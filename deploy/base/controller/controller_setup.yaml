@@ -1,0 +1,86 @@
+---
+##### Controller Service Account, Roles, Rolebindings
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gcp-cloud-storage-csi-controller-sa
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: csi-gcp-gcs-controller
+value: 900000000
+globalDefault: false
+description: "This priority class should be used for the GCE Filestore CSI driver controller deployment only."
+---
+# xref: https://github.com/kubernetes-csi/external-provisioner/blob/master/deploy/kubernetes/rbac.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gcp-cloud-storage-csi-provisioner-role
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gcp-cloud-storage-csi-provisioner-binding
+subjects:
+  - kind: ServiceAccount
+    name: gcp-cloud-storage-csi-controller-sa
+roleRef:
+  kind: ClusterRole
+  name: gcp-cloud-storage-csi-provisioner-role
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gcp-cloud-storage-csi-leaderelection-role
+  labels:
+    k8s-app: gcp-cloud-storage-csi-driver
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "watch", "list", "delete", "update", "create"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gcp-cloud-storage-csi-leaderelection-binding
+  labels:
+    k8s-app: gcp-cloud-storage-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: gcp-cloud-storage-csi-controller-sa
+roleRef:
+  kind: Role
+  name: gcp-cloud-storage-csi-leaderelection-role
+  apiGroup: rbac.authorization.k8s.io
+  

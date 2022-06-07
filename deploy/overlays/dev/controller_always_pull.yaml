@@ -1,0 +1,10 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: gcp-cloud-storage-csi-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: gcp-cloud-storage-driver
+          imagePullPolicy: Always

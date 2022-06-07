@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: gcp-cloud-storage-csi-dynamic-statefulset-example
+  namespace: gcs-csi-example
+spec:
+  selector:
+    matchLabels:
+      app: gcp-cloud-storage-csi-dynamic-statefulset-example
+  serviceName: gcp-cloud-storage-csi-dynamic-statefulset-example
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: gcp-cloud-storage-csi-dynamic-statefulset-example
+    spec:
+      serviceAccountName: gcs-csi
+      containers:
+      - name: writer
+        image: busybox
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+        command:
+          - "/bin/sh"
+          - "-c"
+          - touch /data/${MY_POD_NAME} && while true; do echo $(date) >> /data/${MY_POD_NAME}; sleep 1; done
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        volumeMounts:
+        - name: gcs-bucket
+          mountPath: /data
+      - name: reader
+        image: busybox
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+        command:
+          - "/bin/sh"
+          - "-c"
+          - tail -f /data/${MY_POD_NAME}
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        volumeMounts:
+        - name: gcs-bucket
+          mountPath: /data
+          readOnly: true
+  volumeClaimTemplates:
+  - metadata:
+      name: gcs-bucket
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      storageClassName: gcp-cloud-storage-class
+      resources:
+        requests:
+          storage: 5Gi

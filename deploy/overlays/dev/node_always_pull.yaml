@@ -1,0 +1,13 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: gcp-cloud-storage-csi-node
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: install-gcsfuse-proxy
+          imagePullPolicy: Always
+      containers:
+        - name: gcp-cloud-storage-driver
+          imagePullPolicy: Always

@@ -1,0 +1,115 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: gcp-cloud-storage-csi-node
+spec:
+  selector:
+    matchLabels:
+      app: gcp-cloud-storage-csi-driver
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: gcp-cloud-storage-csi-driver
+    spec:
+      hostPID: true
+      priorityClassName: csi-gcp-gcs-node
+      serviceAccount: gcp-cloud-storage-csi-node-sa
+      nodeSelector:
+        kubernetes.io/os: linux
+      initContainers:
+        - name: install-gcsfuse-proxy
+          image: jiaxun/gcp-cloud-storage-csi-driver
+          command:
+            - "/gcsfuse-proxy/init.sh"
+          securityContext:
+            privileged: true
+          env:
+            - name: INSTALL_GCSFUSE
+              value: "true"
+            - name: FORCE_INSTALL_GCSFUSE_PROXY
+              value: "true"
+            - name: INSTALL_GCSFUSE_PROXY
+              value: "true"
+          volumeMounts:
+            - name: host-usr
+              mountPath: /host/usr
+            - name: host-etc
+              mountPath: /host/etc
+            - name: host-sbin
+              mountPath: /host/sbin
+      containers:
+        - name: csi-driver-registrar
+          image: k8s.gcr.io/sig-storage/csi-node-driver-registrar
+          args:
+            - "--v=5"
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/csi.sock"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 80Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+        - name: gcp-cloud-storage-driver
+          securityContext:
+            privileged: true
+          image: jiaxun/gcp-cloud-storage-csi-driver
+          args:
+            - "--v=5"
+            - "--endpoint=unix:/csi/csi.sock"
+            - "--gcsfuse-proxy-endpoint=unix:/csi/gcsfuse-proxy.sock"
+            - "--nodeid=$(KUBE_NODE_NAME)"
+            - "--node=true"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 80Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: "Bidirectional"
+            - name: plugin-dir
+              mountPath: /csi
+      volumes:
+        - name: host-usr
+          hostPath:
+            path: /usr
+        - name: host-etc
+          hostPath:
+            path: /etc
+        - name: host-sbin
+          hostPath:
+            path: /sbin
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: Directory
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/
+            type: DirectoryOrCreate

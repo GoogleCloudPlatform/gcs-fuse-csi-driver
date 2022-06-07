@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gcp-cloud-storage-csi-ephemeral-example
+  namespace: gcs-csi-example
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gcp-cloud-storage-csi-ephemeral-example
+  template:
+    metadata:
+      labels:
+        app: gcp-cloud-storage-csi-ephemeral-example
+    spec:
+      containers:
+      - name: writer
+        image: busybox
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+        command:
+          - "/bin/sh"
+          - "-c"
+          - touch /data/${MY_POD_NAME} && while true; do echo $(date) >> /data/${MY_POD_NAME}; sleep 1; done
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        volumeMounts:
+        - name: gcp-cloud-storage-csi-ephemeral
+          mountPath: /data
+      - name: reader
+        image: busybox
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+        command:
+          - "/bin/sh"
+          - "-c"
+          - tail -f /data/${MY_POD_NAME}
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        volumeMounts:
+        - name: gcp-cloud-storage-csi-ephemeral
+          mountPath: /data
+          readOnly: true
+      serviceAccountName: gcs-csi
+      # nodeSelector:
+      #   cloud.google.com/gke-ephemeral-storage-local-ssd: "true"
+      volumes:
+      - name: gcp-cloud-storage-csi-ephemeral
+        csi:
+          driver: cloudstorage.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: <bucket-name> # unique bucket name

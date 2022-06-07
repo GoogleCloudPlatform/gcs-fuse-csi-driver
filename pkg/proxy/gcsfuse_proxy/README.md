@@ -1,0 +1,1 @@
+A proxy server that calls gcsfuse on GKE nodes to mount GCK buckets.

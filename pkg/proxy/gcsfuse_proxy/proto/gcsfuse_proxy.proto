@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = ".;pb";
+
+message MountGCSRequest {
+	string source = 1;
+	string target = 2;
+	string fstype = 3;
+	repeated string options = 4;
+	repeated string sensitiveOptions = 5;
+}
+
+message PutGCPTokenRequest {
+	string podID = 1;
+	string token = 2;
+	google.protobuf.Timestamp expiry = 3;
+}
+
+message GetGCPTokenExpiryRequest {
+	string podID = 1;
+}
+
+message GetGCPTokenExpiryResponse {
+	google.protobuf.Timestamp expiry = 1;
+}
+
+message DeleteGCPTokenRequest {
+	string podID = 1;
+}
+
+service GCSFuseProxyService {
+	rpc MountGCS(MountGCSRequest) returns (google.protobuf.Empty) {};
+	rpc PutGCPToken(PutGCPTokenRequest) returns (google.protobuf.Empty) {};
+	rpc GetGCPTokenExpiry(GetGCPTokenExpiryRequest) returns (GetGCPTokenExpiryResponse) {};
+	rpc DeleteGCPToken(DeleteGCPTokenRequest) returns (google.protobuf.Empty) {};
+}
