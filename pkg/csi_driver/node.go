@@ -17,7 +17,6 @@ limitations under the License.
 package driver
 
 import (
-	"fmt"
 	"os"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -117,7 +116,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if needsCreateDir {
 		klog.V(4).Infof("NodePublishVolume attempting mkdir for path %s", targetPath)
 		if err := os.MkdirAll(targetPath, 0750); err != nil {
-			return nil, fmt.Errorf("mkdir failed for path %s (%v)", targetPath, err)
+			return nil, status.Errorf(codes.Internal, "mkdir failed for path %s (%v)", targetPath, err)
 		}
 	}
 

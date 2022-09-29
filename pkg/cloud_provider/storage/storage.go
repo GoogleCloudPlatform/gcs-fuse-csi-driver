@@ -79,28 +79,36 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 
 func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
 	klog.V(4).Infof("Creating bucket %q: project %q, location %q", obj.Name, obj.Project, obj.Location)
+	// Create the bucket
 	bkt := service.storageClient.Bucket(obj.Name)
 	if err := bkt.Create(ctx, obj.Project, &storage.BucketAttrs{Location: obj.Location, Labels: obj.Labels}); err != nil {
-		klog.Errorf("CreateBucket operation failed for bucket %q: %v", obj.Name, err)
-		return nil, err
+		return nil, fmt.Errorf("CreateBucket operation failed for bucket %q: %v", obj.Name, err)
 	}
 
+	// Check that the bucket exists
 	bucket, err := service.GetBucket(ctx, obj)
 	if err != nil {
-		klog.Errorf("failed to get bucket after creation: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get bucket %q after creation: %v", obj.Name, err)
 	}
 	return bucket, nil
 }
 
 func (service *gcsService) DeleteBucket(ctx context.Context, obj *ServiceBucket) error {
-	bkt := service.storageClient.Bucket(obj.Name)
-	err := bkt.Delete(ctx)
+	// Check that the bucket exists
+	_, err := service.GetBucket(ctx, obj)
 	if err != nil {
-		klog.Errorf("Failed to delete bucket %v", obj)
-		return err
+		if IsNotExistErr(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get bucket %q before deletion: %v", obj.Name, err)
 	}
 
+	// Delete the bucket
+	bkt := service.storageClient.Bucket(obj.Name)
+	err = bkt.Delete(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete bucket %q: %v", obj.Name, err)
+	}
 	return nil
 }
 
@@ -108,14 +116,15 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 	bkt := service.storageClient.Bucket(obj.Name)
 	attrs, err := bkt.Attrs(ctx)
 	if err != nil {
-		klog.Errorf("Failed to get bucket %+v", obj)
+		klog.Errorf("Failed to get bucket %q: %v", obj.Name, err)
+		// returns the original error because func IsNotExistErr relies on the error message
 		return nil, err
 	}
 
 	if attrs != nil {
 		return cloudBucketToServiceBucket(attrs)
 	}
-	return nil, fmt.Errorf("failed to get bucket %v", obj.Name)
+	return nil, fmt.Errorf("failed to get bucket %q: got empty attrs", obj.Name)
 }
 
 func cloudBucketToServiceBucket(attrs *storage.BucketAttrs) (*ServiceBucket, error) {
@@ -142,7 +151,7 @@ func CompareBuckets(a, b *ServiceBucket) error {
 	}
 
 	if len(mismatches) > 0 {
-		return fmt.Errorf("bucket %v and bucket %v do not match: [%v]", a.Name, b.Name, strings.Join(mismatches, ", "))
+		return fmt.Errorf("bucket %q and bucket %q do not match: [%s]", a.Name, b.Name, strings.Join(mismatches, ", "))
 	}
 	return nil
 }

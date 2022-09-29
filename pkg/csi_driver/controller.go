@@ -178,7 +178,7 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		}
 		newBucket.Labels = labels
 
-		// Create the instance
+		// Create the bucket
 		var createErr error
 		bucket, createErr = storageService.CreateBucket(ctx, newBucket)
 		if createErr != nil {
@@ -207,16 +207,8 @@ func (s *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 		return nil, err
 	}
 
-	// Check that the volume exists
-	bucket, err := storageService.GetBucket(ctx, &storage.ServiceBucket{Name: volumeID})
-	if err != nil {
-		if storage.IsNotExistErr(err) {
-			return &csi.DeleteVolumeResponse{}, nil
-		}
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	err = storageService.DeleteBucket(ctx, bucket)
+	// Delete the volume
+	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: volumeID})
 	if err != nil {
 		klog.Errorf("Delete volume for volume Id %s failed: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
