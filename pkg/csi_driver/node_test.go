@@ -49,7 +49,7 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	mounter := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
 	driver := initTestDriver(t, mounter)
 	return &nodeServerTestEnv{
-		ns: newNodeServer(driver, mounter, driver.config.GCSFuseProxyClient),
+		ns: newNodeServer(driver, mounter, driver.config.GCSFuseProxyClient, driver.config.TokenManager),
 		fm: mounter,
 	}
 }

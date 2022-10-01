@@ -88,7 +88,7 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	driver.ids = newIdentityServer(driver)
 	if config.RunNode {
 		nscap := []csi.NodeServiceCapability_RPC_Type{}
-		driver.ns = newNodeServer(driver, mount.New(""), config.GCSFuseProxyClient)
+		driver.ns = newNodeServer(driver, mount.New(""), config.GCSFuseProxyClient, config.TokenManager)
 		err = driver.addNodeServiceCapabilities(nscap)
 		if err != nil {
 			return nil, err

@@ -18,9 +18,10 @@ package proxyclient
 
 import (
 	"context"
+	"time"
 
+	"golang.org/x/oauth2"
 	mount "k8s.io/mount-utils"
-	mount_gcs "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/gcsfuse_proxy/pb"
 )
 
 type FakeProxyClient struct {
@@ -32,20 +33,18 @@ func NewFakeProxyClient(fm *mount.FakeMounter) ProxyClient {
 	return &FakeProxyClient{fm: fm}
 }
 
-func (c *FakeProxyClient) UpdateGCPToken(ctx context.Context, vc map[string]string) error {
+func (c *FakeProxyClient) PutGCPToken(ctx context.Context, podID string, token *oauth2.Token) error {
 	return nil
 }
 
-func (c *FakeProxyClient) CleanupGCPToken(ctx context.Context, targetPath string) error {
+func (c *FakeProxyClient) DeleteGCPToken(ctx context.Context, targetPath string) error {
 	return nil
 }
 
-func (c *FakeProxyClient) MountGCS(ctx context.Context, req *mount_gcs.MountGCSRequest) error {
-	source := req.GetSource()
-	target := req.GetTarget()
-	fstype := req.GetFstype()
-	options := req.GetOptions()
-	sensitiveOptions := req.GetSensitiveOptions()
+func (c *FakeProxyClient) GetGCPTokenExpiry(ctx context.Context, podID string) (time.Time, error) {
+	return time.Time{}, nil
+}
 
+func (c *FakeProxyClient) MountGCS(ctx context.Context, source, target, fstype string, options, sensitiveOptions []string) error {
 	return c.fm.MountSensitive(source, target, fstype, options, sensitiveOptions)
 }

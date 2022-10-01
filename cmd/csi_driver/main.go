@@ -80,7 +80,7 @@ func main() {
 			klog.Fatalf("nodeid cannot be empty for node service")
 		}
 
-		gcsfuseProxyClient, err = proxyclient.NewGCSFuseProxyClient(*gcsfuseProxyEndpoint, tm)
+		gcsfuseProxyClient, err = proxyclient.NewGCSFuseProxyClient(*gcsfuseProxyEndpoint)
 		if err != nil {
 			klog.Fatalf("Failed to set up gcsfuse proxy client: %v", err)
 		}

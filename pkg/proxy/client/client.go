@@ -22,11 +22,11 @@ import (
 	"net"
 	"time"
 
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/klog"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	mount_gcs "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/gcsfuse_proxy/pb"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )
@@ -34,77 +34,49 @@ import (
 const (
 	// Interval of logging connection errors
 	connectionLoggingInterval = 10 * time.Second
-
-	// NodePublishVolume VolumeContext pod UID key
-	VolumeContextKeyPodUID = "csi.storage.k8s.io/pod.uid"
 )
 
 type ProxyClient interface {
-	UpdateGCPToken(ctx context.Context, vc map[string]string) error
-	CleanupGCPToken(ctx context.Context, targetPath string) error
-	MountGCS(ctx context.Context, req *mount_gcs.MountGCSRequest) error
+	PutGCPToken(ctx context.Context, podID string, token *oauth2.Token) error
+	DeleteGCPToken(ctx context.Context, targetPath string) error
+	GetGCPTokenExpiry(ctx context.Context, podID string) (time.Time, error)
+	MountGCS(ctx context.Context, source, target, fstype string, options, sensitiveOptions []string) error
 }
 
 type GCSFuseProxyClient struct {
 	gcsfuseProxyClient mount_gcs.GCSFuseProxyServiceClient
-	tokenManager       auth.TokenManager
 }
 
 // NewGCSFuseProxyClient returns a new ProxyServiceClient for GCS Fuse Proxy
-func NewGCSFuseProxyClient(proxyEndpoint string, tm auth.TokenManager) (ProxyClient, error) {
+func NewGCSFuseProxyClient(proxyEndpoint string) (ProxyClient, error) {
 	conn, err := connect(proxyEndpoint)
 	if err != nil {
 		return nil, err
 	}
 	return &GCSFuseProxyClient{
 		gcsfuseProxyClient: mount_gcs.NewGCSFuseProxyServiceClient(conn),
-		tokenManager:       tm,
 	}, nil
 }
 
-func (c *GCSFuseProxyClient) UpdateGCPToken(ctx context.Context, vc map[string]string) error {
-	podID := vc[VolumeContextKeyPodUID]
+func (c *GCSFuseProxyClient) PutGCPToken(ctx context.Context, podID string, token *oauth2.Token) error {
 	if len(podID) == 0 {
-		return fmt.Errorf("NodePublishVolume VolumeContext %s must be provided", VolumeContextKeyPodUID)
-	}
-	sa, err := c.tokenManager.GetK8sServiceAccountFromVolumeContext(vc)
-	if err != nil {
-		return fmt.Errorf("failed to get Kubernetes Service Account with error: %v", err)
-	}
-	getReq := mount_gcs.GetGCPTokenExpiryRequest{
-		PodID: podID,
-	}
-	klog.V(2).Infof("calling GCSfuseProxy: GetGCPTokenExpiry function")
-	getResp, err := c.gcsfuseProxyClient.GetGCPTokenExpiry(ctx, &getReq)
-	if err == nil && getResp.Expiry.AsTime().After(time.Now().Add(time.Minute*5)) {
-		klog.V(2).Infof("no need to update token for Pod %v", podID)
-		return nil
+		return fmt.Errorf("NodePublishVolume VolumeContext Pod ID must be provided")
 	}
 
-	ts, err := c.tokenManager.GetTokenSourceFromK8sServiceAccount(ctx, sa)
-	if err != nil {
-		return err
-	}
-
-	gcpToken, err := ts.Token()
-	if err != nil {
-		return err
-	}
-
-	putReq := mount_gcs.PutGCPTokenRequest{
+	req := mount_gcs.PutGCPTokenRequest{
 		PodID:  podID,
-		Token:  gcpToken.AccessToken,
-		Expiry: timestamppb.New(gcpToken.Expiry),
+		Token:  token.AccessToken,
+		Expiry: timestamppb.New(token.Expiry),
 	}
 	klog.V(2).Infof("calling GCSfuseProxy: PutGCPToken function to update GCP token for Pod %v", podID)
-	_, err = c.gcsfuseProxyClient.PutGCPToken(ctx, &putReq)
+	_, err := c.gcsfuseProxyClient.PutGCPToken(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("PutGCPToken failed with error: %w", err)
 	}
 	return nil
 }
 
-func (c *GCSFuseProxyClient) CleanupGCPToken(ctx context.Context, targetPath string) error {
+func (c *GCSFuseProxyClient) DeleteGCPToken(ctx context.Context, targetPath string) error {
 	podID, _, err := util.ParsePodIDVolume(targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to extract Pod ID: %v", err)
@@ -121,8 +93,31 @@ func (c *GCSFuseProxyClient) CleanupGCPToken(ctx context.Context, targetPath str
 	return nil
 }
 
-func (c *GCSFuseProxyClient) MountGCS(ctx context.Context, req *mount_gcs.MountGCSRequest) error {
-	_, err := c.gcsfuseProxyClient.MountGCS(ctx, req)
+func (c *GCSFuseProxyClient) GetGCPTokenExpiry(ctx context.Context, podID string) (time.Time, error) {
+	if len(podID) == 0 {
+		return time.Time{}, fmt.Errorf("NodePublishVolume VolumeContext Pod ID must be provided")
+	}
+
+	req := mount_gcs.GetGCPTokenExpiryRequest{
+		PodID: podID,
+	}
+	klog.V(2).Infof("calling GCSfuseProxy: DeleteGCPToken function to cleanup GCP token for Pod %v", podID)
+	resp, err := c.gcsfuseProxyClient.GetGCPTokenExpiry(ctx, &req)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("DeleteGCPToken failed with error: %v", err)
+	}
+	return resp.GetExpiry().AsTime(), nil
+}
+
+func (c *GCSFuseProxyClient) MountGCS(ctx context.Context, source, target, fstype string, options, sensitiveOptions []string) error {
+	req := mount_gcs.MountGCSRequest{
+		Source:           source,
+		Target:           target,
+		Fstype:           fstype,
+		Options:          options,
+		SensitiveOptions: sensitiveOptions,
+	}
+	_, err := c.gcsfuseProxyClient.MountGCS(ctx, &req)
 	return err
 }
 

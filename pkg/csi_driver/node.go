@@ -17,7 +17,9 @@ limitations under the License.
 package driver
 
 import (
+	"fmt"
 	"os"
+	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"golang.org/x/net/context"
@@ -25,13 +27,14 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog"
 	mount "k8s.io/mount-utils"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	proxyclient "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/client"
-	mount_gcs "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/gcsfuse_proxy/pb"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )
 
 // NodePublishVolume VolumeContext parameters
 const (
+	VolumeContextKeyPodUID     = "csi.storage.k8s.io/pod.uid"
 	VolumeContextKeyEphemeral  = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName = "bucketName"
 )
@@ -39,14 +42,16 @@ const (
 // nodeServer handles mounting and unmounting of GCFS volumes on a node
 type nodeServer struct {
 	driver             *GCSDriver
+	tokenManager       auth.TokenManager
 	gcsfuseProxyClient proxyclient.ProxyClient
 	mounter            mount.Interface
 	volumeLocks        *util.VolumeLocks
 }
 
-func newNodeServer(driver *GCSDriver, mounter mount.Interface, gcsfuseProxyClient proxyclient.ProxyClient) csi.NodeServer {
+func newNodeServer(driver *GCSDriver, mounter mount.Interface, gcsfuseProxyClient proxyclient.ProxyClient, tokenManager auth.TokenManager) csi.NodeServer {
 	return &nodeServer{
 		driver:             driver,
+		tokenManager:       tokenManager,
 		gcsfuseProxyClient: gcsfuseProxyClient,
 		mounter:            mounter,
 		volumeLocks:        util.NewVolumeLocks(),
@@ -92,8 +97,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	defer s.volumeLocks.Release(targetPath)
 
 	// Update GCP token on the proxy server.
-	if err := s.gcsfuseProxyClient.UpdateGCPToken(ctx, vc); err != nil {
-		return nil, status.Errorf(codes.Internal, "UpdateGCPToken failed with error: %v", err)
+	if err := s.updateGCPToken(ctx, vc); err != nil {
+		return nil, status.Errorf(codes.Internal, "updateGCPToken failed with error: %v", err)
 	}
 
 	// Mount source
@@ -128,15 +133,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if req.GetReadonly() {
 		options = append(options, "ro")
 	}
-	mountreq := mount_gcs.MountGCSRequest{
-		Source:           volumeID,
-		Target:           targetPath,
-		Fstype:           "gcsfuse",
-		Options:          options,
-		SensitiveOptions: []string{},
-	}
-	if err := s.gcsfuseProxyClient.MountGCS(ctx, &mountreq); err != nil {
-		return nil, status.Errorf(codes.Internal, "MountGCS failed with error: %v", err)
+	if err := s.gcsfuseProxyClient.MountGCS(ctx, volumeID, targetPath, "gcsfuse", options, []string{}); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to mount %q: %v", volumeID, err)
 	}
 	return &csi.NodePublishVolumeResponse{}, nil
 }
@@ -161,9 +159,9 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	}
 
 	// Clean up the GCP token on the proxy server.
-	err = s.gcsfuseProxyClient.CleanupGCPToken(ctx, targetPath)
+	err = s.gcsfuseProxyClient.DeleteGCPToken(ctx, targetPath)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "CleanupGCPToken failed with error: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to cleanup token: %v", err)
 	}
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
@@ -179,4 +177,35 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// updateGCPToken calls GCS Fuse Proxy Server to update GCP token
+func (s *nodeServer) updateGCPToken(ctx context.Context, vc map[string]string) error {
+	sa, err := s.tokenManager.GetK8sServiceAccountFromVolumeContext(vc)
+	if err != nil {
+		return fmt.Errorf("failed to get Kubernetes Service Account with error: %v", err)
+	}
+
+	podID := vc[VolumeContextKeyPodUID]
+	expiry, err := s.gcsfuseProxyClient.GetGCPTokenExpiry(ctx, podID)
+	if err == nil && expiry.After(time.Now().Add(time.Minute*5)) {
+		klog.V(2).Infof("no need to update token for Pod %q", podID)
+		return nil
+	}
+
+	ts, err := s.tokenManager.GetTokenSourceFromK8sServiceAccount(ctx, sa)
+	if err != nil {
+		return err
+	}
+
+	gcpToken, err := ts.Token()
+	if err != nil {
+		return err
+	}
+
+	err = s.gcsfuseProxyClient.PutGCPToken(ctx, podID, gcpToken)
+	if err != nil {
+		return fmt.Errorf("failed to put GCP token : %v", err)
+	}
+	return nil
 }
