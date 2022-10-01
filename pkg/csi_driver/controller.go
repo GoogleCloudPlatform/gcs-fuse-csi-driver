@@ -133,7 +133,6 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	klog.V(5).Infof("Using capacity bytes %q for volume %q", capBytes, name)
 
 	secrets := req.GetSecrets()
 	projectID, ok := secrets["projectID"]
@@ -182,7 +181,6 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		var createErr error
 		bucket, createErr = storageService.CreateBucket(ctx, newBucket)
 		if createErr != nil {
-			klog.Errorf("Create volume for volume Id %s failed: %v", volumeID, createErr)
 			return nil, status.Error(codes.Internal, createErr.Error())
 		}
 	}
@@ -210,7 +208,6 @@ func (s *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 	// Delete the volume
 	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: volumeID})
 	if err != nil {
-		klog.Errorf("Delete volume for volume Id %s failed: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &csi.DeleteVolumeResponse{}, nil
