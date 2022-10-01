@@ -24,6 +24,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog"
@@ -103,8 +104,23 @@ func (service *gcsService) DeleteBucket(ctx context.Context, obj *ServiceBucket)
 		return fmt.Errorf("failed to get bucket %q before deletion: %v", obj.Name, err)
 	}
 
-	// Delete the bucket
+	// Delete all objects in the bucket first
 	bkt := service.storageClient.Bucket(obj.Name)
+	it := bkt.Objects(ctx, nil)
+	for {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to iterate next object: %v", err)
+		}
+		if err := bkt.Object(attrs.Name).Delete(ctx); err != nil {
+			return fmt.Errorf("failed to delete object %q: %v", attrs.Name, err)
+		}
+	}
+
+	// Delete the bucket
 	err = bkt.Delete(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to delete bucket %q: %v", obj.Name, err)

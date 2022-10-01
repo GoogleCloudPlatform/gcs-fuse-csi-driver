@@ -40,16 +40,13 @@ kubectl apply -f ./examples/dynamic/statefulset.yaml
 
 # clean up
 kubectl delete -f ./examples/dynamic/deployment.yaml
+kubectl delete -f ./examples/dynamic/statefulset.yaml
 
 # After the StatefulSet application get uninstalled,
 # you will need to clean up the PVCs manually.
-kubectl delete -f ./examples/dynamic/statefulset.yaml
 kubectl delete -n gcs-csi-example pvc gcs-bucket-gcp-cloud-storage-csi-dynamic-statefulset-example-0 gcs-bucket-gcp-cloud-storage-csi-dynamic-statefulset-example-1 gcs-bucket-gcp-cloud-storage-csi-dynamic-statefulset-example-2
 
-# You will need to firstly delete all the files in the GCS bucket
-# so that the PV and the GCS bucket can be deleted.
-
-# Do not delete the secret before you cleaned up all the PVs.
+# clean up the secret after all the PVs are delted
 kubectl delete secret gcs-csi-secret --namespace gcs-csi-example
 ```
 
