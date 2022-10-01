@@ -5,3 +5,5 @@ resources:
 - ../../base
 transformers:
 - ../../images/stable
+patchesStrategicMerge:
+- csi_driver_audience.yaml

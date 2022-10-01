@@ -49,7 +49,7 @@ dev-build-image-and-push:
 	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:v2.0.0
 
 dev-generate-yaml:
-	kubectl apply -k deploy/overlays/dev --dry-run=client -o yaml | tee ./bin/gcp-cloud-storage-csi-driver-specs-generated.yaml
+	kubectl kustomize deploy/overlays/dev | tee ./bin/gcp-cloud-storage-csi-driver-specs-generated.yaml
 
 dev-install:
 	kubectl apply -k deploy/overlays/dev

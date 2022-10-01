@@ -1,0 +1,7 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: cloudstorage.csi.storage.gke.io
+spec:
+  tokenRequests:
+    - audience: <project-id>.svc.id.goog

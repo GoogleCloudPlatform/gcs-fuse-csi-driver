@@ -17,12 +17,14 @@
   ```
 
 ## Install
-Open the file [csi_driver.yaml](../deploy/base/setup/csi_driver.yaml) and replace `<project-id>` with your GKE project id.
-
-Run the following command to install the driver. The driver will be installed under a new namespace `gcp-cloud-storage-csi-driver`. The installation may take a few minutes.
-```bash
-make install
-```
+- Run the following command to replace `<project-id>` with your GKE cluster project ID in file [csi_driver_audience.yaml](../deploy/overlays/stable/csi_driver_audience.yaml).
+  ```bash
+  sed -i "s/<project-id>/$CLUSTER_PROJECT_ID/g" ./deploy/overlays/stable/csi_driver_audience.yaml
+  ```
+- Run the following command to install the driver. The driver will be installed under a new namespace `gcp-cloud-storage-csi-driver`. The installation may take a few minutes.
+  ```bash
+  make install
+  ```
 
 ## Check the Driver Status
 The output from the following command
@@ -53,7 +55,7 @@ pod/gcp-cloud-storage-csi-node-xpdc5                    2/2     Running   0     
 ```
 
 ## Uninstall
-Run the following command to uninstall the driver.
-```bash
-make uninstall
-````
+- Run the following command to uninstall the driver.
+  ```bash
+  make uninstall
+  ````

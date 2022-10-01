@@ -8,6 +8,13 @@ spec:
       initContainers:
         - name: install-gcsfuse-proxy
           imagePullPolicy: Always
+          env:
+            - name: INSTALL_GCSFUSE
+              value: "true"
+            - name: FORCE_INSTALL_GCSFUSE_PROXY
+              value: "true"
+            - name: INSTALL_GCSFUSE_PROXY
+              value: "true"
       containers:
         - name: gcp-cloud-storage-driver
           imagePullPolicy: Always

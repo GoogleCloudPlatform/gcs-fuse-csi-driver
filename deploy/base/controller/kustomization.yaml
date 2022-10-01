@@ -4,4 +4,3 @@ namespace: gcp-cloud-storage-csi-driver
 resources:
 - controller.yaml
 - controller_setup.yaml
-- storageclass.yaml

@@ -55,7 +55,9 @@ kubectl delete secret gcs-csi-secret --namespace gcs-csi-example
 
 ### Static Provisioning Example
 ```bash
-# Open the file ./examples/static/pv.yaml and replace <bucket-name> with your pre-provisioned GCS bucket name.
+# replace <bucket-name> with your pre-provisioned GCS bucket name in file ./examples/static/pv.yaml.
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv.yaml
 
 # install PV/PVC and a Deployment
 kubectl apply -f ./examples/static/pv.yaml
@@ -71,7 +73,9 @@ kubectl delete -f ./examples/static/pv.yaml
 
 ### Ephemeral Volume Example
 ```bash
-# Open the file ./examples/ephemeral/deployment.yaml and replace <bucket-name> with your pre-provisioned GCS bucket name.
+# replace <bucket-name> with your pre-provisioned GCS bucket name in file ./examples/ephemeral/deployment.yaml.
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/ephemeral/deployment.yaml
 
 # install a Deployment using CSI Ephemeral Inline volume
 kubectl apply -f ./examples/ephemeral/deployment.yaml
