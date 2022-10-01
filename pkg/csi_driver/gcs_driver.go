@@ -23,11 +23,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog"
+	mount "k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
 	proxyclient "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/client"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/gcsfuse_proxy/mount"
 )
 
 type GCSDriverConfig struct {
