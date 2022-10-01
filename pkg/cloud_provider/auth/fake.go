@@ -31,23 +31,24 @@ func NewFakeTokenManager() TokenManager {
 
 func (tm *fakeTokenManager) GetK8sServiceAccountFromVolumeContext(volumeContext map[string]string) (*K8sServiceAccountInfo, error) {
 	sa := &K8sServiceAccountInfo{
-		Name:               volumeContext["csi.storage.k8s.io/serviceAccount.name"],
-		Namespace:          volumeContext["csi.storage.k8s.io/pod.namespace"],
-		TokenRequestStatus: nil,
+		Name:      volumeContext[VolumeContextKeyServiceAccountName],
+		Namespace: volumeContext[VolumeContextKeyPodNamespace],
+		Token: &oauth2.Token{
+			AccessToken: "test-token",
+			Expiry:      time.Now().Add(time.Hour),
+		},
 	}
 	return sa, nil
 }
 
 func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context, sa *K8sServiceAccountInfo) (oauth2.TokenSource, error) {
-	return &FakeGCPTokenSource{}, nil
+	return &FakeGCPTokenSource{k8sSA: sa}, nil
 }
 
-type FakeGCPTokenSource struct{}
+type FakeGCPTokenSource struct {
+	k8sSA *K8sServiceAccountInfo
+}
 
 func (ts *FakeGCPTokenSource) Token() (*oauth2.Token, error) {
-	token := &oauth2.Token{
-		AccessToken: "test-token",
-		Expiry:      time.Now().Add(time.Hour),
-	}
-	return token, nil
+	return ts.k8sSA.Token, nil
 }

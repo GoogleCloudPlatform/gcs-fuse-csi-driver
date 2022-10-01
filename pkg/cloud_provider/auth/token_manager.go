@@ -98,9 +98,14 @@ func (tm *tokenManager) GetK8sServiceAccountFromVolumeContext(vc map[string]stri
 	}
 
 	sa := &K8sServiceAccountInfo{
-		Name:               saName,
-		Namespace:          saNamespace,
-		TokenRequestStatus: tokenMap[tm.meta.GetIdentityPool()],
+		Name:      saName,
+		Namespace: saNamespace,
+	}
+	if trs, ok := tokenMap[tm.meta.GetIdentityPool()]; ok {
+		sa.Token = &oauth2.Token{
+			AccessToken: trs.Token,
+			Expiry:      trs.ExpirationTimestamp.Time,
+		}
 	}
 	return sa, nil
 }
@@ -109,7 +114,7 @@ func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context,
 	tokenSource := &GCPTokenSource{
 		ctx:        ctx,
 		meta:       tm.meta,
-		k8sSA:      *sa,
+		k8sSA:      sa,
 		k8sClients: tm.k8sClients,
 	}
 	return tokenSource, nil

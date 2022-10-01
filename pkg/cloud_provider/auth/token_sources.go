@@ -32,16 +32,16 @@ import (
 )
 
 type K8sServiceAccountInfo struct {
-	Namespace          string
-	Name               string
-	TokenRequestStatus *authenticationv1.TokenRequestStatus
+	Namespace string
+	Name      string
+	Token     *oauth2.Token
 }
 
 // GCPTokenSource generates a GCP IAM SA token with a Kubernetes Service Account token.
 type GCPTokenSource struct {
 	ctx        context.Context
 	meta       metadata.Service
-	k8sSA      K8sServiceAccountInfo
+	k8sSA      *K8sServiceAccountInfo
 	k8sClients *kubernetes.Clientset
 }
 
@@ -51,11 +51,6 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	err := ts.fetchK8sSAToken()
 	if err != nil {
 		return nil, fmt.Errorf("k8s service account token fetch error: %v", err)
-	}
-
-	k8sToken := &oauth2.Token{
-		AccessToken: ts.k8sSA.TokenRequestStatus.Token,
-		Expiry:      ts.k8sSA.TokenRequestStatus.ExpirationTimestamp.Time,
 	}
 
 	stsService, err := sts.NewService(ts.ctx, option.WithHTTPClient(&http.Client{}))
@@ -74,7 +69,7 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 		Scope:              "https://www.googleapis.com/auth/cloud-platform",
 		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
 		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		SubjectToken:       k8sToken.AccessToken,
+		SubjectToken:       ts.k8sSA.Token.AccessToken,
 	}
 
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
@@ -91,7 +86,7 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 }
 
 func (ts *GCPTokenSource) fetchK8sSAToken() error {
-	if ts.k8sSA.TokenRequestStatus != nil {
+	if ts.k8sSA.Token != nil {
 		return nil
 	}
 	ttl := int64(1 * time.Hour.Seconds())
@@ -113,6 +108,9 @@ func (ts *GCPTokenSource) fetchK8sSAToken() error {
 		return fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %v", err)
 	}
 
-	ts.k8sSA.TokenRequestStatus = &resp.Status
+	ts.k8sSA.Token = &oauth2.Token{
+		AccessToken: resp.Status.Token,
+		Expiry:      resp.Status.ExpirationTimestamp.Time,
+	}
 	return nil
 }

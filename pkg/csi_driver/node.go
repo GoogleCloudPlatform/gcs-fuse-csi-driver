@@ -186,6 +186,10 @@ func (s *nodeServer) updateGCPToken(ctx context.Context, vc map[string]string) e
 		return fmt.Errorf("failed to get Kubernetes Service Account with error: %v", err)
 	}
 
+	if sa.Token == nil {
+		return fmt.Errorf("VolumeContext does not contain Kubernetes Service Account token for Identity Pool")
+	}
+
 	podID := vc[VolumeContextKeyPodUID]
 	expiry, err := s.gcsfuseProxyClient.GetGCPTokenExpiry(ctx, podID)
 	if err == nil && expiry.After(time.Now().Add(time.Minute*5)) {
