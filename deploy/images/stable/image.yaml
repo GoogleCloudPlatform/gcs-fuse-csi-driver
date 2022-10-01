@@ -1,6 +1,15 @@
 apiVersion: builtin
 kind: ImageTagTransformer
 metadata:
+  name: imagetag-livenessprobe
+imageTag:
+  name: k8s.gcr.io/sig-storage/livenessprobe
+  newTag: "v2.7.0"
+---
+
+apiVersion: builtin
+kind: ImageTagTransformer
+metadata:
   name: imagetag-csi-provisioner
 imageTag:
   name: k8s.gcr.io/sig-storage/csi-provisioner
@@ -22,5 +31,5 @@ metadata:
   name: imagetag-gce-cs-driver
 imageTag:
   name: jiaxun/gcp-cloud-storage-csi-driver
-  newTag: "v2.0.0"
+  newTag: "v0.1.0"
 ---

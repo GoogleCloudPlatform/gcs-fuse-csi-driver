@@ -17,6 +17,23 @@ spec:
       serviceAccount: gcp-cloud-storage-csi-controller-sa
       priorityClassName: csi-gcp-gcs-controller
       containers:
+        - name: liveness-probe
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+          image: k8s.gcr.io/sig-storage/livenessprobe
+          args:
+            - --csi-address=/csi/csi.sock
+            - --probe-timeout=3s
+            - --health-port=29633
+            - --v=2
+          resources:
+            limits:
+              cpu: 50m
+              memory: 100Mi
+            requests:
+              cpu: 10m
+              memory: 20Mi
         - name: csi-external-provisioner
           image: k8s.gcr.io/sig-storage/csi-provisioner
           args:
@@ -30,11 +47,11 @@ spec:
             - "--retry-interval-max=60s"
           resources:
             limits:
-              cpu: 200m
+              cpu: 100m
               memory: 200Mi
             requests:
               cpu: 10m
-              memory: 80Mi
+              memory: 20Mi
           env:
             - name: CLOUDSTORAGECSI_NAMESPACE
               valueFrom:
@@ -62,6 +79,18 @@ spec:
             - "--endpoint=unix:/csi/csi.sock"
             - "--nodeid=$(KUBE_NODE_NAME)"
             - "--controller=true"
+          ports:
+            - containerPort: 29633
+              name: healthz
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
           resources:
             limits:
               cpu: 200m

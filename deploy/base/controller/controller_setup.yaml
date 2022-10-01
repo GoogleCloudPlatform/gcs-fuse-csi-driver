@@ -11,7 +11,7 @@ metadata:
   name: csi-gcp-gcs-controller
 value: 900000000
 globalDefault: false
-description: "This priority class should be used for the GCE Filestore CSI driver controller deployment only."
+description: "This priority class should be used for the GCP GCS CSI driver controller deployment only."
 ---
 # xref: https://github.com/kubernetes-csi/external-provisioner/blob/master/deploy/kubernetes/rbac.yaml
 kind: ClusterRole
@@ -27,7 +27,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["serviceaccounts/token"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["persistentvolumes"]
     verbs: ["get", "list", "watch", "create", "delete"]

@@ -11,16 +11,12 @@ metadata:
   name: csi-gcp-gcs-node
 value: 900001000
 globalDefault: false
-description: "This priority class should be used for the GCE Filestore CSI driver node deployment only."
+description: "This priority class should be used for the GCP GCS CSI driver node deployment only."
 ---
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: gcp-cloud-storage-csi-publisher-role
-rules:
-  - apiGroups: [""]
-    resources: ["serviceaccounts"]
-    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

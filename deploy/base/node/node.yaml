@@ -29,7 +29,7 @@ spec:
             - name: INSTALL_GCSFUSE
               value: "true"
             - name: FORCE_INSTALL_GCSFUSE_PROXY
-              value: "true"
+              value: "false"
             - name: INSTALL_GCSFUSE_PROXY
               value: "true"
           volumeMounts:
@@ -40,26 +40,49 @@ spec:
             - name: host-sbin
               mountPath: /host/sbin
       containers:
+        - name: liveness-probe
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+          image: k8s.gcr.io/sig-storage/livenessprobe
+          args:
+            - --csi-address=/csi/csi.sock
+            - --probe-timeout=3s
+            - --health-port=29633
+            - --v=2
+          resources:
+            limits:
+              cpu: 50m
+              memory: 100Mi
+            requests:
+              cpu: 10m
+              memory: 20Mi
         - name: csi-driver-registrar
           image: k8s.gcr.io/sig-storage/csi-node-driver-registrar
           args:
             - "--v=5"
             - "--csi-address=/csi/csi.sock"
-            - "--kubelet-registration-path=/var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/csi.sock"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+          livenessProbe:
+            exec:
+              command:
+                - /csi-node-driver-registrar
+                - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
+                - --mode=kubelet-registration-probe
+            initialDelaySeconds: 30
+            timeoutSeconds: 15
           resources:
             limits:
-              cpu: 200m
-              memory: 200Mi
+              cpu: 50m
+              memory: 100Mi
             requests:
               cpu: 10m
-              memory: 80Mi
+              memory: 20Mi
           env:
-            - name: KUBE_NODE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/csi.sock
           volumeMounts:
-            - name: plugin-dir
+            - name: socket-dir
               mountPath: /csi
             - name: registration-dir
               mountPath: /registration
@@ -73,6 +96,18 @@ spec:
             - "--gcsfuse-proxy-endpoint=unix:/csi/gcsfuse-proxy.sock"
             - "--nodeid=$(KUBE_NODE_NAME)"
             - "--node=true"
+          ports:
+            - containerPort: 29633
+              name: healthz
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
           resources:
             limits:
               cpu: 200m
@@ -89,7 +124,7 @@ spec:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet
               mountPropagation: "Bidirectional"
-            - name: plugin-dir
+            - name: socket-dir
               mountPath: /csi
       volumes:
         - name: host-usr
@@ -109,7 +144,7 @@ spec:
           hostPath:
             path: /var/lib/kubelet
             type: Directory
-        - name: plugin-dir
+        - name: socket-dir
           hostPath:
             path: /var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/
             type: DirectoryOrCreate
