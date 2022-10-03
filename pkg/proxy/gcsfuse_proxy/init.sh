@@ -25,12 +25,15 @@ HOST_CMD="nsenter --mount=/proc/1/ns/mnt"
 # install gcsfuse
 if [ "${INSTALL_GCSFUSE}" = "true" ]
 then
+  $HOST_CMD wget https://raw.githubusercontent.com/libfuse/libfuse/master/util/fuse.conf -O /etc/fuse.conf
   $HOST_CMD apt-get update
-  $HOST_CMD apt-get install cgroup-tools -y
+  $HOST_CMD apt-get install cgroup-tools fuse3 -y
+
+  # replace gcsfuse with the fork build
   cp /gcsfuse/bin/* /host/usr/local/bin/
   cp /gcsfuse/sbin/* /host/sbin/
 
-  echo "user_allow_other" > /host/etc/fuse.conf
+  echo "user_allow_other" >> /host/etc/fuse.conf
   $HOST_CMD mkdir /var/log/gcsfuse -p
 fi
 
