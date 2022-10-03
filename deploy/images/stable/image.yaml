@@ -31,5 +31,5 @@ metadata:
   name: imagetag-gce-cs-driver
 imageTag:
   name: jiaxun/gcp-cloud-storage-csi-driver
-  newTag: "v0.1.0"
+  newTag: "v0.1.1"
 ---

@@ -25,8 +25,8 @@ proxy:
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags="-s -w" -o ${BINDIR}/gcsfuse-proxy cmd/gcsfuse_proxy/main.go
 
 build-image-and-push:
-	docker build --file Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:v0.1.0 .
-	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:v0.1.0
+	docker build --file Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:v0.1.1 .
+	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:v0.1.1
 
 install:
 	kubectl apply -k deploy/overlays/stable
