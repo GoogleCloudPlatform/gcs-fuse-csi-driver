@@ -18,6 +18,7 @@ package mount
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -31,6 +32,8 @@ const (
 	defaultMountCommand = "mount"
 	// Error thrown by exec cmd.Run() when process spawned by cmd.Start() completes before cmd.Wait() is called (see - k/k issue #103753)
 	errNoChildProcesses = "wait: no child processes"
+	// Parent path of cgroup.
+	cgroupParentPath = "/sys/fs/cgroup/memory/kubepods"
 )
 
 // Mounter provides the GCS Fuse Proxy Server implementation of mount.Interface
@@ -60,7 +63,11 @@ func (mounter *Mounter) MountSensitive(source string, target string, fstype stri
 		return fmt.Errorf("mount failed: cgexec is not enabled")
 	}
 	mountArgs, mountArgsLogStr := mount.MakeMountArgsSensitiveWithMountFlags(source, target, fstype, options, sensitiveOptions, nil /* mountFlags */)
-	mountCmd, mountArgs, mountArgsLogStr := AddCgexecSensitive("cgexec", target, defaultMountCommand, mountArgs, mountArgsLogStr)
+	mountCmd, mountArgs, mountArgsLogStr, err := AddCgexecSensitive("cgexec", target, defaultMountCommand, mountArgs, mountArgsLogStr)
+	if err != nil {
+		klog.Errorf("Mount failed: %v", err)
+		return fmt.Errorf("Mount failed: %v", err)
+	}
 
 	// Logging with sensitive mount options removed.
 	klog.V(4).Infof("Mounting cmd (%s) with arguments (%s)", mountCmd, mountArgsLogStr)
@@ -95,9 +102,26 @@ func detectCgexec() bool {
 // AddCgexecSensitive adds "cgexec -g cpu,memory:<cgroup>" to given command line
 // It also accepts takes a sanitized string containing mount arguments, mountArgsLogStr,
 // and returns the string appended to the cgexec command for logging.
-func AddCgexecSensitive(cgexecPath, mountName, command string, args []string, mountArgsLogStr string) (string, []string, string) {
-	podID, _, _ := util.ParsePodIDVolume(mountName)
-	groupArg := fmt.Sprintf("cpu,memory:kubepods/burstable/pod%v", podID)
+func AddCgexecSensitive(cgexecPath, mountName, command string, args []string, mountArgsLogStr string) (string, []string, string, error) {
+	podID, _, err := util.ParsePodIDVolume(mountName)
+	if err != nil {
+		return "", nil, "", err
+	}
+	cgroup, err := lookupCgroup(podID)
+	if err != nil {
+		return "", nil, "", err
+	}
+	groupArg := fmt.Sprintf("cpu,memory:%s", cgroup)
 	cgexecRunArgs := []string{"-g", groupArg, "--", command}
-	return cgexecPath, append(cgexecRunArgs, args...), strings.Join(cgexecRunArgs, " ") + " " + mountArgsLogStr
+	return cgexecPath, append(cgexecRunArgs, args...), strings.Join(cgexecRunArgs, " ") + " " + mountArgsLogStr, nil
+}
+
+func lookupCgroup(podID string) (string, error) {
+	qosArr := []string{"", "burstable/", "besteffort/"}
+	for _, qos := range qosArr {
+		if _, err := os.Stat(fmt.Sprintf("%s/%spod%s", cgroupParentPath, qos, podID)); err == nil {
+			return fmt.Sprintf("kubepods/%spod%s", qos, podID), nil
+		}
+	}
+	return "", fmt.Errorf("failed to locate cgroup for Pod %q", podID)
 }

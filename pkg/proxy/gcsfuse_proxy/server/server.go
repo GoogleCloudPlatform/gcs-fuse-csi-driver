@@ -68,7 +68,6 @@ func (server *GCSFuseProxyServiceServer) MountGCS(ctx context.Context,
 	sensitiveOptions := req.GetSensitiveOptions()
 
 	options = append(options, "implicit_dirs")
-	// options = append(options, "experimental_local_file_cache")
 	options = append(options, "app_name=gke-gcs-csi")
 
 	podID, volume, err := util.ParsePodIDVolume(target)
