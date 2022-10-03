@@ -29,25 +29,24 @@ import (
 )
 
 const (
-	// envGKEFilestoreCSIVersion is an environment variable set in the Filestore CSI driver controller manifest
+	// envGKEGCSCSIVersion is an environment variable set in the GCS CSI driver controller manifest
 	// with the current version of the GKE component.
-	envGKEFilestoreCSIVersion = "GKE_FILESTORECSI_VERSION"
+	envGKEGCSCSIVersion = "GKE_GCSCSI_VERSION"
 
-	subSystem                   = "filestorecsi"
+	subSystem                   = "gcscsi"
 	operationsLatencyMetricName = "operations_seconds"
 
-	labelStatusCode    = "grpc_status_code"
-	labelMethodName    = "method_name"
-	labelFilestoreMode = "filestore_mode"
+	labelStatusCode = "grpc_status_code"
+	labelMethodName = "method_name"
 )
 
 var (
 	metricBuckets = []float64{.1, .25, .5, 1, 2.5, 5, 10, 15, 30, 60, 120, 300, 600}
 
-	// This metric is exposed only from the controller driver component when GKE_FILESTORECSI_VERSION env variable is set.
+	// This metric is exposed only from the controller driver component when GKE_GCSCSI_VERSION env variable is set.
 	gkeComponentVersion = metrics.NewGaugeVec(&metrics.GaugeOpts{
 		Name: "component_version",
-		Help: "Metric to expose the version of the FILESTORECSI GKE component.",
+		Help: "Metric to expose the version of the GCSCSI GKE component.",
 	}, []string{"component_version"})
 
 	operationSeconds = metrics.NewHistogramVec(
@@ -56,7 +55,7 @@ var (
 			Name:      operationsLatencyMetricName,
 			Buckets:   metricBuckets,
 		},
-		[]string{labelStatusCode, labelMethodName, labelFilestoreMode},
+		[]string{labelStatusCode, labelMethodName},
 	)
 )
 
@@ -81,10 +80,10 @@ func (mm *Manager) registerComponentVersionMetric() {
 }
 
 func (mm *Manager) recordComponentVersionMetric() error {
-	v := getEnvVar(envGKEFilestoreCSIVersion)
+	v := getEnvVar(envGKEGCSCSIVersion)
 	if v == "" {
 		klog.V(2).Info("Skip emitting component version metric")
-		return fmt.Errorf("failed to register GKE component version metric, env variable %v not defined", envGKEFilestoreCSIVersion)
+		return fmt.Errorf("failed to register GKE component version metric, env variable %v not defined", envGKEGCSCSIVersion)
 	}
 
 	klog.Infof("Emit component_version metric with value %v", v)
@@ -92,8 +91,8 @@ func (mm *Manager) recordComponentVersionMetric() error {
 	return nil
 }
 
-func (mm *Manager) RecordOperationMetrics(opErr error, methodName string, filestoreMode string, opDuration time.Duration) {
-	operationSeconds.WithLabelValues(getErrorCode(opErr), methodName, filestoreMode).Observe(opDuration.Seconds())
+func (mm *Manager) RecordOperationMetrics(opErr error, methodName string, opDuration time.Duration) {
+	operationSeconds.WithLabelValues(getErrorCode(opErr), methodName).Observe(opDuration.Seconds())
 }
 
 func getErrorCode(err error) string {
@@ -157,5 +156,5 @@ func getEnvVar(envVarName string) string {
 }
 
 func IsGKEComponentVersionAvailable() bool {
-	return getEnvVar(envGKEFilestoreCSIVersion) != ""
+	return getEnvVar(envGKEGCSCSIVersion) != ""
 }
