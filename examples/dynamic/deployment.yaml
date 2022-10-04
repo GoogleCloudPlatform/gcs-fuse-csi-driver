@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: gcp-cloud-storage-csi-dynamic-pvc
+  name: gcp-gcs-csi-dynamic-pvc
   namespace: gcs-csi-example
 spec:
   storageClassName: gcp-cloud-storage-class
@@ -13,17 +13,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: gcp-cloud-storage-csi-dynamic-deployment-example
+  name: gcp-gcs-csi-dynamic-deployment-example
   namespace: gcs-csi-example
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: gcp-cloud-storage-csi-dynamic-deployment-example
+      app: gcp-gcs-csi-dynamic-deployment-example
   template:
     metadata:
       labels:
-        app: gcp-cloud-storage-csi-dynamic-deployment-example
+        app: gcp-gcs-csi-dynamic-deployment-example
     spec:
       containers:
       - name: writer
@@ -45,7 +45,7 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-cloud-storage-csi-pvc
+        - name: gcp-gcs-csi-pvc
           mountPath: /data
       - name: reader
         image: busybox
@@ -66,11 +66,11 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-cloud-storage-csi-pvc
+        - name: gcp-gcs-csi-pvc
           mountPath: /data
           readOnly: true
       serviceAccountName: gcs-csi
       volumes:
-      - name: gcp-cloud-storage-csi-pvc
+      - name: gcp-gcs-csi-pvc
         persistentVolumeClaim:
-          claimName: gcp-cloud-storage-csi-dynamic-pvc
+          claimName: gcp-gcs-csi-dynamic-pvc

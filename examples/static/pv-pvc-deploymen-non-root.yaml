@@ -1,18 +1,58 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gcp-gcs-csi-non-root-pv
+spec:
+  accessModes:
+  - ReadWriteMany
+  capacity:
+    storage: 5Gi
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: dummy-storage-class
+  claimRef:
+    namespace: gcs-csi-example
+    name: gcp-gcs-csi-static-non-root-pvc
+  mountOptions:
+    - allow_other
+    - uid=1001
+    - gid=1001
+  csi:
+    driver: cloudstorage.csi.storage.gke.io
+    volumeHandle: <bucket-name> # unique bucket name
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gcp-gcs-csi-static-non-root-pvc
+  namespace: gcs-csi-example
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: gcp-gcs-csi-non-root-pv
+  storageClassName: dummy-storage-class
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: gcp-cloud-storage-csi-static-example
+  name: gcp-gcs-csi-static-non-root-example
   namespace: gcs-csi-example
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: gcp-cloud-storage-csi-static-example
+      app: gcp-gcs-csi-static-non-root-example
   template:
     metadata:
       labels:
-        app: gcp-cloud-storage-csi-static-example
+        app: gcp-gcs-csi-static-non-root-example
     spec:
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
       containers:
       - name: writer
         image: busybox
@@ -33,7 +73,7 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-cloud-storage-csi-pvc
+        - name: gcp-gcs-csi-pvc
           mountPath: /data
       - name: reader
         image: busybox
@@ -54,11 +94,11 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-cloud-storage-csi-pvc
+        - name: gcp-gcs-csi-pvc
           mountPath: /data
           readOnly: true
       serviceAccountName: gcs-csi
       volumes:
-      - name: gcp-cloud-storage-csi-pvc
+      - name: gcp-gcs-csi-pvc
         persistentVolumeClaim:
-          claimName: gcp-cloud-storage-csi-static-pvc
+          claimName: gcp-gcs-csi-static-non-root-pvc

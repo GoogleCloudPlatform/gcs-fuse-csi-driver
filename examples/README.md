@@ -32,51 +32,62 @@ kubectl create secret generic gcs-csi-secret --namespace gcs-csi-example \
     --from-literal=serviceAccountName=gcs-csi \
     --from-literal=serviceAccountNamespace=gcs-csi-example
 
-# deploy a Deployment
-kubectl apply -f ./examples/dynamic/deployment.yaml
+# deloy a StorageClass for non-root usage
+kubectl apply -f ./examples/dynamic/storageclass-non-root.yaml
 
-# deploy a StatefulSet
+# deploy Deployment
+kubectl apply -f ./examples/dynamic/deployment.yaml
+kubectl apply -f ./examples/dynamic/deployment-non-root.yaml
+
+# deploy StatefulSet
 kubectl apply -f ./examples/dynamic/statefulset.yaml
+kubectl apply -f ./examples/dynamic/statefulset-non-root.yaml
 
 # clean up
 kubectl delete -f ./examples/dynamic/deployment.yaml
+kubectl delete -f ./examples/dynamic/deployment-non-root.yaml
 kubectl delete -f ./examples/dynamic/statefulset.yaml
+kubectl delete -f ./examples/dynamic/statefulset-non-root.yaml
 
 # After the StatefulSet application get uninstalled,
 # you will need to clean up the PVCs manually.
-kubectl delete -n gcs-csi-example pvc gcs-bucket-gcp-cloud-storage-csi-dynamic-statefulset-example-0 gcs-bucket-gcp-cloud-storage-csi-dynamic-statefulset-example-1 gcs-bucket-gcp-cloud-storage-csi-dynamic-statefulset-example-2
+kubectl delete -n gcs-csi-example pvc gcs-bucket-gcp-gcs-csi-dynamic-statefulset-example-0 gcs-bucket-gcp-gcs-csi-dynamic-statefulset-example-1 gcs-bucket-gcp-gcs-csi-dynamic-statefulset-example-2
+kubectl delete -n gcs-csi-example pvc gcs-bucket-gcp-gcs-csi-dynamic-statefulset-non-root-example-0 gcs-bucket-gcp-gcs-csi-dynamic-statefulset-non-root-example-1 gcs-bucket-gcp-gcs-csi-dynamic-statefulset-non-root-example-2
 
-# clean up the secret after all the PVs are delted
+# clean up the secret and non-root StorageClass after all the PVs are deleted
+kubectl delete -f ./examples/dynamic/storageclass-non-root.yaml
 kubectl delete secret gcs-csi-secret --namespace gcs-csi-example
 ```
 
 ### Static Provisioning Example
 ```bash
-# replace <bucket-name> with your pre-provisioned GCS bucket name in file ./examples/static/pv.yaml.
+# replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deployment.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deploymen-non-root.yaml
 
 # install PV/PVC and a Deployment
-kubectl apply -f ./examples/static/pv.yaml
-kubectl apply -f ./examples/static/pvc.yaml
-kubectl apply -f ./examples/static/deployment.yaml
+kubectl apply -f ./examples/static/pv-pvc-deployment.yaml
+kubectl apply -f ./examples/static/pv-pvc-deploymen-non-root.yaml
 
 # clean up
-kubectl delete -f ./examples/static/deployment.yaml
-kubectl delete -f ./examples/static/pvc.yaml
 # the PV deletion will not delete your GCS bucket
-kubectl delete -f ./examples/static/pv.yaml
+kubectl delete -f ./examples/static/pv-pvc-deployment.yaml
+kubectl delete -f ./examples/static/pv-pvc-deploymen-non-root.yaml
 ```
 
 ### Ephemeral Volume Example
 ```bash
-# replace <bucket-name> with your pre-provisioned GCS bucket name in file ./examples/ephemeral/deployment.yaml.
+# replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/ephemeral/deployment.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/ephemeral/deployment-non-root.yaml
 
 # install a Deployment using CSI Ephemeral Inline volume
 kubectl apply -f ./examples/ephemeral/deployment.yaml
+kubectl apply -f ./examples/ephemeral/deployment-non-root.yaml
 
 # clean up
 kubectl delete -f ./examples/ephemeral/deployment.yaml
+kubectl delete -f ./examples/ephemeral/deployment-non-root.yaml
 ```

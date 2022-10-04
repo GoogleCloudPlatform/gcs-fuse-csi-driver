@@ -19,12 +19,14 @@ package driver
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
 	mount "k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
@@ -34,9 +36,10 @@ import (
 
 // NodePublishVolume VolumeContext parameters
 const (
-	VolumeContextKeyPodUID     = "csi.storage.k8s.io/pod.uid"
-	VolumeContextKeyEphemeral  = "csi.storage.k8s.io/ephemeral"
-	VolumeContextKeyBucketName = "bucketName"
+	VolumeContextKeyPodUID       = "csi.storage.k8s.io/pod.uid"
+	VolumeContextKeyEphemeral    = "csi.storage.k8s.io/ephemeral"
+	VolumeContextKeyBucketName   = "bucketName"
+	VolumeContextKeyMountOptions = "mountOptions"
 )
 
 // nodeServer handles mounting and unmounting of GCFS volumes on a node
@@ -74,10 +77,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Validate arguments
 	volumeID := req.GetVolumeId()
 	vc := req.GetVolumeContext()
+	mountOptions := []string{}
 	if vc[VolumeContextKeyEphemeral] == "true" {
 		volumeID = vc[VolumeContextKeyBucketName]
 		if len(volumeID) == 0 {
-			return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume VolumeContext %s must be provided for ephemeral storage", VolumeContextKeyBucketName)
+			return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+		}
+
+		if ephemeralVolMountOptions, ok := vc[VolumeContextKeyMountOptions]; ok {
+			mountOptions = joinMountOptions(mountOptions, strings.Split(ephemeralVolMountOptions, ","))
 		}
 	}
 
@@ -114,26 +122,25 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	if mounted {
 		// Already mounted
-		klog.V(4).Infof("NodePublishVolume succeeded on volume %v to target path %s, mount already exists.", volumeID, targetPath)
+		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", volumeID, targetPath)
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
 	if needsCreateDir {
-		klog.V(4).Infof("NodePublishVolume attempting mkdir for path %s", targetPath)
+		klog.V(4).Infof("NodePublishVolume attempting mkdir for path %q", targetPath)
 		if err := os.MkdirAll(targetPath, 0750); err != nil {
-			return nil, status.Errorf(codes.Internal, "mkdir failed for path %s (%v)", targetPath, err)
+			return nil, status.Errorf(codes.Internal, "mkdir failed for path %q (%v)", targetPath, err)
 		}
 	}
 
 	// Call the proxy server to mount the GCS bucket.
-	options := []string{}
 	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
-		options = append(options, capMount.GetMountFlags()...)
+		mountOptions = joinMountOptions(mountOptions, capMount.GetMountFlags())
 	}
 	if req.GetReadonly() {
-		options = append(options, "ro")
+		mountOptions = joinMountOptions(mountOptions, []string{"ro"})
 	}
-	if err := s.gcsfuseProxyClient.MountGCS(ctx, volumeID, targetPath, "gcsfuse", options, []string{}); err != nil {
+	if err := s.gcsfuseProxyClient.MountGCS(ctx, volumeID, targetPath, "gcsfuse", mountOptions, []string{}); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount %q: %v", volumeID, err)
 	}
 	return &csi.NodePublishVolumeResponse{}, nil
@@ -212,4 +219,20 @@ func (s *nodeServer) updateGCPToken(ctx context.Context, vc map[string]string) e
 		return fmt.Errorf("failed to put GCP token : %v", err)
 	}
 	return nil
+}
+
+// joinMountOptions joins mount options eliminating duplicates
+func joinMountOptions(userOptions []string, systemOptions []string) []string {
+	allMountOptions := sets.NewString()
+
+	for _, mountOption := range userOptions {
+		if len(mountOption) > 0 {
+			allMountOptions.Insert(mountOption)
+		}
+	}
+
+	for _, mountOption := range systemOptions {
+		allMountOptions.Insert(mountOption)
+	}
+	return allMountOptions.List()
 }

@@ -1,18 +1,24 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: gcp-gcs-csi-ephemeral-example
+  name: gcp-gcs-csi-dynamic-statefulset-non-root-example
   namespace: gcs-csi-example
 spec:
-  replicas: 3
   selector:
     matchLabels:
-      app: gcp-gcs-csi-ephemeral-example
+      app: gcp-gcs-csi-dynamic-statefulset-non-root-example
+  serviceName: gcp-gcs-csi-dynamic-statefulset-non-root-example
+  replicas: 3
   template:
     metadata:
       labels:
-        app: gcp-gcs-csi-ephemeral-example
+        app: gcp-gcs-csi-dynamic-statefulset-non-root-example
     spec:
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      serviceAccountName: gcs-csi
       containers:
       - name: writer
         image: busybox
@@ -33,7 +39,7 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-gcs-csi-ephemeral
+        - name: gcs-bucket
           mountPath: /data
       - name: reader
         image: busybox
@@ -54,15 +60,15 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-gcs-csi-ephemeral
+        - name: gcs-bucket
           mountPath: /data
           readOnly: true
-      serviceAccountName: gcs-csi
-      # nodeSelector:
-      #   cloud.google.com/gke-ephemeral-storage-local-ssd: "true"
-      volumes:
-      - name: gcp-gcs-csi-ephemeral
-        csi:
-          driver: cloudstorage.csi.storage.gke.io
-          volumeAttributes:
-            bucketName: <bucket-name> # unique bucket name
+  volumeClaimTemplates:
+  - metadata:
+      name: gcs-bucket
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      storageClassName: gcp-cloud-storage-class-non-root
+      resources:
+        requests:
+          storage: 5Gi

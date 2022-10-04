@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: gcp-cloud-storage-csi-dynamic-statefulset-example
+  name: gcp-gcs-csi-dynamic-statefulset-example
   namespace: gcs-csi-example
 spec:
   selector:
     matchLabels:
-      app: gcp-cloud-storage-csi-dynamic-statefulset-example
-  serviceName: gcp-cloud-storage-csi-dynamic-statefulset-example
+      app: gcp-gcs-csi-dynamic-statefulset-example
+  serviceName: gcp-gcs-csi-dynamic-statefulset-example
   replicas: 3
   template:
     metadata:
       labels:
-        app: gcp-cloud-storage-csi-dynamic-statefulset-example
+        app: gcp-gcs-csi-dynamic-statefulset-example
     spec:
       serviceAccountName: gcs-csi
       containers:

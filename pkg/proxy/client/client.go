@@ -68,7 +68,7 @@ func (c *GCSFuseProxyClient) PutGCPToken(ctx context.Context, podID string, toke
 		Token:  token.AccessToken,
 		Expiry: timestamppb.New(token.Expiry),
 	}
-	klog.V(2).Infof("calling GCSfuseProxy: PutGCPToken function to update GCP token for Pod %v", podID)
+	klog.V(2).Infof("calling GCSfuseProxy: PutGCPToken function to update GCP token for Pod %q", podID)
 	_, err := c.gcsfuseProxyClient.PutGCPToken(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("PutGCPToken failed with error: %w", err)
@@ -85,7 +85,7 @@ func (c *GCSFuseProxyClient) DeleteGCPToken(ctx context.Context, targetPath stri
 	req := mount_gcs.DeleteGCPTokenRequest{
 		PodID: podID,
 	}
-	klog.V(2).Infof("calling GCSfuseProxy: DeleteGCPToken function to cleanup GCP token for Pod %v", podID)
+	klog.V(2).Infof("calling GCSfuseProxy: DeleteGCPToken function to cleanup GCP token for Pod %q", podID)
 	_, err = c.gcsfuseProxyClient.DeleteGCPToken(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("DeleteGCPToken failed with error: %v", err)
@@ -101,7 +101,7 @@ func (c *GCSFuseProxyClient) GetGCPTokenExpiry(ctx context.Context, podID string
 	req := mount_gcs.GetGCPTokenExpiryRequest{
 		PodID: podID,
 	}
-	klog.V(2).Infof("calling GCSfuseProxy: DeleteGCPToken function to cleanup GCP token for Pod %v", podID)
+	klog.V(2).Infof("calling GCSfuseProxy: GetGCPTokenExpiry function to get token expiry for Pod %q", podID)
 	resp, err := c.gcsfuseProxyClient.GetGCPTokenExpiry(ctx, &req)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("DeleteGCPToken failed with error: %v", err)
@@ -117,6 +117,7 @@ func (c *GCSFuseProxyClient) MountGCS(ctx context.Context, source, target, fstyp
 		Options:          options,
 		SensitiveOptions: sensitiveOptions,
 	}
+	klog.V(2).Infof("calling GCSfuseProxy: MountGCS function to mount GCS bucket source %q to target %q using mount options %v", source, target, options)
 	_, err := c.gcsfuseProxyClient.MountGCS(ctx, &req)
 	return err
 }
