@@ -91,3 +91,19 @@ kubectl apply -f ./examples/ephemeral/deployment-non-root.yaml
 kubectl delete -f ./examples/ephemeral/deployment.yaml
 kubectl delete -f ./examples/ephemeral/deployment-non-root.yaml
 ```
+
+### Machine Learning Application Example
+```bash
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/machineLearning/jupyter-notebook-server.yaml
+
+# install a Jupyter Notebook server using CSI Ephemeral Inline volume
+kubectl apply -f ./examples/machineLearning/jupyter-notebook-server.yaml
+
+# access the Jupyter Notebook via http://localhost:8888
+kubectl port-forward jupyter-notebook-server 8888:8888
+
+# clean up
+kubectl delete -f ./examples/machineLearning/jupyter-notebook-server.yaml
+```
