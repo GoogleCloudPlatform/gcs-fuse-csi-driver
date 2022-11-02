@@ -15,12 +15,21 @@ kubectl create serviceaccount gcs-csi --namespace gcs-csi-example
 ```bash
 # Relace <gcs-bucket-project-id> with the id of the project where your GCS bucket lives.
 # Relace <cluster-project-id> with the id of the project where your GKE cluster lives.
-# Choose "[2] None" for binding condition.
+# Choose "[2] None" for binding condition if you want to apply the permissions to all the GCS buckets in the project.
 GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
 CLUSTER_PROJECT_ID=<cluster-project-id>
 gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
     --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[gcs-csi-example/gcs-csi]" \
     --role "roles/storage.admin"
+
+# Optionally, run the following command if you only want to apply permissions to a specific bucket.
+GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
+CLUSTER_PROJECT_ID=<cluster-project-id>
+BUCKET_NAME=<gcs-bucket-name>
+gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
+    --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[gcs-csi-example/gcs-csi]" \
+    --role "roles/storage.admin" \
+    --condition="expression=resource.name.startsWith(\"projects/$GCS_BUCKET_PROJECT_ID/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
 ```
 
 ## Install Example Applications

@@ -1,3 +1,16 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  namespace: gcs-csi-example
+  name: local-pd
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 100Gi
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,20 +18,26 @@ metadata:
   name: jupyter-notebook-server
 spec:
   selector:
-    name: jupyter-notebook-server
+    app: jupyter-notebook-server
   ports:
   - name: name-of-service-port
     protocol: TCP
     port: 8888
     targetPort: http-web-svc
-  # type: LoadBalancer
+  type: LoadBalancer
 ---
 apiVersion: v1
 kind: Pod
 metadata:
   namespace: gcs-csi-example
   name: jupyter-notebook-server
+  labels:
+    app: jupyter-notebook-server
 spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 100
+    fsGroup: 100
   containers:
   - name: jupyter-notebook-server
     image: jupyter/tensorflow-notebook:latest
@@ -27,18 +46,24 @@ spec:
     resources:
       limits:
         cpu: 1000m
-        memory: 500Mi
+        memory: 1Gi
       requests:
         cpu: 100m
-        memory: 100Mi
+        memory: 500Mi
     ports:
     - containerPort: 8888
       name: http-web-svc
     volumeMounts:
     - name: gcp-cloud-storage-csi-ephemeral-non-root
-      mountPath: /home/jovyan/data # jovyan is the default user
+      mountPath: /home/jovyan/gcs_bucket # jovyan is the default user
+    - name: local-pd-pvc
+      mountPath: /home/jovyan/local_disk # jovyan is the default user
   serviceAccountName: gcs-csi
   volumes:
+  - name: local-pd-pvc
+    persistentVolumeClaim:
+      claimName: local-pd
+      readOnly: false
   - name: gcp-cloud-storage-csi-ephemeral-non-root
     csi:
       driver: cloudstorage.csi.storage.gke.io
