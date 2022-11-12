@@ -13,49 +13,35 @@
 # limitations under the License.
 BINDIR ?= bin
 REGISTRY ?= jiaxun
+IMAGE_VERSION ?= v0.2.0
+LDFLAGS ?= "-s -w"
+OVERLAY ?= stable
 
 all: build-image-and-push
 
 driver:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags="-s -w" -o ${BINDIR}/csi-driver cmd/csi_driver/main.go
+	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags ${LDFLAGS} -o ${BINDIR}/csi-driver cmd/csi_driver/main.go
 
-proxy:
+sidecar-mounter:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags="-s -w" -o ${BINDIR}/gcsfuse-proxy cmd/gcsfuse_proxy/main.go
+	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags ${LDFLAGS} -o ${BINDIR}/sidecar-mounter cmd/sidecar_mounter/main.go
 
 build-image-and-push:
-	docker build --file Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:v0.1.2 .
-	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:v0.1.2
+	docker build --file ./cmd/sidecar_mounter/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${IMAGE_VERSION} .
+	docker push ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${IMAGE_VERSION}
+	
+	docker build --file ./cmd/csi_driver/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:${IMAGE_VERSION} .
+	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:${IMAGE_VERSION}
 
 install:
-	kubectl apply -k deploy/overlays/stable
+	kubectl apply -k deploy/overlays/${OVERLAY}
 
 uninstall:
-	kubectl delete -k deploy/overlays/stable
-
-dev-gcsfuse-proxy-proto:
-	rm -f -r pkg/gcsfuse_proxy/pb
-	mkdir pkg/gcsfuse_proxy/pb
-	protoc --proto_path=pkg/gcsfuse_proxy/proto --go-grpc_out=pkg/gcsfuse_proxy/pb --go_out=pkg/gcsfuse_proxy/pb pkg/gcsfuse_proxy/proto/gcsfuse_proxy.proto
-
-dev-build:
-	mkdir -p ${BINDIR}
-	go build -mod vendor -o ${BINDIR}/csi-driver cmd/csi_driver/main.go
-	go build -mod vendor -o ${BINDIR}/gcsfuse-proxy cmd/gcsfuse_proxy/main.go
-
-dev-build-image-and-push:
-	docker build --file Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:v2.0.0 .
-	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:v2.0.0
+	kubectl delete -k deploy/overlays/${OVERLAY}
 
 dev-generate-yaml:
 	kubectl kustomize deploy/overlays/dev | tee ./bin/gcp-cloud-storage-csi-driver-specs-generated.yaml
-
-dev-install:
-	kubectl apply -k deploy/overlays/dev
-
-dev-uninstall:
-	kubectl delete -k deploy/overlays/dev
 
 verify:
 	hack/verify-all.sh

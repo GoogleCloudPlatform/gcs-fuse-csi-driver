@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build gcsfuse
-FROM golang:1.18.3 AS gcsfuse-builder
+FROM golang:1.19.3 AS gcsfuse-builder
 
 ARG global_ldflags
 
@@ -25,13 +25,15 @@ RUN go install ./tools/build_gcsfuse
 RUN mkdir /tmp/gcsfuse
 RUN build_gcsfuse . /tmp/gcsfuse v2.0.0 -ldflags "all=${global_ldflags}" -ldflags "-X main.gcsfuseVersion=v2.0.0 ${global_ldflags}"
 
-# Build driver go binary
-FROM golang:1.18.3 as driver-builder
+FROM launcher.gcr.io/google/debian11
+ENV DEBIAN_FRONTEND noninteractive
+
+# Build sidecar-mounter go binary
+FROM golang:1.19.3 as sidecar-mounter-builder
 
 WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
 ADD . .
-RUN make driver BINDIR=/bin
-RUN make proxy BINDIR=/bin
+RUN make sidecar-mounter BINDIR=/bin
 
 FROM launcher.gcr.io/google/debian11
 ENV DEBIAN_FRONTEND noninteractive
@@ -41,16 +43,10 @@ LABEL "org.opencontainers.image.authors"="Jiaxun Song <jiaxun.song@outlook.com>"
 LABEL "org.opencontainers.image.description"="The Google Cloud Storage Container Storage Interface (CSI) Plugin"
 LABEL "org.opencontainers.image.licenses"="Apache-2.0 OR MIT"
 LABEL "org.opencontainers.image.source"="https://github.com/songjiaxun/gcp-cloud-storage-csi-driver"
-LABEL "org.opencontainers.image.title"="gcp-cloud-storage-csi-driver"
+LABEL "org.opencontainers.image.title"="gcp-cloud-storage-sidecar-mounter"
 
 # Copy the binaries
-COPY --from=gcsfuse-builder /tmp/gcsfuse/bin/* /gcsfuse/bin/
-COPY --from=gcsfuse-builder /tmp/gcsfuse/sbin/* /gcsfuse/sbin/
+COPY --from=gcsfuse-builder /tmp/gcsfuse/bin/gcsfuse /gcsfuse
+COPY --from=sidecar-mounter-builder /bin/sidecar-mounter /sidecar-mounter
 
-COPY --from=driver-builder /bin/csi-driver /csi-driver
-COPY --from=driver-builder /bin/gcsfuse-proxy /gcsfuse-proxy/gcsfuse-proxy
-COPY /pkg/proxy/gcsfuse_proxy/gcsfuse-proxy.service /gcsfuse-proxy/gcsfuse-proxy.service
-COPY /pkg/proxy/gcsfuse_proxy/init.sh /gcsfuse-proxy/init.sh
-RUN true
-
-ENTRYPOINT ["/csi-driver"]
+ENTRYPOINT ["/sidecar-mounter"]

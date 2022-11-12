@@ -83,4 +83,3 @@ roleRef:
   kind: Role
   name: gcp-cloud-storage-csi-leaderelection-role
   apiGroup: rbac.authorization.k8s.io
-  

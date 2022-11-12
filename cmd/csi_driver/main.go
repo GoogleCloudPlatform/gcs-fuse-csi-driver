@@ -26,7 +26,6 @@ import (
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	driver "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_driver"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
-	proxyclient "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/client"
 )
 
 var (
@@ -59,8 +58,10 @@ func main() {
 	}
 
 	var mm *metrics.Manager
-	var gcsfuseProxyClient proxyclient.ProxyClient
-	var ssm storage.ServiceManager
+	ssm, err := storage.NewGCSServiceManager()
+	if err != nil {
+		klog.Fatalf("Failed to set up storage service manager: %v", err)
+	}
 	if *runController {
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
 			mm = metrics.NewMetricsManager()
@@ -70,19 +71,9 @@ func main() {
 				klog.Fatalf("Failed to emit GKE compoent version: %v", err)
 			}
 		}
-
-		ssm, err = storage.NewGCSServiceManager()
-		if err != nil {
-			klog.Fatalf("Failed to set up storage service manager: %v", err)
-		}
 	} else {
 		if *nodeID == "" {
 			klog.Fatalf("nodeid cannot be empty for node service")
-		}
-
-		gcsfuseProxyClient, err = proxyclient.NewGCSFuseProxyClient(*gcsfuseProxyEndpoint)
-		if err != nil {
-			klog.Fatalf("Failed to set up gcsfuse proxy client: %v", err)
 		}
 	}
 
@@ -96,7 +87,6 @@ func main() {
 		NodeID:                *nodeID,
 		RunController:         *runController,
 		RunNode:               *runNode,
-		GCSFuseProxyClient:    gcsfuseProxyClient,
 		StorageServiceManager: ssm,
 		TokenManager:          tm,
 		Metrics:               mm,

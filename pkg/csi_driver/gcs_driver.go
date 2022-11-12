@@ -27,7 +27,6 @@ import (
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
-	proxyclient "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/client"
 )
 
 type GCSDriverConfig struct {
@@ -36,7 +35,6 @@ type GCSDriverConfig struct {
 	NodeID                string // Node name
 	RunController         bool   // Run CSI controller service
 	RunNode               bool   // Run CSI node service
-	GCSFuseProxyClient    proxyclient.ProxyClient
 	StorageServiceManager storage.ServiceManager
 	TokenManager          auth.TokenManager
 	Metrics               *metrics.Manager
@@ -88,7 +86,7 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	driver.ids = newIdentityServer(driver)
 	if config.RunNode {
 		nscap := []csi.NodeServiceCapability_RPC_Type{}
-		driver.ns = newNodeServer(driver, mount.New(""), config.GCSFuseProxyClient, config.TokenManager)
+		driver.ns = newNodeServer(driver, mount.New(""))
 		err = driver.addNodeServiceCapabilities(nscap)
 		if err != nil {
 			return nil, err

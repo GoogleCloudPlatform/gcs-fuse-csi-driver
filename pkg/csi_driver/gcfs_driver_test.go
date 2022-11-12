@@ -24,7 +24,6 @@ import (
 	mount "k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
-	proxyclient "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/proxy/client"
 )
 
 func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
@@ -36,7 +35,6 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		RunNode:               true,
 		StorageServiceManager: storage.NewFakeServiceManager(),
 		TokenManager:          auth.NewFakeTokenManager(),
-		GCSFuseProxyClient:    proxyclient.NewFakeProxyClient(fm),
 	}
 	driver, err := NewGCSDriver(config)
 	if err != nil {
