@@ -16,6 +16,27 @@ spec:
     spec:
       serviceAccountName: gcs-csi
       containers:
+      - name: gke-gcsfuse-sidecar
+        image: jiaxun/gcp-cloud-storage-sidecar-mounter:v0.2.0
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 0
+          runAsGroup: 0
+        args:
+          - "--v=5"
+        resources:
+          limits:
+            cpu: 100m
+            memory: 30Mi
+            ephemeral-storage: 5Gi
+          requests:
+            cpu: 100m
+            memory: 30Mi
+            ephemeral-storage: 5Gi
+        volumeMounts:
+        - mountPath: /tmp
+          name: gke-gcsfuse
       - name: writer
         image: busybox
         resources:
@@ -59,6 +80,9 @@ spec:
         - name: gcs-bucket
           mountPath: /data
           readOnly: true
+      volumes:
+      - name: gke-gcsfuse
+        emptyDir: {}
   volumeClaimTemplates:
   - metadata:
       name: gcs-bucket

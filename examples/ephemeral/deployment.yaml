@@ -14,6 +14,21 @@ spec:
         app: gcp-gcs-csi-ephemeral-example
     spec:
       containers:
+      - name: gke-gcsfuse-sidecar
+        image: jiaxun/gcp-cloud-storage-sidecar-mounter:v0.2.0
+        imagePullPolicy: Always
+        resources:
+          limits:
+            cpu: 100m
+            memory: 30Mi
+            ephemeral-storage: 5Gi
+          requests:
+            cpu: 100m
+            memory: 30Mi
+            ephemeral-storage: 5Gi
+        volumeMounts:
+        - mountPath: /tmp
+          name: gke-gcsfuse
       - name: writer
         image: busybox
         resources:
@@ -58,9 +73,9 @@ spec:
           mountPath: /data
           readOnly: true
       serviceAccountName: gcs-csi
-      # nodeSelector:
-      #   cloud.google.com/gke-ephemeral-storage-local-ssd: "true"
       volumes:
+      - name: gke-gcsfuse
+        emptyDir: {}
       - name: gcp-gcs-csi-ephemeral
         csi:
           driver: cloudstorage.csi.storage.gke.io

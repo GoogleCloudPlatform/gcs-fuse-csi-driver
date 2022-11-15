@@ -6,9 +6,8 @@ provisioner: cloudstorage.csi.storage.gke.io
 volumeBindingMode: Immediate
 reclaimPolicy: Delete
 mountOptions:
-  - allow_other
   - uid=1001
-  - gid=1001
+  - gid=3003
 parameters:
   csi.storage.k8s.io/provisioner-secret-name: gcs-csi-secret
   csi.storage.k8s.io/provisioner-secret-namespace: ${pvc.namespace}

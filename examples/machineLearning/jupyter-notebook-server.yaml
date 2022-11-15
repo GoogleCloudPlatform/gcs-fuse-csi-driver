@@ -39,6 +39,25 @@ spec:
     runAsGroup: 100
     fsGroup: 100
   containers:
+  - name: gke-gcsfuse-sidecar
+    image: jiaxun/gcp-cloud-storage-sidecar-mounter:v0.2.0
+    imagePullPolicy: Always
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsUser: 0
+      runAsGroup: 0
+    resources:
+      limits:
+        cpu: 100m
+        memory: 30Mi
+        ephemeral-storage: 5Gi
+      requests:
+        cpu: 100m
+        memory: 30Mi
+        ephemeral-storage: 5Gi
+    volumeMounts:
+    - mountPath: /tmp
+      name: gke-gcsfuse
   - name: jupyter-notebook-server
     image: jupyter/tensorflow-notebook:latest
     # password: testtest
@@ -60,6 +79,8 @@ spec:
       mountPath: /home/jovyan/local_disk # jovyan is the default user
   serviceAccountName: gcs-csi
   volumes:
+  - name: gke-gcsfuse
+    emptyDir: {}
   - name: local-pd-pvc
     persistentVolumeClaim:
       claimName: local-pd
@@ -69,4 +90,4 @@ spec:
       driver: cloudstorage.csi.storage.gke.io
       volumeAttributes:
         bucketName: <bucket-name> # unique bucket name
-        mountOptions: "allow_other,uid=1000,gid=100" # the image uses uid 1000 and gid 100 by default
+        mountOptions: "uid=1000,gid=100" # the image uses uid 1000 and gid 100 by default
