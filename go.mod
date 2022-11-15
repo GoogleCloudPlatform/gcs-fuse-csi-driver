@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	cloud.google.com/go/compute v1.9.0
-	github.com/container-storage-interface/spec v1.6.0
+	github.com/container-storage-interface/spec v1.7.0
 	github.com/kubernetes-csi/csi-lib-utils v0.11.0
 	google.golang.org/grpc v1.48.0
 	k8s.io/api v0.25.1
