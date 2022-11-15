@@ -91,14 +91,17 @@ kubectl delete -f ./examples/static/pv-pvc-deploymen-non-root.yaml
 GCS_BUCKET_NAME=your-bucket-name
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/ephemeral/deployment.yaml
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/ephemeral/deployment-non-root.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/ephemeral/deployment-two-vols.yaml
 
 # install a Deployment using CSI Ephemeral Inline volume
 kubectl apply -f ./examples/ephemeral/deployment.yaml
 kubectl apply -f ./examples/ephemeral/deployment-non-root.yaml
+kubectl apply -f ./examples/ephemeral/deployment-two-vols.yaml
 
 # clean up
 kubectl delete -f ./examples/ephemeral/deployment.yaml
 kubectl delete -f ./examples/ephemeral/deployment-non-root.yaml
+kubectl delete -f ./examples/ephemeral/deployment-two-vols.yaml
 ```
 
 ### Machine Learning Application Example
