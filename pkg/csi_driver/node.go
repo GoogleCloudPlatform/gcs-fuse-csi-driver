@@ -116,7 +116,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Check the if the given Service Account has the access to the GCS bucket, and the bucket exists
 	storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to prepare storage service: %v", err)
 	}
 
 	_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
@@ -134,10 +134,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", volumeBasePath, err)
 	}
 
-	// Mount source
+	// Check if the target path is already mounted
 	mounted, err := s.isDirMounted(targetPath)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
 	}
 
 	if mounted {
@@ -147,7 +147,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	} else {
 		klog.V(4).Infof("NodePublishVolume attempting mkdir for path %q", targetPath)
 		if err := os.MkdirAll(targetPath, 0750); err != nil {
-			return nil, status.Errorf(codes.Internal, "mkdir failed for path %q (%v)", targetPath, err)
+			return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 		}
 	}
 
@@ -225,7 +225,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.V(4).Infof("%v exiting the goroutine.", logPrefix)
 	}(l, bucketName, podID, volumeName, mcb, fd)
 
-	klog.Infof("NodePublishVolume successfully mounts the bucket %q for Pod %q, volume %q", podID, volumeName, bucketName)
+	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
@@ -242,16 +242,31 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	// Force unmount the target path.
-	forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
-	if !ok {
-		return nil, status.Error(codes.Internal, "failed to cast the mounter to a forceUnmounter")
-	}
-	err := forceUnmounter.UnmountWithForce(targetPath, 10*time.Second)
+	// Check if the target path is already mounted
+	mounted, err := s.isDirMounted(targetPath)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to force unmount target target %q: %v", targetPath, err)
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
+	}
+	if mounted {
+		// Force unmount the target path
+		// Have to do force unmount firstly becasue if the file descriptor was not closed,
+		// mount.CleanupMountPoint() call will hang.
+		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
+		if !ok {
+			return nil, status.Error(codes.Internal, "failed to cast the mounter to a forceUnmounter")
+		}
+		err = forceUnmounter.UnmountWithForce(targetPath, 10*time.Second)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
+		}
 	}
 
+	// Cleanup the mount point
+	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* bind mount */); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", targetPath, err)
+	}
+
+	klog.V(4).Infof("NodeUnpublishVolume succeeded on target path %q", targetPath)
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
