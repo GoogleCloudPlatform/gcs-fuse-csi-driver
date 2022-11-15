@@ -10,7 +10,6 @@ require (
 	k8s.io/api v0.25.1
 	k8s.io/apimachinery v0.25.1
 	k8s.io/component-base v0.24.1
-	k8s.io/klog v1.0.0
 	k8s.io/klog/v2 v2.70.1
 )
 
@@ -68,7 +67,7 @@ require (
 
 require (
 	cloud.google.com/go/storage v1.26.0
-	github.com/golang/protobuf v1.5.2
+	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/kubernetes-csi/csi-test/v5 v5.0.0
 	golang.org/x/net v0.0.0-20220802222814-0bcc04d9c69b
 	golang.org/x/oauth2 v0.0.0-20220822191816-0ebed06d0094
@@ -76,7 +75,7 @@ require (
 	golang.org/x/text v0.3.7 // indirect
 	google.golang.org/api v0.95.0
 	google.golang.org/genproto v0.0.0-20220810155839-1856144b1d9c // indirect
-	google.golang.org/protobuf v1.28.1
+	google.golang.org/protobuf v1.28.1 // indirect
 	k8s.io/client-go v0.25.1
 	k8s.io/mount-utils v0.24.1
 )

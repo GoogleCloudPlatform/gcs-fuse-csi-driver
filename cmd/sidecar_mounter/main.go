@@ -28,7 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	sidecarmounter "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/sidecar_mounter"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )

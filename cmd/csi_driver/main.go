@@ -20,7 +20,7 @@ import (
 	"flag"
 	"os"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"

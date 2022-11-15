@@ -20,7 +20,7 @@ import (
 	"net"
 	"syscall"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 func SendMsg(via net.Conn, fd int, msg []byte) error {

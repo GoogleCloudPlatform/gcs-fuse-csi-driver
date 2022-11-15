@@ -23,7 +23,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 // Interface defines the set of methods to allow for gcsfuse mount operations on a system.
