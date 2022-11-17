@@ -61,6 +61,7 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 
+		// socket path pattern: /tmp/.volumes/<volume-name>/socket
 		dir := filepath.Dir(sp)
 		volumeName := filepath.Base(dir)
 		mc := sidecarmounter.MountConfig{
@@ -85,6 +86,10 @@ func main() {
 			mc.Stderr.Write([]byte(errMsg))
 			continue
 		}
+		// as we got all the information from the socket, closing the connection and deleting the socket
+		c.Close()
+		syscall.Unlink(sp)
+
 		mc.FileDescriptor = fd
 
 		if err := json.Unmarshal(msg, &mc); err != nil {
@@ -109,15 +114,18 @@ func main() {
 				return
 			}
 
-			err = cmd.Run()
-			if err != nil {
+			if err = cmd.Start(); err != nil {
+				errMsg := fmt.Sprintf("failed to start gcsfuse with error: %v\n", err)
+				mc.Stderr.Write([]byte(errMsg))
+				return
+			}
+
+			// Since the gcsfuse has taken over the file descriptor,
+			// closing the file descriptor to avoid other process forking it.
+			syscall.Close(mc.FileDescriptor)
+			if err = cmd.Wait(); err != nil {
 				errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
 				mc.Stderr.Write([]byte(errMsg))
-				if mc.DeviceFile != nil {
-					if err = mc.DeviceFile.Close(); err != nil {
-						klog.Errorf("failed to close the device file for volume %q: %v", mc.VolumeName, err)
-					}
-				}
 			} else {
 				klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
 			}

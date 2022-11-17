@@ -58,7 +58,6 @@ type MountConfig struct {
 	BucketName     string    `json:"bucket_name,omitempty"`
 	TempDir        string    `json:"-"`
 	Options        []string  `json:"options,omitempty"`
-	DeviceFile     *os.File  `json:"-"`
 	Stdout         io.Writer `json:"-"`
 	Stderr         io.Writer `json:"-"`
 }
@@ -83,16 +82,16 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 		"text",
 	}
 	args = append(args, validateMountArgs(mc.VolumeName, mc.Options)...)
-	args = append(args, mc.BucketName) // gcsfuse supports the `/dev/fd/N` syntax
-	args = append(args, fmt.Sprintf("/dev/fd/%v", mc.FileDescriptor))
+	args = append(args, mc.BucketName)
+	// gcsfuse supports the `/dev/fd/N` syntax
+	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
+	args = append(args, "/dev/fd/3")
 
 	klog.Infof("gcsfuse mounting with args %v...", args)
-	device := os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")
-	mc.DeviceFile = device
 	cmd := exec.Cmd{
 		Path:       m.mounterPath,
 		Args:       args,
-		ExtraFiles: []*os.File{device},
+		ExtraFiles: []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")},
 		Stdout:     mc.Stdout,
 		Stderr:     mc.Stderr,
 	}
