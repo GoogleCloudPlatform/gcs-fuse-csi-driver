@@ -31,6 +31,8 @@ ENV DEBIAN_FRONTEND noninteractive
 # Build sidecar-mounter go binary
 FROM golang:1.19.3 as sidecar-mounter-builder
 
+ARG VERSION
+
 WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
 ADD . .
 RUN make sidecar-mounter BINDIR=/bin

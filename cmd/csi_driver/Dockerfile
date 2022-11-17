@@ -15,6 +15,8 @@
 # Build driver go binary
 FROM golang:1.19.3 as driver-builder
 
+ARG VERSION
+
 WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
 ADD . .
 RUN make driver BINDIR=/bin

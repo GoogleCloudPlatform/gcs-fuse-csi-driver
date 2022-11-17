@@ -13,8 +13,8 @@
 # limitations under the License.
 BINDIR ?= bin
 REGISTRY ?= jiaxun
-IMAGE_VERSION ?= v0.2.0
-LDFLAGS ?= "-s -w"
+VERSION ?= v0.2.0
+LDFLAGS ?= "-s -w -X main.version=${VERSION} -extldflags '-static'"
 OVERLAY ?= stable
 
 all: build-image-and-push
@@ -28,11 +28,11 @@ sidecar-mounter:
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags ${LDFLAGS} -o ${BINDIR}/sidecar-mounter cmd/sidecar_mounter/main.go
 
 build-image-and-push:
-	docker build --file ./cmd/sidecar_mounter/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${IMAGE_VERSION} .
-	docker push ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${IMAGE_VERSION}
+	docker build --file ./cmd/sidecar_mounter/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${VERSION} --build-arg VERSION=${VERSION} .
+	docker push ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${VERSION}
 	
-	docker build --file ./cmd/csi_driver/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:${IMAGE_VERSION} .
-	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:${IMAGE_VERSION}
+	docker build --file ./cmd/csi_driver/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:${VERSION} --build-arg VERSION=${VERSION} .
+	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:${VERSION}
 
 install:
 	kubectl apply -k deploy/overlays/${OVERLAY}
