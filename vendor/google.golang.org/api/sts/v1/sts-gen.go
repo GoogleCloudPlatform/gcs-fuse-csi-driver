@@ -152,11 +152,12 @@ type GoogleIamV1Binding struct {
 	// `allUsers`: A special identifier that represents anyone who is on the
 	// internet; with or without a Google account. *
 	// `allAuthenticatedUsers`: A special identifier that represents anyone
-	// who is authenticated with a Google account or a service account. *
-	// `user:{emailid}`: An email address that represents a specific Google
-	// account. For example, `alice@example.com` . *
-	// `serviceAccount:{emailid}`: An email address that represents a Google
-	// service account. For example,
+	// who is authenticated with a Google account or a service account. Does
+	// not include identities that come from external identity providers
+	// (IdPs) through identity federation. * `user:{emailid}`: An email
+	// address that represents a specific Google account. For example,
+	// `alice@example.com` . * `serviceAccount:{emailid}`: An email address
+	// that represents a Google service account. For example,
 	// `my-other-app@appspot.gserviceaccount.com`. *
 	// `serviceAccount:{projectid}.svc.id.goog[{namespace}/{kubernetes-sa}]`:
 	//  An identifier for a Kubernetes service account
@@ -311,8 +312,10 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	// Audience: The full resource name of the identity provider; for
 	// example:
 	// `//iam.googleapis.com/projects//locations/global/workloadIdentityPools
-	// //providers/`. Required when exchanging an external credential for a
-	// Google access token.
+	// //providers/` for workload identity pool providers, or
+	// `//iam.googleapis.com/locations/global/workforcePools//providers/`
+	// for workforce pool providers. Required when exchanging an external
+	// credential for a Google access token.
 	Audience string `json:"audience,omitempty"`
 
 	// GrantType: Required. The grant type. Must be
@@ -363,7 +366,10 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	// specified in the allowed audiences for the workload identity pool
 	// provider, or one of the audiences allowed by default if no audiences
 	// were specified. See
-	// https://cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers#oidc
+	// https://cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers#oidc.
+	// For workforce pools, this must match the client ID specified in the
+	// provider configuration. See
+	// https://cloud.google.com/iam/docs/reference/rest/v1/locations.workforcePools.providers#oidc.
 	// Example header: ``` { "alg": "RS256", "kid": "us-east-11" } ```
 	// Example payload: ``` { "iss": "https://accounts.google.com", "iat":
 	// 1517963104, "exp": 1517966704, "aud":
@@ -582,7 +588,10 @@ type GoogleIdentityStsV1IntrospectTokenResponse struct {
 	// workload identity pool, this field contains a value in the following
 	// format:
 	// `principal://iam.googleapis.com/projects//locations/global/workloadIde
-	// ntityPools//subject/`
+	// ntityPools//subject/`. If the provided token is associated with a
+	// workforce pool, this field contains a value in the following format:
+	// `principal://iam.googleapis.com/locations/global/workforcePools//subje
+	// ct/`.
 	Username string `json:"username,omitempty"`
 
 	// ServerResponse contains the HTTP response code and headers from the
@@ -952,17 +961,17 @@ func (c *V1IntrospectCall) Do(opts ...googleapi.CallOption) (*GoogleIdentityStsV
 		if res.Body != nil {
 			res.Body.Close()
 		}
-		return nil, &googleapi.Error{
+		return nil, gensupport.WrapError(&googleapi.Error{
 			Code:   res.StatusCode,
 			Header: res.Header,
-		}
+		})
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer googleapi.CloseBody(res)
 	if err := googleapi.CheckResponse(res); err != nil {
-		return nil, err
+		return nil, gensupport.WrapError(err)
 	}
 	ret := &GoogleIdentityStsV1IntrospectTokenResponse{
 		ServerResponse: googleapi.ServerResponse{
@@ -1005,10 +1014,12 @@ type V1TokenCall struct {
 
 // Token: Exchanges a credential for a Google OAuth 2.0 access token.
 // The token asserts an external identity within an identity pool, or it
-// applies a Credential Access Boundary to a Google access token. When
-// you call this method, do not send the `Authorization` HTTP header in
-// the request. This method does not require the `Authorization` header,
-// and using the header can cause the request to fail.
+// applies a Credential Access Boundary to a Google access token. Note
+// that workforce pools do not support Credential Access Boundary at the
+// moment. When you call this method, do not send the `Authorization`
+// HTTP header in the request. This method does not require the
+// `Authorization` header, and using the header can cause the request to
+// fail.
 func (r *V1Service) Token(googleidentitystsv1exchangetokenrequest *GoogleIdentityStsV1ExchangeTokenRequest) *V1TokenCall {
 	c := &V1TokenCall{s: r.s, urlParams_: make(gensupport.URLParams)}
 	c.googleidentitystsv1exchangetokenrequest = googleidentitystsv1exchangetokenrequest
@@ -1081,17 +1092,17 @@ func (c *V1TokenCall) Do(opts ...googleapi.CallOption) (*GoogleIdentityStsV1Exch
 		if res.Body != nil {
 			res.Body.Close()
 		}
-		return nil, &googleapi.Error{
+		return nil, gensupport.WrapError(&googleapi.Error{
 			Code:   res.StatusCode,
 			Header: res.Header,
-		}
+		})
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer googleapi.CloseBody(res)
 	if err := googleapi.CheckResponse(res); err != nil {
-		return nil, err
+		return nil, gensupport.WrapError(err)
 	}
 	ret := &GoogleIdentityStsV1ExchangeTokenResponse{
 		ServerResponse: googleapi.ServerResponse{
@@ -1105,7 +1116,7 @@ func (c *V1TokenCall) Do(opts ...googleapi.CallOption) (*GoogleIdentityStsV1Exch
 	}
 	return ret, nil
 	// {
-	//   "description": "Exchanges a credential for a Google OAuth 2.0 access token. The token asserts an external identity within an identity pool, or it applies a Credential Access Boundary to a Google access token. When you call this method, do not send the `Authorization` HTTP header in the request. This method does not require the `Authorization` header, and using the header can cause the request to fail.",
+	//   "description": "Exchanges a credential for a Google OAuth 2.0 access token. The token asserts an external identity within an identity pool, or it applies a Credential Access Boundary to a Google access token. Note that workforce pools do not support Credential Access Boundary at the moment. When you call this method, do not send the `Authorization` HTTP header in the request. This method does not require the `Authorization` header, and using the header can cause the request to fail.",
 	//   "flatPath": "v1/token",
 	//   "httpMethod": "POST",
 	//   "id": "sts.token",
