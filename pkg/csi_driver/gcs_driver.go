@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
-	mount "k8s.io/mount-utils"
+	"k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
@@ -38,6 +38,7 @@ type GCSDriverConfig struct {
 	StorageServiceManager storage.ServiceManager
 	TokenManager          auth.TokenManager
 	Metrics               *metrics.Manager
+	Mounter               mount.Interface
 }
 
 type GCSDriver struct {
@@ -86,7 +87,7 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	driver.ids = newIdentityServer(driver)
 	if config.RunNode {
 		nscap := []csi.NodeServiceCapability_RPC_Type{}
-		driver.ns = newNodeServer(driver, mount.New(""))
+		driver.ns = newNodeServer(driver, config.Mounter)
 		err = driver.addNodeServiceCapabilities(nscap)
 		if err != nil {
 			return nil, err

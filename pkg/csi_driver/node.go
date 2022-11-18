@@ -17,13 +17,9 @@ limitations under the License.
 package driver
 
 import (
-	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -34,7 +30,6 @@ import (
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
-	sidecarmounter "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/sidecar_mounter"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )
 
@@ -52,7 +47,6 @@ type nodeServer struct {
 	storageServiceManager storage.ServiceManager
 	mounter               mount.Interface
 	volumeLocks           *util.VolumeLocks
-	chdirMu               sync.Mutex
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -61,7 +55,6 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		storageServiceManager: driver.config.StorageServiceManager,
 		mounter:               mounter,
 		volumeLocks:           util.NewVolumeLocks(),
-		chdirMu:               sync.Mutex{},
 	}
 }
 
@@ -83,8 +76,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	vc := req.GetVolumeContext()
 
 	fuseMountOptions := []string{}
+	if req.GetReadonly() {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
+	}
 	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
-		fuseMountOptions = capMount.GetMountFlags()
+		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
 
 	if vc[VolumeContextKeyEphemeral] == "true" {
@@ -113,7 +109,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	// Check the if the given Service Account has the access to the GCS bucket, and the bucket exists
+	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists
 	storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to prepare storage service: %v", err)
@@ -122,16 +118,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get GCS bucket %q: %v", bucketName, err)
-	}
-
-	// Prepare the temp volume base path
-	podID, volumeName, err := util.ParsePodIDVolume(targetPath)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to parse volume name from target path %p: %v", &targetPath, err)
-	}
-	volumeBasePath := fmt.Sprintf("/var/lib/kubelet/pods/%v/volumes/kubernetes.io~empty-dir/gke-gcsfuse/.volumes/%v", podID, volumeName)
-	if err := os.MkdirAll(volumeBasePath, 0750); err != nil {
-		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", volumeBasePath, err)
 	}
 
 	// Check if the target path is already mounted
@@ -151,79 +137,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// Prepare the mount options
-	mountOptions := []string{
-		"nodev",
-		"nosuid",
-		"noexec",
-		"allow_other",
-		"default_permissions",
-		"rootmode=40000",
-		fmt.Sprintf("user_id=%d", os.Getuid()),
-		fmt.Sprintf("group_id=%d", os.Getgid()),
+	if err = s.mounter.Mount(bucketName, targetPath, "fuse", fuseMountOptions); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
 	}
-	if req.GetReadonly() {
-		mountOptions = joinMountOptions(mountOptions, []string{"ro"})
-	}
-
-	klog.V(4).Info("NodePublishVolume opening the device /dev/fuse")
-	fd, err := syscall.Open("/dev/fuse", syscall.O_RDWR, 0644)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to open the device /dev/fuse: %v", err)
-	}
-	mountOptions = append(mountOptions, fmt.Sprintf("fd=%v", fd))
-
-	klog.V(4).Info("NodePublishVolume mounting the fuse filesystem")
-	err = s.mounter.MountSensitiveWithoutSystemdWithMountFlags(bucketName, targetPath, "fuse", mountOptions, nil, []string{"--internal-only"})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to mount the fuse filesystem: %v", err)
-	}
-
-	klog.V(4).Info("NodePublishVolume passing the descriptor")
-	// Need to change the current working directory to the temp volume base path,
-	// because the socket absolute path is longer than 104 characters,
-	// which will cause "bind: invalid argument" errors.
-	s.chdirMu.Lock()
-	exPwd, _ := os.Getwd()
-	os.Chdir(volumeBasePath)
-	klog.V(4).Info("NodePublishVolume creating a listener for the socket")
-	l, err := net.Listen("unix", "./socket")
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create the listener for the socket: %v", err)
-	}
-	os.Chdir(exPwd)
-	s.chdirMu.Unlock()
-
-	// Prepare sidecar mounter MountConfig
-	mc := sidecarmounter.MountConfig{
-		BucketName: bucketName,
-		Options:    fuseMountOptions,
-	}
-	mcb, err := json.Marshal(mc)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to marchal sidecar mounter MountConfig %v: %v", mc, err)
-	}
-
-	go func(l net.Listener, bucketName, podID, volumeName string, msg []byte, fd int) {
-		defer syscall.Close(fd)
-		defer l.Close()
-
-		logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podID, volumeName, bucketName)
-		klog.V(4).Infof("%v start to accept connections to the listener.", logPrefix)
-		a, err := l.Accept()
-		if err != nil {
-			klog.Errorf("%v failed to accept connections to the listener: %v", logPrefix, err)
-			return
-		}
-		defer a.Close()
-
-		klog.V(4).Infof("%v start to send file descriptor and mount options", logPrefix)
-		if err = util.SendMsg(a, fd, msg); err != nil {
-			klog.Errorf("%v failed to send file descriptor and mount options: %v", logPrefix, err)
-		}
-
-		klog.V(4).Infof("%v exiting the goroutine.", logPrefix)
-	}(l, bucketName, podID, volumeName, mcb, fd)
 
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
 	return &csi.NodePublishVolumeResponse{}, nil
@@ -243,21 +159,23 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	defer s.volumeLocks.Release(targetPath)
 
 	// Check if the target path is already mounted
-	mounted, err := s.isDirMounted(targetPath)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
-	}
-	if mounted {
+	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {
+		if err != nil {
+			klog.Errorf("failed to check if path %q is already mounted: %v", targetPath, err)
+		}
 		// Force unmount the target path
-		// Have to do force unmount firstly becasue if the file descriptor was not closed,
+		// Try to do force unmount firstly becasue if the file descriptor was not closed,
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
-		if !ok {
-			return nil, status.Error(codes.Internal, "failed to cast the mounter to a forceUnmounter")
-		}
-		err = forceUnmounter.UnmountWithForce(targetPath, 10*time.Second)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
+		if ok {
+			if err = forceUnmounter.UnmountWithForce(targetPath, time.Second); err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
+			}
+		} else {
+			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
+			if err = s.mounter.Unmount(targetPath); err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
+			}
 		}
 	}
 
@@ -300,7 +218,7 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 	return allMountOptions.List()
 }
 
-// prepareStorageService prepares the GCS Storage Service using CreateVolume/DeleteVolume sercets
+// prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
 	sa, err := s.driver.config.TokenManager.GetK8sServiceAccountFromVolumeContext(vc)
 	if err != nil {

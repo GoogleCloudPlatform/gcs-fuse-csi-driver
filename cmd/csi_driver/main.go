@@ -21,10 +21,12 @@ import (
 	"os"
 
 	"k8s.io/klog/v2"
+	"k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	driver "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_driver"
+	csimounter "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_mounter"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
 )
 
@@ -62,6 +64,8 @@ func main() {
 	if err != nil {
 		klog.Fatalf("Failed to set up storage service manager: %v", err)
 	}
+
+	var mounter mount.Interface
 	if *runController {
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
 			mm = metrics.NewMetricsManager()
@@ -75,6 +79,8 @@ func main() {
 		if *nodeID == "" {
 			klog.Fatalf("nodeid cannot be empty for node service")
 		}
+
+		mounter = csimounter.New("")
 	}
 
 	if err != nil {
@@ -90,6 +96,7 @@ func main() {
 		StorageServiceManager: ssm,
 		TokenManager:          tm,
 		Metrics:               mm,
+		Mounter:               mounter,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

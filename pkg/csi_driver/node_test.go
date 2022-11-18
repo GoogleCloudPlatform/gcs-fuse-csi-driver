@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	mount "k8s.io/mount-utils"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 )
 
 var (
@@ -46,8 +47,10 @@ type nodeServerTestEnv struct {
 }
 
 func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
-	mounter := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriver(t, mounter)
+	s, _ := driver.config.StorageServiceManager.SetupService(nil, nil)
+	s.CreateBucket(nil, &storage.ServiceBucket{Name: testVolumeID})
 	return &nodeServerTestEnv{
 		ns: newNodeServer(driver, mounter),
 		fm: mounter,
@@ -87,7 +90,7 @@ func TestNodePublishVolume(t *testing.T) {
 				TargetPath:       testTargetPath,
 				VolumeCapability: testVolumeCapability,
 			},
-			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "gcsfuse"},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse"},
 		},
 		{
 			name:   "volid request already mounted",
@@ -115,7 +118,7 @@ func TestNodePublishVolume(t *testing.T) {
 					},
 				},
 			},
-			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "gcsfuse", Opts: []string{"foo", "bar"}},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"foo", "bar"}},
 		},
 		{
 			name: "valid request read only",
@@ -125,7 +128,7 @@ func TestNodePublishVolume(t *testing.T) {
 				VolumeCapability: testVolumeCapability,
 				Readonly:         true,
 			},
-			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "gcsfuse", Opts: []string{"ro"}},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"ro"}},
 		},
 		{
 			name: "empty target path",
