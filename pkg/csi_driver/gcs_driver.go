@@ -156,7 +156,7 @@ func (driver *GCSDriver) validateVolumeCapability(c *csi.VolumeCapability) error
 	// if mountType.FsType != "" {
 	// 	return fmt.Errorf("driver does not support fstype %v", mountType.FsType)
 	// }
-	// TODO: check if we want to whitelist/blacklist certain mount options
+	// TODO: check if we want to allow/exclude certain mount options
 	return nil
 }
 
