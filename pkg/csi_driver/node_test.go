@@ -51,7 +51,9 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriver(t, mounter)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
-	s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID})
+	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+		t.Fatalf("failed to create the fake bucket: %v", err)
+	}
 	return &nodeServerTestEnv{
 		ns: newNodeServer(driver, mounter),
 		fm: mounter,

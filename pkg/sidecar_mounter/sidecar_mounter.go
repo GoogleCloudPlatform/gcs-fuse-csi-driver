@@ -78,7 +78,7 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 		mc.TempDir,
 		"--foreground",
 		"--log-file",
-		fmt.Sprintf("/dev/fd/1"), // redirect the output to cmd stdout
+		"/dev/fd/1", // redirect the output to cmd stdout
 		"--log-format",
 		"text",
 	}

@@ -149,11 +149,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		// Already mounted
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", bucketName, targetPath)
 		return &csi.NodePublishVolumeResponse{}, nil
-	} else {
-		klog.V(4).Infof("NodePublishVolume attempting mkdir for path %q", targetPath)
-		if err := os.MkdirAll(targetPath, 0750); err != nil {
-			return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
-		}
+	}
+	klog.V(4).Infof("NodePublishVolume attempting mkdir for path %q", targetPath)
+	if err := os.MkdirAll(targetPath, 0750); err != nil {
+		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
 	if err = s.mounter.Mount(bucketName, targetPath, "fuse", fuseMountOptions); err != nil {
@@ -183,7 +182,7 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 			klog.Errorf("failed to check if path %q is already mounted: %v", targetPath, err)
 		}
 		// Force unmount the target path
-		// Try to do force unmount firstly becasue if the file descriptor was not closed,
+		// Try to do force unmount firstly because if the file descriptor was not closed,
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {

@@ -26,6 +26,6 @@ echo "Verifying golint..."
 
 # enabled by default: deadcode,errcheck,gosimple,govet,ineffassign,staticcheck,structcheck,typecheck,unused,varcheck
 golangci-lint run --no-config --deadline=10m --sort-results \
---enable gofmt,revive,misspell,exportloopref,asciicheck,bodyclose,depguard,dogsled,durationcheck,errname,forbidigo
+--enable gofmt,revive,misspell,exportloopref,asciicheck,bodyclose,depguard,durationcheck,errname,forbidigo
 
 echo "Congratulations! Lint check completed for all Go source files."

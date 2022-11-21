@@ -60,47 +60,11 @@ func main() {
 		// 1. logs from different gcsfuse mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-
-		// socket path pattern: /tmp/.volumes/<volume-name>/socket
-		dir := filepath.Dir(sp)
-		volumeName := filepath.Base(dir)
-		mc := sidecarmounter.MountConfig{
-			VolumeName: volumeName,
-			TempDir:    filepath.Join(dir, "temp-dir"),
-			Stdout:     sidecarmounter.NewStdoutWriter(os.Stdout, volumeName),
-			Stderr:     sidecarmounter.NewStderrWriter(os.Stdout, volumeName, filepath.Join(dir, "error")),
-		}
-
-		klog.Infof("connecting to socket %q", sp)
-		c, err := net.Dial("unix", sp)
+		mc, err := prepareMountConfig(sp)
 		if err != nil {
-			errMsg := fmt.Sprintf("failed to connect to the socket %q: %v\n", sp, err)
-			mc.Stderr.Write([]byte(errMsg))
-			continue
-		}
-		defer c.Close()
-
-		fd, msg, err := util.RecvMsg(c)
-		if err != nil {
-			errMsg := fmt.Sprintf("failed to receive mount options from the socket %q: %v\n", sp, err)
-			mc.Stderr.Write([]byte(errMsg))
-			continue
-		}
-		// as we got all the information from the socket, closing the connection and deleting the socket
-		c.Close()
-		syscall.Unlink(sp)
-
-		mc.FileDescriptor = fd
-
-		if err := json.Unmarshal(msg, &mc); err != nil {
-			errMsg := fmt.Sprintf("failed to unmarchal the mount config: %v\n", err)
-			mc.Stderr.Write([]byte(errMsg))
-			continue
-		}
-
-		if mc.BucketName == "" {
-			errMsg := fmt.Sprintln("failed to fetch bucket name from CSI driver.")
-			mc.Stderr.Write([]byte(errMsg))
+			if _, e := mc.Stderr.Write([]byte(err.Error())); e != nil {
+				klog.Errorf("failed to write the error message %q: %v", err.Error(), e)
+			}
 			continue
 		}
 
@@ -110,13 +74,17 @@ func main() {
 			cmd, err := mounter.Mount(mc)
 			if err != nil {
 				errMsg := fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err)
-				mc.Stderr.Write([]byte(errMsg))
+				if _, e := mc.Stderr.Write([]byte(errMsg)); e != nil {
+					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
+				}
 				return
 			}
 
 			if err = cmd.Start(); err != nil {
 				errMsg := fmt.Sprintf("failed to start gcsfuse with error: %v\n", err)
-				mc.Stderr.Write([]byte(errMsg))
+				if _, e := mc.Stderr.Write([]byte(errMsg)); e != nil {
+					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
+				}
 				return
 			}
 
@@ -125,14 +93,16 @@ func main() {
 			syscall.Close(mc.FileDescriptor)
 			if err = cmd.Wait(); err != nil {
 				errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
-				mc.Stderr.Write([]byte(errMsg))
+				if _, e := mc.Stderr.Write([]byte(errMsg)); e != nil {
+					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
+				}
 			} else {
 				klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
 			}
-		}(&mc)
+		}(mc)
 	}
 
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	klog.Info("waiting for termination signals...")
 	sig := <-c // blocking the process
@@ -149,4 +119,44 @@ func main() {
 
 	wg.Wait()
 	klog.Info("existing sidecar mounter...")
+}
+
+func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
+	// socket path pattern: /tmp/.volumes/<volume-name>/socket
+	dir := filepath.Dir(sp)
+	volumeName := filepath.Base(dir)
+	mc := sidecarmounter.MountConfig{
+		VolumeName: volumeName,
+		TempDir:    filepath.Join(dir, "temp-dir"),
+		Stdout:     sidecarmounter.NewStdoutWriter(os.Stdout, volumeName),
+		Stderr:     sidecarmounter.NewStderrWriter(os.Stdout, volumeName, filepath.Join(dir, "error")),
+	}
+
+	klog.Infof("connecting to socket %q", sp)
+	c, err := net.Dial("unix", sp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to the socket %q: %v", sp, err)
+	}
+
+	fd, msg, err := util.RecvMsg(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive mount options from the socket %q: %v", sp, err)
+	}
+	// as we got all the information from the socket, closing the connection and deleting the socket
+	c.Close()
+	if err = syscall.Unlink(sp); err != nil {
+		klog.Errorf("failed to close socket %q: %v", sp, err)
+	}
+
+	mc.FileDescriptor = fd
+
+	if err := json.Unmarshal(msg, &mc); err != nil {
+		return nil, fmt.Errorf("failed to unmarchal the mount config: %v", err)
+	}
+
+	if mc.BucketName == "" {
+		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
+	}
+
+	return &mc, nil
 }

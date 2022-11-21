@@ -105,8 +105,13 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	// because the socket absolute path is longer than 104 characters,
 	// which will cause "bind: invalid argument" errors.
 	m.chdirMu.Lock()
-	exPwd, _ := os.Getwd()
-	os.Chdir(volumeBasePath)
+	exPwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get the current directory to %v", err)
+	}
+	if err = os.Chdir(volumeBasePath); err != nil {
+		return fmt.Errorf("failed to change directory to %q: %v", volumeBasePath, err)
+	}
 	klog.V(4).Info("creating a listener for the socket")
 	l, err := net.Listen("unix", "./socket")
 	go func(l net.Listener) {
@@ -116,7 +121,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	if err != nil {
 		return fmt.Errorf("failed to create the listener for the socket: %v", err)
 	}
-	os.Chdir(exPwd)
+	if err = os.Chdir(exPwd); err != nil {
+		return fmt.Errorf("failed to change directory to %q: %v", exPwd, err)
+	}
 	m.chdirMu.Unlock()
 
 	// Prepare sidecar mounter MountConfig
