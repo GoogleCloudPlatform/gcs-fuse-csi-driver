@@ -26,16 +26,20 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/webhook"
 )
 
 // NodePublishVolume VolumeContext parameters
 const (
-	VolumeContextKeyPodUID       = "csi.storage.k8s.io/pod.uid"
+	VolumeContextKeyPodName      = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace = "csi.storage.k8s.io/pod.namespace"
 	VolumeContextKeyEphemeral    = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName   = "bucketName"
 	VolumeContextKeyMountOptions = "mountOptions"
@@ -47,6 +51,7 @@ type nodeServer struct {
 	storageServiceManager storage.ServiceManager
 	mounter               mount.Interface
 	volumeLocks           *util.VolumeLocks
+	k8sClients            clientset.Interface
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -55,6 +60,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		storageServiceManager: driver.config.StorageServiceManager,
 		mounter:               mounter,
 		volumeLocks:           util.NewVolumeLocks(),
+		k8sClients:            driver.config.K8sClients,
 	}
 }
 
@@ -119,6 +125,19 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get GCS bucket %q: %v", bucketName, err)
 	}
+
+	// Check if the sidecar container was injected into the Pod
+	// TODO: skip this check step for the second and following NodePublishVolume calls
+	pod, err := s.k8sClients.GetPod(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
+	}
+	if !s.checkSidecarContainerInjectedInto(pod) {
+		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
+	}
+
+	// TODO: Check sidecar container error message in the emptyDir
+	// TODO: Check if the socket listener timed out
 
 	// Check if the target path is already mounted
 	mounted, err := s.isDirMounted(targetPath)
@@ -216,6 +235,35 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 		allMountOptions.Insert(mountOption)
 	}
 	return allMountOptions.List()
+}
+
+// checkSidecarContainerInjectedInto checks if the sidecar container was injected into the Pod
+func (s *nodeServer) checkSidecarContainerInjectedInto(pod *v1.Pod) bool {
+	sc := webhook.GetSidecarSpec()
+	targetContainer := sc.Containers[0]
+	targetVolume := sc.Volumes[0]
+
+	containerInjected := false
+	volumeInjected := false
+	for _, c := range pod.Spec.Containers {
+		if strings.HasPrefix(c.Name, targetContainer.Name) && strings.HasPrefix(c.Image, targetContainer.Image) {
+			for _, v := range c.VolumeMounts {
+				if strings.HasPrefix(v.Name, targetContainer.VolumeMounts[0].Name) && v.MountPath == targetContainer.VolumeMounts[0].MountPath {
+					containerInjected = true
+					break
+				}
+			}
+			break
+		}
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		if strings.HasPrefix(v.Name, targetVolume.Name) && v.VolumeSource.EmptyDir != nil {
+			volumeInjected = true
+			break
+		}
+	}
+	return containerInjected && volumeInjected
 }
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext

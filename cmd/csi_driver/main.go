@@ -23,6 +23,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	driver "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_driver"
@@ -31,14 +32,13 @@ import (
 )
 
 var (
-	endpoint             = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	gcsfuseProxyEndpoint = flag.String("gcsfuse-proxy-endpoint", "unix:/tmp/gcsfuse-proxy.sock", "gcsfuse-proxy endpoint")
-	nodeID               = flag.String("nodeid", "", "node id")
-	runController        = flag.Bool("controller", false, "run controller service")
-	runNode              = flag.Bool("node", false, "run node service")
-	httpEndpoint         = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
-	metricsPath          = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	kubeconfigPath       = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	endpoint       = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID         = flag.String("nodeid", "", "node id")
+	runController  = flag.Bool("controller", false, "run controller service")
+	runNode        = flag.Bool("node", false, "run node service")
+	httpEndpoint   = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsPath    = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	kubeconfigPath = flag.String("kubeconfig-path", "", "The kubeconfig path.")
 	// This is set at compile time
 	version = "unknown"
 )
@@ -54,10 +54,11 @@ func main() {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}
 
-	tm, err := auth.NewTokenManager(meta, *kubeconfigPath)
+	clientset, err := clientset.New(*kubeconfigPath)
 	if err != nil {
-		klog.Fatalf("Failed to set up token manager: %v", err)
+		klog.Fatal("failed to configure k8s client")
 	}
+	tm := auth.NewTokenManager(meta, clientset)
 
 	var mm *metrics.Manager
 	ssm, err := storage.NewGCSServiceManager()
@@ -97,6 +98,7 @@ func main() {
 		TokenManager:          tm,
 		Metrics:               mm,
 		Mounter:               mounter,
+		K8sClients:            clientset,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

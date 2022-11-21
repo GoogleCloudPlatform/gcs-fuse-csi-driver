@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
 )
@@ -39,6 +40,7 @@ type GCSDriverConfig struct {
 	TokenManager          auth.TokenManager
 	Metrics               *metrics.Manager
 	Mounter               mount.Interface
+	K8sClients            clientset.Interface
 }
 
 type GCSDriver struct {

@@ -23,10 +23,7 @@ import (
 
 	"golang.org/x/oauth2"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog/v2"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 )
 
@@ -44,37 +41,15 @@ type TokenManager interface {
 
 type tokenManager struct {
 	meta       metadata.Service
-	k8sClients *kubernetes.Clientset
+	k8sClients clientset.Interface
 }
 
-func NewTokenManager(meta metadata.Service, kubeconfig string) (TokenManager, error) {
-	var rc *rest.Config
-	var err error
-	if kubeconfig != "" {
-		klog.V(5).InfoS("using kubeconfig", "path", kubeconfig)
-		rc, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-	} else {
-		klog.V(5).InfoS("using in-cluster kubeconfig")
-		rc, err = rest.InClusterConfig()
-	}
-	if err != nil {
-		klog.ErrorS(err, "failed to read kubeconfig")
-		klog.Fatal("failed to read kubeconfig")
-		return nil, err
-	}
-
-	clientset, err := kubernetes.NewForConfig(rc)
-	if err != nil {
-		klog.ErrorS(err, "failed to configure k8s client")
-		klog.Fatal("failed to configure k8s client")
-		return nil, err
-	}
-
+func NewTokenManager(meta metadata.Service, clientset clientset.Interface) TokenManager {
 	tm := tokenManager{
 		meta:       meta,
 		k8sClients: clientset,
 	}
-	return &tm, nil
+	return &tm
 }
 
 func (tm *tokenManager) GetK8sServiceAccountFromVolumeContext(vc map[string]string) (*K8sServiceAccountInfo, error) {

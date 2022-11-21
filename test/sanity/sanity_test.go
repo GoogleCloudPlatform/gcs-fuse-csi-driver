@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 	driver "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_driver"
 )
@@ -65,6 +66,7 @@ func TestSanity(t *testing.T) {
 		StorageServiceManager: storage.NewFakeServiceManager(),
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
+		K8sClients:            &clientset.FakeClientset{},
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(driverConfig)

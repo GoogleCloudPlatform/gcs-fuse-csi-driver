@@ -27,7 +27,7 @@ import (
 	sts "google.golang.org/api/sts/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 )
 
@@ -42,7 +42,7 @@ type GCPTokenSource struct {
 	ctx        context.Context
 	meta       metadata.Service
 	k8sSA      *K8sServiceAccountInfo
-	k8sClients *kubernetes.Clientset
+	k8sClients clientset.Interface
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token
@@ -90,20 +90,17 @@ func (ts *GCPTokenSource) fetchK8sSAToken() error {
 		return nil
 	}
 	ttl := int64(1 * time.Hour.Seconds())
-	resp, err := ts.k8sClients.
-		CoreV1().
-		ServiceAccounts(ts.k8sSA.Namespace).
-		CreateToken(
-			ts.ctx,
-			ts.k8sSA.Name,
-			&authenticationv1.TokenRequest{
-				Spec: authenticationv1.TokenRequestSpec{
-					ExpirationSeconds: &ttl,
-					Audiences:         []string{ts.meta.GetIdentityPool()},
-				},
+	resp, err := ts.k8sClients.CreateServiceAccountToken(
+		ts.ctx,
+		ts.k8sSA.Namespace,
+		ts.k8sSA.Name,
+		&authenticationv1.TokenRequest{
+			Spec: authenticationv1.TokenRequestSpec{
+				ExpirationSeconds: &ttl,
+				Audiences:         []string{ts.meta.GetIdentityPool()},
 			},
-			v1.CreateOptions{},
-		)
+		},
+		v1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %v", err)
 	}

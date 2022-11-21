@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -50,7 +51,7 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriver(t, mounter)
 	s, _ := driver.config.StorageServiceManager.SetupService(nil, nil)
-	s.CreateBucket(nil, &storage.ServiceBucket{Name: testVolumeID})
+	s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID})
 	return &nodeServerTestEnv{
 		ns: newNodeServer(driver, mounter),
 		fm: mounter,
@@ -266,6 +267,12 @@ func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mou
 	if aLen != eLen {
 		t.Errorf("test %q failed: got opts length %v, expected %v", name, aLen, eLen)
 	} else {
+		sort.Slice(a.Opts, func(i, j int) bool {
+			return a.Opts[i] > a.Opts[j]
+		})
+		sort.Slice(e.Opts, func(i, j int) bool {
+			return e.Opts[i] > e.Opts[j]
+		})
 		for i := range a.Opts {
 			aOpt := a.Opts[i]
 			eOpt := e.Opts[i]

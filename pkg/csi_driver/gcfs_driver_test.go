@@ -23,6 +23,7 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	mount "k8s.io/mount-utils"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
+	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
 	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 )
 
@@ -35,6 +36,8 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		RunNode:               true,
 		StorageServiceManager: storage.NewFakeServiceManager(),
 		TokenManager:          auth.NewFakeTokenManager(),
+		Mounter:               fm,
+		K8sClients:            &clientset.FakeClientset{},
 	}
 	driver, err := NewGCSDriver(config)
 	if err != nil {
