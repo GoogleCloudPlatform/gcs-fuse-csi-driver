@@ -26,7 +26,7 @@ func GetSidecarSpec() *v1.PodSpec {
 		Containers: []v1.Container{
 			{
 				Name:  "gke-gcsfuse-sidecar",
-				Image: "jiaxun/gcp-cloud-storage-sidecar-mounter",
+				Image: "jiaxun/gcs-fuse-csi-driver-sidecar-mounter",
 				SecurityContext: &v1.SecurityContext{
 					AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
 					RunAsUser:                func(i int64) *int64 { return &i }(0),

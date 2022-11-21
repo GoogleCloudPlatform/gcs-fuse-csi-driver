@@ -26,10 +26,10 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # https://github.com/opencontainers/image-spec/blob/master/annotations.md
 LABEL "org.opencontainers.image.authors"="Jiaxun Song <jiaxun.song@outlook.com>"
-LABEL "org.opencontainers.image.description"="The Google Cloud Storage Container Storage Interface (CSI) Plugin"
+LABEL "org.opencontainers.image.description"="The Google Cloud Storage FUSE Container Storage Interface (CSI) Plugin"
 LABEL "org.opencontainers.image.licenses"="Apache-2.0 OR MIT"
-LABEL "org.opencontainers.image.source"="https://github.com/songjiaxun/gcp-cloud-storage-csi-driver"
-LABEL "org.opencontainers.image.title"="gcp-cloud-storage-csi-driver"
+LABEL "org.opencontainers.image.source"="https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver"
+LABEL "org.opencontainers.image.title"="gcs-fuse-csi-driver"
 
 # Copy the binaries
 COPY --from=driver-builder /bin/csi-driver /csi-driver

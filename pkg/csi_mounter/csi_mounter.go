@@ -25,11 +25,11 @@ import (
 	"syscall"
 	"time"
 
+	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
-	sidecarmounter "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/sidecar_mounter"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )
 
 // Mounter provides the GCS FUSE CSI implementation of mount.Interface

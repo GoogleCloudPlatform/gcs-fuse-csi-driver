@@ -1,4 +1,4 @@
-module sigs.k8s.io/gcp-cloud-storage-csi-driver
+module github.com/googlecloudplatform/gcs-fuse-csi-driver
 
 go 1.19
 

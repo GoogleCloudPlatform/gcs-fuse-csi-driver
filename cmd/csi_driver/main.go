@@ -20,15 +20,15 @@ import (
 	"flag"
 	"os"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
+	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
-	driver "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_driver"
-	csimounter "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_mounter"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
 )
 
 var (
@@ -103,10 +103,10 @@ func main() {
 
 	gcfsDriver, err := driver.NewGCSDriver(config)
 	if err != nil {
-		klog.Fatalf("Failed to initialize Cloud Storage CSI Driver: %v", err)
+		klog.Fatalf("Failed to initialize Google Cloud Storage FUSE CSI Driver: %v", err)
 	}
 
-	klog.Infof("Running Google Cloud Storage CSI driver version %v", version)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v", version)
 	gcfsDriver.Run(*endpoint)
 
 	os.Exit(0)

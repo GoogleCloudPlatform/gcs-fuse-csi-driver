@@ -15,20 +15,20 @@
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: gcp-cloud-storage-csi-node
+  name: gcs-fuse-csi-node
 spec:
   selector:
     matchLabels:
-      app: gcp-cloud-storage-csi-driver
+      app: gcs-fuse-csi-driver
   updateStrategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
-        app: gcp-cloud-storage-csi-driver
+        app: gcs-fuse-csi-driver
     spec:
       priorityClassName: csi-gcp-gcs-node
-      serviceAccount: gcp-cloud-storage-csi-node-sa
+      serviceAccount: gcs-fuse-csi-node-sa
       nodeSelector:
         kubernetes.io/os: linux
       containers:
@@ -78,10 +78,10 @@ spec:
               mountPath: /csi
             - name: registration-dir
               mountPath: /registration
-        - name: gcp-cloud-storage-driver
+        - name: gcs-fuse-driver
           securityContext:
             privileged: true
-          image: jiaxun/gcp-cloud-storage-csi-driver
+          image: jiaxun/gcs-fuse-csi-driver
           args:
             - "--v=5"
             - "--endpoint=unix:/csi/csi.sock"

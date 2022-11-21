@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
       - name: gke-gcsfuse-sidecar
-        image: jiaxun/gcp-cloud-storage-sidecar-mounter:v0.2.0
+        image: jiaxun/gcs-fuse-csi-driver-sidecar-mounter:v0.2.0
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false

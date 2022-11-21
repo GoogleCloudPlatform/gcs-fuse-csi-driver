@@ -23,6 +23,10 @@ import (
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,10 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/webhook"
 )
 
 // NodePublishVolume VolumeContext parameters

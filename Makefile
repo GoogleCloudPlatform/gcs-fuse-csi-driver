@@ -28,11 +28,11 @@ sidecar-mounter:
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags ${LDFLAGS} -o ${BINDIR}/sidecar-mounter cmd/sidecar_mounter/main.go
 
 build-image-and-push:
-	docker build --file ./cmd/sidecar_mounter/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${VERSION} --build-arg VERSION=${VERSION} .
-	docker push ${REGISTRY}/gcp-cloud-storage-sidecar-mounter:${VERSION}
+	docker build --file ./cmd/sidecar_mounter/Dockerfile --tag ${REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${VERSION} --build-arg VERSION=${VERSION} .
+	docker push ${REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${VERSION}
 	
-	docker build --file ./cmd/csi_driver/Dockerfile --tag ${REGISTRY}/gcp-cloud-storage-csi-driver:${VERSION} --build-arg VERSION=${VERSION} .
-	docker push ${REGISTRY}/gcp-cloud-storage-csi-driver:${VERSION}
+	docker build --file ./cmd/csi_driver/Dockerfile --tag ${REGISTRY}/gcs-fuse-csi-driver:${VERSION} --build-arg VERSION=${VERSION} .
+	docker push ${REGISTRY}/gcs-fuse-csi-driver:${VERSION}
 
 install:
 	kubectl apply -k deploy/overlays/${OVERLAY}
@@ -41,7 +41,7 @@ uninstall:
 	kubectl delete -k deploy/overlays/${OVERLAY}
 
 dev-generate-yaml:
-	kubectl kustomize deploy/overlays/dev | tee ./bin/gcp-cloud-storage-csi-driver-specs-generated.yaml
+	kubectl kustomize deploy/overlays/dev | tee ./bin/gcs-fuse-csi-driver-specs-generated.yaml
 
 verify:
 	hack/verify-all.sh

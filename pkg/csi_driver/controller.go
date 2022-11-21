@@ -21,14 +21,14 @@ import (
 	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/metrics"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )
 
 const (

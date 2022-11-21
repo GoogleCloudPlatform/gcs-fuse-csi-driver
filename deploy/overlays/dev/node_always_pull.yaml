@@ -15,10 +15,10 @@
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: gcp-cloud-storage-csi-node
+  name: gcs-fuse-csi-node
 spec:
   template:
     spec:
       containers:
-        - name: gcp-cloud-storage-driver
+        - name: gcs-fuse-driver
           imagePullPolicy: Always

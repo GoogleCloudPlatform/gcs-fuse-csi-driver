@@ -14,7 +14,7 @@
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: gcp-cloud-storage-csi-driver
+namespace: gcs-fuse-csi-driver
 resources:
 - ../../base
 transformers:

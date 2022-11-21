@@ -16,4 +16,4 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: gcp-cloud-storage-csi-driver
+  name: gcs-fuse-csi-driver

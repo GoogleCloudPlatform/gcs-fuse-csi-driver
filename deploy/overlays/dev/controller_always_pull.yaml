@@ -15,10 +15,10 @@
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  name: gcp-cloud-storage-csi-controller
+  name: gcs-fuse-csi-controller
 spec:
   template:
     spec:
       containers:
-        - name: gcp-cloud-storage-driver
+        - name: gcs-fuse-driver
           imagePullPolicy: Always

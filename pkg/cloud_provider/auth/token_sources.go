@@ -22,13 +22,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	sts "google.golang.org/api/sts/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 )
 
 type K8sServiceAccountInfo struct {

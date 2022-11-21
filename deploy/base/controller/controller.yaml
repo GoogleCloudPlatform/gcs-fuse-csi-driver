@@ -15,20 +15,20 @@
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  name: gcp-cloud-storage-csi-controller
+  name: gcs-fuse-csi-controller
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: gcp-cloud-storage-csi-driver
+      app: gcs-fuse-csi-driver
   template:
     metadata:
       labels:
-        app: gcp-cloud-storage-csi-driver
+        app: gcs-fuse-csi-driver
     spec:
       nodeSelector:
         kubernetes.io/os: linux
-      serviceAccount: gcp-cloud-storage-csi-controller-sa
+      serviceAccount: gcs-fuse-csi-controller-sa
       priorityClassName: csi-gcp-gcs-controller
       containers:
         - name: liveness-probe
@@ -86,8 +86,8 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-        - name: gcp-cloud-storage-driver
-          image: jiaxun/gcp-cloud-storage-csi-driver
+        - name: gcs-fuse-driver
+          image: jiaxun/gcs-fuse-csi-driver
           args:
             - "--v=5"
             - "--endpoint=unix:/csi/csi.sock"

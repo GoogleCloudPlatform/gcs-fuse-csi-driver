@@ -19,10 +19,10 @@ package clientset
 import (
 	"context"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/webhook"
 )
 
 type FakeClientset struct {

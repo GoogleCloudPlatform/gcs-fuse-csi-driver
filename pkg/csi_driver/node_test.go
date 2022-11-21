@@ -24,11 +24,11 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	mount "k8s.io/mount-utils"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 )
 
 var (

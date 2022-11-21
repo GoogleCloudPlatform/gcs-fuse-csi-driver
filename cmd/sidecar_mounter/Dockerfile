@@ -18,9 +18,9 @@ FROM golang:1.19.3 AS gcsfuse-builder
 ARG global_ldflags
 
 # Install gcsfuse using the specified version or commit hash
-ADD https://api.github.com/repos/songjiaxun/gcsfuse/git/refs/heads/master version.json
-WORKDIR ${GOPATH}/src/github.com/songjiaxun/gcsfuse
-RUN git clone -b master https://github.com/songjiaxun/gcsfuse.git . -q
+ADD https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/git/refs/heads/master version.json
+WORKDIR ${GOPATH}/src/github.com/GoogleCloudPlatform/gcsfuse
+RUN git clone -b master https://github.com/GoogleCloudPlatform/gcsfuse.git . -q
 RUN go install ./tools/build_gcsfuse
 RUN mkdir /tmp/gcsfuse
 RUN build_gcsfuse . /tmp/gcsfuse v2.0.0 -ldflags "all=${global_ldflags}" -ldflags "-X main.gcsfuseVersion=v2.0.0 ${global_ldflags}"
@@ -42,10 +42,10 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # https://github.com/opencontainers/image-spec/blob/master/annotations.md
 LABEL "org.opencontainers.image.authors"="Jiaxun Song <jiaxun.song@outlook.com>"
-LABEL "org.opencontainers.image.description"="The Google Cloud Storage Container Storage Interface (CSI) Plugin"
+LABEL "org.opencontainers.image.description"="The Google Cloud Storage FUSE Container Storage Interface (CSI) Plugin"
 LABEL "org.opencontainers.image.licenses"="Apache-2.0 OR MIT"
-LABEL "org.opencontainers.image.source"="https://github.com/songjiaxun/gcp-cloud-storage-csi-driver"
-LABEL "org.opencontainers.image.title"="gcp-cloud-storage-sidecar-mounter"
+LABEL "org.opencontainers.image.source"="https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver"
+LABEL "org.opencontainers.image.title"="gcs-fuse-csi-driver-sidecar-mounter"
 
 # Copy the binaries
 COPY --from=gcsfuse-builder /tmp/gcsfuse/bin/gcsfuse /gcsfuse

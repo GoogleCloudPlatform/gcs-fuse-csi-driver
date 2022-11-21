@@ -35,7 +35,7 @@ spec:
       serviceAccountName: gcs-csi
       containers:
       - name: gke-gcsfuse-sidecar
-        image: jiaxun/gcp-cloud-storage-sidecar-mounter:v0.2.0
+        image: jiaxun/gcs-fuse-csi-driver-sidecar-mounter:v0.2.0
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false
@@ -106,7 +106,7 @@ spec:
       name: gcs-bucket
     spec:
       accessModes: [ "ReadWriteMany" ]
-      storageClassName: gcp-cloud-storage-class-non-root
+      storageClassName: gcs-fuse-class-non-root
       resources:
         requests:
           storage: 5Gi

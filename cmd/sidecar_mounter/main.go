@@ -28,9 +28,9 @@ import (
 	"syscall"
 	"time"
 
+	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
-	sidecarmounter "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/sidecar_mounter"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 )
 
 var (
@@ -45,7 +45,7 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
-	klog.Infof("Running Google Cloud Storage CSI driver sidecar mounter version %v", version)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPathes, err := filepath.Glob(socketPathPattern)
 	if err != nil {

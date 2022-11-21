@@ -21,10 +21,10 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	mount "k8s.io/mount-utils"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
 )
 
 func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {

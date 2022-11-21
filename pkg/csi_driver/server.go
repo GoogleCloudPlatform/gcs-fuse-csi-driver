@@ -20,9 +20,9 @@ import (
 	"net"
 	"sync"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 )

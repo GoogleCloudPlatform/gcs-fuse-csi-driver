@@ -21,10 +21,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"golang.org/x/oauth2"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/metadata"
 )
 
 // NodePublishVolume VolumeContext keys

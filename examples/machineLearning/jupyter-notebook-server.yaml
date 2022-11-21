@@ -54,7 +54,7 @@ spec:
     fsGroup: 100
   containers:
   - name: gke-gcsfuse-sidecar
-    image: jiaxun/gcp-cloud-storage-sidecar-mounter:v0.2.0
+    image: jiaxun/gcs-fuse-csi-driver-sidecar-mounter:v0.2.0
     imagePullPolicy: Always
     securityContext:
       allowPrivilegeEscalation: false
@@ -87,7 +87,7 @@ spec:
     - containerPort: 8888
       name: http-web-svc
     volumeMounts:
-    - name: gcp-cloud-storage-csi-ephemeral-non-root
+    - name: gcs-fuse-csi-ephemeral-non-root
       mountPath: /home/jovyan/gcs_bucket # jovyan is the default user
     - name: local-pd-pvc
       mountPath: /home/jovyan/local_disk # jovyan is the default user
@@ -99,7 +99,7 @@ spec:
     persistentVolumeClaim:
       claimName: local-pd
       readOnly: false
-  - name: gcp-cloud-storage-csi-ephemeral-non-root
+  - name: gcs-fuse-csi-ephemeral-non-root
     csi:
       driver: cloudstorage.csi.storage.gke.io
       volumeAttributes:

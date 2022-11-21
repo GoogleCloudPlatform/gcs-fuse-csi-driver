@@ -20,14 +20,14 @@ import (
 	"os"
 	"testing"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sanity "github.com/kubernetes-csi/csi-test/v5/pkg/sanity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/mount-utils"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/auth"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/clientset"
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/cloud_provider/storage"
-	driver "sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/csi_driver"
 )
 
 const (

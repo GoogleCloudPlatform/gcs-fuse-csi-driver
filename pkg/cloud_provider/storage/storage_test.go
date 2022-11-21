@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"sigs.k8s.io/gcp-cloud-storage-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 )
 
 func TestCompareBuckets(t *testing.T) {

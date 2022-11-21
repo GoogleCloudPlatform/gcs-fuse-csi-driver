@@ -44,6 +44,6 @@ kind: ImageTagTransformer
 metadata:
   name: imagetag-gce-cs-driver
 imageTag:
-  name: jiaxun/gcp-cloud-storage-csi-driver
+  name: jiaxun/gcs-fuse-csi-driver
   newTag: "v2.0.0"
 ---
