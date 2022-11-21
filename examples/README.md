@@ -1,7 +1,7 @@
 # Example Applications
 
 ## Install the CSI driver
-See the documentation [GCS CSI Driver Installation](../docs/installation.md).
+See the documentation [GCS FUSE CSI Driver Installation](../docs/installation.md).
 
 ## Setup Service Accounts
 In order to authenticate with GCP, you will need to setup a Kubernetes Service Account and grant the GCS permissions to the serice account.

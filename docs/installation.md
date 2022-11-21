@@ -1,4 +1,4 @@
-# GCS CSI Driver Installation
+# GCS FUSE CSI Driver Installation
 
 ## Prerequisites
 - Clone the repo by running the following command

@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
-# Copyright 2015 The Kubernetes Authors.
+# Copyright 2015 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -144,7 +144,7 @@ def file_passes(filename, refs, regexs):
 def file_extension(filename):
     return os.path.splitext(filename)[1].split(".")[-1].lower()
 
-skipped_dirs = [".git", "vendor", "hack/boilerplate/test"]
+skipped_dirs = [".git", "vendor", "hack/boilerplate/test", "bin"]
 
 # list all the files contain 'DO NOT EDIT', but are not generated
 skipped_ungenerated_files = ["hack/boilerplate/boilerplate.py"]

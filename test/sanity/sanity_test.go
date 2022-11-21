@@ -1,11 +1,11 @@
 /*
-Copyright 2022 The Kubernetes Authors.
+Copyright 2022 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -71,7 +71,7 @@ func TestSanity(t *testing.T) {
 
 	gcfsDriver, err := driver.NewGCSDriver(driverConfig)
 	if err != nil {
-		t.Fatalf("Failed to initialize GCS CSI Driver: %v", err)
+		t.Fatalf("Failed to initialize GCS FUSE CSI Driver: %v", err)
 	}
 
 	go func() {

@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Copyright 2022 The Kubernetes Authors.
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,8 +19,8 @@ set -o pipefail
 
 PKG_ROOT=$(git rev-parse --show-toplevel)
 
+${PKG_ROOT}/hack/verify-boilerplate.sh
 ${PKG_ROOT}/hack/verify-gofmt.sh
 ${PKG_ROOT}/hack/verify-govet.sh
-${PKG_ROOT}/hack/verify-gomod.sh
 ${PKG_ROOT}/hack/verify-golint.sh
-${PKG_ROOT}/hack/verify-boilerplate.sh
+${PKG_ROOT}/hack/verify-gomod.sh
