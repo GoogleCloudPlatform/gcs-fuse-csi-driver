@@ -40,13 +40,6 @@ RUN make sidecar-mounter BINDIR=/bin
 FROM launcher.gcr.io/google/debian11
 ENV DEBIAN_FRONTEND noninteractive
 
-# https://github.com/opencontainers/image-spec/blob/master/annotations.md
-LABEL "org.opencontainers.image.authors"="Jiaxun Song <jiaxun.song@outlook.com>"
-LABEL "org.opencontainers.image.description"="The Google Cloud Storage FUSE Container Storage Interface (CSI) Plugin"
-LABEL "org.opencontainers.image.licenses"="Apache-2.0 OR MIT"
-LABEL "org.opencontainers.image.source"="https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver"
-LABEL "org.opencontainers.image.title"="gcs-fuse-csi-driver-sidecar-mounter"
-
 # Copy the binaries
 COPY --from=gcsfuse-builder /tmp/gcsfuse/bin/gcsfuse /gcsfuse
 COPY --from=sidecar-mounter-builder /bin/sidecar-mounter /sidecar-mounter
