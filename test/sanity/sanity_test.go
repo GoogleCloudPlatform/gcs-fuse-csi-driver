@@ -35,8 +35,8 @@ const (
 	driverVersion = "test-driver-version"
 	nodeID        = "io.kubernetes.storage.mock"
 	endpoint      = "unix:/tmp/csi.sock"
-	mountPath     = "/tmp/csi/mount"
-	tmpDir        = "/tmp/csi"
+	mountPath     = "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/test-volume/mount"
+	tmpDir        = "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/test-volume"
 )
 
 func TestSanity(t *testing.T) {

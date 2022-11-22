@@ -64,7 +64,11 @@ func TestNodePublishVolume(t *testing.T) {
 	defaultPerm := os.FileMode(0750) + os.ModeDir
 
 	// Setup mount target path
-	base, err := os.MkdirTemp("", "node-publish-")
+	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
+	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
+		t.Fatalf("failed to setup tmp dir path: %v", err)
+	}
+	base, err := os.MkdirTemp(tmpDir, "node-publish-")
 	if err != nil {
 		t.Fatalf("failed to setup testdir: %v", err)
 	}

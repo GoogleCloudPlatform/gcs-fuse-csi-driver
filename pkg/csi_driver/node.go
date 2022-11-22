@@ -136,7 +136,19 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
 	}
 
-	// TODO: Check sidecar container error message in the emptyDir
+	// TODO: find the empty-dir using regex
+	emptyDirBasePath, err := prepareEmptyDir(targetPath, "gke-gcsfuse")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get emptyDir path: %v", err)
+	}
+	dat, err := os.ReadFile(emptyDirBasePath + "/error")
+	if err != nil && !os.IsNotExist(err) {
+		return nil, status.Errorf(codes.Internal, "failed to open error file %q: %v", emptyDirBasePath+"/error", err)
+	}
+	if err == nil && len(dat) > 0 {
+		return nil, status.Errorf(codes.Internal, "the sidecar container failed with error: %v", string(dat))
+	}
+
 	// TODO: Check if the socket listener timed out
 
 	// Check if the target path is already mounted
@@ -218,6 +230,20 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func prepareEmptyDir(targetPath, emptyDirVolumeName string) (string, error) {
+	_, volumeName, err := util.ParsePodIDVolume(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse volume name from target path %q: %v", targetPath, err)
+	}
+
+	emptyDirBasePath := fmt.Sprintf("%vkubernetes.io~empty-dir/%v/.volumes/%v", strings.Split(targetPath, "kubernetes.io~csi")[0], emptyDirVolumeName, volumeName)
+	if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
+		return "", fmt.Errorf("mkdir failed for path %q: %v", emptyDirBasePath, err)
+	}
+
+	return emptyDirBasePath, nil
 }
 
 // joinMountOptions joins mount options eliminating duplicates

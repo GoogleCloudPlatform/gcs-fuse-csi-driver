@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -82,7 +83,8 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	if err != nil {
 		return fmt.Errorf("failed to parse volume name from target path %q: %v", target, err)
 	}
-	volumeBasePath := fmt.Sprintf("/var/lib/kubelet/pods/%v/volumes/kubernetes.io~empty-dir/gke-gcsfuse/.volumes/%v", podID, volumeName)
+	// TODO: find the empty-dir using regex
+	volumeBasePath := fmt.Sprintf("%vkubernetes.io~empty-dir/%v/.volumes/%v", strings.Split(target, "kubernetes.io~csi")[0], "gke-gcsfuse", volumeName)
 	if err := os.MkdirAll(volumeBasePath, 0750); err != nil {
 		return fmt.Errorf("mkdir failed for path %q: %v", volumeBasePath, err)
 	}
