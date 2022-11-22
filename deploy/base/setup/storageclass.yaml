@@ -16,7 +16,7 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: gcs-fuse-class
-provisioner: cloudstorage.csi.storage.gke.io
+provisioner: gcsfuse.csi.storage.gke.io
 volumeBindingMode: Immediate
 reclaimPolicy: Delete
 parameters:

@@ -15,7 +15,7 @@
 apiVersion: storage.k8s.io/v1
 kind: CSIDriver
 metadata:
-  name: cloudstorage.csi.storage.gke.io
+  name: gcsfuse.csi.storage.gke.io
 spec:
   attachRequired: false
   podInfoOnMount: true

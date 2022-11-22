@@ -45,5 +45,5 @@ metadata:
   name: imagetag-gce-cs-driver
 imageTag:
   name: jiaxun/gcs-fuse-csi-driver
-  newTag: "v0.2.0"
+  newTag: "v0.3.0"
 ---

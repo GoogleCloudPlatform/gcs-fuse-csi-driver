@@ -6,13 +6,13 @@
   git clone https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver.git
   cd gcs-fuse-csi-driver
   ```
-- A standard GKE cluster using Ubuntu node images. Autopilot clusters are not supported. COS images are not supported.
+- A standard GKE cluster. Autopilot clusters are not supported.
 - [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) is enabled on the cluster.
 - Run the following commands to create a GKE cluster with Workload Identity enabled.
   ```bash
   CLUSTER_PROJECT_ID=<cluster-project-id>
   CLUSTER_NAME=<cluster-name>
-  gcloud container clusters create ${CLUSTER_NAME} --image-type=ubuntu_containerd --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
+  gcloud container clusters create ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
   gcloud container clusters get-credentials ${CLUSTER_NAME}
   ```
 
@@ -34,7 +34,7 @@ kubectl get CSIDriver,Deployment,DaemonSet,Pods -n gcs-fuse-csi-driver
 should contain the driver application information, something like
 ```
 NAME                                                       ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS                      REQUIRESREPUBLISH   MODES                  AGE
-csidriver.storage.k8s.io/cloudstorage.csi.storage.gke.io   false            true             false             <cluster-project-id>.svc.id.goog   true                Persistent,Ephemeral   116s
+csidriver.storage.k8s.io/gcsfuse.csi.storage.gke.io   false            true             false             <cluster-project-id>.svc.id.goog   true                Persistent,Ephemeral   116s
 
 NAME                                               READY   UP-TO-DATE   AVAILABLE   AGE
 deployment.apps/gcs-fuse-csi-controller   3/3     3            3           116s

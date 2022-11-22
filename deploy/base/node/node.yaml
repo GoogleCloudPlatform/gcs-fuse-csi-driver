@@ -72,7 +72,7 @@ spec:
               memory: 20Mi
           env:
             - name: DRIVER_REG_SOCK_PATH
-              value: /var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/csi.sock
+              value: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/csi.sock
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
@@ -128,5 +128,5 @@ spec:
             type: Directory
         - name: socket-dir
           hostPath:
-            path: /var/lib/kubelet/plugins/cloudstorage.csi.storage.gke.io/
+            path: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
             type: DirectoryOrCreate

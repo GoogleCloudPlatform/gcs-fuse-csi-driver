@@ -27,7 +27,7 @@ spec:
     namespace: gcs-csi-example
     name: gcp-gcs-csi-static-pvc
   csi:
-    driver: cloudstorage.csi.storage.gke.io
+    driver: gcsfuse.csi.storage.gke.io
     volumeHandle: <bucket-name> # unique bucket name
 ---
 apiVersion: v1
@@ -61,7 +61,7 @@ spec:
     spec:
       containers:
       - name: gke-gcsfuse-sidecar
-        image: jiaxun/gcs-fuse-csi-driver-sidecar-mounter:v0.2.0
+        image: jiaxun/gcs-fuse-csi-driver-sidecar-mounter:v0.3.0
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false

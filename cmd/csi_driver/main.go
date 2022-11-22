@@ -43,7 +43,7 @@ var (
 	version = "unknown"
 )
 
-const driverName = "cloudstorage.csi.storage.gke.io"
+const driverName = "gcsfuse.csi.storage.gke.io"
 
 func main() {
 	klog.InitFlags(nil)
