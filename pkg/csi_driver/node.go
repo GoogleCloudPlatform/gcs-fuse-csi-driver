@@ -30,7 +30,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
@@ -132,7 +131,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
 	}
-	if !s.checkSidecarContainerInjectedInto(pod) {
+	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarConfig, pod) {
 		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
 	}
 
@@ -260,35 +259,6 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 		allMountOptions.Insert(mountOption)
 	}
 	return allMountOptions.List()
-}
-
-// checkSidecarContainerInjectedInto checks if the sidecar container was injected into the Pod
-func (s *nodeServer) checkSidecarContainerInjectedInto(pod *v1.Pod) bool {
-	sc := webhook.GetSidecarSpec()
-	targetContainer := sc.Containers[0]
-	targetVolume := sc.Volumes[0]
-
-	containerInjected := false
-	volumeInjected := false
-	for _, c := range pod.Spec.Containers {
-		if strings.HasPrefix(c.Name, targetContainer.Name) && strings.HasPrefix(c.Image, targetContainer.Image) {
-			for _, v := range c.VolumeMounts {
-				if strings.HasPrefix(v.Name, targetContainer.VolumeMounts[0].Name) && v.MountPath == targetContainer.VolumeMounts[0].MountPath {
-					containerInjected = true
-					break
-				}
-			}
-			break
-		}
-	}
-
-	for _, v := range pod.Spec.Volumes {
-		if strings.HasPrefix(v.Name, targetVolume.Name) && v.VolumeSource.EmptyDir != nil {
-			volumeInjected = true
-			break
-		}
-	}
-	return containerInjected && volumeInjected
 }
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext

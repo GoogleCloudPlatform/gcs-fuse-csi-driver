@@ -27,18 +27,20 @@ import (
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
 
 var (
-	endpoint       = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID         = flag.String("nodeid", "", "node id")
-	runController  = flag.Bool("controller", false, "run controller service")
-	runNode        = flag.Bool("node", false, "run node service")
-	httpEndpoint   = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
-	metricsPath    = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	kubeconfigPath = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	endpoint              = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID                = flag.String("nodeid", "", "node id")
+	runController         = flag.Bool("controller", false, "run controller service")
+	runNode               = flag.Bool("node", false, "run node service")
+	httpEndpoint          = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsPath           = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	kubeconfigPath        = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	sidecarContainerImage = flag.String("sidecar-container-image", "jiaxun/gcs-fuse-csi-driver-sidecar-mounter", "The gcsfuse sidecar container image name.")
 	// This is set at compile time
 	version = "unknown"
 )
@@ -67,6 +69,7 @@ func main() {
 	}
 
 	var mounter mount.Interface
+	var webhookConfig *webhook.Config
 	if *runController {
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
 			mm = metrics.NewMetricsManager()
@@ -82,6 +85,10 @@ func main() {
 		}
 
 		mounter = csimounter.New("")
+		webhookConfig, err = webhook.LoadConfig(*sidecarContainerImage, "latest", "100m", "30Mi", "5Gi")
+		if err != nil {
+			klog.Fatalf("Failed to load webhook config: %v", err)
+		}
 	}
 
 	if err != nil {
@@ -99,6 +106,7 @@ func main() {
 		Metrics:               mm,
 		Mounter:               mounter,
 		K8sClients:            clientset,
+		SidecarConfig:         webhookConfig,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

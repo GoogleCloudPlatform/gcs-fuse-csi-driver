@@ -58,29 +58,10 @@ spec:
     metadata:
       labels:
         app: gcp-gcs-csi-static-example
+      annotations:
+        gke-gcsfuse/volumes: "true"
     spec:
       containers:
-      - name: gke-gcsfuse-sidecar
-        image: jiaxun/gcs-fuse-csi-driver-sidecar-mounter:v0.3.0
-        imagePullPolicy: Always
-        securityContext:
-          allowPrivilegeEscalation: false
-          runAsUser: 0
-          runAsGroup: 0
-        args:
-          - "--v=5"
-        resources:
-          limits:
-            cpu: 100m
-            memory: 30Mi
-            ephemeral-storage: 5Gi
-          requests:
-            cpu: 100m
-            memory: 30Mi
-            ephemeral-storage: 5Gi
-        volumeMounts:
-        - mountPath: /tmp
-          name: gke-gcsfuse
       - name: writer
         image: busybox
         resources:
@@ -126,8 +107,6 @@ spec:
           readOnly: true
       serviceAccountName: gcs-csi
       volumes:
-      - name: gke-gcsfuse
-        emptyDir: {}
       - name: gcp-gcs-csi-pvc
         persistentVolumeClaim:
           claimName: gcp-gcs-csi-static-pvc

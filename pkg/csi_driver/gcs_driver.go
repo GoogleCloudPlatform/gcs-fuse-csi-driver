@@ -24,6 +24,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -41,6 +42,7 @@ type GCSDriverConfig struct {
 	Metrics               *metrics.Manager
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
+	SidecarConfig         *webhook.Config
 }
 
 type GCSDriver struct {

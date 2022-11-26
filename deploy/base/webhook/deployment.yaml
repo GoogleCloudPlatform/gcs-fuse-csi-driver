@@ -1,0 +1,63 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gcs-fuse-csi-driver-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gcs-fuse-csi-driver-webhook
+  template:
+    metadata:
+      labels:
+        app: gcs-fuse-csi-driver-webhook
+    spec:
+      containers:
+      - name: gcs-fuse-csi-driver-webhook
+        image: jiaxun/gcs-fuse-csi-driver-webhook
+        imagePullPolicy: Always
+        args: ['--cert-dir=/etc/gcs-fuse-csi-driver-webhook/certs', '--cert-name=cert.pem', '--key-name=key.pem']
+        resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+        ports:
+        - containerPort: 443 # change the port as needed
+        volumeMounts:
+          - name: gcs-fuse-csi-driver-webhook-certs
+            mountPath: /etc/gcs-fuse-csi-driver-webhook/certs
+            readOnly: true
+      volumes:
+        - name: gcs-fuse-csi-driver-webhook-certs
+          secret:
+            secretName: gcs-fuse-csi-driver-webhook-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gcs-fuse-csi-driver-webhook
+  namespace: gcs-fuse-csi-driver
+spec:
+  selector:
+    app: gcs-fuse-csi-driver-webhook
+  ports:
+    - protocol: TCP
+      port: 443 # Change if needed
+      targetPort: 443 # Change if the webserver image expects a different port

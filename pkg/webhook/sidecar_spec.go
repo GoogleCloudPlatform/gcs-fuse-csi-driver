@@ -17,54 +17,76 @@ limitations under the License.
 package webhook
 
 import (
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-func GetSidecarSpec() *v1.PodSpec {
-	spec := &v1.PodSpec{
-		Containers: []v1.Container{
-			{
-				Name:  "gke-gcsfuse-sidecar",
-				Image: "jiaxun/gcs-fuse-csi-driver-sidecar-mounter",
-				SecurityContext: &v1.SecurityContext{
-					AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-					RunAsUser:                func(i int64) *int64 { return &i }(0),
-					RunAsGroup:               func(i int64) *int64 { return &i }(0),
-				},
-				Args: []string{"--v=5"},
-				Resources: v1.ResourceRequirements{
-					Limits: v1.ResourceList{
-						v1.ResourceCPU:              resource.MustParse("100m"),
-						v1.ResourceMemory:           resource.MustParse("30Mi"),
-						v1.ResourceEphemeralStorage: resource.MustParse("5Gi"),
-					},
-					Requests: v1.ResourceList{
-						v1.ResourceCPU:              resource.MustParse("100m"),
-						v1.ResourceMemory:           resource.MustParse("30Mi"),
-						v1.ResourceEphemeralStorage: resource.MustParse("5Gi"),
-					},
-				},
-				VolumeMounts: []v1.VolumeMount{
-					{
-						Name:      "gke-gcsfuse",
-						MountPath: "/tmp",
-					},
-				},
+func GetSidecarContainerSpec(c *Config) v1.Container {
+	return v1.Container{
+		Name:  "gke-gcsfuse-sidecar",
+		Image: c.ContainerImage + ":" + c.ImageVersion,
+		SecurityContext: &v1.SecurityContext{
+			AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
+			RunAsUser:                func(i int64) *int64 { return &i }(0),
+			RunAsGroup:               func(i int64) *int64 { return &i }(0),
+		},
+		Args: []string{"--v=5"},
+		Resources: v1.ResourceRequirements{
+			Limits: v1.ResourceList{
+				v1.ResourceCPU:              c.CPULimit,
+				v1.ResourceMemory:           c.MemoryLimit,
+				v1.ResourceEphemeralStorage: c.EphemeralStorageLimit,
+			},
+			Requests: v1.ResourceList{
+				v1.ResourceCPU:              c.CPULimit,
+				v1.ResourceMemory:           c.MemoryLimit,
+				v1.ResourceEphemeralStorage: c.EphemeralStorageLimit,
 			},
 		},
-		Volumes: []v1.Volume{
+		VolumeMounts: []v1.VolumeMount{
 			{
-				Name: "gke-gcsfuse",
-				VolumeSource: v1.VolumeSource{
-					EmptyDir: &v1.EmptyDirVolumeSource{},
-				},
+				Name:      "gke-gcsfuse",
+				MountPath: "/tmp",
 			},
 		},
 	}
-	return spec
 }
 
-func GetPodWithSidecarSpec() *v1.Pod {
-	return &v1.Pod{Spec: *GetSidecarSpec()}
+func GetSidecarContainerVolumeSpec() v1.Volume {
+	return v1.Volume{
+		Name: "gke-gcsfuse",
+		VolumeSource: v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
+		},
+	}
+}
+
+// ValidatePod performs additional strict validation.
+func ValidatePodHasSidecarContainerInjected(c *Config, pod *corev1.Pod) bool {
+	targetContainer := GetSidecarContainerSpec(c)
+	targetVolume := GetSidecarContainerVolumeSpec()
+
+	containerInjected := false
+	volumeInjected := false
+	for _, c := range pod.Spec.Containers {
+		if c.Name == targetContainer.Name && strings.Split(c.Image, ":")[0] == strings.Split(targetContainer.Image, ":")[0] {
+			for _, v := range c.VolumeMounts {
+				if v.Name == targetContainer.VolumeMounts[0].Name && v.MountPath == targetContainer.VolumeMounts[0].MountPath {
+					containerInjected = true
+					break
+				}
+			}
+			break
+		}
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == targetVolume.Name && v.VolumeSource.EmptyDir != nil {
+			volumeInjected = true
+			break
+		}
+	}
+	return containerInjected && volumeInjected
 }

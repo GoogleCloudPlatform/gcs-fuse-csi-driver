@@ -19,3 +19,4 @@ resources:
 - setup
 - controller
 - node
+- webhook

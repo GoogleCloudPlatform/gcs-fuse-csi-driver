@@ -47,3 +47,12 @@ imageTag:
   name: jiaxun/gcs-fuse-csi-driver
   newTag: "v2.0.0"
 ---
+
+apiVersion: builtin
+kind: ImageTagTransformer
+metadata:
+  name: imagetag-gce-cs-driver-webhook
+imageTag:
+  name: jiaxun/gcs-fuse-csi-driver-webhook
+  newTag: "v2.0.0"
+---

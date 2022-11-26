@@ -29,9 +29,21 @@ type FakeClientset struct {
 }
 
 func (c *FakeClientset) GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error) {
-	pod := webhook.GetPodWithSidecarSpec()
-	pod.Name = name
-	pod.Namespace = namespace
+	config := webhook.FakeConfig()
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				webhook.GetSidecarContainerSpec(config),
+			},
+			Volumes: []v1.Volume{
+				webhook.GetSidecarContainerVolumeSpec(),
+			},
+		},
+	}
 	return pod, nil
 }
 

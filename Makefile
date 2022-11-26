@@ -27,6 +27,10 @@ sidecar-mounter:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags ${LDFLAGS} -o ${BINDIR}/sidecar-mounter cmd/sidecar_mounter/main.go
 
+webhook:
+	mkdir -p ${BINDIR}
+	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags ${LDFLAGS} -o ${BINDIR}/webhook cmd/webhook/main.go
+
 build-image-and-push:
 	docker build --file ./cmd/sidecar_mounter/Dockerfile --tag ${REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${VERSION} --build-arg VERSION=${VERSION} .
 	docker push ${REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${VERSION}
@@ -34,8 +38,12 @@ build-image-and-push:
 	docker build --file ./cmd/csi_driver/Dockerfile --tag ${REGISTRY}/gcs-fuse-csi-driver:${VERSION} --build-arg VERSION=${VERSION} .
 	docker push ${REGISTRY}/gcs-fuse-csi-driver:${VERSION}
 
+	docker build --file ./cmd/webhook/Dockerfile --tag ${REGISTRY}/gcs-fuse-csi-driver-webhook:${VERSION} --build-arg VERSION=${VERSION} .
+	docker push ${REGISTRY}/gcs-fuse-csi-driver-webhook:${VERSION}
+
 install:
 	kubectl apply -k deploy/overlays/${OVERLAY}
+	./deploy/base/webhook/create-cert.sh
 
 uninstall:
 	kubectl delete -k deploy/overlays/${OVERLAY}
