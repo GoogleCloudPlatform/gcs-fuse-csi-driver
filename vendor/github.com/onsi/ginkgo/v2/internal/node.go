@@ -47,19 +47,20 @@ type Node struct {
 	ReportEachBody       func(types.SpecReport)
 	ReportAfterSuiteBody func(types.Report)
 
-	MarkedFocus          bool
-	MarkedPending        bool
-	MarkedSerial         bool
-	MarkedOrdered        bool
-	MarkedOncePerOrdered bool
-	FlakeAttempts        int
-	MustPassRepeatedly   int
-	Labels               Labels
-	PollProgressAfter    time.Duration
-	PollProgressInterval time.Duration
-	NodeTimeout          time.Duration
-	SpecTimeout          time.Duration
-	GracePeriod          time.Duration
+	MarkedFocus                     bool
+	MarkedPending                   bool
+	MarkedSerial                    bool
+	MarkedOrdered                   bool
+	MarkedOncePerOrdered            bool
+	MarkedSuppressProgressReporting bool
+	FlakeAttempts                   int
+	MustPassRepeatedly              int
+	Labels                          Labels
+	PollProgressAfter               time.Duration
+	PollProgressInterval            time.Duration
+	NodeTimeout                     time.Duration
+	SpecTimeout                     time.Duration
+	GracePeriod                     time.Duration
 
 	NodeIDWhereCleanupWasGenerated uint
 }
@@ -247,7 +248,10 @@ func NewNode(deprecationTracker *types.DeprecationTracker, nodeType types.NodeTy
 				appendError(types.GinkgoErrors.InvalidDecoratorForNodeType(node.CodeLocation, nodeType, "OncePerOrdered"))
 			}
 		case t == reflect.TypeOf(SuppressProgressReporting):
-			deprecationTracker.TrackDeprecation(types.Deprecations.SuppressProgressReporting())
+			node.MarkedSuppressProgressReporting = bool(arg.(suppressProgressReporting))
+			if nodeType.Is(types.NodeTypeContainer) {
+				appendError(types.GinkgoErrors.InvalidDecoratorForNodeType(node.CodeLocation, nodeType, "SuppressProgressReporting"))
+			}
 		case t == reflect.TypeOf(FlakeAttempts(0)):
 			node.FlakeAttempts = int(arg.(FlakeAttempts))
 			if !nodeType.Is(types.NodeTypesForContainerAndIt) {

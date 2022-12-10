@@ -116,7 +116,6 @@ func (g *group) initialReportForSpec(spec Spec) types.SpecReport {
 		LeafNodeText:                spec.FirstNodeWithType(types.NodeTypeIt).Text,
 		LeafNodeLabels:              []string(spec.FirstNodeWithType(types.NodeTypeIt).Labels),
 		ParallelProcess:             g.suite.config.ParallelProcess,
-		RunningInParallel:           g.suite.isRunningInParallel(),
 		IsSerial:                    spec.Nodes.HasNodeMarkedSerial(),
 		IsInOrderedContainer:        !spec.Nodes.FirstNodeMarkedOrdered().IsZero(),
 		MaxFlakeAttempts:            spec.Nodes.GetMaxFlakeAttempts(),
@@ -320,10 +319,10 @@ func (g *group) run(specs Specs) {
 				g.suite.outputInterceptor.StartInterceptingOutput()
 				if attempt > 0 {
 					if g.suite.currentSpecReport.MaxMustPassRepeatedly > 0 {
-						g.suite.handleSpecEvent(types.SpecEvent{SpecEventType: types.SpecEventSpecRepeat, Attempt: attempt})
+						fmt.Fprintf(g.suite.writer, "\nGinkgo: Attempt #%d Passed.  Repeating...\n", attempt)
 					}
 					if g.suite.currentSpecReport.MaxFlakeAttempts > 0 {
-						g.suite.handleSpecEvent(types.SpecEvent{SpecEventType: types.SpecEventSpecRetry, Attempt: attempt})
+						fmt.Fprintf(g.suite.writer, "\nGinkgo: Attempt #%d Failed.  Retrying...\n", attempt)
 					}
 				}
 
@@ -342,10 +341,6 @@ func (g *group) run(specs Specs) {
 				if g.suite.currentSpecReport.MaxFlakeAttempts > 0 {
 					if g.suite.currentSpecReport.State.Is(types.SpecStatePassed | types.SpecStateSkipped | types.SpecStateAborted | types.SpecStateInterrupted) {
 						break
-					} else if attempt < maxAttempts-1 {
-						af := types.AdditionalFailure{State: g.suite.currentSpecReport.State, Failure: g.suite.currentSpecReport.Failure}
-						af.Failure.Message = fmt.Sprintf("Failure recorded during attempt %d:\n%s", attempt+1, af.Failure.Message)
-						g.suite.currentSpecReport.AdditionalFailures = append(g.suite.currentSpecReport.AdditionalFailures, af)
 					}
 				}
 			}

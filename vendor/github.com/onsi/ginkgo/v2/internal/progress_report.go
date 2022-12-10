@@ -48,10 +48,13 @@ type ProgressStepCursor struct {
 	StartTime    time.Time
 }
 
-func NewProgressReport(isRunningInParallel bool, report types.SpecReport, currentNode Node, currentNodeStartTime time.Time, currentStep types.SpecEvent, gwOutput string, timelineLocation types.TimelineLocation, additionalReports []string, sourceRoots []string, includeAll bool) (types.ProgressReport, error) {
+func NewProgressReport(isRunningInParallel bool, report types.SpecReport, currentNode Node, currentNodeStartTime time.Time, currentStep ProgressStepCursor, gwOutput string, additionalReports []string, sourceRoots []string, includeAll bool) (types.ProgressReport, error) {
 	pr := types.ProgressReport{
-		ParallelProcess:         report.ParallelProcess,
-		RunningInParallel:       isRunningInParallel,
+		ParallelProcess:   report.ParallelProcess,
+		RunningInParallel: isRunningInParallel,
+
+		Time: time.Now(),
+
 		ContainerHierarchyTexts: report.ContainerHierarchyTexts,
 		LeafNodeText:            report.LeafNodeText,
 		LeafNodeLocation:        report.LeafNodeLocation,
@@ -62,14 +65,14 @@ func NewProgressReport(isRunningInParallel bool, report types.SpecReport, curren
 		CurrentNodeLocation:  currentNode.CodeLocation,
 		CurrentNodeStartTime: currentNodeStartTime,
 
-		CurrentStepText:      currentStep.Message,
+		CurrentStepText:      currentStep.Text,
 		CurrentStepLocation:  currentStep.CodeLocation,
-		CurrentStepStartTime: currentStep.TimelineLocation.Time,
+		CurrentStepStartTime: currentStep.StartTime,
 
 		AdditionalReports: additionalReports,
 
 		CapturedGinkgoWriterOutput: gwOutput,
-		TimelineLocation:           timelineLocation,
+		GinkgoWriterOffset:         len(gwOutput),
 	}
 
 	goroutines, err := extractRunningGoroutines()
