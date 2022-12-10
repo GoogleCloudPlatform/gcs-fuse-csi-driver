@@ -56,3 +56,13 @@ imageTag:
   name: jiaxun/gcs-fuse-csi-driver-webhook
   newTag: "v2.0.0"
 ---
+
+apiVersion: builtin
+kind: PatchTransformer
+metadata:
+  name: patch-gce-cs-driver-sidecar-container-image-name
+patch: '[{"op": "replace", "path": "/spec/template/spec/containers/0/env/1/value", "value": "v2.0.0"}]'
+target:
+  name: gcs-fuse-csi-driver-webhook
+  kind: Deployment
+---

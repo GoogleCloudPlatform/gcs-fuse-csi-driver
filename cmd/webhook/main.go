@@ -33,11 +33,11 @@ var (
 	certDir               = flag.String("cert-dir", "/etc/gcs-fuse-csi-driver-webhook/certs", "The directory that contains the server key and certificate.")
 	certName              = flag.String("cert-name", "cert.pem", "The server certificate name.")
 	keyName               = flag.String("key-name", "key.pem", "The server key name.")
-	sidecarContainerImage = flag.String("container-image", "jiaxun/gcs-fuse-csi-driver-sidecar-mounter", "The gcsfuse sidecar container image name.")
-	sidecarImageVersion   = flag.String("image-version", "v2.0.0", "The gcsfuse sidecar container image version.")
-	cpuLimit              = flag.String("cpu-limit", "500m", "The default CPU limit for gcsfuse sidecar container.")
-	memoryLimit           = flag.String("memory-limit", "300Mi", "The default memory limit for gcsfuse sidecar container.")
-	ephemeralStorageLimit = flag.String("ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
+	sidecarImageName      = flag.String("sidecar-image-name", "jiaxun/gcs-fuse-csi-driver-sidecar-mounter", "The gcsfuse sidecar container image name.")
+	sidecarImageVersion   = flag.String("sidecar-image-version", "v2.0.0", "The gcsfuse sidecar container image version.")
+	cpuLimit              = flag.String("sidecar-cpu-limit", "500m", "The default CPU limit for gcsfuse sidecar container.")
+	memoryLimit           = flag.String("sidecar-memory-limit", "300Mi", "The default memory limit for gcsfuse sidecar container.")
+	ephemeralStorageLimit = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	// This is set at compile time
 	version = "unknown"
 )
@@ -49,7 +49,7 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v", version)
 
 	// Load webhook config
-	c, err := wh.LoadConfig(*sidecarContainerImage, *sidecarImageVersion, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
+	c, err := wh.LoadConfig(*sidecarImageName, *sidecarImageVersion, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
 	if err != nil {
 		klog.Fatalf("Unable to load webhook config: %v", err)
 	}

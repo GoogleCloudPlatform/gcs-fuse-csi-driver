@@ -13,7 +13,7 @@
 # limitations under the License.
 BINDIR ?= bin
 REGISTRY ?= jiaxun
-VERSION ?= v0.3.0
+VERSION ?= v0.4.0
 LDFLAGS ?= "-s -w -X main.version=${VERSION} -extldflags '-static'"
 OVERLAY ?= stable
 

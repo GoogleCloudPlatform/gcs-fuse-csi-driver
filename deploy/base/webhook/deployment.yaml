@@ -29,8 +29,20 @@ spec:
       containers:
       - name: gcs-fuse-csi-driver-webhook
         image: jiaxun/gcs-fuse-csi-driver-webhook
-        imagePullPolicy: Always
-        args: ['--cert-dir=/etc/gcs-fuse-csi-driver-webhook/certs', '--cert-name=cert.pem', '--key-name=key.pem']
+        args:
+          - '--sidecar-image-name=$(SIDECAR_IMAGE_NAME)'
+          - '--sidecar-image-version=$(SIDECAR_IMAGE_VERSION)'
+          - '--sidecar-cpu-limit=500m'
+          - '--sidecar-memory-limit=300Mi'
+          - '--sidecar-ephemeral-storage-limit=5Gi'
+          - '--cert-dir=/etc/gcs-fuse-csi-driver-webhook/certs'
+          - '--cert-name=cert.pem'
+          - '--key-name=key.pem'
+        env:
+          - name: SIDECAR_IMAGE_NAME
+            value: jiaxun/gcs-fuse-csi-driver-sidecar-mounter
+          - name: SIDECAR_IMAGE_VERSION
+            value: ''
         resources:
           limits:
             cpu: 200m

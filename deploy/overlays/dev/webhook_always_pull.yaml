@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: gcs-fuse-csi-driver
-resources:
-- setup
-- controller
-- node
-- webhook
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: gcs-fuse-csi-driver-webhook
+spec:
+  template:
+    spec:
+      containers:
+        - name: gcs-fuse-csi-driver-webhook
+          imagePullPolicy: Always
