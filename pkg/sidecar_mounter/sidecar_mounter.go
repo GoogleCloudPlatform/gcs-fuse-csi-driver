@@ -107,15 +107,17 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 
 func validateMountArgs(volumeName string, args []string) []string {
 	allowedBoolFlags := map[string]bool{
-		"debug_gcs":   true,
-		"debug_fuse":  true,
-		"debug_http":  true,
-		"debug_fs":    true,
-		"debug_mutex": true,
+		"debug_gcs":     true,
+		"debug_fuse":    true,
+		"debug_http":    true,
+		"debug_fs":      true,
+		"debug_mutex":   true,
+		"disable-http2": true,
 	}
 	allowedIntFlags := map[string]bool{
-		"uid": true,
-		"gid": true,
+		"uid":                true,
+		"gid":                true,
+		"max-conns-per-host": true,
 	}
 
 	validatedArgs := []string{}

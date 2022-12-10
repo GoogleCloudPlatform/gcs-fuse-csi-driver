@@ -130,6 +130,20 @@ kubectl delete -f ./examples/ephemeral/deployment-non-root.yaml
 kubectl delete -f ./examples/ephemeral/deployment-two-vols.yaml
 ```
 
+### Performance Testing
+```bash
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/perf-test/pod.yaml
+
+# make sure the cluster have nodes using n2-standard-32 instance type
+kubectl apply -f ./examples/perf-test/pod.yaml
+
+# the FIO test may last ~2 hours
+# when the test is done, you can find the result output in your bucket, e.g. <bucket-name>/fio-logs/output-2022-12-07.json
+kubectl delete -f ./examples/perf-test/pod.yaml
+```
+
 ### Machine Learning Application Example
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
