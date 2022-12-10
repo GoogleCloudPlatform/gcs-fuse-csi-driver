@@ -18,6 +18,7 @@ package clientset
 
 import (
 	"context"
+	"fmt"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
@@ -31,6 +32,7 @@ import (
 type Interface interface {
 	GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (*authenticationv1.TokenRequest, error)
+	GetGCPServiceAccountName(ctx context.Context, namespace, name string, options metav1.GetOptions) (string, error)
 }
 
 type Clientset struct {
@@ -78,4 +80,19 @@ func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, na
 			options,
 		)
 	return resp, err
+}
+
+func (c *Clientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string, options metav1.GetOptions) (string, error) {
+	resp, err := c.k8sClients.
+		CoreV1().
+		ServiceAccounts(namespace).
+		Get(
+			ctx,
+			name,
+			options,
+		)
+	if err != nil {
+		return "", fmt.Errorf("Kubernetes ServiceAccount.Get API: %v", err)
+	}
+	return resp.Annotations["iam.gke.io/gcp-service-account"], nil
 }

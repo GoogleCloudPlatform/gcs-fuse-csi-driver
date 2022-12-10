@@ -4,32 +4,58 @@
 See the documentation [GCS FUSE CSI Driver Installation](../docs/installation.md).
 
 ## Setup Service Accounts
-In order to authenticate with GCP, you will need to setup a Kubernetes Service Account and grant the GCS permissions to the serice account.
+In order to authenticate with GCP, you will need to do the following steps:
+1. Setup a GCP Service Account.
+2. Grant the GCS permissions to the GCP Service Account.
+3. Setup a Kubernetes Service Account.
+4. Bind the the Kubernetes Service Account with the GCP Service Account.
+
+### Define the variables
+```bash
+# Relace <gcs-bucket-project-id> with the id of the project where your GCS bucket lives.
+# Relace <gcp-service-account-name> with the name of the GCP service account. The service account should in the GCS bucket project.
+# Relace <cluster-project-id> with the id of the project where your GKE cluster lives.
+GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
+GSA_NAME=<gcp-service-account-name>
+CLUSTER_PROJECT_ID=<cluster-project-id>
+```
+
+### Create GCP Service Account
+```bash
+gcloud iam service-accounts create ${GSA_NAME} \
+    --project=${GCS_BUCKET_PROJECT_ID}
+```
+
+### Grant GCS Permissions to the GCP Service Account
+```bash
+# Choose "[2] None" for binding condition if you want to apply the permissions to all the GCS buckets in the project.
+gcloud projects add-iam-policy-binding ${CLUSTER_PROJECT_ID} \
+    --member "serviceAccount:${GSA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
+    --role "roles/storage.admin"
+
+# Optionally, run the following command if you only want to apply permissions to a specific bucket.
+BUCKET_NAME=<gcs-bucket-name>
+gcloud projects add-iam-policy-binding ${CLUSTER_PROJECT_ID} \
+    --member "serviceAccount:${GSA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
+    --role "roles/storage.admin" \
+    --condition="expression=resource.name.startsWith(\"projects/$GCS_BUCKET_PROJECT_ID/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
+```
+
 ### Create Kubernetes Service Account
 ```bash
 kubectl create namespace gcs-csi-example
 kubectl create serviceaccount gcs-csi --namespace gcs-csi-example
 ```
 
-### Grant GCS Permissions to the Kubernetes Service Account
+### Bind the Kubernetes Service Account with the GCP Service Account
 ```bash
-# Relace <gcs-bucket-project-id> with the id of the project where your GCS bucket lives.
-# Relace <cluster-project-id> with the id of the project where your GKE cluster lives.
-# Choose "[2] None" for binding condition if you want to apply the permissions to all the GCS buckets in the project.
-GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
-CLUSTER_PROJECT_ID=<cluster-project-id>
-gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
-    --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[gcs-csi-example/gcs-csi]" \
-    --role "roles/storage.admin"
+gcloud iam service-accounts add-iam-policy-binding ${GSA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com \
+    --role roles/iam.workloadIdentityUser \
+    --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[gcs-csi-example/gcs-csi]"
 
-# Optionally, run the following command if you only want to apply permissions to a specific bucket.
-GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
-CLUSTER_PROJECT_ID=<cluster-project-id>
-BUCKET_NAME=<gcs-bucket-name>
-gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
-    --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[gcs-csi-example/gcs-csi]" \
-    --role "roles/storage.admin" \
-    --condition="expression=resource.name.startsWith(\"projects/$GCS_BUCKET_PROJECT_ID/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
+kubectl annotate serviceaccount gcs-csi \
+    --namespace gcs-csi-example \
+    iam.gke.io/gcp-service-account=${GSA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 ## Install Example Applications

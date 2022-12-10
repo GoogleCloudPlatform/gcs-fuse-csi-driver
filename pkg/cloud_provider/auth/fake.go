@@ -18,7 +18,6 @@ package auth
 
 import (
 	"context"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -29,26 +28,15 @@ func NewFakeTokenManager() TokenManager {
 	return &fakeTokenManager{}
 }
 
-func (tm *fakeTokenManager) GetK8sServiceAccountFromVolumeContext(volumeContext map[string]string) (*K8sServiceAccountInfo, error) {
-	sa := &K8sServiceAccountInfo{
-		Name:      volumeContext[VolumeContextKeyServiceAccountName],
-		Namespace: volumeContext[VolumeContextKeyPodNamespace],
-		Token: &oauth2.Token{
-			AccessToken: "test-token",
-			Expiry:      time.Now().Add(time.Hour),
-		},
-	}
-	return sa, nil
-}
-
-func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context, sa *K8sServiceAccountInfo) (oauth2.TokenSource, error) {
-	return &FakeGCPTokenSource{k8sSA: sa}, nil
+func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context, saNamespace, saName string) (oauth2.TokenSource, error) {
+	return &FakeGCPTokenSource{k8sSAName: saName, k8sSANamespace: saNamespace}, nil
 }
 
 type FakeGCPTokenSource struct {
-	k8sSA *K8sServiceAccountInfo
+	k8sSAName      string
+	k8sSANamespace string
 }
 
 func (ts *FakeGCPTokenSource) Token() (*oauth2.Token, error) {
-	return ts.k8sSA.Token, nil
+	return nil, nil
 }

@@ -50,3 +50,7 @@ func (c *FakeClientset) GetPod(ctx context.Context, namespace, name string) (*v1
 func (c *FakeClientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (*authenticationv1.TokenRequest, error) {
 	return nil, nil
 }
+
+func (c *FakeClientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string, options metav1.GetOptions) (string, error) {
+	return "", nil
+}

@@ -17,10 +17,6 @@
   ```
 
 ## Install
-- Run the following command to replace `<project-id>` with your GKE cluster project ID in file [csi_driver_audience.yaml](../deploy/overlays/stable/csi_driver_audience.yaml).
-  ```bash
-  sed -i "s/<project-id>/$CLUSTER_PROJECT_ID/g" ./deploy/overlays/stable/csi_driver_audience.yaml
-  ```
 - Run the following command to patch the webhook CA bundl.
     ```bash
   ./deploy/base/webhook/patch-ca-bundle.sh

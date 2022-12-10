@@ -10,9 +10,12 @@ cloud.google.com/go/compute/internal
 # cloud.google.com/go/compute/metadata v0.2.1
 ## explicit; go 1.19
 cloud.google.com/go/compute/metadata
-# cloud.google.com/go/iam v0.7.0
+# cloud.google.com/go/iam v0.8.0
 ## explicit; go 1.19
 cloud.google.com/go/iam
+cloud.google.com/go/iam/credentials/apiv1
+cloud.google.com/go/iam/credentials/apiv1/credentialspb
+cloud.google.com/go/iam/internal
 # cloud.google.com/go/storage v1.28.0
 ## explicit; go 1.19
 cloud.google.com/go/storage
@@ -308,7 +311,7 @@ google.golang.org/appengine/internal/socket
 google.golang.org/appengine/internal/urlfetch
 google.golang.org/appengine/socket
 google.golang.org/appengine/urlfetch
-# google.golang.org/genproto v0.0.0-20221118155620-16455021b5e6
+# google.golang.org/genproto v0.0.0-20221201164419-0e50fba7f41c
 ## explicit; go 1.19
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations

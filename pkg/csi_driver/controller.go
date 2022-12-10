@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -223,11 +222,7 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "serviceAccountNamespace must be provided in secret")
 	}
-	sa := &auth.K8sServiceAccountInfo{
-		Name:      serviceAccountName,
-		Namespace: serviceAccountNamespace,
-	}
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, sa)
+	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, serviceAccountName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
 	}

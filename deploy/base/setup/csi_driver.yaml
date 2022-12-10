@@ -23,5 +23,3 @@ spec:
     - Persistent
     - Ephemeral
   requiresRepublish: true
-  tokenRequests:
-    - audience: <project-id>.svc.id.goog

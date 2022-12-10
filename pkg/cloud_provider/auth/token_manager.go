@@ -18,25 +18,20 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"golang.org/x/oauth2"
-	authenticationv1 "k8s.io/api/authentication/v1"
 )
 
 // NodePublishVolume VolumeContext keys
 const (
-	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
-	VolumeContextKeyServiceAccountName  = "csi.storage.k8s.io/serviceAccount.name"
-	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
+	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
+	VolumeContextKeyPodNamespace       = "csi.storage.k8s.io/pod.namespace"
 )
 
 type TokenManager interface {
-	GetTokenSourceFromK8sServiceAccount(ctx context.Context, sa *K8sServiceAccountInfo) (oauth2.TokenSource, error)
-	GetK8sServiceAccountFromVolumeContext(volumeContext map[string]string) (*K8sServiceAccountInfo, error)
+	GetTokenSourceFromK8sServiceAccount(ctx context.Context, saNamespace, saName string) (oauth2.TokenSource, error)
 }
 
 type tokenManager struct {
@@ -52,45 +47,13 @@ func NewTokenManager(meta metadata.Service, clientset clientset.Interface) Token
 	return &tm
 }
 
-func (tm *tokenManager) GetK8sServiceAccountFromVolumeContext(vc map[string]string) (*K8sServiceAccountInfo, error) {
-	tokenString, ok := vc[VolumeContextKeyServiceAccountToken]
-	if !ok {
-		return nil, fmt.Errorf("VolumeContext %s must be provided", VolumeContextKeyServiceAccountToken)
-	}
-	tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
-	if err := json.Unmarshal([]byte(tokenString), &tokenMap); err != nil {
-		return nil, err
-	}
-
-	saName, ok := vc[VolumeContextKeyServiceAccountName]
-	if !ok {
-		return nil, fmt.Errorf("VolumeContext %s must be provided", VolumeContextKeyServiceAccountName)
-	}
-
-	saNamespace, ok := vc[VolumeContextKeyPodNamespace]
-	if !ok {
-		return nil, fmt.Errorf("VolumeContext %s must be provided", VolumeContextKeyPodNamespace)
-	}
-
-	sa := &K8sServiceAccountInfo{
-		Name:      saName,
-		Namespace: saNamespace,
-	}
-	if trs, ok := tokenMap[tm.meta.GetIdentityPool()]; ok {
-		sa.Token = &oauth2.Token{
-			AccessToken: trs.Token,
-			Expiry:      trs.ExpirationTimestamp.Time,
-		}
-	}
-	return sa, nil
-}
-
-func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context, sa *K8sServiceAccountInfo) (oauth2.TokenSource, error) {
+func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context, saNamespace, saName string) (oauth2.TokenSource, error) {
 	tokenSource := &GCPTokenSource{
-		ctx:        ctx,
-		meta:       tm.meta,
-		k8sSA:      sa,
-		k8sClients: tm.k8sClients,
+		ctx:            ctx,
+		meta:           tm.meta,
+		k8sSAName:      saName,
+		k8sSANamespace: saNamespace,
+		k8sClients:     tm.k8sClients,
 	}
 	return tokenSource, nil
 }
