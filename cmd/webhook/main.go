@@ -35,9 +35,9 @@ var (
 	keyName               = flag.String("key-name", "key.pem", "The server key name.")
 	sidecarContainerImage = flag.String("container-image", "jiaxun/gcs-fuse-csi-driver-sidecar-mounter", "The gcsfuse sidecar container image name.")
 	sidecarImageVersion   = flag.String("image-version", "v2.0.0", "The gcsfuse sidecar container image version.")
-	cpuLimit              = flag.String("cpu-limit", "100m", "The CPU limit for gcsfuse sidecar container.")
-	memoryLimit           = flag.String("memory-limit", "30Mi", "The memory limit for gcsfuse sidecar container.")
-	ephemeralStorageLimit = flag.String("ephemeral-storage-limit", "5Gi", "The ephemeral storage limit for gcsfuse sidecar container.")
+	cpuLimit              = flag.String("cpu-limit", "500m", "The default CPU limit for gcsfuse sidecar container.")
+	memoryLimit           = flag.String("memory-limit", "300Mi", "The default memory limit for gcsfuse sidecar container.")
+	ephemeralStorageLimit = flag.String("ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	// This is set at compile time
 	version = "unknown"
 )

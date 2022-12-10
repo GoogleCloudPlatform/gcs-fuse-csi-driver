@@ -25,8 +25,9 @@ import (
 
 func GetSidecarContainerSpec(c *Config) v1.Container {
 	return v1.Container{
-		Name:  "gke-gcsfuse-sidecar",
-		Image: c.ContainerImage + ":" + c.ImageVersion,
+		Name:            "gke-gcsfuse-sidecar",
+		Image:           c.ContainerImage + ":" + c.ImageVersion,
+		ImagePullPolicy: "Always",
 		SecurityContext: &v1.SecurityContext{
 			AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
 			RunAsUser:                func(i int64) *int64 { return &i }(0),
