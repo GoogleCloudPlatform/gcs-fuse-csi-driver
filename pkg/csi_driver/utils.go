@@ -70,6 +70,8 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 			nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = "***stripped***"
 			strippedReq = fmt.Sprintf("%+v", nodePublishReq)
 			nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = token
+		} else {
+			strippedReq = fmt.Sprintf("%+v", req)
 		}
 	default:
 		strippedReq = fmt.Sprintf("%+v", req)

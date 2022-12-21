@@ -26,7 +26,7 @@ spec:
   nodeSelector:
     node.kubernetes.io/instance-type: n2-standard-32
   containers:
-  - name: perf-test-pod
+  - name: perf-test
     image: ubuntu:20.04
     env:
       - name: MY_POD_NAME
@@ -43,7 +43,7 @@ spec:
         mkdir /gcs/256kb -p;
         mkdir /gcs/3mb -p;
         mkdir /gcs/5mb -p;
-        mkdir /gcs/30mb -p;
+        mkdir /gcs/50mb -p;
         mkdir /gcs/fio-logs -p;
         fio /seq_rand_read_write.fio --lat_percentiles 1 --output-format=json --output='/output.json';
         echo "Copying FIO test result...";
@@ -61,7 +61,7 @@ spec:
     volumeMounts:
     - name: gcs-fuse-csi-ephemeral
       mountPath: /gcs
-  serviceAccountName: gcs-csi-test
+  serviceAccountName: gcs-csi
   volumes:
   - name: gcs-fuse-csi-ephemeral
     csi:
