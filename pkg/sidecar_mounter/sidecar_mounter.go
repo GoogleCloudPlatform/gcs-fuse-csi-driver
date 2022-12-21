@@ -21,7 +21,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"k8s.io/klog/v2"
@@ -106,44 +105,29 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 }
 
 func validateMountArgs(volumeName string, args []string) []string {
-	allowedBoolFlags := map[string]bool{
-		"debug_gcs":     true,
-		"debug_fuse":    true,
-		"debug_http":    true,
-		"debug_fs":      true,
-		"debug_mutex":   true,
-		"disable-http2": true,
-	}
-	allowedIntFlags := map[string]bool{
-		"uid":                true,
-		"gid":                true,
-		"max-conns-per-host": true,
+	disallowedFlags := map[string]bool{
+		"implicit-dirs": true,
+		"app-name":      true,
+		"temp-dir":      true,
+		"foreground":    true,
+		"log-file":      true,
 	}
 
 	validatedArgs := []string{}
 	invalidArgs := []string{}
 	for _, arg := range args {
-		argPair := strings.Split(arg, "=")
-		switch len(argPair) {
-		case 1:
-			if ok, prs := allowedBoolFlags[argPair[0]]; prs && ok {
-				validatedArgs = append(validatedArgs, "--"+argPair[0])
-			} else {
-				invalidArgs = append(invalidArgs, arg)
-			}
-		case 2:
-			if ok, prs := allowedIntFlags[argPair[0]]; prs && ok {
-				if _, err := strconv.Atoi(argPair[1]); err == nil {
-					validatedArgs = append(validatedArgs, "--"+argPair[0])
-					validatedArgs = append(validatedArgs, argPair[1])
-				} else {
-					invalidArgs = append(invalidArgs, arg)
-				}
-			} else {
-				invalidArgs = append(invalidArgs, arg)
-			}
-		default:
+		argPair := strings.SplitN(arg, "=", 2)
+		if len(argPair) == 0 {
+			continue
+		}
+		if !disallowedFlags[argPair[0]] {
+			validatedArgs = append(validatedArgs, "--"+argPair[0])
+		} else {
 			invalidArgs = append(invalidArgs, arg)
+			continue
+		}
+		if len(argPair) > 1 {
+			validatedArgs = append(validatedArgs, argPair[1])
 		}
 	}
 
