@@ -27,10 +27,10 @@ spec:
   - name: gcsfuse-e2e-test
     image: ubuntu:20.04
     env:
-      - name: MY_POD_NAME
+      - name: MY_NODE_NAME
         valueFrom:
           fieldRef:
-            fieldPath: metadata.name
+            fieldPath: spec.nodeName
     securityContext:
        privileged: true
     command:
@@ -49,7 +49,7 @@ spec:
         GODEBUG="asyncpreemptoff=1" go test -v --args mnt_dir_path="/gcs" > /output.log;
         echo "Copying gcsfuse E2E test result...";
         mkdir /gcs/e2e-logs -p;
-        cp /output.log /gcs/e2e-logs/output-${MY_POD_NAME}-$(date '+%Y-%m-%d').log;
+        cp /output.log /gcs/e2e-logs/output-${MY_NODE_NAME}-$(date '+%Y-%m-%d').log;
         sleep infinity;
     resources:
       limits:
