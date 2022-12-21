@@ -144,6 +144,20 @@ kubectl apply -f ./examples/perf-test/pod.yaml
 kubectl delete -f ./examples/perf-test/pod.yaml
 ```
 
+### GCS Fuse E2E Test
+```bash
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/gcsfuse-e2e-test/pod.yaml
+
+# create the test pod
+kubectl apply -f ./examples/gcsfuse-e2e-test/pod.yaml
+
+# the e2e test may last ~5 minutes
+# when the test is done, you can find the result output in your bucket, e.g. <bucket-name>/e2e-logs/output-2022-12-07.json
+kubectl delete -f ./examples/gcsfuse-e2e-test/pod.yaml
+```
+
 ### Machine Learning Application Example
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
