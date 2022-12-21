@@ -130,3 +130,8 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
             type: DirectoryOrCreate
+      # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+      # See "special case". This will tolerate everything. Node component should
+      # be scheduled on all nodes.
+      tolerations:
+      - operator: Exists

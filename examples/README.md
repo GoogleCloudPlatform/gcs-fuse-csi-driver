@@ -29,13 +29,13 @@ gcloud iam service-accounts create ${GSA_NAME} \
 ### Grant GCS Permissions to the GCP Service Account
 ```bash
 # Choose "[2] None" for binding condition if you want to apply the permissions to all the GCS buckets in the project.
-gcloud projects add-iam-policy-binding ${CLUSTER_PROJECT_ID} \
+gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
     --member "serviceAccount:${GSA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
     --role "roles/storage.admin"
 
 # Optionally, run the following command if you only want to apply permissions to a specific bucket.
 BUCKET_NAME=<gcs-bucket-name>
-gcloud projects add-iam-policy-binding ${CLUSTER_PROJECT_ID} \
+gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
     --member "serviceAccount:${GSA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
     --role "roles/storage.admin" \
     --condition="expression=resource.name.startsWith(\"projects/$GCS_BUCKET_PROJECT_ID/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
