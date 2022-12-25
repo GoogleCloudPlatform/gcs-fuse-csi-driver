@@ -37,16 +37,14 @@ NAME                                                  ATTACHREQUIRED   PODINFOON
 csidriver.storage.k8s.io/gcsfuse.csi.storage.gke.io   false            true             false             <cluster-project-id>-gke-dev.svc.id.goog   true                Persistent,Ephemeral   3m49s
 
 NAME                                          READY   UP-TO-DATE   AVAILABLE   AGE
-deployment.apps/gcs-fuse-csi-controller       3/3     3            3           3m49s
+deployment.apps/gcs-fuse-csi-controller       1/1     1            1           3m49s
 deployment.apps/gcs-fuse-csi-driver-webhook   1/1     1            1           3m49s
 
 NAME                               DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
 daemonset.apps/gcs-fuse-csi-node   3         3         3       3            3           kubernetes.io/os=linux   3m49s
 
 NAME                                               READY   STATUS    RESTARTS   AGE
-pod/gcs-fuse-csi-controller-8947bbb9f-8spw6        3/3     Running   0          3m49s
-pod/gcs-fuse-csi-controller-8947bbb9f-9w627        3/3     Running   0          3m49s
-pod/gcs-fuse-csi-controller-8947bbb9f-hvpl9        3/3     Running   0          3m49s
+pod/gcs-fuse-csi-controller-8947bbb9f-8spw6        1/1     Running   0          3m49s
 pod/gcs-fuse-csi-driver-webhook-565f85dcb9-pdlb9   1/1     Running   0          3m49s
 pod/gcs-fuse-csi-node-b6rs2                        3/3     Running   0          3m49s
 pod/gcs-fuse-csi-node-ng9xs                        3/3     Running   0          3m49s

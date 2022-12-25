@@ -17,7 +17,7 @@ apiVersion: apps/v1
 metadata:
   name: gcs-fuse-csi-controller
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: gcs-fuse-csi-driver
