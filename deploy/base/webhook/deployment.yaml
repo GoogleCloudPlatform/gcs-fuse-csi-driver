@@ -32,9 +32,9 @@ spec:
         args:
           - '--sidecar-image-name=$(SIDECAR_IMAGE_NAME)'
           - '--sidecar-image-version=$(SIDECAR_IMAGE_VERSION)'
-          - '--sidecar-cpu-limit=500m'
-          - '--sidecar-memory-limit=300Mi'
-          - '--sidecar-ephemeral-storage-limit=5Gi'
+          - '--sidecar-cpu-limit=300m'
+          - '--sidecar-memory-limit=100Mi'
+          - '--sidecar-ephemeral-storage-limit=1Gi'
           - '--cert-dir=/etc/gcs-fuse-csi-driver-webhook/certs'
           - '--cert-name=cert.pem'
           - '--key-name=key.pem'
