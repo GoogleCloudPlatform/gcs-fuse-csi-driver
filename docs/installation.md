@@ -17,10 +17,6 @@
   ```
 
 ## Install
-- Run the following command to patch the webhook CA bundl.
-    ```bash
-  ./deploy/base/webhook/patch-ca-bundle.sh
-  ```
 - Run the following command to install the driver. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
   ```bash
   make install

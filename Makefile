@@ -42,6 +42,7 @@ build-image-and-push:
 	docker push ${REGISTRY}/gcs-fuse-csi-driver-webhook:${VERSION}
 
 install:
+	./deploy/base/webhook/patch-ca-bundle.sh
 	kubectl apply -k deploy/overlays/${OVERLAY}
 	./deploy/base/webhook/create-cert.sh
 
