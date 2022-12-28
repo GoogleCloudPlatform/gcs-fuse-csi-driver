@@ -116,14 +116,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	defer s.volumeLocks.Release(targetPath)
 
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists
-	storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to prepare storage service: %v", err)
-	}
+	if bucketName != "_" {
+		storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to prepare storage service: %v", err)
+		}
 
-	_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get GCS bucket %q: %v", bucketName, err)
+		_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get GCS bucket %q: %v", bucketName, err)
+		}
 	}
 
 	// Check if the sidecar container was injected into the Pod
