@@ -39,7 +39,7 @@ type Clientset struct {
 	k8sClients kubernetes.Interface
 }
 
-func New(kubeconfigPath string) (*Clientset, error) {
+func New(kubeconfigPath string) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {

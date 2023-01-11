@@ -23,18 +23,13 @@ import (
 )
 
 type Service interface {
-	GetZone() string
 	GetProjectID() string
-	GetClusterName() string
 	GetIdentityPool() string
 	GetIdentityProvider() string
 }
 
 type metadataServiceManager struct {
-	// Current zone the driver is running in
-	zone             string
 	projectID        string
-	clusterName      string
 	identityPool     string
 	identityProvider string
 }
@@ -42,10 +37,6 @@ type metadataServiceManager struct {
 var _ Service = &metadataServiceManager{}
 
 func NewMetadataService() (Service, error) {
-	zone, err := metadata.Zone()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current zone: %v", err)
-	}
 	projectID, err := metadata.ProjectID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %v", err)
@@ -71,23 +62,13 @@ func NewMetadataService() (Service, error) {
 
 	return &metadataServiceManager{
 		projectID:        projectID,
-		zone:             zone,
-		clusterName:      clusterName,
 		identityPool:     identityPool,
 		identityProvider: identityProvider,
 	}, nil
 }
 
-func (manager *metadataServiceManager) GetZone() string {
-	return manager.zone
-}
-
 func (manager *metadataServiceManager) GetProjectID() string {
 	return manager.projectID
-}
-
-func (manager *metadataServiceManager) GetClusterName() string {
-	return manager.clusterName
 }
 
 func (manager *metadataServiceManager) GetIdentityPool() string {

@@ -31,6 +31,8 @@ import (
 	"k8s.io/mount-utils"
 )
 
+const DefaultName = "gcsfuse.csi.storage.gke.io"
+
 type GCSDriverConfig struct {
 	Name                  string // Driver name
 	Version               string // Driver version
