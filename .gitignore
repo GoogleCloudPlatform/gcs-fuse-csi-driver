@@ -43,3 +43,7 @@ gcsfuse/
 *.un~
 Session.vim
 .netrwhist
+
+# Kubernetes test files
+_artifacts/
+_rundir/

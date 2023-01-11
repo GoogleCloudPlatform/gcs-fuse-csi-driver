@@ -18,36 +18,36 @@ package metadata
 
 import "fmt"
 
-type fakeServiceManager struct{}
+type fakeServiceManager struct {
+	projectID   string
+	location    string
+	clusterName string
+}
 
 var _ Service = &fakeServiceManager{}
 
-func NewFakeService() Service {
-	return &fakeServiceManager{}
-}
-
-func (manager *fakeServiceManager) GetZone() string {
-	return "us-central1-c"
+func NewFakeService(projectID, location, clusterName string) Service {
+	return &fakeServiceManager{
+		projectID:   projectID,
+		location:    location,
+		clusterName: clusterName,
+	}
 }
 
 func (manager *fakeServiceManager) GetProjectID() string {
-	return "test-project"
-}
-
-func (manager *fakeServiceManager) GetClusterName() string {
-	return "test-cluster"
+	return manager.projectID
 }
 
 func (manager *fakeServiceManager) GetIdentityPool() string {
-	return fmt.Sprintf("%s.svc.id.goog", manager.GetProjectID())
+	return fmt.Sprintf("%s.svc.id.goog", manager.projectID)
 }
 
 func (manager *fakeServiceManager) GetIdentityProvider() string {
 	return fmt.Sprintf(
 		"https://container.googleapis.com/v1"+
 			"/projects/%s/locations/%s/clusters/%s",
-		manager.GetProjectID(),
-		manager.GetZone(),
-		manager.GetClusterName(),
+		manager.projectID,
+		manager.location,
+		manager.clusterName,
 	)
 }

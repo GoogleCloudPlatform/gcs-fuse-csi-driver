@@ -16,6 +16,7 @@ REGISTRY ?= jiaxun
 VERSION ?= v0.4.0
 LDFLAGS ?= "-s -w -X main.version=${VERSION} -extldflags '-static'"
 OVERLAY ?= stable
+ARTIFACTS_PATH ?= ../../_artifacts
 
 all: build-image-and-push
 
@@ -56,7 +57,10 @@ verify:
 	hack/verify-all.sh
 
 unit-test:
-	go test -mod=vendor -timeout 30s -v -cover "./pkg/..."
+	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
 	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
+
+e2e-test:
+	go test -v -mod=vendor -timeout 600s "./test/e2e/" -run TestE2E -report-dir ${ARTIFACTS_PATH}

@@ -45,8 +45,6 @@ var (
 	version = "unknown"
 )
 
-const driverName = "gcsfuse.csi.storage.gke.io"
-
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
@@ -58,7 +56,7 @@ func main() {
 
 	clientset, err := clientset.New(*kubeconfigPath)
 	if err != nil {
-		klog.Fatal("failed to configure k8s client")
+		klog.Fatal("Failed to configure k8s client")
 	}
 	tm := auth.NewTokenManager(meta, clientset)
 
@@ -81,7 +79,7 @@ func main() {
 		}
 	} else {
 		if *nodeID == "" {
-			klog.Fatalf("nodeid cannot be empty for node service")
+			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
 		mounter = csimounter.New("")
@@ -96,7 +94,7 @@ func main() {
 	}
 
 	config := &driver.GCSDriverConfig{
-		Name:                  driverName,
+		Name:                  driver.DefaultName,
 		Version:               version,
 		NodeID:                *nodeID,
 		RunController:         *runController,
