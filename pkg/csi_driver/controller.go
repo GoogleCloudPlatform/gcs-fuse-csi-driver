@@ -149,7 +149,6 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		Project:   projectID,
 		Name:      name,
 		SizeBytes: capBytes,
-		Labels:    param,
 	}
 
 	storageService, err := s.prepareStorageService(ctx, secrets)
@@ -279,7 +278,7 @@ func getRequestCapacity(capRange *csi.CapacityRange) (int64, error) {
 
 func extractLabels(parameters map[string]string, driverName string) (map[string]string, error) {
 	labels := make(map[string]string)
-	scLables := make(map[string]string)
+	scLabels := make(map[string]string)
 	for k, v := range parameters {
 		switch strings.ToLower(k) {
 		case ParameterKeyPVCName:
@@ -290,7 +289,7 @@ func extractLabels(parameters map[string]string, driverName string) (map[string]
 			labels[tagKeyCreatedForVolumeName] = v
 		case ParameterKeyLabels:
 			var err error
-			scLables, err = util.ConvertLabelsStringToMap(v)
+			scLabels, err = util.ConvertLabelsStringToMap(v)
 			if err != nil {
 				return nil, fmt.Errorf("parameters contain invalid labels parameter: %w", err)
 			}
@@ -298,7 +297,16 @@ func extractLabels(parameters map[string]string, driverName string) (map[string]
 	}
 
 	labels[tagKeyCreatedBy] = strings.ReplaceAll(driverName, ".", "_")
-	return mergeLabels(scLables, labels)
+	labels, err := mergeLabels(scLabels, labels)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: validate labels: https://cloud.google.com/storage/docs/tags-and-labels#bucket-labels
+	for k, v := range labels {
+		labels[k] = strings.ReplaceAll(v, ".", "_")
+	}
+	return mergeLabels(scLabels, labels)
 }
 
 func mergeLabels(scLabels map[string]string, metedataLabels map[string]string) (map[string]string, error) {
