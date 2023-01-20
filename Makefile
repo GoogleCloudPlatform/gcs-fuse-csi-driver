@@ -51,7 +51,8 @@ uninstall:
 	kubectl delete -k deploy/overlays/${OVERLAY}
 
 dev-generate-yaml:
-	kubectl kustomize deploy/overlays/dev | tee ./bin/gcs-fuse-csi-driver-specs-generated.yaml
+	mkdir -p ${BINDIR}
+	kubectl kustomize deploy/overlays/dev | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
 
 verify:
 	hack/verify-all.sh
