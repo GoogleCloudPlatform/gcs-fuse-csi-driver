@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build gcsfuse
-FROM golang:1.19.3 AS gcsfuse-builder
+FROM golang:1.19.5 AS gcsfuse-builder
 
 ARG global_ldflags
 
@@ -25,11 +25,8 @@ RUN go install ./tools/build_gcsfuse
 RUN mkdir /tmp/gcsfuse
 RUN build_gcsfuse . /tmp/gcsfuse v2.0.0 -ldflags "all=${global_ldflags}" -ldflags "-X main.gcsfuseVersion=v2.0.0 ${global_ldflags}"
 
-FROM launcher.gcr.io/google/debian11
-ENV DEBIAN_FRONTEND noninteractive
-
 # Build sidecar-mounter go binary
-FROM golang:1.19.3 as sidecar-mounter-builder
+FROM golang:1.19.5 as sidecar-mounter-builder
 
 ARG VERSION
 
@@ -37,8 +34,9 @@ WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
 ADD . .
 RUN make sidecar-mounter BINDIR=/bin
 
-FROM launcher.gcr.io/google/debian11
-ENV DEBIAN_FRONTEND noninteractive
+# go/gke-releasing-policies#base-images
+# We use `gcr.io/distroless/base` because it includes glibc.
+FROM gcr.io/distroless/base-debian11
 
 # Copy the binaries
 COPY --from=gcsfuse-builder /tmp/gcsfuse/bin/gcsfuse /gcsfuse

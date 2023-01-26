@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build webhook go binary
-FROM golang:1.19.3 as webhook-builder
+FROM golang:1.19.5 as webhook-builder
 
 ARG VERSION
 
@@ -21,8 +21,7 @@ WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
 ADD . .
 RUN make webhook BINDIR=/bin
 
-FROM launcher.gcr.io/google/debian11
-ENV DEBIAN_FRONTEND noninteractive
+FROM gcr.io/distroless/static
 
 # Copy the binaries
 COPY --from=webhook-builder /bin/webhook /webhook
