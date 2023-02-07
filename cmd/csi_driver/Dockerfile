@@ -13,11 +13,13 @@
 # limitations under the License.
 
 # Build driver go binary
-FROM golang:1.19.5 as driver-builder
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM golang:1.19.5 as driver-builder
 
-ARG VERSION
+ARG STAGINGVERSION
+ARG REGISTRY
 
-WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
+WORKDIR /gcs-fuse-csi-driver
 ADD . .
 RUN make driver BINDIR=/bin
 
@@ -38,11 +40,10 @@ ENV LIB_DIR_PREFIX x86_64
 FROM distroless-base AS distroless-arm64
 ENV LIB_DIR_PREFIX aarch64
 
-# FROM distroless-$TARGETARCH as output-image
-FROM distroless-amd64 as output-image
+FROM distroless-$TARGETARCH as output-image
 
 # Copy the binaries
-COPY --from=driver-builder /bin/csi-driver /csi-driver
+COPY --from=driver-builder /bin/gcs-fuse-csi-driver /gcs-fuse-csi-driver
 COPY --from=debian /bin/mount /bin/mount
 COPY --from=debian /bin/umount /bin/umount
 
@@ -66,4 +67,4 @@ RUN if ldd /bin/mount | grep "not found"; then echo "!!! Missing deps for mount 
 # Final build stage, create the real Docker image with ENTRYPOINT
 FROM output-image
 
-ENTRYPOINT ["/csi-driver"]
+ENTRYPOINT ["/gcs-fuse-csi-driver"]

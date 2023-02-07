@@ -33,16 +33,17 @@ import (
 )
 
 var (
-	endpoint         = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID           = flag.String("nodeid", "", "node id")
-	runController    = flag.Bool("controller", false, "run controller service")
-	runNode          = flag.Bool("node", false, "run node service")
-	httpEndpoint     = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
-	metricsPath      = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	sidecarImageName = flag.String("sidecar-container-image", "jiaxun/gcs-fuse-csi-driver-sidecar-mounter", "The gcsfuse sidecar container image name.")
-	// This is set at compile time
-	version = "unknown"
+	endpoint       = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID         = flag.String("nodeid", "", "node id")
+	runController  = flag.Bool("controller", false, "run controller service")
+	runNode        = flag.Bool("node", false, "run node service")
+	httpEndpoint   = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsPath    = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	kubeconfigPath = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+
+	// These are set at compile time
+	version          = "unknown"
+	sidecarImageName = "unknown"
 )
 
 func main() {
@@ -83,7 +84,7 @@ func main() {
 		}
 
 		mounter = csimounter.New("")
-		webhookConfig, err = webhook.LoadConfig(*sidecarImageName, "latest", "100m", "30Mi", "5Gi")
+		webhookConfig, err = webhook.LoadConfig(sidecarImageName, "latest", "100m", "30Mi", "5Gi")
 		if err != nil {
 			klog.Fatalf("Failed to load webhook config: %v", err)
 		}
@@ -112,7 +113,7 @@ func main() {
 		klog.Fatalf("Failed to initialize Google Cloud Storage FUSE CSI Driver: %v", err)
 	}
 
-	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v", version)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v, sidecar container image %v", version, sidecarImageName)
 	gcfsDriver.Run(*endpoint)
 
 	os.Exit(0)

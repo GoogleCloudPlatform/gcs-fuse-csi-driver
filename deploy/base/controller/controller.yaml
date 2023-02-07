@@ -87,7 +87,7 @@ spec:
             - name: socket-dir
               mountPath: /csi
         - name: gcs-fuse-driver
-          image: jiaxun/gcs-fuse-csi-driver
+          image: gke.gcr.io/gcs-fuse-csi-driver
           args:
             - "--v=5"
             - "--endpoint=unix:/csi/csi.sock"

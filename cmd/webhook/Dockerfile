@@ -13,17 +13,19 @@
 # limitations under the License.
 
 # Build webhook go binary
-FROM golang:1.19.5 as webhook-builder
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM golang:1.19.5 as webhook-builder
 
-ARG VERSION
+ARG STAGINGVERSION
+ARG REGISTRY
 
-WORKDIR /go/src/sigs.k8s.io/gcp-cloud-stroage-csi-driver
+WORKDIR /gcs-fuse-csi-driver
 ADD . .
 RUN make webhook BINDIR=/bin
 
 FROM gcr.io/distroless/static
 
 # Copy the binaries
-COPY --from=webhook-builder /bin/webhook /webhook
+COPY --from=webhook-builder /bin/gcs-fuse-csi-driver-webhook /gcs-fuse-csi-driver-webhook
 
-ENTRYPOINT ["/webhook"]
+ENTRYPOINT ["/gcs-fuse-csi-driver-webhook"]
