@@ -18,7 +18,7 @@ metadata:
   name: imagetag-livenessprobe
 imageTag:
   name: k8s.gcr.io/sig-storage/livenessprobe
-  newTag: "v2.7.0"
+  newTag: "v2.9.0"
 ---
 
 apiVersion: builtin
@@ -27,7 +27,7 @@ metadata:
   name: imagetag-csi-provisioner
 imageTag:
   name: k8s.gcr.io/sig-storage/csi-provisioner
-  newTag: "v3.2.0"
+  newTag: "v3.4.0"
 ---
 
 apiVersion: builtin
@@ -36,7 +36,7 @@ metadata:
   name: imagetag-csi-node-registrar
 imageTag:
   name: k8s.gcr.io/sig-storage/csi-node-driver-registrar
-  newTag: "v2.5.1"
+  newTag: "v2.6.3"
 ---
 
 apiVersion: builtin
@@ -45,7 +45,7 @@ metadata:
   name: imagetag-gcs-fuse-csi-driver
 imageTag:
   name: gke.gcr.io/gcs-fuse-csi-driver
-  newTag: "v0.4.0"
+  newTag: "v999.0.0"
 ---
 
 apiVersion: builtin
@@ -54,5 +54,5 @@ metadata:
   name: imagetag-gcs-fuse-csi-driver-webhook
 imageTag:
   name: gke.gcr.io/gcs-fuse-csi-driver-webhook
-  newTag: "v0.4.0"
+  newTag: "v999.0.0"
 ---

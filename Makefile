@@ -33,6 +33,12 @@ E2E_TEST_USE_MANAGED_DRIVER ?= false
 E2E_TEST_BUILD_DRIVER ?= false
 E2E_TEST_ARTIFACTS_PATH ?= ../../_artifacts
 
+$(info OVERLAY is ${OVERLAY})
+$(info STAGINGVERSION is ${STAGINGVERSION})
+$(info DRIVER_IMAGE is ${DRIVER_IMAGE})
+$(info SIDECAR_IMAGE is ${SIDECAR_IMAGE})
+$(info WEBHOOK_IMAGE is ${WEBHOOK_IMAGE})
+
 all: build-image-and-push-multi-arch
 
 driver:
@@ -48,8 +54,9 @@ webhook:
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS} -X main.sidecarImageName=${SIDECAR_IMAGE} -X main.sidecarImageVersion=${STAGINGVERSION}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
 
 download-gcsfuse:
-	gsutil cp ${GCSFUSE_PATH} ./bin/gcsfuse
-	chmod +x ./bin/gcsfuse
+	mkdir -p ${BINDIR}
+	gsutil cp ${GCSFUSE_PATH} ${BINDIR}/gcsfuse
+	chmod +x ${BINDIR}/gcsfuse
 
 build-image-and-push-multi-arch: build-image-and-push-linux-amd64 build-image-and-push-linux-arm64
 	docker manifest create \
@@ -61,7 +68,7 @@ build-image-and-push-multi-arch: build-image-and-push-linux-amd64 build-image-an
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 
 	docker manifest create \
-		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64 ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_arm64
+		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
 build-image-and-push-linux-amd64: init-buildx download-gcsfuse
@@ -109,15 +116,6 @@ build-image-and-push-linux-arm64: init-buildx download-gcsfuse
 		--build-arg BUILDPLATFORM=linux/arm64 \
 		--push .
 
-	docker buildx build \
-		--file ./cmd/webhook/Dockerfile \
-		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 \
-		--build-arg STAGINGVERSION=${STAGINGVERSION} \
-		--build-arg BUILDPLATFORM=linux/arm64 \
-		--build-arg REGISTRY=${REGISTRY} \
-		--push .
-
 install:	
 	./deploy/base/webhook/patch-ca-bundle.sh
 	make generate-spec-yaml
@@ -147,10 +145,6 @@ sanity-test:
 e2e-test:
 ifeq (${E2E_TEST_USE_MANAGED_DRIVER}, false)
 ifeq (${E2E_TEST_BUILD_DRIVER}, true)
-	$(info STAGINGVERSION is ${STAGINGVERSION})
-	$(info DRIVER_IMAGE is ${DRIVER_IMAGE})
-	$(info SIDECAR_IMAGE is ${SIDECAR_IMAGE})
-	$(info WEBHOOK_IMAGE is ${WEBHOOK_IMAGE})
 	make build-image-and-push-multi-arch
 endif
 	make uninstall || true
