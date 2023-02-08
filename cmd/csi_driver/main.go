@@ -27,7 +27,6 @@ import (
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
@@ -68,7 +67,6 @@ func main() {
 	}
 
 	var mounter mount.Interface
-	var webhookConfig *webhook.Config
 	if *runController {
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
 			mm = metrics.NewMetricsManager()
@@ -84,10 +82,6 @@ func main() {
 		}
 
 		mounter = csimounter.New("")
-		webhookConfig, err = webhook.LoadConfig(sidecarImageName, "latest", "100m", "30Mi", "5Gi")
-		if err != nil {
-			klog.Fatalf("Failed to load webhook config: %v", err)
-		}
 	}
 
 	if err != nil {
@@ -105,7 +99,7 @@ func main() {
 		Metrics:               mm,
 		Mounter:               mounter,
 		K8sClients:            clientset,
-		SidecarConfig:         webhookConfig,
+		SidecarImageName:      sidecarImageName,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

@@ -33,6 +33,7 @@ var (
 	certDir               = flag.String("cert-dir", "/etc/gcs-fuse-csi-driver-webhook/certs", "The directory that contains the server key and certificate.")
 	certName              = flag.String("cert-name", "cert.pem", "The server certificate name.")
 	keyName               = flag.String("key-name", "key.pem", "The server key name.")
+	imagePullPolicy       = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
 	cpuLimit              = flag.String("sidecar-cpu-limit", "500m", "The default CPU limit for gcsfuse sidecar container.")
 	memoryLimit           = flag.String("sidecar-memory-limit", "300Mi", "The default memory limit for gcsfuse sidecar container.")
 	ephemeralStorageLimit = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
@@ -50,7 +51,7 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v:%v", version, sidecarImageName, sidecarImageVersion)
 
 	// Load webhook config
-	c, err := wh.LoadConfig(sidecarImageName, sidecarImageVersion, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
+	c, err := wh.LoadConfig(sidecarImageName, sidecarImageVersion, *imagePullPolicy, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
 	if err != nil {
 		klog.Fatalf("Unable to load webhook config: %v", err)
 	}

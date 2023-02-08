@@ -70,7 +70,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", annotationGcsfuseVolumeEnableKey))
 	}
 
-	if ValidatePodHasSidecarContainerInjected(si.Config, pod) {
+	if ValidatePodHasSidecarContainerInjected(si.Config.ContainerImage, pod) {
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
 

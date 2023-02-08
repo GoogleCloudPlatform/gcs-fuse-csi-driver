@@ -134,12 +134,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
 	}
-	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarConfig, pod) {
+	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarImageName, pod) {
 		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
 	}
 
 	// TODO: find the empty-dir using regex
-	emptyDirBasePath, err := prepareEmptyDir(targetPath, "gke-gcsfuse")
+	emptyDirBasePath, err := prepareEmptyDir(targetPath, webhook.SidecarContainerVolumeName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get emptyDir path: %v", err)
 	}

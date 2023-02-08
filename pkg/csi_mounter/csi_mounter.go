@@ -28,25 +28,24 @@ import (
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
 
-// Mounter provides the GCS FUSE CSI implementation of mount.Interface
+// Mounter provides the GCS Fuse CSI implementation of mount.Interface
 // for the linux platform.
 type Mounter struct {
-	// mount.Interface
 	mount.MounterForceUnmounter
 	chdirMu sync.Mutex
 }
 
-// New returns a mount.Interface for the current system.
+// New returns a mount.MounterForceUnmounter for the current system.
 // It provides options to override the default mounter behavior.
 // mounterPath allows using an alternative to `/bin/mount` for mounting.
 func New(mounterPath string) mount.Interface {
 	return &Mounter{
-		// mount.New(mounterPath),
 		mount.New(mounterPath).(mount.MounterForceUnmounter),
 		sync.Mutex{},
 	}
@@ -84,7 +83,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to parse volume name from target path %q: %v", target, err)
 	}
 	// TODO: find the empty-dir using regex
-	volumeBasePath := fmt.Sprintf("%vkubernetes.io~empty-dir/%v/.volumes/%v", strings.Split(target, "kubernetes.io~csi")[0], "gke-gcsfuse", volumeName)
+	volumeBasePath := fmt.Sprintf("%vkubernetes.io~empty-dir/%v/.volumes/%v", strings.Split(target, "kubernetes.io~csi")[0], webhook.SidecarContainerVolumeName, volumeName)
 	if err := os.MkdirAll(volumeBasePath, 0750); err != nil {
 		return fmt.Errorf("mkdir failed for path %q: %v", volumeBasePath, err)
 	}
