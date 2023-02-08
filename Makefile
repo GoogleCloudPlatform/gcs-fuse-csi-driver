@@ -118,13 +118,13 @@ build-image-and-push-linux-arm64: init-buildx download-gcsfuse
 
 install:	
 	./deploy/base/webhook/patch-ca-bundle.sh
-	make generate-spec-yaml
+	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
 	./deploy/base/webhook/create-cert.sh
 	git restore ./deploy/base/webhook/mutatingwebhook.yaml
 
 uninstall:
-	kubectl delete -k deploy/overlays/${OVERLAY}
+	kubectl delete -k deploy/overlays/${OVERLAY} --wait
 
 generate-spec-yaml:
 	mkdir -p ${BINDIR}
@@ -145,12 +145,12 @@ sanity-test:
 e2e-test:
 ifeq (${E2E_TEST_USE_MANAGED_DRIVER}, false)
 ifeq (${E2E_TEST_BUILD_DRIVER}, true)
-	make build-image-and-push-multi-arch
+	make build-image-and-push-multi-arch REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
-	make uninstall || true
-	make install
+	make uninstall OVERLAY=${OVERLAY} || true
+	make install OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
-	
+
 	go test -v -mod=vendor -timeout 600s "./test/e2e/" -run TestE2E -report-dir ${E2E_TEST_ARTIFACTS_PATH}
 
 init-buildx:
