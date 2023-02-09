@@ -31,7 +31,7 @@ webhooks:
       namespace: "gcs-fuse-csi-driver"
       name: "gcs-fuse-csi-driver-webhook"
       path: "/inject"
-  failurePolicy: Fail
+  failurePolicy: Ignore # will not block other Pod requests
   admissionReviewVersions: ["v1"]
   sideEffects: None
   reinvocationPolicy: Never
