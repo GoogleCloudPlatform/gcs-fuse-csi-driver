@@ -20,5 +20,5 @@ spec:
   template:
     spec:
       containers:
-        - name: gcs-fuse-driver
+        - name: gcs-fuse-csi-driver
           imagePullPolicy: Always

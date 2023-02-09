@@ -6,7 +6,7 @@
   git clone https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver.git
   cd gcs-fuse-csi-driver
   ```
-- A standard GKE cluster. Autopilot clusters are not supported.
+- A standard GKE cluster. Autopilot clusters are not supported for now.
 - [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) is enabled on the cluster.
 - Run the following commands to create a GKE cluster with Workload Identity enabled.
   ```bash
@@ -15,10 +15,22 @@
   gcloud container clusters create ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
   gcloud container clusters get-credentials ${CLUSTER_NAME}
   ```
+- For an exising cluster, run the following commands to enable Workload Identity.
+  ```bash
+  CLUSTER_PROJECT_ID=<cluster-project-id>
+  CLUSTER_NAME=<cluster-name>
+  gcloud container clusters update ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
+  gcloud container clusters get-credentials ${CLUSTER_NAME}
+  ```
 
 ## Install
 - Run the following command to install the driver. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
   ```bash
+  # Optionally, specify the image registry and image version if you have built the images from source code.
+  export REGISTRY=<your-container-registry>
+  export STAGINGVERSION=<staging-version>
+  # Optionally, specify the overlay if you want to try out features that are only available in the dev overlay.
+  export OVERLAY=dev
   make install
   ```
 

@@ -78,7 +78,7 @@ spec:
               mountPath: /csi
             - name: registration-dir
               mountPath: /registration
-        - name: gcs-fuse-driver
+        - name: gcs-fuse-csi-driver
           securityContext:
             privileged: true
           image: gke.gcr.io/gcs-fuse-csi-driver

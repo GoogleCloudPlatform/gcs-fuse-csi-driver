@@ -23,5 +23,5 @@ Enable the following GCP API:
 gcloud auth login
 gcloud config set ${PROJECT_ID}
 gcloud auth application-default login
-make e2e-test
+make e2e-test OVERLAY=dev
 ```

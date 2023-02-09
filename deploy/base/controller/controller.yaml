@@ -86,7 +86,7 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-        - name: gcs-fuse-driver
+        - name: gcs-fuse-csi-driver
           image: gke.gcr.io/gcs-fuse-csi-driver
           args:
             - "--v=5"

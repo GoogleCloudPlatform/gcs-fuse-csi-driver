@@ -17,6 +17,7 @@ BINDIR ?= bin
 REGISTRY ?= jiaxun
 STAGINGVERSION ?= ${REV}
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
+BUILD_GCSFUSE_FROM_SOURCE ?= false
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 OVERLAY ?= stable
 
@@ -55,8 +56,15 @@ webhook:
 
 download-gcsfuse:
 	mkdir -p ${BINDIR}
+ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
+	docker build --file ./cmd/sidecar_mounter/Dockerfile.gcsfuse --build-arg STAGINGVERSION=${STAGINGVERSION} --tag local/gcsfuse:latest .
+	docker create --name local_gcsfuse local/gcsfuse:latest
+	docker cp local_gcsfuse:/tmp/gcsfuse/bin/gcsfuse ${BINDIR}/gcsfuse
+	docker rm -f local_gcsfuse
+else
 	gsutil cp ${GCSFUSE_PATH} ${BINDIR}/gcsfuse
 	chmod +x ${BINDIR}/gcsfuse
+endif
 
 build-image-and-push-multi-arch: build-image-and-push-linux-amd64 build-image-and-push-linux-arm64
 	docker manifest create \

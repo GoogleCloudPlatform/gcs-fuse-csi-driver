@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-kind: DaemonSet
-apiVersion: apps/v1
-metadata:
-  name: gcs-fuse-csi-node
-spec:
-  template:
-    spec:
-      containers:
-        - name: gcs-fuse-csi-driver
-          imagePullPolicy: Always
+# Build gcsfuse binary
+FROM golang:1.19.5
+
+ARG STAGINGVERSION
+
+ADD https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/git/refs/heads/master version.json
+WORKDIR ${GOPATH}/src/github.com/GoogleCloudPlatform/gcsfuse
+RUN git clone -b master https://github.com/GoogleCloudPlatform/gcsfuse.git . -q
+RUN go install ./tools/build_gcsfuse
+RUN mkdir /tmp/gcsfuse
+RUN build_gcsfuse . /tmp/gcsfuse ${STAGINGVERSION} -ldflags "-X main.gcsfuseVersion=${STAGINGVERSION} -s -w -extldflags '-static'"
