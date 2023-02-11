@@ -29,13 +29,18 @@ spec:
       containers:
       - name: gcs-fuse-csi-driver-webhook
         image: gke.gcr.io/gcs-fuse-csi-driver-webhook
+        imagePullPolicy: IfNotPresent
         args:
+          - '--sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)'
           - '--sidecar-cpu-limit=300m'
           - '--sidecar-memory-limit=100Mi'
           - '--sidecar-ephemeral-storage-limit=1Gi'
           - '--cert-dir=/etc/gcs-fuse-csi-driver-webhook/certs'
           - '--cert-name=cert.pem'
           - '--key-name=key.pem'
+        env:
+          - name: SIDECAR_IMAGE_PULL_POLICY
+            value: 'IfNotPresent'
         resources:
           limits:
             cpu: 200m

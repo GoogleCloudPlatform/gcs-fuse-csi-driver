@@ -37,6 +37,7 @@ spec:
             - mountPath: /csi
               name: socket-dir
           image: k8s.gcr.io/sig-storage/livenessprobe
+          imagePullPolicy: IfNotPresent
           args:
             - --csi-address=/csi/csi.sock
             - --probe-timeout=3s
@@ -51,6 +52,7 @@ spec:
               memory: 20Mi
         - name: csi-driver-registrar
           image: k8s.gcr.io/sig-storage/csi-node-driver-registrar
+          imagePullPolicy: IfNotPresent
           args:
             - "--v=5"
             - "--csi-address=/csi/csi.sock"
@@ -82,6 +84,7 @@ spec:
           securityContext:
             privileged: true
           image: gke.gcr.io/gcs-fuse-csi-driver
+          imagePullPolicy: IfNotPresent
           args:
             - "--v=5"
             - "--endpoint=unix:/csi/csi.sock"

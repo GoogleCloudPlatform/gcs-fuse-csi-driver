@@ -20,5 +20,8 @@ spec:
   template:
     spec:
       containers:
-        - name: gcs-fuse-csi-driver-webhook
-          imagePullPolicy: Always
+      - name: gcs-fuse-csi-driver-webhook
+        imagePullPolicy: Always
+        env:
+          - name: SIDECAR_IMAGE_PULL_POLICY
+            value: 'Always'
