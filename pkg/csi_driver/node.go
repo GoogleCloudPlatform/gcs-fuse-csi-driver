@@ -19,6 +19,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -129,7 +130,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Check if the sidecar container was injected into the Pod
-	// TODO: skip this check step for the second and following NodePublishVolume calls
 	pod, err := s.k8sClients.GetPod(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
@@ -138,17 +138,47 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
 	}
 
+	// Check if the Pod is owned by a Job
+	isOwnedByJob := false
+	for _, o := range pod.ObjectMeta.OwnerReferences {
+		if o.Kind == "Job" {
+			isOwnedByJob = true
+			break
+		}
+	}
+
+	// Check if all the containers besides the sidecar container exited
+	sidecarShouldExit := true
+	if isOwnedByJob {
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.Name != webhook.SidecarContainerName && cs.State.Terminated == nil {
+				sidecarShouldExit = false
+				break
+			}
+		}
+	}
+
 	// TODO: find the empty-dir using regex
 	emptyDirBasePath, err := prepareEmptyDir(targetPath, webhook.SidecarContainerVolumeName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get emptyDir path: %v", err)
 	}
-	dat, err := os.ReadFile(emptyDirBasePath + "/error")
+
+	if isOwnedByJob && sidecarShouldExit {
+		f, err := os.Create(filepath.Dir(emptyDirBasePath) + "/exit")
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to put the exit file: %v", err)
+		}
+		f.Close()
+		klog.V(4).Info("all the other containers exited in the Job Pod, put the exit file.")
+	}
+
+	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
 	if err != nil && !os.IsNotExist(err) {
 		return nil, status.Errorf(codes.Internal, "failed to open error file %q: %v", emptyDirBasePath+"/error", err)
 	}
-	if err == nil && len(dat) > 0 {
-		return nil, status.Errorf(codes.Internal, "the sidecar container failed with error: %v", string(dat))
+	if err == nil && len(errMsg) > 0 {
+		return nil, status.Errorf(codes.Internal, "the sidecar container failed with error: %v", string(errMsg))
 	}
 
 	// TODO: Check if the socket listener timed out

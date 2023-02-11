@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gcp-gcs-csi-job-example
+spec:
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      containers:
+      - name: writer
+        image: busybox
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+        command:
+          - "/bin/sh"
+          - "-c"
+          - touch /data/${MY_POD_NAME} && echo $(date) >> /data/${MY_POD_NAME} && sleep 10
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        volumeMounts:
+        - name: gcp-gcs-csi-ephemeral
+          mountPath: /data
+      serviceAccountName: gcs-csi
+      volumes:
+      - name: gcp-gcs-csi-ephemeral
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: <bucket-name> # unique bucket name
+      restartPolicy: Never
+  backoffLimit: 1

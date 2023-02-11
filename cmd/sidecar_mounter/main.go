@@ -105,6 +105,21 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	klog.Info("waiting for termination signals...")
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := os.Stat("/tmp/.volumes/exit"); err == nil {
+					klog.Info("all the other containers exited in the Job Pod, exiting the sidecar container.")
+					c <- syscall.SIGTERM
+					return
+				}
+			}
+		}
+	}()
+
 	sig := <-c // blocking the process
 	klog.Infof("received signal: %v, sleep %v seconds before terminating gcsfuse processes.", sig, *gracePeriod)
 	time.Sleep(time.Duration(*gracePeriod) * time.Second)

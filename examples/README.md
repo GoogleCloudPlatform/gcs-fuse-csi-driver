@@ -78,6 +78,19 @@ kubectl delete -f ./examples/ephemeral/deployment-non-root.yaml
 kubectl delete -f ./examples/ephemeral/deployment-two-vols.yaml
 ```
 
+### Batch Job Example
+```bash
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/batch-job/job.yaml
+
+# install a Job using CSI Ephemeral Inline volume
+kubectl apply -f ./examples/batch-job/job.yaml
+
+# clean up
+kubectl delete -f ./examples/batch-job/job.yaml
+```
+
 ### Performance Testing
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
