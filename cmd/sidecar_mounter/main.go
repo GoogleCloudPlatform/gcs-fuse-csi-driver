@@ -57,7 +57,7 @@ func main() {
 
 	for _, sp := range socketPathes {
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
-		// 1. logs from different gcsfuse mixed together.
+		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc, err := prepareMountConfig(sp)
@@ -106,6 +106,8 @@ func main() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	klog.Info("waiting for termination signals...")
 
+	// Monitor the exit file.
+	// If the exit file is detected, send a syscall.SIGTERM signal to the singal channel.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
@@ -136,6 +138,11 @@ func main() {
 	klog.Info("existing sidecar mounter...")
 }
 
+// Fetch the following information from a given socket path:
+// 1. Pod volume name
+// 2. The file descriptor
+// 3. GCS bucket name
+// 4. Mount options passing to gcsfuse (passed by the csi mounter)
 func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	// socket path pattern: /tmp/.volumes/<volume-name>/socket
 	dir := filepath.Dir(sp)

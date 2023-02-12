@@ -43,6 +43,7 @@ func NewStderrWriter(w io.Writer, volumeName string, errorFile string) io.Writer
 	return &stderrWriter{w: w, volumeName: volumeName, errorFile: errorFile}
 }
 
+// Write writes the output from a gcsfuse instance to stdout with the volume name added as prefix.
 func (f *stdoutWriter) Write(p []byte) (n int, err error) {
 	msg := string(p)
 	exp := regexp.MustCompile(`(^|\n)(N|I|E|D)(\d*|$)`)
@@ -55,6 +56,8 @@ func (f *stdoutWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
+// Write writes any error message of a gcsfuse instance to stderr with the volume name added as prefix.
+// Meanwhile, it writes the error message to a given local file.
 func (f *stderrWriter) Write(p []byte) (n int, err error) {
 	msg := fmt.Sprintf("[%v] E%v %v", f.volumeName, time.Now().Format("0102 15:04:05.000000"), string(p))
 	_, err = f.w.Write([]byte(msg))
