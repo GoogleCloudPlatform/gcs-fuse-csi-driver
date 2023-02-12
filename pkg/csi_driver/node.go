@@ -158,12 +158,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// TODO: find the empty-dir using regex
-	emptyDirBasePath, err := prepareEmptyDir(targetPath, webhook.SidecarContainerVolumeName)
+	// Prepare the emptyDir path for the mounter to pass the file descriptor
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get emptyDir path: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to prepare emptyDir path: %v", err)
 	}
 
+	// Put an exit file to notify the sidecar container to exit
 	if isOwnedByJob && sidecarShouldExit {
 		f, err := os.Create(filepath.Dir(emptyDirBasePath) + "/exit")
 		if err != nil {
@@ -173,6 +174,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.V(4).Info("all the other containers exited in the Job Pod, put the exit file.")
 	}
 
+	// Check if there is any error from the sidecar container
 	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
 	if err != nil && !os.IsNotExist(err) {
 		return nil, status.Errorf(codes.Internal, "failed to open error file %q: %v", emptyDirBasePath+"/error", err)
@@ -199,6 +201,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
+	// Start to mount
 	if err = s.mounter.Mount(bucketName, targetPath, "fuse", fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
 	}
@@ -265,7 +268,7 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 }
 
 func prepareEmptyDir(targetPath, emptyDirVolumeName string) (string, error) {
-	_, volumeName, err := util.ParsePodIDVolume(targetPath)
+	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(targetPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse volume name from target path %q: %v", targetPath, err)
 	}

@@ -17,8 +17,11 @@ limitations under the License.
 package util
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 )
 
 func TestConvertLabelsStringToMap(t *testing.T) {
@@ -250,7 +253,7 @@ func TestParseEndpoint(t *testing.T) {
 	}
 }
 
-func TestParsePodID(t *testing.T) {
+func TestParsePodIDVolumeFromTargetpath(t *testing.T) {
 	testCases := []struct {
 		name           string
 		targetPath     string
@@ -276,7 +279,7 @@ func TestParsePodID(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
-		podID, volume, err := ParsePodIDVolume(tc.targetPath)
+		podID, volume, err := ParsePodIDVolumeFromTargetpath(tc.targetPath)
 		if tc.expectedError && err == nil {
 			t.Errorf("Expected error but got none")
 		}
@@ -292,6 +295,46 @@ func TestParsePodID(t *testing.T) {
 		}
 		if !reflect.DeepEqual(volume, tc.expectedVolume) {
 			t.Errorf("Got volume %v, but expected %v", volume, tc.expectedVolume)
+		}
+	}
+}
+
+func TestPrepareEmptyDir(t *testing.T) {
+	testCases := []struct {
+		name                     string
+		targetPath               string
+		expectedEmptyDirBasePath string
+		expectedError            bool
+	}{
+		{
+			name:                     "should return emptyDir path correctly",
+			targetPath:               "/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~csi/test-volume/mount",
+			expectedEmptyDirBasePath: fmt.Sprintf("/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~empty-dir/%v/.volumes/test-volume", webhook.SidecarContainerVolumeName),
+			expectedError:            false,
+		},
+		{
+			name:                     "should return error",
+			targetPath:               "/foo/bar/volumes",
+			expectedEmptyDirBasePath: "",
+			expectedError:            true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Logf("test case: %s", tc.name)
+		emptyDirBasePath, err := PrepareEmptyDir(tc.targetPath, false)
+		if tc.expectedError && err == nil {
+			t.Errorf("Expected error but got none")
+		}
+		if err != nil {
+			if !tc.expectedError {
+				t.Errorf("Did not expect error but got: %v", err)
+			}
+			continue
+		}
+
+		if !reflect.DeepEqual(emptyDirBasePath, tc.expectedEmptyDirBasePath) {
+			t.Errorf("Got emptyDirBasePath %v, but expected %v", emptyDirBasePath, tc.expectedEmptyDirBasePath)
 		}
 	}
 }

@@ -21,14 +21,12 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -77,15 +75,10 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 	options = optionSet.List()
 
-	// Prepare the temp volume base path
-	podID, volumeName, err := util.ParsePodIDVolume(target)
+	// Prepare the temp emptyDir path
+	emptyDirBasePath, err := util.PrepareEmptyDir(target, false)
 	if err != nil {
-		return fmt.Errorf("failed to parse volume name from target path %q: %v", target, err)
-	}
-	// TODO: find the empty-dir using regex
-	volumeBasePath := fmt.Sprintf("%vkubernetes.io~empty-dir/%v/.volumes/%v", strings.Split(target, "kubernetes.io~csi")[0], webhook.SidecarContainerVolumeName, volumeName)
-	if err := os.MkdirAll(volumeBasePath, 0750); err != nil {
-		return fmt.Errorf("mkdir failed for path %q: %v", volumeBasePath, err)
+		return fmt.Errorf("failed to prepare emptyDir path: %v", err)
 	}
 
 	klog.V(4).Info("opening the device /dev/fuse")
@@ -110,18 +103,23 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	if err != nil {
 		return fmt.Errorf("failed to get the current directory to %v", err)
 	}
-	if err = os.Chdir(volumeBasePath); err != nil {
-		return fmt.Errorf("failed to change directory to %q: %v", volumeBasePath, err)
+	if err = os.Chdir(emptyDirBasePath); err != nil {
+		return fmt.Errorf("failed to change directory to %q: %v", emptyDirBasePath, err)
 	}
+
 	klog.V(4).Info("creating a listener for the socket")
 	l, err := net.Listen("unix", "./socket")
+	if err != nil {
+		return fmt.Errorf("failed to create the listener for the socket: %v", err)
+	}
+
+	// Close the listener after 15 minutes
+	// TODO: properly handle the socket listener timed out
 	go func(l net.Listener) {
 		time.Sleep(15 * time.Minute)
 		l.Close()
 	}(l)
-	if err != nil {
-		return fmt.Errorf("failed to create the listener for the socket: %v", err)
-	}
+
 	if err = os.Chdir(exPwd); err != nil {
 		return fmt.Errorf("failed to change directory to %q: %v", exPwd, err)
 	}
@@ -137,11 +135,14 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %v", mc, err)
 	}
 
-	go func(l net.Listener, bucketName, podID, volumeName string, msg []byte, fd int) {
+	// Asynchronously waiting for the sidecar container to connect to the listener
+	go func(l net.Listener, bucketName, target string, msg []byte, fd int) {
 		defer syscall.Close(fd)
 		defer l.Close()
 
+		podID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(target)
 		logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podID, volumeName, bucketName)
+
 		klog.V(4).Infof("%v start to accept connections to the listener.", logPrefix)
 		a, err := l.Accept()
 		if err != nil {
@@ -156,7 +157,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		}
 
 		klog.V(4).Infof("%v exiting the goroutine.", logPrefix)
-	}(l, source, podID, volumeName, mcb, fd)
+	}(l, source, target, mcb, fd)
 
 	return nil
 }

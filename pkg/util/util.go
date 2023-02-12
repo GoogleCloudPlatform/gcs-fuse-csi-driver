@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
 
@@ -114,7 +115,7 @@ func ParseEndpoint(endpoint string, cleanupSocket bool) (string, string, error) 
 	return u.Scheme, addr, nil
 }
 
-func ParsePodIDVolume(targetPath string) (string, string, error) {
+func ParsePodIDVolumeFromTargetpath(targetPath string) (string, string, error) {
 	r := regexp.MustCompile("/var/lib/kubelet/pods/(.*)/volumes/kubernetes.io~csi/(.*)/mount")
 	matched := r.FindStringSubmatch(targetPath)
 	if len(matched) < 3 {
@@ -123,4 +124,22 @@ func ParsePodIDVolume(targetPath string) (string, string, error) {
 	podID := matched[1]
 	volume := matched[2]
 	return podID, volume, nil
+}
+
+func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
+	_, _, err := ParsePodIDVolumeFromTargetpath(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse volume name from target path %q: %v", targetPath, err)
+	}
+
+	r := regexp.MustCompile("kubernetes.io~csi/(.*)/mount")
+	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerVolumeName))
+
+	if createEmptyDir {
+		if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
+			return "", fmt.Errorf("mkdir failed for path %q: %v", emptyDirBasePath, err)
+		}
+	}
+
+	return emptyDirBasePath, nil
 }
