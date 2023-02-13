@@ -142,6 +142,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		if config.Prefix == specs.NonRootVolumePrefix {
 			mountOptions = "uid=1001,gid=3003"
 		}
+		if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
+			mountOptions = "invalid-option"
+		}
 		return &gcsVolume{
 			driver:                  n,
 			bucketName:              bucketName,
@@ -197,6 +200,9 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 	if config.Prefix == specs.NonRootVolumePrefix {
 		attributes["mountOptions"] = "uid=1001,gid=3003"
 	}
+	if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
+		attributes["mountOptions"] = "invalid-option"
+	}
 	return attributes, volme.shared, volme.readOnly
 }
 
@@ -215,6 +221,9 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 	mountOptions := []string{}
 	if config.Prefix == specs.NonRootVolumePrefix {
 		mountOptions = append(mountOptions, "uid=1001", "gid=3003")
+	}
+	if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
+		mountOptions = append(mountOptions, "invalid-option")
 	}
 
 	return &storagev1.StorageClass{

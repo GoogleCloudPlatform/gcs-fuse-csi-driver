@@ -41,11 +41,12 @@ import (
 )
 
 const (
-	TesterContainerName   = "volume-tester"
-	K8sServiceAccountName = "gcsfuse-csi-sa"
-	K8sSecretName         = "gcsfuse-csi-test-secret"
-	FakeVolumePrefix      = "gcs-fake-volume"
-	NonRootVolumePrefix   = "gcs-non-root-volume"
+	TesterContainerName             = "volume-tester"
+	K8sServiceAccountName           = "gcsfuse-csi-sa"
+	K8sSecretName                   = "gcsfuse-csi-test-secret"
+	FakeVolumePrefix                = "gcs-fake-volume"
+	NonRootVolumePrefix             = "gcs-non-root-volume"
+	InvalidMountOptionsVolumePrefix = "gcs-innalid-mount-options-volume"
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 10 * time.Second

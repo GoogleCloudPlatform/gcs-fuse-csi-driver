@@ -131,4 +131,62 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError("googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket.")
 	})
+
+	ginkgo.It("should fail when the sidecar container is not injected", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		mountPath := "/mnt/test"
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		tPod.SetAnnotations(map[string]string{})
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError("failed to find the sidecar container in Pod spec")
+	})
+
+	ginkgo.It("should fail when the gcsfuse processes got killed due to OOM", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		mountPath := "/mnt/test"
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/volumes":      "true",
+			"gke-gcsfuse/memory-limit": "15Mi",
+		})
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError("gcsfuse exited with error: signal: killed")
+	})
+
+	ginkgo.It("should fail when invalid mount options are passed", func() {
+		init(specs.InvalidMountOptionsVolumePrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		mountPath := "/mnt/test"
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError("Incorrect Usage. flag provided but not defined: -invalid-option")
+	})
 }
