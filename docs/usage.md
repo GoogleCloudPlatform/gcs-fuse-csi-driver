@@ -45,7 +45,7 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
     gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
         --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
         --role "${STORAGE_ROLE}" \
-        --condition="expression=resource.name.startsWith(\"projects/$GCS_BUCKET_PROJECT_ID/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
+        --condition="expression=resource.name.startsWith(\"projects/_/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
     ```
 
 3. Create a Kubernetes Service Account.
