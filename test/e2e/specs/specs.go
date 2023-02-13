@@ -45,6 +45,7 @@ const (
 	K8sServiceAccountName = "gcsfuse-csi-sa"
 	K8sSecretName         = "gcsfuse-csi-test-secret"
 	FakeVolumePrefix      = "gcs-fake-volume"
+	NonRootVolumePrefix   = "gcs-non-root-volume"
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 10 * time.Second
@@ -206,6 +207,13 @@ func (t *TestPod) SetAnnotations(annotations map[string]string) {
 
 func (t *TestPod) SetServiceAccount(sa string) {
 	t.pod.Spec.ServiceAccountName = sa
+}
+
+func (t *TestPod) SetNonRootSecurityContext() {
+	t.pod.Spec.SecurityContext = &v1.PodSecurityContext{
+		RunAsUser: pointer.Int64(1001),
+		FSGroup:   pointer.Int64(3003),
+	}
 }
 
 func (t *TestPod) Cleanup() {

@@ -48,6 +48,7 @@ type gcsVolume struct {
 	driver                  *GCSFuseCSITestDriver
 	bucketName              string
 	serviceAccountNamespace string
+	mountOptions            string
 	shared                  bool
 	readOnly                bool
 }
@@ -136,10 +137,16 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		if config.Prefix != specs.FakeVolumePrefix {
 			bucketName = n.createBucket(config.Framework.Namespace.Name)
 		}
+
+		mountOptions := ""
+		if config.Prefix == specs.NonRootVolumePrefix {
+			mountOptions = "uid=1001,gid=3003"
+		}
 		return &gcsVolume{
 			driver:                  n,
 			bucketName:              bucketName,
 			serviceAccountNamespace: config.Framework.Namespace.Name,
+			mountOptions:            mountOptions,
 		}
 	case storageframework.DynamicPV:
 		// Do nothing
@@ -155,10 +162,12 @@ func (v *gcsVolume) DeleteVolume() {
 
 func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, fsType string, volume storageframework.TestVolume) (*v1.PersistentVolumeSource, *v1.VolumeNodeAffinity) {
 	nv, _ := volume.(*gcsVolume)
+	va := map[string]string{"mountOptions": nv.mountOptions}
 	return &v1.PersistentVolumeSource{
 		CSI: &v1.CSIPersistentVolumeSource{
-			Driver:       n.driverInfo.Name,
-			VolumeHandle: nv.bucketName,
+			Driver:           n.driverInfo.Name,
+			VolumeHandle:     nv.bucketName,
+			VolumeAttributes: va,
 		},
 	}, nil
 }
@@ -185,6 +194,9 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 	attributes := map[string]string{
 		"bucketName": volme.bucketName,
 	}
+	if config.Prefix == specs.NonRootVolumePrefix {
+		attributes["mountOptions"] = "uid=1001,gid=3003"
+	}
 	return attributes, volme.shared, volme.readOnly
 }
 
@@ -200,11 +212,17 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 	generateName := fmt.Sprintf("gcsfuse-csi-dynamic-test-sc-")
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
+	mountOptions := []string{}
+	if config.Prefix == specs.NonRootVolumePrefix {
+		mountOptions = append(mountOptions, "uid=1001", "gid=3003")
+	}
+
 	return &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: generateName,
 		},
 		Provisioner:       n.driverInfo.Name,
+		MountOptions:      mountOptions,
 		Parameters:        parameters,
 		VolumeBindingMode: &defaultBindingMode,
 	}

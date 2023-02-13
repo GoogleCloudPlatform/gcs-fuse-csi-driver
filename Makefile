@@ -32,6 +32,16 @@ WEBHOOK_IMAGE = ${REGISTRY}/${WEBHOOK_BINARY}
 E2E_TEST_CREATE_CLUSTER ?= false
 E2E_TEST_USE_MANAGED_DRIVER ?= false
 E2E_TEST_BUILD_DRIVER ?= false
+E2E_TEST_FOCUS ?=
+E2E_TEST_SKIP ?= Dynamic.PV
+E2E_TEST_GINKGO_FLAGS ?=
+ifneq ("${E2E_TEST_FOCUS}", "")
+E2E_TEST_GINKGO_FLAGS+= -ginkgo.focus ${E2E_TEST_FOCUS}
+endif
+
+ifneq ("${E2E_TEST_SKIP}", "")
+E2E_TEST_GINKGO_FLAGS+= -ginkgo.skip ${E2E_TEST_SKIP}
+endif
 E2E_TEST_ARTIFACTS_PATH ?= ../../_artifacts
 
 $(info OVERLAY is ${OVERLAY})
@@ -159,7 +169,7 @@ endif
 	make install OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
 
-	go test -v -mod=vendor -timeout 600s "./test/e2e/" -run TestE2E -report-dir ${E2E_TEST_ARTIFACTS_PATH}
+	go test -v -mod=vendor -timeout 600s "./test/e2e/" -run TestE2E -report-dir ${E2E_TEST_ARTIFACTS_PATH} ${E2E_TEST_GINKGO_FLAGS}
 
 init-buildx:
 	# Ensure we use a builder that can leverage it (the default on linux will not)

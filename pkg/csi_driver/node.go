@@ -89,15 +89,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
+	if mountOptions, ok := vc[VolumeContextKeyMountOptions]; ok {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
+	}
 
 	if vc[VolumeContextKeyEphemeral] == "true" {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
 			return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
-		}
-
-		if ephemeralVolMountOptions, ok := vc[VolumeContextKeyMountOptions]; ok {
-			fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(ephemeralVolMountOptions, ","))
 		}
 	}
 

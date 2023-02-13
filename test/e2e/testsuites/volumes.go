@@ -69,9 +69,12 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 	f := framework.NewFrameworkWithCustomTimeouts("volumes", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
-	init := func() {
+	init := func(configPrefix ...string) {
 		l = local{}
 		l.config, l.driverCleanup = driver.PrepareTest(f)
+		if len(configPrefix) > 0 {
+			l.config.Prefix = configPrefix[0]
+		}
 		l.volumeResource = storageframework.CreateVolumeResource(driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
@@ -144,5 +147,27 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Expecting error when write to read-only volumes")
 		tPod.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data", mountPath), 1)
+	})
+
+	ginkgo.It("[non-root] should store data", func() {
+		init(specs.NonRootVolumePrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		mountPath := "/mnt/test"
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetNonRootSecurityContext()
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning()
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 	})
 }
