@@ -106,7 +106,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
    
    - `spec.csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
    - `spec.csi.volumeHandle`: specify your GCS bucket name.
-   - `spec.mountOptions`: pass flags to gcsfuse. *TODO*: list out supported gcsfuse flags.
+   - `spec.mountOptions`: pass flags to gcsfuse.
    
     ```yaml
     apiVersion: v1
@@ -190,7 +190,7 @@ Use the following YAML manifest to specify the GCS bucket directly on the Pod sp
 - `spec.serviceAccountName`: use the same Kubernetes service account in the [GCS bucket access setup step](#set-up-access-to-gcs-buckets-via-gke-workload-identity).
 - `spec.volumes[n].csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
 - `spec.volumes[n].csi.volumeAttributes.bucketName`: specify your GCS bucket name.
-- `spec.volumes[n].csi.volumeAttributes.mountOptions`: pass flags to gcsfuse. Put all the flags in one string separated by a comma `,` without spaces. *TODO*: list out supported gcsfuse flags.
+- `spec.volumes[n].csi.volumeAttributes.mountOptions`: pass flags to gcsfuse. Put all the flags in one string separated by a comma `,` without spaces.
 
 ```yaml
 apiVersion: v1
@@ -224,6 +224,33 @@ spec:
         # optional, if Pod does not use the root user
         mountOptions: "uid=1001,gid=3003"
 ```
+
+## GCS Fuse Mount Flags
+
+When the GCS Fuse is initiated, the following flags are passed to the gcsfuse binary, and these flags cannot be overwritten by users:
+
+- implicit-dirs
+- app-name=gke-gcs-fuse-csi
+- temp-dir=/tmp/.volumes/{volume-name}/temp-dir
+- foreground
+- log-file=/dev/fd/1
+- log-format=text
+
+The following flags are disallowed to be passed to the gcsfuse binary:
+
+- key-file
+- token-url
+- reuse-token-from-url
+- endpoint
+
+All the other flags defined in the [GCS Fuse flags file](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/flags.go) are allowed. You can pass the flags via `spec.mountOptions` on a `PersistentVolume` manifest, or `spec.volumes[n].csi.volumeAttributes.mountOptions` if you are using the CSI Ephemeral Inline volumes.
+
+Specifically, you may consider passing the following flags as needed:
+
+ - If the Pod/container does not use the root user, pass the uid to gcsfuse using the flag `uid`.
+ - If the Pod/container does not use the default fsGroup, pass the gid to gcsfuse using the flag `gid`.
+ - In order to get higher throughput, increase the max number of TCP connections allowed per gcsfuse instance by using the flag `max-conns-per-host`. The default value is 10.
+ - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
 
 ## More usage examples
 See the documentation [Example Applications](../examples/README.md).

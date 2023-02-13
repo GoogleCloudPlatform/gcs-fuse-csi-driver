@@ -26,6 +26,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const GCSFUSE_APP_NAME = "gke-gcs-fuse-csi"
+
 // Interface defines the set of methods to allow for gcsfuse mount operations on a system.
 type Interface interface {
 	// Mount mounts bucket using a file descriptor passed via a unix domain socket.
@@ -69,24 +71,10 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to create temp dir %q: %v", mc.TempDir, err)
 	}
 
-	args := []string{
-		"--implicit-dirs",
-		"--app-name",
-		"gke-gcs-csi",
-		"--temp-dir",
-		mc.TempDir,
-		"--foreground",
-		"--log-file",
-		"/dev/fd/1", // redirect the output to cmd stdout
-		"--log-format",
-		"text",
+	args, err := prepareMountArgs(mc)
+	if err != nil {
+		klog.Warningf("got error when preparing the mount args: %v. Will discard invalid args and continue to mount.", err)
 	}
-	args = append(args, validateMountArgs(mc.VolumeName, mc.Options)...)
-	args = append(args, mc.BucketName)
-	// gcsfuse supports the `/dev/fd/N` syntax
-	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
-	args = append(args, "/dev/fd/3")
-
 	klog.Infof("gcsfuse mounting with args %v...", args)
 	cmd := exec.Cmd{
 		Path:       m.mounterPath,
@@ -104,36 +92,59 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 	return m.cmds
 }
 
-func validateMountArgs(volumeName string, args []string) []string {
-	disallowedFlags := map[string]bool{
-		"implicit-dirs": true,
-		"app-name":      true,
-		"temp-dir":      true,
-		"foreground":    true,
-		"log-file":      true,
+var disallowedFlags = map[string]bool{
+	"implicit-dirs":        true,
+	"app-name":             true,
+	"temp-dir":             true,
+	"foreground":           true,
+	"log-file":             true,
+	"log-format":           true,
+	"key-file":             true,
+	"token-url":            true,
+	"reuse-token-from-url": true,
+	"endpoint":             true,
+}
+
+func prepareMountArgs(mc *MountConfig) ([]string, error) {
+	args := []string{
+		"--implicit-dirs",
+		"--app-name",
+		GCSFUSE_APP_NAME,
+		"--temp-dir",
+		mc.TempDir,
+		"--foreground",
+		"--log-file",
+		"/dev/fd/1", // redirect the output to cmd stdout
+		"--log-format",
+		"text",
 	}
 
-	validatedArgs := []string{}
 	invalidArgs := []string{}
-	for _, arg := range args {
+	for _, arg := range mc.Options {
 		argPair := strings.SplitN(arg, "=", 2)
 		if len(argPair) == 0 {
 			continue
 		}
+
 		if !disallowedFlags[argPair[0]] {
-			validatedArgs = append(validatedArgs, "--"+argPair[0])
+			args = append(args, "--"+argPair[0])
 		} else {
 			invalidArgs = append(invalidArgs, arg)
 			continue
 		}
 		if len(argPair) > 1 {
-			validatedArgs = append(validatedArgs, argPair[1])
+			args = append(args, argPair[1])
 		}
 	}
 
-	if len(invalidArgs) > 0 {
-		klog.Warningf("got invalid args %v for volume %q, will discard these args and continue to mount.", invalidArgs, volumeName)
-	}
+	args = append(args, mc.BucketName)
+	// gcsfuse supports the `/dev/fd/N` syntax
+	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
+	args = append(args, "/dev/fd/3")
 
-	return validatedArgs
+	var err error
+	if len(invalidArgs) > 0 {
+		err = fmt.Errorf("got invalid args %v for volume %q.", invalidArgs, mc.VolumeName)
+	}
+	return args, err
 }
