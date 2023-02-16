@@ -212,7 +212,7 @@ spec:
   - image: nginx
     name: nginx
     volumeMounts:
-    - name: gcp-cloud-storage-pvc
+    - name: gcp-cloud-storage-csi-ephemeral
       mountPath: /data
   serviceAccountName: my_k8s_sa
   volumes:
