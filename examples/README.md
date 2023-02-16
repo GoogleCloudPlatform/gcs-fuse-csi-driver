@@ -119,6 +119,41 @@ kubectl apply -f ./examples/gcsfuse-e2e-test/pod.yaml
 kubectl delete -f ./examples/gcsfuse-e2e-test/pod.yaml
 ```
 
+### PyTorch Application Example
+```bash
+# add a new nood pool with GPU
+CLUSTER_NAME=<cluster-name>
+gcloud container node-pools create pool-gpu-pytorch \
+  --accelerator type=nvidia-tesla-a100,count=8 \
+  --zone us-central1-c --cluster ${CLUSTER_NAME} \
+  --num-nodes 1 \
+  --machine-type a2-highgpu-8g
+
+# install nvidia driver
+# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
+
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/data-loader-pod.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-pytorch.yaml
+
+# replace <kaggle-key> with your kaggle API key
+# Go to https://www.kaggle.com/docs/api to get your kaggle API key. The format is {"username":"xxx","key":"xxx"}.
+KAGGLE_KEY=<your-kaggle-key>
+sed -i "s/<kaggle-key>/$KAGGLE_KEY/g" ./examples/pytorch/data-loader-pod.yaml
+
+# prepare the data
+kubectl apply -f ./examples/pytorch/data-loader-pod.yaml
+# clean up
+kubectl delete -f ./examples/pytorch/data-loader-pod.yaml
+
+# start the pytorch training job
+kubectl apply -f ./examples/pytorch/train-job-pytorch.yaml
+# clean up
+kubectl delete -f ./examples/pytorch/train-job-pytorch.yaml
+```
+
 ### Machine Learning Application Example
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name

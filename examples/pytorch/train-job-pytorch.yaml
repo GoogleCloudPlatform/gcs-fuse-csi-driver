@@ -1,0 +1,70 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gcp-gcs-csi-job-example
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      namespace: gcs-csi-example
+      name: pytorch-test-pod
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "10"
+        gke-gcsfuse/memory-limit: 2Gi
+        gke-gcsfuse/local-storage-limit: 50Gi
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: pytorch-test
+        image: nvcr.io/nvidia/pytorch:22.03-py3
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        command:
+          - "/bin/sh"
+          - "-c"
+          - git clone https://github.com/facebookresearch/dino.git;
+            mkdir -p /pytorch_output;
+            pip install timm;
+            python -c 'import torch;torch.hub.list("facebookresearch/xcit:main")';
+            python -m torch.distributed.launch --nproc_per_node=8 /workspace/dino/main_dino.py --arch vit_small --num_workers 20 --data_path /gcs/imagenet/ILSVRC/Data/CLS-LOC/train/ --output_dir /pytorch_output --norm_last_layer False --use_fp16 False --clip_grad 0 --epochs 800 --global_crops_scale 0.25 1.0 --local_crops_number 10 --local_crops_scale 0.05 0.25 --teacher_temp 0.07 --warmup_teacher_temp_epochs 30 --min_lr 0.00001  2>&1 | tee /pytorch_output/pytorch_test.log;
+            mkdir -p /gcs/pytorch_output;
+            cp -r /pytorch_output /gcs/pytorch_output/${MY_POD_NAME};
+        resources:
+          limits:
+            cpu: "85"
+            memory: 640Gi
+            ephemeral-storage: 20Gi
+            nvidia.com/gpu: "8"
+          requests:
+            cpu: "85"
+            memory: 640Gi
+            ephemeral-storage: 20Gi
+            nvidia.com/gpu: "8"
+        volumeMounts:
+        - name: gcs-fuse-csi-ephemeral
+          mountPath: /gcs
+      serviceAccountName: gcs-csi
+      volumes:
+      - name: gcs-fuse-csi-ephemeral
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: <bucket-name>
+            mountOptions: "max-conns-per-host=100,disable-http2,debug_gcs,debug_fuse,debug_fs"

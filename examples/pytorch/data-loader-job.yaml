@@ -1,0 +1,83 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kaggle-key
+  namespace: gcs-csi-example
+data:
+  kaggle.json: |
+    <kaggle-key>
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  namespace: gcs-csi-example
+  name: local-pd
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 500Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gcp-gcs-csi-job-example
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      namespace: gcs-csi-example
+      name: data-loader-pod
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: data-loader
+        image: google/cloud-sdk:latest
+        env:
+          - name: BUCKET_NAME
+            value: <bucket-name>
+        command:
+          - "/bin/sh"
+          - "-c"
+          - apt-get update && apt-get install python3-pip unzip -y;
+            pip install kaggle;
+            chmod 600 /root/.kaggle/kaggle.json;
+            kaggle competitions download -c imagenet-object-localization-challenge -p /local_disk;
+            mkdir /local_disk/imagenet -p;
+            unzip /local_disk/imagenet-object-localization-challenge.zip -x "ILSVRC/Annotations/*" "ILSVRC/ImageSets/*" "ILSVRC/*.csv" -d /local_disk/imagenet;
+            gsutil -m cp -R /local_disk/imagenet gs://${BUCKET_NAME}/imagenet;
+        resources:
+          limits:
+            cpu: "1"
+            memory: 2Gi
+          requests:
+            cpu: "1"
+            memory: 2Gi
+        volumeMounts:
+        - name: kaggle-key
+          mountPath: /root/.kaggle
+        - name: local-pd-pvc
+          mountPath: /local_disk
+      serviceAccountName: gcs-csi
+      volumes:
+      - name: kaggle-key
+        configMap:
+          name: kaggle-key
+      - name: local-pd-pvc
+        persistentVolumeClaim:
+          claimName: local-pd
