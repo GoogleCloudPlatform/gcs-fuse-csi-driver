@@ -107,6 +107,7 @@ var disallowedFlags = map[string]bool{
 
 func prepareMountArgs(mc *MountConfig) ([]string, error) {
 	args := []string{
+		"gcsfuse",
 		"--implicit-dirs",
 		"--app-name",
 		GCSFUSE_APP_NAME,
