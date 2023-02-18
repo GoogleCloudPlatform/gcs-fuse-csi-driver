@@ -90,7 +90,7 @@ metadata:
    gke-gcsfuse/volumes: "true" # required
    gke-gcsfuse/cpu-limit: 500m # optional
    gke-gcsfuse/memory-limit: 100Mi # optional
-   gke-gcsfuse/local-storage-limit: 50Gi # optional
+   gke-gcsfuse/ephemeral-storage-limit: 50Gi # optional
 ```
 
 ### Using a PersistentVolumeClaim bound to the PersistentVolume
@@ -162,7 +162,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
         gke-gcsfuse/volumes: "true" # required
         gke-gcsfuse/cpu-limit: 500m # optional
         gke-gcsfuse/memory-limit: 100Mi # optional
-        gke-gcsfuse/local-storage-limit: 50Gi # optional
+        gke-gcsfuse/ephemeral-storage-limit: 50Gi # optional
     spec:
       securityContext: # optional, if Pod does not use the root user
         runAsUser: 1001
@@ -202,7 +202,7 @@ metadata:
     gke-gcsfuse/volumes: "true" # required
     gke-gcsfuse/cpu-limit: 500m # optional
     gke-gcsfuse/memory-limit: 100Mi # optional
-    gke-gcsfuse/local-storage-limit: 50Gi # optional
+    gke-gcsfuse/ephemeral-storage-limit: 50Gi # optional
 spec:
   securityContext: # optional, if Pod does not use the root user
     runAsUser: 1001

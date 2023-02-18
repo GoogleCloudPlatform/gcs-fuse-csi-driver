@@ -21,7 +21,7 @@ metadata:
     gke-gcsfuse/volumes: "true"
     gke-gcsfuse/cpu-limit: "10"
     gke-gcsfuse/memory-limit: 2Gi
-    gke-gcsfuse/local-storage-limit: 50Gi
+    gke-gcsfuse/ephemeral-storage-limit: 50Gi
 spec:
   nodeSelector:
     node.kubernetes.io/instance-type: n2-standard-32
