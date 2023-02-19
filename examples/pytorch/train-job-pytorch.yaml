@@ -24,8 +24,8 @@ spec:
       annotations:
         gke-gcsfuse/volumes: "true"
         gke-gcsfuse/cpu-limit: "10"
-        gke-gcsfuse/memory-limit: 2Gi
-        gke-gcsfuse/local-storage-limit: 50Gi
+        gke-gcsfuse/memory-limit: 20Gi
+        gke-gcsfuse/ephemeral-storage-limit: 20Gi
     spec:
       restartPolicy: Never
       containers:
@@ -49,19 +49,23 @@ spec:
         resources:
           limits:
             cpu: "85"
-            memory: 640Gi
-            ephemeral-storage: 20Gi
+            memory: 620Gi
             nvidia.com/gpu: "8"
           requests:
             cpu: "85"
-            memory: 640Gi
-            ephemeral-storage: 20Gi
+            memory: 620Gi
             nvidia.com/gpu: "8"
         volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
         - name: gcs-fuse-csi-ephemeral
           mountPath: /gcs
       serviceAccountName: gcs-csi
       volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Gi
       - name: gcs-fuse-csi-ephemeral
         csi:
           driver: gcsfuse.csi.storage.gke.io
