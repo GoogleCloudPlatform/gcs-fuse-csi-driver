@@ -29,18 +29,45 @@ DRIVER_IMAGE = ${REGISTRY}/${DRIVER_BINARY}
 SIDECAR_IMAGE = ${REGISTRY}/${SIDECAR_BINARY}
 WEBHOOK_IMAGE = ${REGISTRY}/${WEBHOOK_BINARY}
 
+RAND := $(shell od -An -N2 -i /dev/random | tr -d ' ')
+E2E_TEST_GCP_PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
 E2E_TEST_CREATE_CLUSTER ?= false
-E2E_TEST_USE_MANAGED_DRIVER ?= false
-E2E_TEST_BUILD_DRIVER ?= false
-E2E_TEST_FOCUS ?=
-E2E_TEST_SKIP ?= Dynamic.PV
-E2E_TEST_GINKGO_FLAGS ?=
-ifneq ("${E2E_TEST_FOCUS}", "")
-E2E_TEST_GINKGO_FLAGS+= -ginkgo.focus ${E2E_TEST_FOCUS}
+E2E_TEST_CLUSTER_NAME ?= gcs-fuse-csi-driver-test-${RAND}
+E2E_TEST_CLUSTER_VERSION ?=
+E2E_TEST_NODE_VERSION ?=
+E2E_TEST_CLUSTER_NUM_NODES ?= 3
+E2E_TEST_CLUSTER_REGION ?= us-central1
+E2E_TEST_IMAGE_TYPE ?= cos_containerd
+E2E_TEST_CLEANUP_CLUSTER ?= false
+E2E_TEST_CREATE_CLUSTER_ARGS = --quiet --region ${E2E_TEST_CLUSTER_REGION} --num-nodes ${E2E_TEST_CLUSTER_NUM_NODES} --machine-type n1-standard-2 --image-type ${E2E_TEST_IMAGE_TYPE} --workload-pool=${E2E_TEST_GCP_PROJECT}.svc.id.goog
+ifneq ("${E2E_TEST_CLUSTER_VERSION}", "")
+E2E_TEST_CREATE_CLUSTER_ARGS += --cluster-version ${E2E_TEST_CLUSTER_VERSION}
+endif
+ifneq ("${E2E_TEST_NODE_VERSION}", "")
+E2E_TEST_CREATE_CLUSTER_ARGS += --node-version ${E2E_TEST_NODE_VERSION}
 endif
 
+export E2E_TEST_API_ENV ?= prod
+ifeq (${E2E_TEST_API_ENV}, staging)
+	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://staging-container.sandbox.googleapis.com/
+else ifeq (${E2E_TEST_API_ENV}, staging2)
+	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://staging2-container.sandbox.googleapis.com/
+else ifeq (${E2E_TEST_API_ENV}, test)
+	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://test-container.sandbox.googleapis.com/
+endif
+
+E2E_TEST_USE_MANAGED_DRIVER ?= false
+E2E_TEST_BUILD_DRIVER ?= false
+
+E2E_TEST_FOCUS ?=
+E2E_TEST_SKIP ?= Dynamic.PV
+E2E_TEST_GINKGO_PROCS ?= 5
+E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} --always-emit-ginkgo-writer
+ifneq ("${E2E_TEST_FOCUS}", "")
+E2E_TEST_GINKGO_FLAGS+= --focus ${E2E_TEST_FOCUS}
+endif
 ifneq ("${E2E_TEST_SKIP}", "")
-E2E_TEST_GINKGO_FLAGS+= -ginkgo.skip ${E2E_TEST_SKIP}
+E2E_TEST_GINKGO_FLAGS+= --skip ${E2E_TEST_SKIP}
 endif
 E2E_TEST_ARTIFACTS_PATH ?= ../../_artifacts
 
@@ -77,17 +104,6 @@ else
 endif
 
 build-image-and-push-multi-arch: build-image-and-push-linux-amd64 build-image-and-push-linux-arm64
-	docker manifest create \
-		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
-
-	docker manifest create \
-		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
-
-	docker manifest create \
-		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
-	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
 build-image-and-push-linux-amd64: init-buildx download-gcsfuse
 	docker buildx build \
@@ -98,6 +114,9 @@ build-image-and-push-linux-amd64: init-buildx download-gcsfuse
 		--build-arg BUILDPLATFORM=linux/amd64 \
 		--build-arg REGISTRY=${REGISTRY} \
 		--push .
+	docker manifest create \
+		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 
 	docker buildx build \
 		--file ./cmd/sidecar_mounter/Dockerfile \
@@ -106,6 +125,9 @@ build-image-and-push-linux-amd64: init-buildx download-gcsfuse
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
 		--build-arg BUILDPLATFORM=linux/amd64 \
 		--push .
+	docker manifest create \
+		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 
 	docker buildx build \
 		--file ./cmd/webhook/Dockerfile \
@@ -115,6 +137,9 @@ build-image-and-push-linux-amd64: init-buildx download-gcsfuse
 		--build-arg BUILDPLATFORM=linux/amd64 \
 		--build-arg REGISTRY=${REGISTRY} \
 		--push .
+	docker manifest create \
+		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
 build-image-and-push-linux-arm64: init-buildx download-gcsfuse
 	docker buildx build \
@@ -125,6 +150,9 @@ build-image-and-push-linux-arm64: init-buildx download-gcsfuse
 		--build-arg BUILDPLATFORM=linux/arm64 \
 		--build-arg REGISTRY=${REGISTRY} \
 		--push .
+	docker manifest create \
+		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
+	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 
 	docker buildx build \
 		--file ./cmd/sidecar_mounter/Dockerfile \
@@ -133,6 +161,9 @@ build-image-and-push-linux-arm64: init-buildx download-gcsfuse
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
 		--build-arg BUILDPLATFORM=linux/arm64 \
 		--push .
+	docker manifest create \
+		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
+	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 
 install:	
 	./deploy/base/webhook/patch-ca-bundle.sh
@@ -160,16 +191,30 @@ unit-test:
 sanity-test:
 	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
 
-e2e-test:
+e2e-test: init-ginkgo
+ifeq (${E2E_TEST_CREATE_CLUSTER}, true)
+	gcloud container clusters create ${E2E_TEST_CLUSTER_NAME} ${E2E_TEST_CREATE_CLUSTER_ARGS}
+	gcloud container clusters get-credentials ${E2E_TEST_CLUSTER_NAME} --region ${E2E_TEST_CLUSTER_REGION}
+endif
+
 ifeq (${E2E_TEST_USE_MANAGED_DRIVER}, false)
 ifeq (${E2E_TEST_BUILD_DRIVER}, true)
-	make build-image-and-push-multi-arch REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
+	make build-image-and-push-linux-amd64 REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
+
 	make uninstall OVERLAY=${OVERLAY} || true
 	make install OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
 
-	go test -v -mod=vendor -timeout 600s "./test/e2e/" -run TestE2E -report-dir ${E2E_TEST_ARTIFACTS_PATH} ${E2E_TEST_GINKGO_FLAGS}
+	ginkgo ${E2E_TEST_GINKGO_FLAGS} "./test/e2e/" -- -report-dir ${E2E_TEST_ARTIFACTS_PATH} 
+
+ifeq (${E2E_TEST_CLEANUP_CLUSTER}, true)
+	gcloud container clusters delete ${E2E_TEST_CLUSTER_NAME} --quiet --region ${E2E_TEST_CLUSTER_REGION}
+endif
+
+init-ginkgo:
+	export PATH=${PATH}:$(go env GOPATH)/bin
+	go install github.com/onsi/ginkgo/v2/ginkgo@v2.4.0
 
 init-buildx:
 	# Ensure we use a builder that can leverage it (the default on linux will not)

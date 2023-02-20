@@ -82,7 +82,7 @@ func TestE2E(t *testing.T) {
 	}
 
 	suiteConfig, reporterConfig := framework.CreateGinkgoConfig()
-	klog.Infof("Starting e2e run  on Ginkgo node %d", framework.RunID, suiteConfig.ParallelProcess)
+	klog.Infof("Starting e2e run %q on Ginkgo node %d", framework.RunID, suiteConfig.ParallelProcess)
 	ginkgo.RunSpecs(t, "GCS Fuse CSI E2E Suite", suiteConfig, reporterConfig)
 }
 

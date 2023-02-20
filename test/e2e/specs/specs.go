@@ -25,6 +25,7 @@ import (
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -49,7 +50,7 @@ const (
 	InvalidMountOptionsVolumePrefix = "gcs-innalid-mount-options-volume"
 
 	pollInterval    = 1 * time.Second
-	pollTimeout     = 10 * time.Second
+	pollTimeout     = 1 * time.Minute
 	pollTimeoutSlow = 5 * time.Minute
 )
 
@@ -60,6 +61,8 @@ type TestPod struct {
 }
 
 func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
+	cpu, _ := resource.ParseQuantity("100m")
+	mem, _ := resource.ParseQuantity("20Mi")
 	return &TestPod{
 		client:    c,
 		namespace: ns,
@@ -80,6 +83,16 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 						Command:      []string{"/bin/sh"},
 						Args:         []string{"-c", "tail -f /dev/null"},
 						VolumeMounts: make([]v1.VolumeMount, 0),
+						Resources: v1.ResourceRequirements{
+							Limits: v1.ResourceList{
+								v1.ResourceCPU:    cpu,
+								v1.ResourceMemory: mem,
+							},
+							Requests: v1.ResourceList{
+								v1.ResourceCPU:    cpu,
+								v1.ResourceMemory: mem,
+							},
+						},
 					},
 				},
 				RestartPolicy:                v1.RestartPolicyNever,
@@ -166,7 +179,7 @@ func (t *TestPod) WaitForFailedMountError(msg string) {
 		t.namespace.Name,
 		fields.Set{"reason": events.FailedMountVolume}.AsSelector().String(),
 		msg,
-		pollTimeout)
+		pollTimeoutSlow)
 	framework.ExpectNoError(err)
 }
 
@@ -215,6 +228,10 @@ func (t *TestPod) SetNonRootSecurityContext() {
 		RunAsUser: pointer.Int64(1001),
 		FSGroup:   pointer.Int64(3003),
 	}
+}
+
+func (t *TestPod) SetCommand(cmd string) {
+	t.pod.Spec.Containers[0].Args = []string{"-c", cmd}
 }
 
 func (t *TestPod) Cleanup() {
@@ -397,7 +414,13 @@ func (t *TestGCPProjectIAMPolicyBinding) Create() {
 	crmService, err := cloudresourcemanager.NewService(context.TODO())
 	framework.ExpectNoError(err)
 
-	addBinding(crmService, t.projectID, t.member, t.role)
+	err = wait.PollImmediate(pollInterval, pollTimeoutSlow, func() (bool, error) {
+		if e := addBinding(crmService, t.projectID, t.member, t.role); e != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	framework.ExpectNoError(err)
 }
 
 func (t *TestGCPProjectIAMPolicyBinding) Cleanup() {
@@ -405,12 +428,21 @@ func (t *TestGCPProjectIAMPolicyBinding) Cleanup() {
 	crmService, err := cloudresourcemanager.NewService(context.TODO())
 	framework.ExpectNoError(err)
 
-	removeMember(crmService, t.projectID, t.member, t.role)
+	err = wait.PollImmediate(pollInterval, pollTimeoutSlow, func() (bool, error) {
+		if e := removeMember(crmService, t.projectID, t.member, t.role); e != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	framework.ExpectNoError(err)
 }
 
 // addBinding adds the member to the project's IAM policy
-func addBinding(crmService *cloudresourcemanager.Service, projectID, member, role string) {
-	policy := getPolicy(crmService, projectID)
+func addBinding(crmService *cloudresourcemanager.Service, projectID, member, role string) error {
+	policy, err := getPolicy(crmService, projectID)
+	if err != nil {
+		return err
+	}
 
 	// Find the policy binding for role. Only one binding can have the role.
 	var binding *cloudresourcemanager.Binding
@@ -433,12 +465,15 @@ func addBinding(crmService *cloudresourcemanager.Service, projectID, member, rol
 		policy.Bindings = append(policy.Bindings, binding)
 	}
 
-	setPolicy(crmService, projectID, policy)
+	return setPolicy(crmService, projectID, policy)
 }
 
 // removeMember removes the member from the project's IAM policy
-func removeMember(crmService *cloudresourcemanager.Service, projectID, member, role string) {
-	policy := getPolicy(crmService, projectID)
+func removeMember(crmService *cloudresourcemanager.Service, projectID, member, role string) error {
+	policy, err := getPolicy(crmService, projectID)
+	if err != nil {
+		return err
+	}
 
 	// Find the policy binding for role. Only one binding can have the role.
 	var binding *cloudresourcemanager.Binding
@@ -471,29 +506,27 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 		binding.Members = binding.Members[:last]
 	}
 
-	setPolicy(crmService, projectID, policy)
+	return setPolicy(crmService, projectID, policy)
 }
 
 // getPolicy gets the project's IAM policy
-func getPolicy(crmService *cloudresourcemanager.Service, projectID string) *cloudresourcemanager.Policy {
+func getPolicy(crmService *cloudresourcemanager.Service, projectID string) (*cloudresourcemanager.Policy, error) {
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 
 	request := new(cloudresourcemanager.GetIamPolicyRequest)
-	policy, err := crmService.Projects.GetIamPolicy(projectID, request).Do()
-	framework.ExpectNoError(err)
-	return policy
+	return crmService.Projects.GetIamPolicy(projectID, request).Do()
 }
 
 // setPolicy sets the project's IAM policy
-func setPolicy(crmService *cloudresourcemanager.Service, projectID string, policy *cloudresourcemanager.Policy) {
+func setPolicy(crmService *cloudresourcemanager.Service, projectID string, policy *cloudresourcemanager.Policy) error {
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 
 	request := new(cloudresourcemanager.SetIamPolicyRequest)
 	request.Policy = policy
-	policy, err := crmService.Projects.SetIamPolicy(projectID, request).Do()
-	framework.ExpectNoError(err)
+	_, err := crmService.Projects.SetIamPolicy(projectID, request).Do()
+	return err
 }

@@ -159,6 +159,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		mountPath := "/mnt/test"
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetCommand("touch /mnt/test/test_file && while true; do echo $(date) >> /mnt/test/test_file; done")
 
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/volumes":      "true",

@@ -138,12 +138,12 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 			bucketName = n.createBucket(config.Framework.Namespace.Name)
 		}
 
-		mountOptions := ""
+		mountOptions := "debug_gcs,debug_fuse,debug_fs"
 		if config.Prefix == specs.NonRootVolumePrefix {
-			mountOptions = "uid=1001,gid=3003"
+			mountOptions += ",uid=1001,gid=3003"
 		}
 		if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
-			mountOptions = "invalid-option"
+			mountOptions += ",invalid-option"
 		}
 		return &gcsVolume{
 			driver:                  n,
@@ -195,13 +195,14 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 
 	volme := n.volumeStore[volumeNumber]
 	attributes := map[string]string{
-		"bucketName": volme.bucketName,
+		"bucketName":   volme.bucketName,
+		"mountOptions": "debug_gcs,debug_fuse,debug_fs",
 	}
 	if config.Prefix == specs.NonRootVolumePrefix {
-		attributes["mountOptions"] = "uid=1001,gid=3003"
+		attributes["mountOptions"] += ",uid=1001,gid=3003"
 	}
 	if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
-		attributes["mountOptions"] = "invalid-option"
+		attributes["mountOptions"] += ",invalid-option"
 	}
 	return attributes, volme.shared, volme.readOnly
 }
@@ -218,7 +219,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 	generateName := fmt.Sprintf("gcsfuse-csi-dynamic-test-sc-")
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
-	mountOptions := []string{}
+	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
 	if config.Prefix == specs.NonRootVolumePrefix {
 		mountOptions = append(mountOptions, "uid=1001", "gid=3003")
 	}
