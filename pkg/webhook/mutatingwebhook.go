@@ -74,9 +74,17 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
 
+	configCopy := &Config{
+		ContainerImage:        si.Config.ContainerImage,
+		ImageVersion:          si.Config.ImageVersion,
+		ImagePullPolicy:       si.Config.ImagePullPolicy,
+		CPULimit:              si.Config.CPULimit.DeepCopy(),
+		MemoryLimit:           si.Config.MemoryLimit.DeepCopy(),
+		EphemeralStorageLimit: si.Config.EphemeralStorageLimit.DeepCopy(),
+	}
 	if v, ok := pod.Annotations[annotationGcsfuseSidecarCPULimitKey]; ok {
 		if q, err := resource.ParseQuantity(v); err == nil {
-			si.Config.CPULimit = q
+			configCopy.CPULimit = q
 		} else {
 			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %v", v, annotationGcsfuseSidecarCPULimitKey, err))
 		}
@@ -84,7 +92,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 
 	if v, ok := pod.Annotations[annotationGcsfuseSidecarMemoryLimitKey]; ok {
 		if q, err := resource.ParseQuantity(v); err == nil {
-			si.Config.MemoryLimit = q
+			configCopy.MemoryLimit = q
 		} else {
 			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %v", v, annotationGcsfuseSidecarMemoryLimitKey, err))
 		}
@@ -92,15 +100,15 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 
 	if v, ok := pod.Annotations[annotationGcsfuseSidecarEphermeralStorageLimitKey]; ok {
 		if q, err := resource.ParseQuantity(v); err == nil {
-			si.Config.EphemeralStorageLimit = q
+			configCopy.EphemeralStorageLimit = q
 		} else {
 			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %v", v, annotationGcsfuseSidecarEphermeralStorageLimitKey, err))
 		}
 	}
 
-	klog.Infof("mutating pod: name %q, namespace %q, CPU limit %q, memory limit %q, local storage limit %q", pod.Name, pod.Namespace, &si.Config.CPULimit, &si.Config.MemoryLimit, &si.Config.EphemeralStorageLimit)
+	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, CPU limit %q, memory limit %q, local storage limit %q", pod.Name, pod.GenerateName, pod.Namespace, configCopy.CPULimit.String(), configCopy.MemoryLimit.String(), configCopy.EphemeralStorageLimit.String())
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
-	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(si.Config)}, pod.Spec.Containers...)
+	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy)}, pod.Spec.Containers...)
 	pod.Spec.Volumes = append([]corev1.Volume{GetSidecarContainerVolumeSpec()}, pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
