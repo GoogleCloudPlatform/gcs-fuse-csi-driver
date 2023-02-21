@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	appsv1 "k8s.io/api/apps/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,10 +48,14 @@ func (c *FakeClientset) GetPod(ctx context.Context, namespace, name string) (*v1
 	return pod, nil
 }
 
-func (c *FakeClientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (*authenticationv1.TokenRequest, error) {
+func (c *FakeClientset) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
 	return nil, nil
 }
 
-func (c *FakeClientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string, options metav1.GetOptions) (string, error) {
+func (c *FakeClientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
+	return nil, nil
+}
+
+func (c *FakeClientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error) {
 	return "", nil
 }

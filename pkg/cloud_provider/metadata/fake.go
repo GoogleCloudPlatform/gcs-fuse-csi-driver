@@ -18,20 +18,38 @@ package metadata
 
 import "fmt"
 
+var envAPIMap = map[string]string{
+	"prod":     "container.googleapis.com",
+	"staging":  "staging-container.sandbox.googleapis.com",
+	"staging2": "staging2-container.sandbox.googleapis.com",
+	"test":     "test-container.sandbox.googleapis.com",
+}
+
 type fakeServiceManager struct {
-	projectID   string
-	location    string
-	clusterName string
+	projectID        string
+	identityPool     string
+	identityProvider string
 }
 
 var _ Service = &fakeServiceManager{}
 
-func NewFakeService(projectID, location, clusterName string) Service {
-	return &fakeServiceManager{
-		projectID:   projectID,
-		location:    location,
-		clusterName: clusterName,
+func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, error) {
+	if _, ok := envAPIMap[gkeEnv]; !ok {
+		return nil, fmt.Errorf("invalid GKE environment: %v", gkeEnv)
 	}
+	s := fakeServiceManager{
+		projectID:    projectID,
+		identityPool: fmt.Sprintf("%s.svc.id.goog", projectID),
+		identityProvider: fmt.Sprintf(
+			"https://%s/v1"+
+				"/projects/%s/locations/%s/clusters/%s",
+			envAPIMap[gkeEnv],
+			projectID,
+			location,
+			clusterName,
+		),
+	}
+	return &s, nil
 }
 
 func (manager *fakeServiceManager) GetProjectID() string {
@@ -39,15 +57,9 @@ func (manager *fakeServiceManager) GetProjectID() string {
 }
 
 func (manager *fakeServiceManager) GetIdentityPool() string {
-	return fmt.Sprintf("%s.svc.id.goog", manager.projectID)
+	return manager.identityPool
 }
 
 func (manager *fakeServiceManager) GetIdentityProvider() string {
-	return fmt.Sprintf(
-		"https://container.googleapis.com/v1"+
-			"/projects/%s/locations/%s/clusters/%s",
-		manager.projectID,
-		manager.location,
-		manager.clusterName,
-	)
+	return manager.identityProvider
 }

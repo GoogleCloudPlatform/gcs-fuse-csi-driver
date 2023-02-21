@@ -17,9 +17,13 @@ limitations under the License.
 package metadata
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/compute/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	appsv1 "k8s.io/api/apps/v1"
 )
 
 type Service interface {
@@ -36,34 +40,23 @@ type metadataServiceManager struct {
 
 var _ Service = &metadataServiceManager{}
 
-func NewMetadataService() (Service, error) {
+func NewMetadataService(clientset clientset.Interface) (Service, error) {
 	projectID, err := metadata.ProjectID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %v", err)
 	}
 
-	clusterName, err := metadata.InstanceAttributeValue("cluster-name")
+	ds, err := clientset.GetDaemonSet(context.TODO(), "kube-system", "gke-metadata-server")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster name: %v", err)
-	}
-	location, err := metadata.InstanceAttributeValue("cluster-location")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster location: %v", err)
+		return nil, fmt.Errorf("failed to get gke-metadata-server DaemonSet spec: %v", err)
 	}
 
 	identityPool := fmt.Sprintf("%s.svc.id.goog", projectID)
-	identityProvider := fmt.Sprintf(
-		"https://container.googleapis.com/v1"+
-			"/projects/%s/locations/%s/clusters/%s",
-		projectID,
-		location,
-		clusterName,
-	)
 
 	return &metadataServiceManager{
 		projectID:        projectID,
 		identityPool:     identityPool,
-		identityProvider: identityProvider,
+		identityProvider: getIdentityProvider(ds),
 	}, nil
 }
 
@@ -77,4 +70,14 @@ func (manager *metadataServiceManager) GetIdentityPool() string {
 
 func (manager *metadataServiceManager) GetIdentityProvider() string {
 	return manager.identityProvider
+}
+
+func getIdentityProvider(ds *appsv1.DaemonSet) string {
+	for _, c := range ds.Spec.Template.Spec.Containers[0].Command {
+		l := strings.Split(c, "=")
+		if len(l) == 2 && l[0] == "--identity-provider" {
+			return l[1]
+		}
+	}
+	return ""
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,8 +32,9 @@ import (
 
 type Interface interface {
 	GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error)
-	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (*authenticationv1.TokenRequest, error)
-	GetGCPServiceAccountName(ctx context.Context, namespace, name string, options metav1.GetOptions) (string, error)
+	GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error)
+	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
+	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
 
 type Clientset struct {
@@ -69,7 +71,15 @@ func (c *Clientset) GetPod(ctx context.Context, namespace, name string) (*v1.Pod
 	return pod, nil
 }
 
-func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (*authenticationv1.TokenRequest, error) {
+func (c *Clientset) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
+	ds, err := c.k8sClients.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return ds, nil
+}
+
+func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
 	resp, err := c.k8sClients.
 		CoreV1().
 		ServiceAccounts(namespace).
@@ -77,19 +87,19 @@ func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, na
 			ctx,
 			name,
 			tokenRequest,
-			options,
+			metav1.CreateOptions{},
 		)
 	return resp, err
 }
 
-func (c *Clientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string, options metav1.GetOptions) (string, error) {
+func (c *Clientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error) {
 	resp, err := c.k8sClients.
 		CoreV1().
 		ServiceAccounts(namespace).
 		Get(
 			ctx,
 			name,
-			options,
+			metav1.GetOptions{},
 		)
 	if err != nil {
 		return "", fmt.Errorf("Kubernetes ServiceAccount.Get API: %v", err)

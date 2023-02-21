@@ -69,8 +69,10 @@ func init() {
 	if len(l) < 4 || l[0] != "gke" {
 		klog.Fatalf("Got invalid cluster name %v, please make sure the cluster is created on GKE", currentCluster)
 	}
-	m = metadata.NewFakeService(l[1], l[2], l[3])
-
+	m, err = metadata.NewFakeService(l[1], l[2], l[3], os.Getenv("E2E_TEST_API_ENV"))
+	if err != nil {
+		klog.Fatal(err)
+	}
 }
 
 func TestE2E(t *testing.T) {

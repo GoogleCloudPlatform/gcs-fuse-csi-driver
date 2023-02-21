@@ -30,7 +30,6 @@ import (
 	"google.golang.org/api/option"
 	sts "google.golang.org/api/sts/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -74,8 +73,7 @@ func (ts *GCPTokenSource) fetchK8sSAToken(saNamespace, saName string) (*oauth2.T
 				ExpirationSeconds: &ttl,
 				Audiences:         []string{ts.meta.GetIdentityPool()},
 			},
-		},
-		v1.CreateOptions{})
+		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %v", err)
 	}
@@ -102,7 +100,7 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(k8sSAToken *oauth2.Token) (*
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
-		Scope:              "https://www.googleapis.com/auth/cloud-platform",
+		Scope:              credentials.DefaultAuthScopes()[0],
 		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
 		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
 		SubjectToken:       k8sSAToken.AccessToken,
@@ -130,7 +128,7 @@ func (ts *GCPTokenSource) fetchGCPSAToken(identityBindingToken *oauth2.Token) (*
 		return nil, fmt.Errorf("create credentials client error: %v", err)
 	}
 
-	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ts.ctx, ts.k8sSANamespace, ts.k8sSAName, v1.GetOptions{})
+	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ts.ctx, ts.k8sSANamespace, ts.k8sSAName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get GCP SA from Kubernetes SA [%s/%s] annotation: %v.", ts.k8sSANamespace, ts.k8sSAName, err)
 	}

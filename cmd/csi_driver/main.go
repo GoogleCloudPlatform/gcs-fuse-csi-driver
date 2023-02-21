@@ -49,15 +49,16 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
-	meta, err := metadata.NewMetadataService()
-	if err != nil {
-		klog.Fatalf("Failed to set up metadata service: %v", err)
-	}
-
 	clientset, err := clientset.New(*kubeconfigPath)
 	if err != nil {
 		klog.Fatal("Failed to configure k8s client")
 	}
+
+	meta, err := metadata.NewMetadataService(clientset)
+	if err != nil {
+		klog.Fatalf("Failed to set up metadata service: %v", err)
+	}
+
 	tm := auth.NewTokenManager(meta, clientset)
 
 	var mm *metrics.Manager
