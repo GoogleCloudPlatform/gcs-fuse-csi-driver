@@ -22,6 +22,7 @@ import (
 )
 
 var defaultArgs = []string{
+	"gcsfuse",
 	"--implicit-dirs",
 	"--app-name",
 	GCSFUSE_APP_NAME,
