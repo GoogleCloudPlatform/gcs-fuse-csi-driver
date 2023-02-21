@@ -74,13 +74,13 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
 
 ## Using the GCS Fuse CSI driver
 
-The GCS Fuse CSI driver allows developers to use standard Kubernetes API to consume pre-exising GCS buckets. There are two types of volume configuration supported:
+The GCS Fuse CSI driver allows developers to use standard Kubernetes API to consume pre-existing GCS buckets. There are two types of volume configuration supported:
 1. [Static Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#static) using a PersistentVolumeClaim bound to the PersistentVolume
 2. Using [CSI Ephemeral Inline volumes](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#csi-ephemeral-volumes)
 
 The GCS Fuse CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is under development and not officially supported.
 
-No matter which configuration method you choose, the CSI driver webhook depends on Pod annotations to inject and configure a sidecar contianer containing gcsfuse. Specifically, the annotation `gke-gcsfuse/volumes: "true"` is required. By default, the sidecar contianer has **300m CPU, 100Mi memory, and 1Gi ephemeral storage** allocated. You can overwrite these values by specifing the annotation `gke-gcsfuse/[cpu-limit | memory-limit | ephemeral-storage-limit]`. For example:
+No matter which configuration method you choose, the CSI driver webhook depends on Pod annotations to inject and configure a sidecar container containing gcsfuse. Specifically, the annotation `gke-gcsfuse/volumes: "true"` is required. By default, the sidecar container has **300m CPU, 100Mi memory, and 1Gi ephemeral storage** allocated. You can overwrite these values by specifying the annotation `gke-gcsfuse/[cpu-limit | memory-limit | ephemeral-storage-limit]`. For example:
 
 ```yaml
 apiVersion: v1
