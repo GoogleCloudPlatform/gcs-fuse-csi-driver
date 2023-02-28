@@ -60,8 +60,7 @@ type MountConfig struct {
 	BucketName     string    `json:"bucket_name,omitempty"`
 	TempDir        string    `json:"-"`
 	Options        []string  `json:"options,omitempty"`
-	Stdout         io.Writer `json:"-"`
-	Stderr         io.Writer `json:"-"`
+	ErrWriter      io.Writer `json:"-"`
 }
 
 func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
@@ -80,8 +79,8 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 		Path:       m.mounterPath,
 		Args:       args,
 		ExtraFiles: []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")},
-		Stdout:     mc.Stdout,
-		Stderr:     mc.Stderr,
+		Stdout:     os.Stdout,
+		Stderr:     io.MultiWriter(os.Stderr, mc.ErrWriter),
 	}
 
 	m.cmds = append(m.cmds, &cmd)

@@ -60,13 +60,17 @@ func main() {
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
+		errWriter := sidecarmounter.NewErrorWriter(filepath.Join(filepath.Dir(sp), "error"))
 		mc, err := prepareMountConfig(sp)
 		if err != nil {
-			if _, e := mc.Stderr.Write([]byte(err.Error())); e != nil {
-				klog.Errorf("failed to write the error message %q: %v", err.Error(), e)
+			errMsg := fmt.Sprintf("failed prepare mount config: bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err)
+			klog.Errorf(errMsg)
+			if _, e := errWriter.Write([]byte(errMsg)); e != nil {
+				klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 			}
 			continue
 		}
+		mc.ErrWriter = errWriter
 
 		wg.Add(1)
 		go func(mc *sidecarmounter.MountConfig) {
@@ -74,7 +78,8 @@ func main() {
 			cmd, err := mounter.Mount(mc)
 			if err != nil {
 				errMsg := fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err)
-				if _, e := mc.Stderr.Write([]byte(errMsg)); e != nil {
+				klog.Errorf(errMsg)
+				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 				}
 				return
@@ -82,7 +87,8 @@ func main() {
 
 			if err = cmd.Start(); err != nil {
 				errMsg := fmt.Sprintf("failed to start gcsfuse with error: %v\n", err)
-				if _, e := mc.Stderr.Write([]byte(errMsg)); e != nil {
+				klog.Errorf(errMsg)
+				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 				}
 				return
@@ -93,7 +99,8 @@ func main() {
 			syscall.Close(mc.FileDescriptor)
 			if err = cmd.Wait(); err != nil {
 				errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
-				if _, e := mc.Stderr.Write([]byte(errMsg)); e != nil {
+				klog.Errorf(errMsg)
+				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 				}
 			} else {
@@ -150,8 +157,6 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	mc := sidecarmounter.MountConfig{
 		VolumeName: volumeName,
 		TempDir:    filepath.Join(dir, "temp-dir"),
-		Stdout:     sidecarmounter.NewStdoutWriter(os.Stdout, volumeName),
-		Stderr:     sidecarmounter.NewStderrWriter(os.Stdout, volumeName, filepath.Join(dir, "error")),
 	}
 
 	klog.Infof("connecting to socket %q", sp)
