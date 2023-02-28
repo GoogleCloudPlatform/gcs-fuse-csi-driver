@@ -32,6 +32,49 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       containers:
+        - name: gcs-fuse-csi-driver
+          securityContext:
+            privileged: true
+          image: gke.gcr.io/gcs-fuse-csi-driver
+          imagePullPolicy: IfNotPresent
+          args:
+            - --v=5
+            - --endpoint=unix:/csi/csi.sock
+            - --nodeid=$(KUBE_NODE_NAME)
+            - --node=true
+            - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
+          ports:
+            - containerPort: 29633
+              name: healthz
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 80Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: SIDECAR_IMAGE_REGISTRY
+              value: ''
+          volumeMounts:
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: "Bidirectional"
+            - name: socket-dir
+              mountPath: /csi
         - name: liveness-probe
           volumeMounts:
             - mountPath: /csi
@@ -80,46 +123,6 @@ spec:
               mountPath: /csi
             - name: registration-dir
               mountPath: /registration
-        - name: gcs-fuse-csi-driver
-          securityContext:
-            privileged: true
-          image: gke.gcr.io/gcs-fuse-csi-driver
-          imagePullPolicy: IfNotPresent
-          args:
-            - "--v=5"
-            - "--endpoint=unix:/csi/csi.sock"
-            - "--nodeid=$(KUBE_NODE_NAME)"
-            - "--node=true"
-          ports:
-            - containerPort: 29633
-              name: healthz
-              protocol: TCP
-          livenessProbe:
-            failureThreshold: 5
-            httpGet:
-              path: /healthz
-              port: healthz
-            initialDelaySeconds: 30
-            timeoutSeconds: 10
-            periodSeconds: 30
-          resources:
-            limits:
-              cpu: 200m
-              memory: 200Mi
-            requests:
-              cpu: 10m
-              memory: 80Mi
-          env:
-            - name: KUBE_NODE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
-          volumeMounts:
-            - name: kubelet-dir
-              mountPath: /var/lib/kubelet
-              mountPropagation: "Bidirectional"
-            - name: socket-dir
-              mountPath: /csi
       volumes:
         - name: registration-dir
           hostPath:

@@ -32,17 +32,17 @@ import (
 )
 
 var (
-	endpoint       = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID         = flag.String("nodeid", "", "node id")
-	runController  = flag.Bool("controller", false, "run controller service")
-	runNode        = flag.Bool("node", false, "run node service")
-	httpEndpoint   = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
-	metricsPath    = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	kubeconfigPath = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	endpoint         = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID           = flag.String("nodeid", "", "node id")
+	runController    = flag.Bool("controller", false, "run controller service")
+	runNode          = flag.Bool("node", false, "run node service")
+	httpEndpoint     = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsPath      = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	sidecarImageName = flag.String("sidecar-image-name", "", "The gcsfuse sidecar container image name.")
 
 	// These are set at compile time
-	version          = "unknown"
-	sidecarImageName = "unknown"
+	version = "unknown"
 )
 
 func main() {
@@ -100,7 +100,7 @@ func main() {
 		Metrics:               mm,
 		Mounter:               mounter,
 		K8sClients:            clientset,
-		SidecarImageName:      sidecarImageName,
+		SidecarImageName:      *sidecarImageName,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

@@ -35,4 +35,4 @@ webhooks:
   admissionReviewVersions: ["v1"]
   sideEffects: None
   reinvocationPolicy: Never
-  timeoutSeconds: 2
+  timeoutSeconds: 10

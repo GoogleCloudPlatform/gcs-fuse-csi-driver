@@ -31,28 +31,40 @@ spec:
         image: gke.gcr.io/gcs-fuse-csi-driver-webhook
         imagePullPolicy: IfNotPresent
         args:
-          - '--sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)'
-          - '--sidecar-cpu-limit=300m'
-          - '--sidecar-memory-limit=100Mi'
-          - '--sidecar-ephemeral-storage-limit=1Gi'
-          - '--cert-dir=/etc/gcs-fuse-csi-driver-webhook/certs'
-          - '--cert-name=cert.pem'
-          - '--key-name=key.pem'
+          - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
+          - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
+          - --sidecar-cpu-limit=300m
+          - --sidecar-memory-limit=100Mi
+          - --sidecar-ephemeral-storage-limit=1Gi
+          - --cert-dir=/etc/tls-certs
         env:
           - name: SIDECAR_IMAGE_PULL_POLICY
             value: 'IfNotPresent'
+          - name: SIDECAR_IMAGE_REGISTRY
+            value: ''
         resources:
           limits:
             cpu: 200m
             memory: 200Mi
           requests:
             cpu: 10m
-            memory: 80Mi
+            memory: 10Mi
         ports:
-        - containerPort: 443 # change the port as needed
+          - name: inject
+            containerPort: 443 # change the port as needed
+          - name: readyz
+            containerPort: 8080 # change the port as needed
+        livenessProbe:
+          httpGet:
+            scheme: HTTP
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 15
         volumeMounts:
           - name: gcs-fuse-csi-driver-webhook-certs
-            mountPath: /etc/gcs-fuse-csi-driver-webhook/certs
+            mountPath: /etc/tls-certs
             readOnly: true
       volumes:
         - name: gcs-fuse-csi-driver-webhook-certs
