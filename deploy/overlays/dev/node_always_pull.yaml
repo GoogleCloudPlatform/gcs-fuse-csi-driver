@@ -15,7 +15,7 @@
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: gcs-fuse-csi-node
+  name: gcsfusecsi-node
 spec:
   template:
     spec:

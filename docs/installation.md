@@ -53,13 +53,13 @@ NAME                                          READY   UP-TO-DATE   AVAILABLE   A
 deployment.apps/gcs-fuse-csi-driver-webhook   1/1     1            1           3m49s
 
 NAME                               DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
-daemonset.apps/gcs-fuse-csi-node   3         3         3       3            3           kubernetes.io/os=linux   3m49s
+daemonset.apps/gcsfusecsi-node   3         3         3       3            3           kubernetes.io/os=linux   3m49s
 
 NAME                                               READY   STATUS    RESTARTS   AGE
 pod/gcs-fuse-csi-driver-webhook-565f85dcb9-pdlb9   1/1     Running   0          3m49s
-pod/gcs-fuse-csi-node-b6rs2                        3/3     Running   0          3m49s
-pod/gcs-fuse-csi-node-ng9xs                        3/3     Running   0          3m49s
-pod/gcs-fuse-csi-node-t9zq5                        3/3     Running   0          3m49s
+pod/gcsfusecsi-node-b6rs2                        3/3     Running   0          3m49s
+pod/gcsfusecsi-node-ng9xs                        3/3     Running   0          3m49s
+pod/gcsfusecsi-node-t9zq5                        3/3     Running   0          3m49s
 ```
 
 ## Uninstall

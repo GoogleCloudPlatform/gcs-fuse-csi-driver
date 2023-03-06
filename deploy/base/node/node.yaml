@@ -15,26 +15,34 @@
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: gcs-fuse-csi-node
+  name: gcsfusecsi-node
 spec:
   selector:
     matchLabels:
-      app: gcs-fuse-csi-driver
+      k8s-app: gcs-fuse-csi-driver
   updateStrategy:
     type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
   template:
     metadata:
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: "runtime/default"
       labels:
-        app: gcs-fuse-csi-driver
+        k8s-app: gcs-fuse-csi-driver
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       priorityClassName: csi-gcp-gcs-node
-      serviceAccount: gcs-fuse-csi-node-sa
+      serviceAccount: gcsfusecsi-node-sa
       nodeSelector:
         kubernetes.io/os: linux
       containers:
         - name: gcs-fuse-csi-driver
           securityContext:
             privileged: true
+            readOnlyRootFilesystem: true
           image: gke.gcr.io/gcs-fuse-csi-driver
           imagePullPolicy: IfNotPresent
           args:
@@ -43,78 +51,46 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
             - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
-          ports:
-            - containerPort: 29633
-              name: healthz
-              protocol: TCP
-          livenessProbe:
-            failureThreshold: 5
-            httpGet:
-              path: /healthz
-              port: healthz
-            initialDelaySeconds: 30
-            timeoutSeconds: 10
-            periodSeconds: 30
           resources:
             limits:
               cpu: 200m
               memory: 200Mi
             requests:
-              cpu: 10m
-              memory: 80Mi
+              cpu: 5m
+              memory: 10Mi
           env:
             - name: KUBE_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: SIDECAR_IMAGE_REGISTRY
-              value: ''
+              value: ""
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
-        - name: liveness-probe
-          volumeMounts:
-            - mountPath: /csi
-              name: socket-dir
-          image: k8s.gcr.io/sig-storage/livenessprobe
-          imagePullPolicy: IfNotPresent
-          args:
-            - --csi-address=/csi/csi.sock
-            - --probe-timeout=3s
-            - --health-port=29633
-            - --v=2
-          resources:
-            limits:
-              cpu: 50m
-              memory: 100Mi
-            requests:
-              cpu: 10m
-              memory: 20Mi
         - name: csi-driver-registrar
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - all
           image: k8s.gcr.io/sig-storage/csi-node-driver-registrar
           imagePullPolicy: IfNotPresent
           args:
             - "--v=5"
             - "--csi-address=/csi/csi.sock"
             - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
-          livenessProbe:
-            exec:
-              command:
-                - /csi-node-driver-registrar
-                - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
-                - --mode=kubelet-registration-probe
-            initialDelaySeconds: 30
-            timeoutSeconds: 15
           resources:
             limits:
               cpu: 50m
               memory: 100Mi
             requests:
               cpu: 10m
-              memory: 20Mi
+              memory: 10Mi
           env:
             - name: DRIVER_REG_SOCK_PATH
               value: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/csi.sock
@@ -140,4 +116,4 @@ spec:
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.
       tolerations:
-      - operator: Exists
+        - operator: Exists

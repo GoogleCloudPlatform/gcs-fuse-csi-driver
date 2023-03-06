@@ -25,47 +25,62 @@ spec:
     metadata:
       labels:
         app: gcs-fuse-csi-driver-webhook
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: "runtime/default"
     spec:
+      securityContext:
+        runAsUser: 2079
+        runAsGroup: 2079
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-      - name: gcs-fuse-csi-driver-webhook
-        image: gke.gcr.io/gcs-fuse-csi-driver-webhook
-        imagePullPolicy: IfNotPresent
-        args:
-          - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
-          - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
-          - --sidecar-cpu-limit=300m
-          - --sidecar-memory-limit=100Mi
-          - --sidecar-ephemeral-storage-limit=1Gi
-          - --cert-dir=/etc/tls-certs
-        env:
-          - name: SIDECAR_IMAGE_PULL_POLICY
-            value: 'IfNotPresent'
-          - name: SIDECAR_IMAGE_REGISTRY
-            value: ''
-        resources:
-          limits:
-            cpu: 200m
-            memory: 200Mi
-          requests:
-            cpu: 10m
-            memory: 10Mi
-        ports:
-          - name: inject
-            containerPort: 443 # change the port as needed
-          - name: readyz
-            containerPort: 8080 # change the port as needed
-        livenessProbe:
-          httpGet:
-            scheme: HTTP
-            path: /readyz
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 30
-          timeoutSeconds: 15
-        volumeMounts:
-          - name: gcs-fuse-csi-driver-webhook-certs
-            mountPath: /etc/tls-certs
-            readOnly: true
+        - name: gcs-fuse-csi-driver-webhook
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - all
+          image: gke.gcr.io/gcs-fuse-csi-driver-webhook
+          imagePullPolicy: IfNotPresent
+          args:
+            - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
+            - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
+            - --sidecar-cpu-limit=300m
+            - --sidecar-memory-limit=100Mi
+            - --sidecar-ephemeral-storage-limit=1Gi
+            - --cert-dir=/etc/tls-certs
+            - --port=22030
+            - --health-probe-bind-adress=:22031
+          env:
+            - name: SIDECAR_IMAGE_PULL_POLICY
+              value: "IfNotPresent"
+            - name: SIDECAR_IMAGE_REGISTRY
+              value: ""
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 10Mi
+          ports:
+            - name: inject
+              containerPort: 22030
+            - name: readyz
+              containerPort: 22031
+          livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /readyz
+              port: 22031
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 15
+          volumeMounts:
+            - name: gcs-fuse-csi-driver-webhook-certs
+              mountPath: /etc/tls-certs
+              readOnly: true
       volumes:
         - name: gcs-fuse-csi-driver-webhook-certs
           secret:
@@ -81,5 +96,5 @@ spec:
     app: gcs-fuse-csi-driver-webhook
   ports:
     - protocol: TCP
-      port: 443 # Change if needed
-      targetPort: 443 # Change if the webserver image expects a different port
+      port: 443
+      targetPort: 22030

@@ -32,7 +32,7 @@ patches:
     group: apps
     version: v1
     kind: DaemonSet
-    name: gcs-fuse-csi-node
+    name: gcsfusecsi-node
 - path: registry_patch_webhook.json
   target:
     group: apps
