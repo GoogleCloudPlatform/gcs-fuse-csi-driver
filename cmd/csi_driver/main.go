@@ -40,6 +40,8 @@ var (
 	metricsPath      = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
 	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
 	sidecarImageName = flag.String("sidecar-image-name", "", "The gcsfuse sidecar container image name.")
+	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 
 	// These are set at compile time
 	version = "unknown"
@@ -54,7 +56,7 @@ func main() {
 		klog.Fatal("Failed to configure k8s client")
 	}
 
-	meta, err := metadata.NewMetadataService(clientset)
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider, clientset)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}
