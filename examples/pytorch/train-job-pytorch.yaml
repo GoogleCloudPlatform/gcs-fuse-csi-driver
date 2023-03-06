@@ -71,4 +71,4 @@ spec:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
             bucketName: <bucket-name>
-            mountOptions: "max-conns-per-host=100,disable-http2,debug_gcs,debug_fuse,debug_fs"
+            mountOptions: "max-conns-per-host=100,debug_gcs,debug_fuse,debug_fs"
