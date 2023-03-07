@@ -36,8 +36,15 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 		ImagePullPolicy: v1.PullPolicy(c.ImagePullPolicy),
 		SecurityContext: &v1.SecurityContext{
 			AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-			RunAsUser:                func(i int64) *int64 { return &i }(0),
-			RunAsGroup:               func(i int64) *int64 { return &i }(0),
+			ReadOnlyRootFilesystem:   func(b bool) *bool { return &b }(true),
+			Capabilities: &v1.Capabilities{
+				Drop: []v1.Capability{
+					v1.Capability("all"),
+				},
+			},
+			// the sidecar container has to run as a root user to fetch the FD from socket.
+			RunAsUser:  func(i int64) *int64 { return &i }(0),
+			RunAsGroup: func(i int64) *int64 { return &i }(0),
 		},
 		Args: []string{"--v=5"},
 		Resources: v1.ResourceRequirements{

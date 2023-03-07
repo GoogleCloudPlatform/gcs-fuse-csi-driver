@@ -63,7 +63,7 @@ func main() {
 		errWriter := sidecarmounter.NewErrorWriter(filepath.Join(filepath.Dir(sp), "error"))
 		mc, err := prepareMountConfig(sp)
 		if err != nil {
-			errMsg := fmt.Sprintf("failed prepare mount config: bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err)
+			errMsg := fmt.Sprintf("failed prepare mount config: socket path %q: %v\n", sp, err)
 			klog.Errorf(errMsg)
 			if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 				klog.Errorf("failed to write the error message %q: %v", errMsg, e)
