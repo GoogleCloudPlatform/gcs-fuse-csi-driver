@@ -18,6 +18,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -39,12 +40,13 @@ type GCPTokenSource struct {
 	meta           metadata.Service
 	k8sSAName      string
 	k8sSANamespace string
+	k8sSAToken     string
 	k8sClients     clientset.Interface
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.
 func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
-	k8sSAToken, err := ts.fetchK8sSAToken(ts.k8sSANamespace, ts.k8sSAName)
+	k8sSAToken, err := ts.fetchK8sSAToken()
 	if err != nil {
 		return nil, fmt.Errorf("k8s service account token fetch error: %v", err)
 	}
@@ -62,12 +64,27 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API
-func (ts *GCPTokenSource) fetchK8sSAToken(saNamespace, saName string) (*oauth2.Token, error) {
-	ttl := int64(1 * time.Hour.Seconds())
+func (ts *GCPTokenSource) fetchK8sSAToken() (*oauth2.Token, error) {
+	if ts.k8sSAToken != "" {
+		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
+		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal TokenRequestStatus: %v", err)
+		}
+		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
+			return &oauth2.Token{
+				AccessToken: trs.Token,
+				Expiry:      trs.ExpirationTimestamp.Time,
+			}, nil
+		} else {
+			return nil, fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
+		}
+	}
+
+	ttl := int64(10 * time.Minute.Seconds())
 	resp, err := ts.k8sClients.CreateServiceAccountToken(
 		ts.ctx,
-		saNamespace,
-		saName,
+		ts.k8sSANamespace,
+		ts.k8sSAName,
 		&authenticationv1.TokenRequest{
 			Spec: authenticationv1.TokenRequestSpec{
 				ExpirationSeconds: &ttl,

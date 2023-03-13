@@ -242,7 +242,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 // There is an assumption that before this function is called, the Kubernetes service account is already created in the namespace.
 func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context, serviceAccountNamespace string) (storage.Service, error) {
 	tm := auth.NewTokenManager(n.meta, n.clientset)
-	ts, err := tm.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, specs.K8sServiceAccountName)
+	ts, err := tm.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, specs.K8sServiceAccountName, "")
 	if err != nil {
 		return nil, fmt.Errorf("token manager failed to get token source: %v", err)
 	}

@@ -38,12 +38,13 @@ import (
 
 // NodePublishVolume VolumeContext parameters
 const (
-	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
-	VolumeContextKeyPodName            = "csi.storage.k8s.io/pod.name"
-	VolumeContextKeyPodNamespace       = "csi.storage.k8s.io/pod.namespace"
-	VolumeContextKeyEphemeral          = "csi.storage.k8s.io/ephemeral"
-	VolumeContextKeyBucketName         = "bucketName"
-	VolumeContextKeyMountOptions       = "mountOptions"
+	VolumeContextKeyServiceAccountName  = "csi.storage.k8s.io/serviceAccount.name"
+	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
+	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
+	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
+	VolumeContextKeyBucketName          = "bucketName"
+	VolumeContextKeyMountOptions        = "mountOptions"
 )
 
 // nodeServer handles mounting and unmounting of GCFS volumes on a node
@@ -298,7 +299,7 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
+	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
 	}

@@ -27,10 +27,9 @@ import (
 )
 
 const (
-	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
-	CreateVolumeCSIFullMethod           = "/csi.v1.Controller/CreateVolume"
-	DeleteVolumeCSIFullMethod           = "/csi.v1.Controller/DeleteVolume"
-	NodePublishVolumeCSIFullMethod      = "/csi.v1.Node/NodePublishVolume"
+	CreateVolumeCSIFullMethod      = "/csi.v1.Controller/CreateVolume"
+	DeleteVolumeCSIFullMethod      = "/csi.v1.Controller/DeleteVolume"
+	NodePublishVolumeCSIFullMethod = "/csi.v1.Node/NodePublishVolume"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {

@@ -39,3 +39,9 @@ patches:
     version: v1
     kind: Deployment
     name: gcs-fuse-csi-driver-webhook
+- path: project_patch_csi_driver.json
+  target:
+    group: storage.k8s.io
+    version: v1
+    kind: CSIDriver
+    name: gcsfuse.csi.storage.gke.io

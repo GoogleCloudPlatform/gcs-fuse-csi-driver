@@ -20,6 +20,7 @@ GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 BUILD_GCSFUSE_FROM_SOURCE ?= false
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 OVERLAY ?= stable
+PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
 
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
@@ -183,10 +184,12 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${REGISTRY}\"}]" > ./deploy/overlays/${OVERLAY}/registry_patch_node.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${REGISTRY}\"}]" > ./deploy/overlays/${OVERLAY}/registry_patch_webhook.json
+	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${PROJECT}.svc.id.goog\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml > /dev/null
 	git restore ./deploy/overlays/${OVERLAY}/kustomization.yaml
 	git restore ./deploy/overlays/${OVERLAY}/registry_patch_node.json
 	git restore ./deploy/overlays/${OVERLAY}/registry_patch_webhook.json
+	git restore ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 
 verify:
 	hack/verify-all.sh

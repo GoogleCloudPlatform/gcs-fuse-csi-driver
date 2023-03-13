@@ -221,7 +221,7 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "serviceAccountNamespace must be provided in secret")
 	}
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, serviceAccountName)
+	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, serviceAccountName, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
 	}
