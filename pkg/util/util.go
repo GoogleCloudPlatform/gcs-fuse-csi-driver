@@ -136,7 +136,7 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerVolumeName))
 
 	if createEmptyDir {
-		if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
+		if err := os.MkdirAll(emptyDirBasePath, 0777); err != nil {
 			return "", fmt.Errorf("mkdir failed for path %q: %v", emptyDirBasePath, err)
 		}
 	}

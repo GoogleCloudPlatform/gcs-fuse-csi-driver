@@ -35,7 +35,7 @@ import (
 
 var (
 	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath = flag.String("volume-base-path", "/tmp/.volumes", "volume base path")
+	volumeBasePath = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
 	gracePeriod    = flag.Int("grace-period", 15, "grace period for gcsfuse termination")
 	// This is set at compile time
 	version = "unknown"

@@ -27,6 +27,7 @@ import (
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -111,6 +112,16 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	l, err := net.Listen("unix", "./socket")
 	if err != nil {
 		return fmt.Errorf("failed to create the listener for the socket: %v", err)
+	}
+
+	// Change the socket ownership
+	err = os.Chown(emptyDirBasePath, webhook.NonRootUID, webhook.NonRootGID)
+	if err != nil {
+		return fmt.Errorf("failed to change ownership on emptyDirBasePath: %v", err)
+	}
+	err = os.Chown("./socket", webhook.NonRootUID, webhook.NonRootGID)
+	if err != nil {
+		return fmt.Errorf("failed to change ownership on socket: %v", err)
 	}
 
 	// Close the listener after 15 minutes

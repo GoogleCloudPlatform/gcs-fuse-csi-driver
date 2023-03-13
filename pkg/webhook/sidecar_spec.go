@@ -26,7 +26,11 @@ import (
 const (
 	SidecarContainerName            = "gke-gcsfuse-sidecar"
 	SidecarContainerVolumeName      = "gke-gcsfuse-tmp"
-	SidecarContainerVolumeMountPath = "/tmp"
+	SidecarContainerVolumeMountPath = "/gcsfuse-tmp"
+
+	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
+	NonRootUID = 65532
+	NonRootGID = 65532
 )
 
 func GetSidecarContainerSpec(c *Config) v1.Container {
@@ -42,9 +46,10 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 					v1.Capability("all"),
 				},
 			},
-			// the sidecar container has to run as a root user to fetch the FD from socket.
-			RunAsUser:  func(i int64) *int64 { return &i }(0),
-			RunAsGroup: func(i int64) *int64 { return &i }(0),
+			SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
+			RunAsNonRoot:   func(b bool) *bool { return &b }(true),
+			RunAsUser:      func(i int64) *int64 { return &i }(NonRootUID),
+			RunAsGroup:     func(i int64) *int64 { return &i }(NonRootGID),
 		},
 		Args: []string{"--v=5"},
 		Resources: v1.ResourceRequirements{

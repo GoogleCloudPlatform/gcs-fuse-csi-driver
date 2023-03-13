@@ -21,18 +21,15 @@ import (
 	"testing"
 )
 
-var defaultArgs = []string{
-	"gcsfuse",
-	"--implicit-dirs",
-	"--app-name",
-	GCSFUSE_APP_NAME,
-	"--temp-dir",
-	"test-temp-dir",
-	"--foreground",
-	"--log-file",
-	"/dev/fd/1",
-	"--log-format",
-	"text",
+var defaultFlagMap = map[string]string{
+	"implicit-dirs": "",
+	"app-name":      GCSFUSE_APP_NAME,
+	"temp-dir":      "test-temp-dir",
+	"foreground":    "",
+	"log-file":      "/dev/fd/1",
+	"log-format":    "text",
+	"uid":           "0",
+	"gid":           "0",
 }
 
 var invalidArgs = []string{
@@ -52,7 +49,7 @@ func TestPrepareMountArgs(t *testing.T) {
 	testCases := []struct {
 		name          string
 		mc            *MountConfig
-		expectedArgs  []string
+		expectedArgs  map[string]string
 		expectedError bool
 	}{
 		{
@@ -61,7 +58,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
 			},
-			expectedArgs:  append(defaultArgs, "test-bucket", "/dev/fd/3"),
+			expectedArgs:  defaultFlagMap,
 			expectedError: false,
 		},
 		{
@@ -71,7 +68,18 @@ func TestPrepareMountArgs(t *testing.T) {
 				TempDir:    "test-temp-dir",
 				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=100"},
 			},
-			expectedArgs:  append(defaultArgs, "--uid", "100", "--gid", "200", "--debug_gcs", "--max-conns-per-host", "100", "test-bucket", "/dev/fd/3"),
+			expectedArgs: map[string]string{
+				"implicit-dirs":      "",
+				"app-name":           GCSFUSE_APP_NAME,
+				"temp-dir":           "test-temp-dir",
+				"foreground":         "",
+				"log-file":           "/dev/fd/1",
+				"log-format":         "text",
+				"uid":                "100",
+				"gid":                "200",
+				"debug_gcs":          "",
+				"max-conns-per-host": "100",
+			},
 			expectedError: false,
 		},
 		{
@@ -81,14 +89,14 @@ func TestPrepareMountArgs(t *testing.T) {
 				TempDir:    "test-temp-dir",
 				Options:    invalidArgs,
 			},
-			expectedArgs:  append(defaultArgs, "test-bucket", "/dev/fd/3"),
+			expectedArgs:  defaultFlagMap,
 			expectedError: true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
-		args, err := prepareMountArgs(tc.mc)
+		flagMap, err := prepareMountArgs(tc.mc)
 		if tc.expectedError && err == nil {
 			t.Errorf("Expected error but got none")
 		}
@@ -98,8 +106,8 @@ func TestPrepareMountArgs(t *testing.T) {
 			}
 		}
 
-		if !reflect.DeepEqual(args, tc.expectedArgs) {
-			t.Errorf("Got args %v, but expected %v", args, tc.expectedArgs)
+		if !reflect.DeepEqual(flagMap, tc.expectedArgs) {
+			t.Errorf("Got args %v, but expected %v", flagMap, tc.expectedArgs)
 		}
 	}
 }

@@ -91,7 +91,7 @@ func TestNodePublishVolume(t *testing.T) {
 			expectErr: status.Error(codes.InvalidArgument, "NodePublishVolume target path must be provided"),
 		},
 		{
-			name: "volid request not already mounted",
+			name: "valid request not already mounted",
 			req: &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				TargetPath:       testTargetPath,
@@ -100,7 +100,7 @@ func TestNodePublishVolume(t *testing.T) {
 			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse"},
 		},
 		{
-			name:   "volid request already mounted",
+			name:   "valid request already mounted",
 			mounts: []mount.MountPoint{{Device: "/test-device", Path: testTargetPath}},
 			req: &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,

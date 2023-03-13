@@ -103,6 +103,8 @@ else
 	chmod +x ${BINDIR}/gcsfuse
 endif
 
+	chmod 0555 ${BINDIR}/gcsfuse
+
 build-image-and-push-multi-arch: build-image-and-push-linux-amd64 build-image-and-push-linux-arm64
 
 build-image-and-push-linux-amd64: init-buildx download-gcsfuse

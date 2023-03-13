@@ -70,10 +70,22 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to create temp dir %q: %v", mc.TempDir, err)
 	}
 
-	args, err := prepareMountArgs(mc)
+	args := []string{"gcsfuse"}
+	flagMap, err := prepareMountArgs(mc)
 	if err != nil {
 		klog.Warningf("got error when preparing the mount args: %v. Will discard invalid args and continue to mount.", err)
 	}
+	for k, v := range flagMap {
+		args = append(args, "--"+k)
+		if v != "" {
+			args = append(args, v)
+		}
+	}
+	args = append(args, mc.BucketName)
+	// gcsfuse supports the `/dev/fd/N` syntax
+	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
+	args = append(args, "/dev/fd/3")
+
 	klog.Infof("gcsfuse mounting with args %v...", args)
 	cmd := exec.Cmd{
 		Path:       m.mounterPath,
@@ -104,19 +116,16 @@ var disallowedFlags = map[string]bool{
 	"endpoint":             true,
 }
 
-func prepareMountArgs(mc *MountConfig) ([]string, error) {
-	args := []string{
-		"gcsfuse",
-		"--implicit-dirs",
-		"--app-name",
-		GCSFUSE_APP_NAME,
-		"--temp-dir",
-		mc.TempDir,
-		"--foreground",
-		"--log-file",
-		"/dev/fd/1", // redirect the output to cmd stdout
-		"--log-format",
-		"text",
+func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
+	flagMap := map[string]string{
+		"implicit-dirs": "",
+		"app-name":      GCSFUSE_APP_NAME,
+		"temp-dir":      mc.TempDir,
+		"foreground":    "",
+		"log-file":      "/dev/fd/1", // redirect the output to cmd stdout
+		"log-format":    "text",
+		"uid":           "0",
+		"gid":           "0",
 	}
 
 	invalidArgs := []string{}
@@ -126,25 +135,20 @@ func prepareMountArgs(mc *MountConfig) ([]string, error) {
 			continue
 		}
 
-		if !disallowedFlags[argPair[0]] {
-			args = append(args, "--"+argPair[0])
-		} else {
+		if disallowedFlags[argPair[0]] {
 			invalidArgs = append(invalidArgs, arg)
 			continue
 		}
+
+		flagMap[argPair[0]] = ""
 		if len(argPair) > 1 {
-			args = append(args, argPair[1])
+			flagMap[argPair[0]] = argPair[1]
 		}
 	}
-
-	args = append(args, mc.BucketName)
-	// gcsfuse supports the `/dev/fd/N` syntax
-	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
-	args = append(args, "/dev/fd/3")
 
 	var err error
 	if len(invalidArgs) > 0 {
 		err = fmt.Errorf("got invalid args %v for volume %q.", invalidArgs, mc.VolumeName)
 	}
-	return args, err
+	return flagMap, err
 }
