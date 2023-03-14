@@ -16,13 +16,16 @@ limitations under the License.
 
 package metadata
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 var envAPIMap = map[string]string{
-	"prod":     "container.googleapis.com",
-	"staging":  "staging-container.sandbox.googleapis.com",
-	"staging2": "staging2-container.sandbox.googleapis.com",
-	"test":     "test-container.sandbox.googleapis.com",
+	"prod":     "https://container.googleapis.com/",
+	"staging":  "https://staging-container.sandbox.googleapis.com/",
+	"staging2": "https://staging2-container.sandbox.googleapis.com/",
+	"test":     "https://test-container.sandbox.googleapis.com/",
 }
 
 type fakeServiceManager struct {
@@ -34,16 +37,23 @@ type fakeServiceManager struct {
 var _ Service = &fakeServiceManager{}
 
 func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, error) {
+	var gkeAPIEndpoint string
 	if _, ok := envAPIMap[gkeEnv]; !ok {
-		return nil, fmt.Errorf("invalid GKE environment: %v", gkeEnv)
+		if gkeEnv == "sandbox" {
+			gkeAPIEndpoint = os.Getenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
+		} else {
+			return nil, fmt.Errorf("invalid GKE environment: %v", gkeEnv)
+		}
+	} else {
+		gkeAPIEndpoint = envAPIMap[gkeEnv]
 	}
+
 	s := fakeServiceManager{
 		projectID:    projectID,
 		identityPool: fmt.Sprintf("%s.svc.id.goog", projectID),
 		identityProvider: fmt.Sprintf(
-			"https://%s/v1"+
-				"/projects/%s/locations/%s/clusters/%s",
-			envAPIMap[gkeEnv],
+			"%sv1/projects/%s/locations/%s/clusters/%s",
+			gkeAPIEndpoint,
 			projectID,
 			location,
 			clusterName,

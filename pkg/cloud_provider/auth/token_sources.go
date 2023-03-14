@@ -125,7 +125,7 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(k8sSAToken *oauth2.Token) (*
 
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
 	if err != nil {
-		return nil, fmt.Errorf("IdentityBindingToken exchange error: %v", err)
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %v", audience, err)
 	}
 
 	return &oauth2.Token{

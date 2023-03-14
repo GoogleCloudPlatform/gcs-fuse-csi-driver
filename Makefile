@@ -55,6 +55,8 @@ else ifeq (${E2E_TEST_API_ENV}, staging2)
 	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://staging2-container.sandbox.googleapis.com/
 else ifeq (${E2E_TEST_API_ENV}, test)
 	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://test-container.sandbox.googleapis.com/
+else ifeq (${E2E_TEST_API_ENV}, sandbox)
+	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = ${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER}
 endif
 
 E2E_TEST_USE_MANAGED_DRIVER ?= false
