@@ -249,7 +249,6 @@ Specifically, you may consider passing the following flags as needed:
 
  - If the Pod/container does not use the root user, pass the uid to gcsfuse using the flag `uid`.
  - If the Pod/container does not use the default fsGroup, pass the gid to gcsfuse using the flag `gid`.
- - In order to get higher throughput, increase the max number of TCP connections allowed per gcsfuse instance by using the flag `max-conns-per-host`. The default value is 10.
  - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
 
 ## More usage examples

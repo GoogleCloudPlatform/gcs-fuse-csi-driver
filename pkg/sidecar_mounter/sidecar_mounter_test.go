@@ -66,7 +66,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=100"},
+				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
@@ -78,7 +78,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"uid":                "100",
 				"gid":                "200",
 				"debug_gcs":          "",
-				"max-conns-per-host": "100",
+				"max-conns-per-host": "10",
 			},
 			expectedError: false,
 		},
