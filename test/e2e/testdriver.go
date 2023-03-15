@@ -27,6 +27,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -94,7 +95,7 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 	}
 }
 
-func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) (*storageframework.PerTestConfig, func()) {
+func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storageframework.PerTestConfig {
 	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(
 		n.meta.GetProjectID(),
 		fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), f.Namespace.Name, specs.K8sServiceAccountName),
@@ -118,7 +119,7 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) (*storagef
 		Framework: f,
 	}
 
-	return config, func() {
+	ginkgo.DeferCleanup(func() {
 		for _, v := range n.volumeStore {
 			v.driver.deleteBucket(v.serviceAccountNamespace, v.bucketName)
 		}
@@ -127,7 +128,8 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) (*storagef
 		testSecret.Cleanup()
 		testK8sSA.Cleanup()
 		testGCPProjectIAMPolicyBinding.Cleanup()
-	}
+	})
+	return config
 }
 
 func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConfig, volType storageframework.TestVolType) storageframework.TestVolume {

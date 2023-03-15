@@ -112,7 +112,7 @@ func (t *TestPod) Create() {
 
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed
 func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, shExec string) {
-	stdout, stderr, err := f.ExecCommandInContainerWithFullOutput(t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	if err != nil {
 		if exiterr, ok := err.(uexec.CodeExitError); ok {
 			exitCode := exiterr.ExitStatus()
@@ -129,7 +129,7 @@ func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, 
 
 // VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
-	stdout, stderr, err := f.ExecCommandInContainerWithFullOutput(t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	if err != nil {
 		if exiterr, ok := err.(clientexec.ExitError); ok {
 			actualExitCode := exiterr.ExitStatus()

@@ -26,7 +26,6 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
-	storageutils "k8s.io/kubernetes/test/e2e/storage/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
@@ -58,7 +57,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) SkipUnsupportedTests(driver storagefram
 func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
 	type local struct {
 		config         *storageframework.PerTestConfig
-		driverCleanup  func()
 		volumeResource *storageframework.VolumeResource
 	}
 	var (
@@ -72,7 +70,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 	init := func(configPrefix ...string) {
 		l = local{}
-		l.config, l.driverCleanup = driver.PrepareTest(f)
+		l.config = driver.PrepareTest(f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
@@ -82,7 +80,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	cleanup := func() {
 		var cleanUpErrs []error
 		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource())
-		cleanUpErrs = append(cleanUpErrs, storageutils.TryFunc(l.driverCleanup))
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}

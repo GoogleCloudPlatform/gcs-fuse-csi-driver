@@ -65,7 +65,7 @@ E2E_TEST_BUILD_DRIVER ?= false
 E2E_TEST_FOCUS ?=
 E2E_TEST_SKIP ?= Dynamic.PV
 E2E_TEST_GINKGO_PROCS ?= 5
-E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} --always-emit-ginkgo-writer --flake-attempts 1
+E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts 1
 ifneq ("${E2E_TEST_FOCUS}", "")
 E2E_TEST_GINKGO_FLAGS+= --focus "${E2E_TEST_FOCUS}"
 endif
@@ -217,7 +217,7 @@ endif
 	make install OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
 
-	ginkgo ${E2E_TEST_GINKGO_FLAGS} "./test/e2e/" -- -report-dir ${E2E_TEST_ARTIFACTS_PATH} 
+	ginkgo run ${E2E_TEST_GINKGO_FLAGS} "./test/e2e/" -- -report-dir ${E2E_TEST_ARTIFACTS_PATH} 
 
 ifeq (${E2E_TEST_CLEANUP_CLUSTER}, true)
 	gcloud container clusters delete ${E2E_TEST_CLUSTER_NAME} --quiet --region ${E2E_TEST_CLUSTER_REGION}
@@ -225,7 +225,7 @@ endif
 
 init-ginkgo:
 	export PATH=${PATH}:$(go env GOPATH)/bin
-	go install github.com/onsi/ginkgo/v2/ginkgo@v2.4.0
+	go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.1
 
 init-buildx:
 	# Ensure we use a builder that can leverage it (the default on linux will not)
