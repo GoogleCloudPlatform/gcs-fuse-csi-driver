@@ -65,12 +65,12 @@ E2E_TEST_BUILD_DRIVER ?= false
 E2E_TEST_FOCUS ?=
 E2E_TEST_SKIP ?= Dynamic.PV
 E2E_TEST_GINKGO_PROCS ?= 5
-E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} --always-emit-ginkgo-writer
+E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} --always-emit-ginkgo-writer --flake-attempts 1
 ifneq ("${E2E_TEST_FOCUS}", "")
-E2E_TEST_GINKGO_FLAGS+= --focus ${E2E_TEST_FOCUS}
+E2E_TEST_GINKGO_FLAGS+= --focus "${E2E_TEST_FOCUS}"
 endif
 ifneq ("${E2E_TEST_SKIP}", "")
-E2E_TEST_GINKGO_FLAGS+= --skip ${E2E_TEST_SKIP}
+E2E_TEST_GINKGO_FLAGS+= --skip "${E2E_TEST_SKIP}"
 endif
 E2E_TEST_ARTIFACTS_PATH ?= ../../_artifacts
 

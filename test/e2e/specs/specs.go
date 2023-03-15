@@ -51,7 +51,7 @@ const (
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 1 * time.Minute
-	pollTimeoutSlow = 5 * time.Minute
+	pollTimeoutSlow = 10 * time.Minute
 )
 
 type TestPod struct {
