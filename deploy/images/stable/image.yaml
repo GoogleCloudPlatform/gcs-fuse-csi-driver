@@ -36,7 +36,7 @@ metadata:
   name: imagetag-csi-node-registrar
 imageTag:
   name: k8s.gcr.io/sig-storage/csi-node-driver-registrar
-  newTag: "v2.6.3"
+  newTag: "v2.7.0"
 ---
 
 apiVersion: builtin
