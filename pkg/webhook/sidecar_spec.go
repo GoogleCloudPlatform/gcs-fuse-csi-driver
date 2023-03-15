@@ -29,8 +29,8 @@ const (
 	SidecarContainerVolumeMountPath = "/gcsfuse-tmp"
 
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
-	NonRootUID = 65532
-	NonRootGID = 65532
+	NobodyUID = 65534
+	NobodyGID = 65534
 )
 
 func GetSidecarContainerSpec(c *Config) v1.Container {
@@ -48,8 +48,8 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 			},
 			SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
 			RunAsNonRoot:   func(b bool) *bool { return &b }(true),
-			RunAsUser:      func(i int64) *int64 { return &i }(NonRootUID),
-			RunAsGroup:     func(i int64) *int64 { return &i }(NonRootGID),
+			RunAsUser:      func(i int64) *int64 { return &i }(NobodyUID),
+			RunAsGroup:     func(i int64) *int64 { return &i }(NobodyGID),
 		},
 		Args: []string{"--v=5"},
 		Resources: v1.ResourceRequirements{

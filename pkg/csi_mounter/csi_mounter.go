@@ -115,11 +115,11 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 
 	// Change the socket ownership
-	err = os.Chown(emptyDirBasePath, webhook.NonRootUID, webhook.NonRootGID)
+	err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID)
 	if err != nil {
 		return fmt.Errorf("failed to change ownership on emptyDirBasePath: %v", err)
 	}
-	err = os.Chown("./socket", webhook.NonRootUID, webhook.NonRootGID)
+	err = os.Chown("./socket", webhook.NobodyUID, webhook.NobodyGID)
 	if err != nil {
 		return fmt.Errorf("failed to change ownership on socket: %v", err)
 	}
