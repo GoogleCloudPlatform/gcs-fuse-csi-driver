@@ -165,12 +165,17 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Put an exit file to notify the sidecar container to exit
 	if isOwnedByJob && sidecarShouldExit {
-		f, err := os.Create(filepath.Dir(emptyDirBasePath) + "/exit")
+		klog.V(4).Info("all the other containers exited in the Job Pod, put the exit file.")
+		exitFilePath := filepath.Dir(emptyDirBasePath) + "/exit"
+		f, err := os.Create(exitFilePath)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to put the exit file: %v", err)
 		}
 		f.Close()
-		klog.V(4).Info("all the other containers exited in the Job Pod, put the exit file.")
+		err = os.Chown(exitFilePath, webhook.NobodyUID, webhook.NobodyGID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to change ownership on the exit file: %v", err)
+		}
 	}
 
 	// Check if there is any error from the sidecar container

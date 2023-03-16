@@ -119,7 +119,7 @@ func main() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
 			<-ticker.C
-			if _, err := os.Stat("/tmp/.volumes/exit"); err == nil {
+			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
 				klog.Info("all the other containers exited in the Job Pod, exiting the sidecar container.")
 				c <- syscall.SIGTERM
 				return

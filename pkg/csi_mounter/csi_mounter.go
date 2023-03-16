@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -115,6 +116,10 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 
 	// Change the socket ownership
+	err = os.Chown(filepath.Dir(emptyDirBasePath), webhook.NobodyUID, webhook.NobodyGID)
+	if err != nil {
+		return fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %v", err)
+	}
 	err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID)
 	if err != nil {
 		return fmt.Errorf("failed to change ownership on emptyDirBasePath: %v", err)
