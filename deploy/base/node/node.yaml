@@ -78,7 +78,7 @@ spec:
             capabilities:
               drop:
                 - all
-          image: k8s.gcr.io/sig-storage/csi-node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar
           imagePullPolicy: IfNotPresent
           args:
             - "--v=5"

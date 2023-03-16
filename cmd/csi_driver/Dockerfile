@@ -24,7 +24,7 @@ ADD . .
 RUN make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM k8s.gcr.io/build-image/debian-base:buster-v1.9.0 as debian
+FROM registry.k8s.io/build-image/debian-base:buster-v1.9.0 as debian
 # Install necessary dependencies
 RUN clean-install mount bash
 
