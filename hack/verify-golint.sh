@@ -17,7 +17,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-TOOL_VERSION="v1.50.1"
+TOOL_VERSION="v1.51.2"
 
 export PATH=$PATH:$(go env GOPATH)/bin
 go install "github.com/golangci/golangci-lint/cmd/golangci-lint@${TOOL_VERSION}"

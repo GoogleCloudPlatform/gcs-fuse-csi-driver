@@ -26,7 +26,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const GCSFUSE_APP_NAME = "gke-gcs-fuse-csi"
+const GCSFuseAppName = "gke-gcs-fuse-csi"
 
 // Interface defines the set of methods to allow for gcsfuse mount operations on a system.
 type Interface interface {
@@ -119,7 +119,7 @@ var disallowedFlags = map[string]bool{
 func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 	flagMap := map[string]string{
 		"implicit-dirs": "",
-		"app-name":      GCSFUSE_APP_NAME,
+		"app-name":      GCSFuseAppName,
 		"temp-dir":      mc.TempDir,
 		"foreground":    "",
 		"log-file":      "/dev/fd/1", // redirect the output to cmd stdout
@@ -148,7 +148,7 @@ func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 
 	var err error
 	if len(invalidArgs) > 0 {
-		err = fmt.Errorf("got invalid args %v for volume %q.", invalidArgs, mc.VolumeName)
+		err = fmt.Errorf("got invalid args %v for volume %q", invalidArgs, mc.VolumeName)
 	}
 	return flagMap, err
 }

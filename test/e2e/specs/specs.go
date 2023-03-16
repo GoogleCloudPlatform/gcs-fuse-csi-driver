@@ -511,20 +511,12 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 
 // getPolicy gets the project's IAM policy
 func getPolicy(crmService *cloudresourcemanager.Service, projectID string) (*cloudresourcemanager.Policy, error) {
-	ctx := context.Background()
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
-
 	request := new(cloudresourcemanager.GetIamPolicyRequest)
 	return crmService.Projects.GetIamPolicy(projectID, request).Do()
 }
 
 // setPolicy sets the project's IAM policy
 func setPolicy(crmService *cloudresourcemanager.Service, projectID string, policy *cloudresourcemanager.Policy) error {
-	ctx := context.Background()
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
-
 	request := new(cloudresourcemanager.SetIamPolicyRequest)
 	request.Policy = policy
 	_, err := crmService.Projects.SetIamPolicy(projectID, request).Do()

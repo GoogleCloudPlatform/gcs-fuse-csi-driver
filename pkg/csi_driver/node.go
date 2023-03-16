@@ -17,7 +17,6 @@ limitations under the License.
 package driver
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,20 +264,6 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func prepareEmptyDir(targetPath, emptyDirVolumeName string) (string, error) {
-	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse volume name from target path %q: %v", targetPath, err)
-	}
-
-	emptyDirBasePath := fmt.Sprintf("%vkubernetes.io~empty-dir/%v/.volumes/%v", strings.Split(targetPath, "kubernetes.io~csi")[0], emptyDirVolumeName, volumeName)
-	if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
-		return "", fmt.Errorf("mkdir failed for path %q: %v", emptyDirBasePath, err)
-	}
-
-	return emptyDirBasePath, nil
 }
 
 // joinMountOptions joins mount options eliminating duplicates

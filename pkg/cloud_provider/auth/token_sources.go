@@ -75,9 +75,8 @@ func (ts *GCPTokenSource) fetchK8sSAToken() (*oauth2.Token, error) {
 				AccessToken: trs.Token,
 				Expiry:      trs.ExpirationTimestamp.Time,
 			}, nil
-		} else {
-			return nil, fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
 		}
+		return nil, fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
 	}
 
 	ttl := int64(10 * time.Minute.Seconds())
@@ -147,7 +146,7 @@ func (ts *GCPTokenSource) fetchGCPSAToken(identityBindingToken *oauth2.Token) (*
 
 	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ts.ctx, ts.k8sSANamespace, ts.k8sSAName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get GCP SA from Kubernetes SA [%s/%s] annotation: %v.", ts.k8sSANamespace, ts.k8sSAName, err)
+		return nil, fmt.Errorf("failed to get GCP SA from Kubernetes SA [%s/%s] annotation: %v", ts.k8sSANamespace, ts.k8sSAName, err)
 	}
 	if gcpSAName == "" {
 		klog.V(4).Infof("Kubernetes SA [%s/%s] is not bound with a GCP SA, proceed with the IdentityBindingToken", ts.k8sSANamespace, ts.k8sSAName)

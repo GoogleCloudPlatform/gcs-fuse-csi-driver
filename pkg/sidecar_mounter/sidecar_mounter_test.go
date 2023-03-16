@@ -23,7 +23,7 @@ import (
 
 var defaultFlagMap = map[string]string{
 	"implicit-dirs": "",
-	"app-name":      GCSFUSE_APP_NAME,
+	"app-name":      GCSFuseAppName,
 	"temp-dir":      "test-temp-dir",
 	"foreground":    "",
 	"log-file":      "/dev/fd/1",
@@ -70,7 +70,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
-				"app-name":           GCSFUSE_APP_NAME,
+				"app-name":           GCSFuseAppName,
 				"temp-dir":           "test-temp-dir",
 				"foreground":         "",
 				"log-file":           "/dev/fd/1",

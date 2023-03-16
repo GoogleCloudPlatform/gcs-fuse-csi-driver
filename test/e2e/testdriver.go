@@ -218,7 +218,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 		"csi.storage.k8s.io/provisioner-secret-name":      specs.K8sSecretName,
 		"csi.storage.k8s.io/provisioner-secret-namespace": "${pvc.namespace}",
 	}
-	generateName := fmt.Sprintf("gcsfuse-csi-dynamic-test-sc-")
+	generateName := "gcsfuse-csi-dynamic-test-sc-"
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}

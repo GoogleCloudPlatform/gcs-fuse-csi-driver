@@ -30,7 +30,7 @@ import (
 
 var (
 	port                   = flag.Int("port", 443, "The port that the webhook server serves at.")
-	healthProbeBindAddress = flag.String("health-probe-bind-adress", ":8080", "The TCP address that the controller should bind to for serving health probes.")
+	healthProbeBindAddress = flag.String("health-probe-bind-address", ":8080", "The TCP address that the controller should bind to for serving health probes.")
 	certDir                = flag.String("cert-dir", "/etc/tls-certs", "The directory that contains the server key and certificate.")
 	certName               = flag.String("cert-name", "cert.pem", "The server certificate name.")
 	keyName                = flag.String("key-name", "key.pem", "The server key name.")

@@ -118,13 +118,11 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
-			select {
-			case <-ticker.C:
-				if _, err := os.Stat("/tmp/.volumes/exit"); err == nil {
-					klog.Info("all the other containers exited in the Job Pod, exiting the sidecar container.")
-					c <- syscall.SIGTERM
-					return
-				}
+			<-ticker.C
+			if _, err := os.Stat("/tmp/.volumes/exit"); err == nil {
+				klog.Info("all the other containers exited in the Job Pod, exiting the sidecar container.")
+				c <- syscall.SIGTERM
+				return
 			}
 		}
 	}()

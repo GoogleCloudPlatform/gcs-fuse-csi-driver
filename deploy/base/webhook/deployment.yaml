@@ -51,7 +51,7 @@ spec:
             - --sidecar-ephemeral-storage-limit=1Gi
             - --cert-dir=/etc/tls-certs
             - --port=22030
-            - --health-probe-bind-adress=:22031
+            - --health-probe-bind-address=:22031
           env:
             - name: SIDECAR_IMAGE_PULL_POLICY
               value: "IfNotPresent"
