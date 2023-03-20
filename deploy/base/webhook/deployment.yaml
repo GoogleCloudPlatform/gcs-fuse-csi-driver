@@ -46,9 +46,9 @@ spec:
           args:
             - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
             - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
-            - --sidecar-cpu-limit=300m
-            - --sidecar-memory-limit=100Mi
-            - --sidecar-ephemeral-storage-limit=1Gi
+            - --sidecar-cpu-limit=250m
+            - --sidecar-memory-limit=256Mi
+            - --sidecar-ephemeral-storage-limit=10Gi
             - --cert-dir=/etc/tls-certs
             - --port=22030
             - --health-probe-bind-address=:22031
