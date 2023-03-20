@@ -34,7 +34,7 @@ import (
 	"k8s.io/mount-utils"
 )
 
-// Mounter provides the GCS Fuse CSI implementation of mount.Interface
+// Mounter provides the Cloud Storage FUSE CSI implementation of mount.Interface
 // for the linux platform.
 type Mounter struct {
 	mount.MounterForceUnmounter

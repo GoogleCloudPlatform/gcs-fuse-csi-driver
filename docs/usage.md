@@ -1,4 +1,4 @@
-# GCS FUSE CSI Driver Usage
+# Cloud Storage FUSE CSI Driver Usage
 
 ## Before you begin
 
@@ -8,7 +8,7 @@ The CSI driver depends on the Workload Identity feature to authenticate with GCP
 
 ### Install the CSI driver
 
-Refer to the documentation [GCS FUSE CSI Driver Installation](./installation.md) to manually install the CSI driver.
+Refer to the documentation [Cloud Storage FUSE CSI Driver Installation](./installation.md) to manually install the CSI driver.
 
 > Note: We are actively working on integrating the CSI driver with GKE service to make it a GKE managed add-on feature. After the integration work is done, manual installation will not be needed. The instruction will be provided afterwards.
 
@@ -80,13 +80,13 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
         iam.gke.io/gcp-service-account=${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
     ```
 
-## Using the GCS Fuse CSI driver
+## Using the Cloud Storage FUSE CSI driver
 
-The GCS Fuse CSI driver allows developers to use standard Kubernetes API to consume pre-existing GCS buckets. There are two types of volume configuration supported:
+The Cloud Storage FUSE CSI driver allows developers to use standard Kubernetes API to consume pre-existing GCS buckets. There are two types of volume configuration supported:
 1. [Static Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#static) using a PersistentVolumeClaim bound to the PersistentVolume
 2. Using [CSI Ephemeral Inline volumes](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#csi-ephemeral-volumes)
 
-The GCS Fuse CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is under development and not officially supported.
+The Cloud Storage FUSE CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is under development and not officially supported.
 
 ### Pod annotations and sidecar container
 

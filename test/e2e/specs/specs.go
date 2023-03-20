@@ -329,7 +329,7 @@ func (t *TestGCPServiceAccount) Create() {
 	request := &iam.CreateServiceAccountRequest{
 		AccountId: t.serviceAccount.Name,
 		ServiceAccount: &iam.ServiceAccount{
-			DisplayName: "GCS Fuse CSI Driver E2E Test SA " + t.serviceAccount.Name,
+			DisplayName: "Cloud Storage FUSE CSI Driver E2E Test SA " + t.serviceAccount.Name,
 		},
 	}
 	t.serviceAccount, err = iamService.Projects.ServiceAccounts.Create("projects/"+t.serviceAccount.ProjectId, request).Do()
