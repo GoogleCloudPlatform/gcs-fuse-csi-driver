@@ -35,9 +35,9 @@ var (
 	certName               = flag.String("cert-name", "cert.pem", "The server certificate name.")
 	keyName                = flag.String("key-name", "key.pem", "The server key name.")
 	imagePullPolicy        = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
-	cpuLimit               = flag.String("sidecar-cpu-limit", "500m", "The default CPU limit for gcsfuse sidecar container.")
-	memoryLimit            = flag.String("sidecar-memory-limit", "300Mi", "The default memory limit for gcsfuse sidecar container.")
-	ephemeralStorageLimit  = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
+	cpuLimit               = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
+	memoryLimit            = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
+	ephemeralStorageLimit  = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImageName       = flag.String("sidecar-image-name", "", "The gcsfuse sidecar container image name.")
 
 	// These are set at compile time
