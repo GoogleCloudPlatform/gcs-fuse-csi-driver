@@ -1,10 +1,10 @@
 # Example Applications
 
 ## Install the CSI driver
-See the documentation [GCS FUSE CSI Driver Installation](../docs/installation.md).
+See the documentation [Cloud Storage FUSE CSI Driver Installation](../docs/installation.md).
 
 ## Set up access to GCS buckets
-See the documentation [GCS FUSE CSI Driver Usage](../docs/usage.md#set-up-access-to-gcs-buckets-via-gke-workload-identity).
+See the documentation [Cloud Storage FUSE CSI Driver Usage](../docs/usage.md#set-up-access-to-gcs-buckets-via-gke-workload-identity).
 
 ## Install Example Applications
 ### Dynamic Provisioning Example (Unstable)
@@ -105,7 +105,7 @@ kubectl apply -f ./examples/perf-test/pod.yaml
 kubectl delete -f ./examples/perf-test/pod.yaml
 ```
 
-### GCS Fuse E2E Test
+### Cloud Storage FUSE E2E Test
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name

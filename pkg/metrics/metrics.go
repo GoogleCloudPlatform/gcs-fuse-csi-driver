@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	// envGKEGCSCSIVersion is an environment variable set in the GCS FUSE CSI driver controller manifest
+	// envGKEGCSCSIVersion is an environment variable set in the Cloud Storage FUSE CSI driver controller manifest
 	// with the current version of the GKE component.
 	envGKEGCSCSIVersion = "GKE_GCSCSI_VERSION"
 

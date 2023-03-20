@@ -1,4 +1,4 @@
-# GCS FUSE CSI Driver Installation
+# Cloud Storage FUSE CSI Driver Installation
 
 ## Prerequisites
 - Clone the repo by running the following command

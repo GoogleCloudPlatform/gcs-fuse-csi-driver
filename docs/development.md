@@ -1,4 +1,4 @@
-# GCS FUSE CSI Driver Development Guide
+# Cloud Storage FUSE CSI Driver Development Guide
 
 ## Prerequisite
 The following software are required for local development.
@@ -35,12 +35,12 @@ Run the following queries on GCP Logs Explorer to check logs.
     resource.type="k8s_container"
     resource.labels.container_name="gke-gcsfuse-sidecar"
     ```
-- GCS Fuse CSI Driver logs:
+- Cloud Storage FUSE CSI Driver logs:
     ```
     resource.type="k8s_container"
     resource.labels.container_name="gcs-fuse-csi-driver"
     ```
-- GCS Fuse CSI Driver Webhook logs:
+- Cloud Storage FUSE CSI Driver Webhook logs:
     ```
     resource.type="k8s_container"
     resource.labels.container_name="gcs-fuse-csi-driver-webhook"
