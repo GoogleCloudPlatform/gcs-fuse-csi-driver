@@ -15,23 +15,24 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: gcp-gcs-csi-job-example
+  name: gcs-fuse-csi-job-example
 spec:
   template:
     metadata:
       annotations:
         gke-gcsfuse/volumes: "true"
     spec:
+      serviceAccountName: gcs-csi
       containers:
       - name: writer
         image: busybox
         resources:
           limits:
-            cpu: 100m
-            memory: 100Mi
+            cpu: 30m
+            memory: 30Mi
           requests:
-            cpu: 10m
-            memory: 80Mi
+            cpu: 30m
+            memory: 30Mi
         command:
           - "/bin/sh"
           - "-c"
@@ -42,11 +43,31 @@ spec:
               fieldRef:
                 fieldPath: metadata.name
         volumeMounts:
-        - name: gcp-gcs-csi-ephemeral
+        - name: gcs-fuse-csi-ephemeral
           mountPath: /data
-      serviceAccountName: gcs-csi
+      - name: reader
+        image: busybox
+        resources:
+          limits:
+            cpu: 30m
+            memory: 30Mi
+          requests:
+            cpu: 30m
+            memory: 30Mi
+        command:
+          - "/bin/sh"
+          - "-c"
+          - sleep 10 && cat /data/${MY_POD_NAME}
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        volumeMounts:
+        - name: gcs-fuse-csi-ephemeral
+          mountPath: /data
       volumes:
-      - name: gcp-gcs-csi-ephemeral
+      - name: gcs-fuse-csi-ephemeral
         csi:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
