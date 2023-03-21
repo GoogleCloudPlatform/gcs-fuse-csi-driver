@@ -12,22 +12,22 @@ Refer to the documentation [Cloud Storage FUSE CSI Driver Installation](./instal
 
 > Note: We are actively working on integrating the CSI driver with GKE service to make it a GKE managed add-on feature. After the integration work is done, manual installation will not be needed. The instruction will be provided afterwards.
 
-### Create GCS buckets
+### Create Cloud Storage buckets
 
-Refer to the documentation [Create GCS buckets](https://cloud.google.com/storage/docs/creating-buckets).
+Refer to the documentation [Create Cloud Storage buckets](https://cloud.google.com/storage/docs/creating-buckets).
 
 In order to have better performance and higher throughput, please set the `Location type` as `Region`, and select a region where your GKE cluster is running.
 
-### Set up access to GCS buckets via GKE Workload Identity
+### Set up access to Cloud Storage buckets via GKE Workload Identity
 
-In order to let the CSI driver authenticate with GCP APIs, you will need to do the following steps to make your GCS buckets accessible by your GKE cluster. See [GKE Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for more information.
+In order to let the CSI driver authenticate with GCP APIs, you will need to do the following steps to make your Cloud Storage buckets accessible by your GKE cluster. See [GKE Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for more information.
 
 1. Create a GCP Service Account
 
    ```bash
-    # The ID of the project where your GCS bucket lives.
+    # The ID of the project where your Cloud Storage bucket lives.
     GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
-    # The name of the GCP service account. The service account should be in the GCS bucket project.
+    # The name of the GCP service account. The service account should be in the Cloud Storage bucket project.
     GCP_SA_NAME=<gcp-service-account-name>
     # The ID of the project where your GKE cluster lives.
     CLUSTER_PROJECT_ID=<cluster-project-id>
@@ -35,13 +35,13 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
     gcloud iam service-accounts create ${GCP_SA_NAME} --project=${GCS_BUCKET_PROJECT_ID}
     ```
 
-2. Grant the GCS permissions to the GCP Service Account. Select a proper IAM role according to the doc [IAM roles for Cloud Storage](https://cloud.google.com/storage/docs/access-control/iam-roles).
+2. Grant the Cloud Storage permissions to the GCP Service Account. Select a proper IAM role according to the doc [IAM roles for Cloud Storage](https://cloud.google.com/storage/docs/access-control/iam-roles).
     
     ```bash
     # Specify a proper IAM role for Cloud Storage.
     STORAGE_ROLE=<cloud-storage-role>
     
-    # Choose "[2] None" for binding condition if you want to apply the permissions to all the GCS buckets in the project.
+    # Choose "[2] None" for binding condition if you want to apply the permissions to all the Cloud Storage buckets in the project.
     gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
         --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
         --role "${STORAGE_ROLE}"
@@ -82,7 +82,7 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
 
 ## Using the Cloud Storage FUSE CSI driver
 
-The Cloud Storage FUSE CSI driver allows developers to use standard Kubernetes API to consume pre-existing GCS buckets. There are two types of volume configuration supported:
+The Cloud Storage FUSE CSI driver allows developers to use standard Kubernetes API to consume pre-existing Cloud Storage buckets. There are two types of volume configuration supported:
 1. [Static Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#static) using a PersistentVolumeClaim bound to the PersistentVolume
 2. Using [CSI Ephemeral Inline volumes](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#csi-ephemeral-volumes)
 
@@ -90,9 +90,9 @@ The Cloud Storage FUSE CSI driver natively supports the above volume configurati
 
 ### Pod annotations and sidecar container
 
-No matter which configuration method you choose, the CSI driver relies on Pod annotations to identify if the Pod uses GCS-backed volumes. The CSI driver employs a mutating admission webhook controller to monitor all the Pod specs. If the proper Pod annotations are found, the webhook will inject a sidecar container into the workload Pod. The CSI driver uses [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse) to mount GCS buckets, and the fuse instances run inside the sidecar containers.
+No matter which configuration method you choose, the CSI driver relies on Pod annotations to identify if the Pod uses Cloud Storage backed volumes. The CSI driver employs a mutating admission webhook controller to monitor all the Pod specs. If the proper Pod annotations are found, the webhook will inject a sidecar container into the workload Pod. The CSI driver uses [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse) to mount Cloud Storage buckets, and the fuse instances run inside the sidecar containers.
 
-In order to let the webhook identify the GCS-backed volumes, the annotation `gke-gcsfuse/volumes: "true"` is required. By default, the sidecar container has **250m CPU, 256Mi memory, and 10Gi ephemeral storage** allocated. You can overwrite these values by specifying the annotation `gke-gcsfuse/[cpu-limit|memory-limit|ephemeral-storage-limit]`. For example:
+In order to let the webhook identify the Cloud Storage backed volumes, the annotation `gke-gcsfuse/volumes: "true"` is required. By default, the sidecar container has **250m CPU, 256Mi memory, and 10Gi ephemeral storage** allocated. You can overwrite these values by specifying the annotation `gke-gcsfuse/[cpu-limit|memory-limit|ephemeral-storage-limit]`. For example:
 
 ```yaml
 apiVersion: v1
@@ -111,7 +111,7 @@ To decide how much resource is needed, here are some suggestions:
 
 2. Since Cloud Storage FUSE consumes memory for object meta data caching, when the workloads need to process a large amount of files, it is required to increase the sidecar container memory allocation. Our application test shows that, Cloud Storage FUSE consumes approximately 2.5 GB memory for caching 2 million files' meta data in memory. Note that the memory consumption is proportional to the file number but not file size, as Cloud Storage FUSE currently does not cache the file content. Users also have options to tune the caching behavior, see the [Cloud Storage FUSE caching documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#caching) for more details. 
 
-3. For write operations, Cloud Storage FUSE prepares the files in a local tmp directory before the files are uploaded to the GCS bucket. Users need to estimate how large files their workloads may write to the GCS bucket, and increase the sidecar container ephemeral storage limit accordingly.
+3. For write operations, Cloud Storage FUSE prepares the files in a local tmp directory before the files are uploaded to the Cloud Storage bucket. Users need to estimate how large files their workloads may write to the Cloud Storage bucket, and increase the sidecar container ephemeral storage limit accordingly.
 
 > Note: The sidecar container resource configuration may be overridden on Autopilot clusters. See [Resource requests in Autopilot](https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-resource-requests) for more details.
 
@@ -150,15 +150,15 @@ containers:
 
 ### Using CSI Ephemeral Inline volumes
 
-By using the CSI Ephemeral Inline volumes, the lifecycle of volumes backed by GCS buckets is tied with the Pod lifecycle. After the Pod termination, there is no need to maintain independent PV/PVC objects to represent GCS-backed volumes.
+By using the CSI Ephemeral Inline volumes, the lifecycle of volumes backed by Cloud Storage buckets is tied with the Pod lifecycle. After the Pod termination, there is no need to maintain independent PV/PVC objects to represent Cloud Storage backed volumes.
 
-> Note: Using CSI Ephemeral Inline volumes does not mean the CSI driver will create or delete the GCS buckets. Users need to manually create the buckets before use, and manually delete the buckets after use if needed.
+> Note: Using CSI Ephemeral Inline volumes does not mean the CSI driver will create or delete the Cloud Storage buckets. Users need to manually create the buckets before use, and manually delete the buckets after use if needed.
 
-Use the following YAML manifest to specify the GCS bucket directly on the Pod spec.
+Use the following YAML manifest to specify the Cloud Storage bucket directly on the Pod spec.
 
-- `spec.serviceAccountName`: use the same Kubernetes service account in the [GCS bucket access setup step](#set-up-access-to-gcs-buckets-via-gke-workload-identity).
+- `spec.serviceAccountName`: use the same Kubernetes service account in the [Cloud Storage bucket access setup step](#set-up-access-to-cloud-storage-buckets-via-gke-workload-identity).
 - `spec.volumes[n].csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
-- `spec.volumes[n].csi.volumeAttributes.bucketName`: specify your GCS bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
+- `spec.volumes[n].csi.volumeAttributes.bucketName`: specify your Cloud Storage bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
 - `spec.volumes[n].csi.volumeAttributes.mountOptions`: pass flags to Cloud Storage FUSE. Put all the flags in one string separated by a comma `,` without spaces. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) to learn about available mount flags.
 
 ```yaml
@@ -200,12 +200,12 @@ There are two ways to bind a `PersistentVolumeClaim` to a specific `PersistentVo
 1. A `PersistentVolume` can be bound to a `PersistentVolumeClaim` using `claimRef` on the `PersistentVolume` spec.
 2. A `PersistentVolumeClaim` can bind a `PersistentVolume` using `volumeName` on the `PersistentVolumeClaim` spec.
 
-To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of the two resources must match, as well as `capacity` and `accessModes`. You can omit the storageClassName, but you must specify `""` to prevent Kubernetes from using the default StorageClass. The `storageClassName` does not need to refer to an existing StorageClass object. If all you need is to bind the claim to a volume, you can use any name you want. Since GCS buckets do not have size limits, you can put any number for `capacity`, but it cannot be empty.
+To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of the two resources must match, as well as `capacity` and `accessModes`. You can omit the storageClassName, but you must specify `""` to prevent Kubernetes from using the default StorageClass. The `storageClassName` does not need to refer to an existing StorageClass object. If all you need is to bind the claim to a volume, you can use any name you want. Since Cloud Storage buckets do not have size limits, you can put any number for `capacity`, but it cannot be empty.
 
 1. Create a PersistentVolume using the following YAML manifest.
    
    - `spec.csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
-   - `spec.csi.volumeHandle`: specify your GCS bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
+   - `spec.csi.volumeHandle`: specify your Cloud Storage bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
    - `spec.mountOptions`: pass flags to Cloud Storage FUSE. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) to learn about available mount flags.
    
     ```yaml
@@ -251,7 +251,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
 
 3. Use the PersistentVolumeClaim in a Pod.
   
-   - `spec.serviceAccountName`: use the same Kubernetes service account in the [GCS bucket access setup step](#set-up-access-to-gcs-buckets-via-gke-workload-identity).
+   - `spec.serviceAccountName`: use the same Kubernetes service account in the [Cloud Storage bucket access setup step](#set-up-access-to-cloud-storage-buckets-via-gke-workload-identity).
     
     ```yaml
     apiVersion: v1
@@ -284,7 +284,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
 
 ## Cloud Storage FUSE Mount Flags
 
-When the Cloud Storage FUSE is initiated, the following flags are passed to the gcsfuse binary, and these flags cannot be overwritten by users:
+When the Cloud Storage FUSE is initiated, the following flags are passed to the Cloud Storage FUSE binary, and these flags cannot be overwritten by users:
 
 - implicit-dirs
 - app-name=gke-gcs-fuse-csi
@@ -293,7 +293,7 @@ When the Cloud Storage FUSE is initiated, the following flags are passed to the 
 - log-file=/dev/fd/1
 - log-format=text
 
-The following flags are disallowed to be passed to the gcsfuse binary:
+The following flags are disallowed to be passed to the Cloud Storage FUSE binary:
 
 - key-file
 - token-url
@@ -304,14 +304,14 @@ All the other flags defined in the [Cloud Storage FUSE flags file](https://githu
 
 Specifically, you may consider passing the following flags as needed:
 
- - If the Pod/container does not use the root user, pass the uid to gcsfuse using the flag `uid`.
- - If the Pod/container does not use the default fsGroup, pass the gid to gcsfuse using the flag `gid`.
+ - If the Pod/container does not use the root user, pass the uid to Cloud Storage FUSE using the flag `uid`.
+ - If the Pod/container does not use the default fsGroup, pass the gid to Cloud Storage FUSE using the flag `gid`.
  - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
  - If you need to troubleshoot Cloud Storage FUSE issues, pass the flags `debug_fuse`, `debug_fs`, and `debug_gcs`.
 
 ## Workload Examples
 
-The following YAML manifest shows a Job example consuming a GCS bucket. Before you run the example workload, replace the namespace, service account name and bucket name.
+The following YAML manifest shows a Job example consuming a Cloud Storage bucket. Before you run the example workload, replace the namespace, service account name and bucket name.
 
 ```yaml
 apiVersion: batch/v1
@@ -363,7 +363,7 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 1. Error `Transport endpoint is not connected` in workload Pods.
    
-    This error is due to gcsfuse termination. In most cases, gcsfuse was terminated because of OOM. Please use the Pod annotations `gke-gcsfuse/[cpu-limit | memory-limit | ephemeral-storage-limit]` to allocate more resources to gcsfuse (the sidecar container). Note that the only way to fix this error is to restart your workload Pod.
+    This error is due to Cloud Storage FUSE termination. In most cases, Cloud Storage FUSE was terminated because of OOM. Please use the Pod annotations `gke-gcsfuse/[cpu-limit | memory-limit | ephemeral-storage-limit]` to allocate more resources to Cloud Storage FUSE (the sidecar container). Note that the only way to fix this error is to restart your workload Pod.
 
 2. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
    
@@ -371,11 +371,11 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 3. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 400: Invalid bucket name: 'xxx', invalid`
    
-    The GCS bucket does not exist. Make sure the GCS bucket is created, and the GCS bucket name is specified correctly.
+    The Cloud Storage bucket does not exist. Make sure the Cloud Storage bucket is created, and the Cloud Storage bucket name is specified correctly.
 
 4. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to find the sidecar container in Pod spec`
    
-    The gcsfuse sidecar container was not injected. Please check the Pod annotation `gke-gcsfuse/volumes: "true"` is set correctly.
+    The Cloud Storage FUSE sidecar container was not injected. Please check the Pod annotation `gke-gcsfuse/volumes: "true"` is set correctly.
 
 5. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
 
