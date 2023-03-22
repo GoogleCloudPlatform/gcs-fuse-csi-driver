@@ -160,6 +160,8 @@ Use the following YAML manifest to specify the Cloud Storage bucket directly on 
 - `spec.volumes[n].csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
 - `spec.volumes[n].csi.volumeAttributes.bucketName`: specify your Cloud Storage bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
 - `spec.volumes[n].csi.volumeAttributes.mountOptions`: pass flags to Cloud Storage FUSE. Put all the flags in one string separated by a comma `,` without spaces. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) to learn about available mount flags.
+- `spec.volumes[n].csi.readOnly`: pass `true` if all the volume mounts are read-only.
+- `spec.containers[n].volumeMounts[m].readOnly`: pass `true` if only specific volume mount is read-only.
 
 ```yaml
 apiVersion: v1
@@ -183,14 +185,16 @@ spec:
     volumeMounts:
     - name: gcs-fuse-csi-ephemeral
       mountPath: /data
+      readOnly: true # optional, if this specific volume mount is read-only
   serviceAccountName: my_k8s_sa
   volumes:
   - name: gcs-fuse-csi-ephemeral
     csi:
       driver: gcsfuse.csi.storage.gke.io
+      readOnly: true # optional, if all the volume mounts are read-only
       volumeAttributes:
         bucketName: my-bucket-name
-        mountOptions: "uid=1001,gid=3003,debug_fuse"
+        mountOptions: "uid=1001,gid=3003,debug_fuse" # optional
 ```
 
 ### Using a PersistentVolumeClaim bound to the PersistentVolume
@@ -207,6 +211,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
    - `spec.csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
    - `spec.csi.volumeHandle`: specify your Cloud Storage bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
    - `spec.mountOptions`: pass flags to Cloud Storage FUSE. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) to learn about available mount flags.
+   - `spec.csi.readOnly`: pass `true` if all the volume mounts are read-only.
    
     ```yaml
     apiVersion: v1
@@ -222,13 +227,14 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
       claimRef:
         namespace: my_namespace
         name: gcs-fuse-csi-static-pvc
-      mountOptions:
+      mountOptions: # optional
         - uid=1001
         - gid=3003
         - debug_fuse
       csi:
         driver: gcsfuse.csi.storage.gke.io
         volumeHandle: my-bucket-name
+        readOnly: true # optional, if all the volume mounts are read-only
     ```
 
 2. Create a PersistentVolumeClaim using the following YAML manifest.
@@ -252,6 +258,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
 3. Use the PersistentVolumeClaim in a Pod.
   
    - `spec.serviceAccountName`: use the same Kubernetes service account in the [Cloud Storage bucket access setup step](#set-up-access-to-cloud-storage-buckets-via-gke-workload-identity).
+   - `spec.containers[n].volumeMounts[m].readOnly`: pass `true` if only specific volume mount is read-only.
     
     ```yaml
     apiVersion: v1
@@ -275,6 +282,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
         volumeMounts:
         - name: gcs-fuse-csi-static
           mountPath: /data
+          readOnly: true # optional, if this specific volume mount is read-only
       serviceAccountName: my_k8s_sa
       volumes:
       - name: gcs-fuse-csi-static
@@ -345,6 +353,7 @@ spec:
         volumeMounts:
         - name: gcs-fuse-csi-ephemeral
           mountPath: /data
+          readOnly: true
       volumes:
       - name: gcs-fuse-csi-ephemeral
         csi:
