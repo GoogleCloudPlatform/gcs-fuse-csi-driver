@@ -19,6 +19,8 @@ package e2etest
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 
 	"github.com/google/uuid"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
@@ -141,12 +143,16 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		}
 
 		mountOptions := "debug_gcs,debug_fuse,debug_fs"
-		if config.Prefix == specs.NonRootVolumePrefix {
+		switch config.Prefix {
+		case specs.NonRootVolumePrefix:
 			mountOptions += ",uid=1001,gid=3003"
-		}
-		if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
+		case specs.InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
+		case specs.ImplicitDirsVolumePrefix:
+			createImplicitDir(bucketName)
+			mountOptions += ",implicit-dirs"
 		}
+
 		return &gcsVolume{
 			driver:                  n,
 			bucketName:              bucketName,
@@ -195,18 +201,22 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 		})
 	}
 
-	volme := n.volumeStore[volumeNumber]
+	volume := n.volumeStore[volumeNumber]
 	attributes := map[string]string{
-		"bucketName":   volme.bucketName,
+		"bucketName":   volume.bucketName,
 		"mountOptions": "debug_gcs,debug_fuse,debug_fs",
 	}
-	if config.Prefix == specs.NonRootVolumePrefix {
+	switch config.Prefix {
+	case specs.NonRootVolumePrefix:
 		attributes["mountOptions"] += ",uid=1001,gid=3003"
-	}
-	if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
+	case specs.InvalidMountOptionsVolumePrefix:
 		attributes["mountOptions"] += ",invalid-option"
+	case specs.ImplicitDirsVolumePrefix:
+		createImplicitDir(volume.bucketName)
+		attributes["mountOptions"] += ",implicit-dirs"
 	}
-	return attributes, volme.shared, volme.readOnly
+
+	return attributes, volume.shared, volume.readOnly
 }
 
 func (n *GCSFuseCSITestDriver) GetCSIDriverName(config *storageframework.PerTestConfig) string {
@@ -222,10 +232,10 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
-	if config.Prefix == specs.NonRootVolumePrefix {
+	switch config.Prefix {
+	case specs.NonRootVolumePrefix:
 		mountOptions = append(mountOptions, "uid=1001", "gid=3003")
-	}
-	if config.Prefix == specs.InvalidMountOptionsVolumePrefix {
+	case specs.InvalidMountOptionsVolumePrefix:
 		mountOptions = append(mountOptions, "invalid-option")
 	}
 
@@ -287,5 +297,24 @@ func (n *GCSFuseCSITestDriver) deleteBucket(serviceAccountNamespace, bucketName 
 	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 	if err != nil {
 		e2eframework.Failf("Failed to delete the GCS bucket: %v", err)
+	}
+}
+
+func createImplicitDir(bucketName string) {
+	f, err := os.Create(bucketName)
+	if err != nil {
+		e2eframework.Failf("Failed to create an empty data file: %v", err)
+	}
+	f.Close()
+	defer func() {
+		err = os.Remove(bucketName)
+		if err != nil {
+			e2eframework.Failf("Failed to delete the empty data file: %v", err)
+		}
+	}()
+
+	cmd := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, specs.ImplicitDirsPath))
+	if err := cmd.Run(); err != nil {
+		e2eframework.Failf("Failed to create a implicit dir in GCS bucket: %v", err)
 	}
 }

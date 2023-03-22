@@ -23,6 +23,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -166,5 +167,30 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+	})
+
+	ginkgo.It("should store data in implicit directory", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+
+		init(specs.ImplicitDirsVolumePrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		mountPath := "/mnt/test"
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning()
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/%v/data && grep 'hello world' %v/%v/data", mountPath, specs.ImplicitDirsPath, mountPath, specs.ImplicitDirsPath))
 	})
 }

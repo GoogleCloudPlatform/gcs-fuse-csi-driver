@@ -47,7 +47,9 @@ const (
 	K8sSecretName                   = "gcsfuse-csi-test-secret"
 	FakeVolumePrefix                = "gcs-fake-volume"
 	NonRootVolumePrefix             = "gcs-non-root-volume"
-	InvalidMountOptionsVolumePrefix = "gcs-innalid-mount-options-volume"
+	InvalidMountOptionsVolumePrefix = "gcs-invalid-mount-options-volume"
+	ImplicitDirsVolumePrefix        = "gcs-implicit-dirs-volume"
+	ImplicitDirsPath                = "implicit-dir"
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 1 * time.Minute
