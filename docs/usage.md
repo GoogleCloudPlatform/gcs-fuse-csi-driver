@@ -389,3 +389,7 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 5. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
 
     Invalid mount flags are passed to Cloud Storage FUSE. Please check [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+
+6. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to prepare storage service: rpc error: code = Internal desc = storage service manager failed to setup service: timed out waiting for the condition`
+
+    After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
