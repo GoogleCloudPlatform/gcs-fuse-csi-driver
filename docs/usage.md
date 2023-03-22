@@ -294,7 +294,6 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
 
 When the Cloud Storage FUSE is initiated, the following flags are passed to the Cloud Storage FUSE binary, and these flags cannot be overwritten by users:
 
-- implicit-dirs
 - app-name=gke-gcs-fuse-csi
 - temp-dir=/gcsfuse-tmp/.volumes/{volume-name}/temp-dir
 - foreground
@@ -312,10 +311,11 @@ All the other flags defined in the [Cloud Storage FUSE flags file](https://githu
 
 Specifically, you may consider passing the following flags as needed:
 
- - If the Pod/container does not use the root user, pass the uid to Cloud Storage FUSE using the flag `uid`.
- - If the Pod/container does not use the default fsGroup, pass the gid to Cloud Storage FUSE using the flag `gid`.
- - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
- - If you need to troubleshoot Cloud Storage FUSE issues, pass the flags `debug_fuse`, `debug_fs`, and `debug_gcs`.
+- If you use some other tools, such as [gsutil](https://cloud.google.com/storage/docs/gsutil), to upload objects to the bucket, pass the flag `implicit-dirs`. See Cloud Storage FUSE [implicit directories documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#implicit-directories) for details.
+- If the Pod/container does not use the root user, pass the uid to Cloud Storage FUSE using the flag `uid`.
+- If the Pod/container does not use the default fsGroup, pass the gid to Cloud Storage FUSE using the flag `gid`.
+- If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
+- If you need to troubleshoot Cloud Storage FUSE issues, pass the flags `debug_fuse`, `debug_fs`, and `debug_gcs`.
 
 ## Workload Examples
 

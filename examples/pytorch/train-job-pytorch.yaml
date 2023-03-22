@@ -89,7 +89,7 @@ spec:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
             bucketName: <bucket-name>
-            mountOptions: "debug_gcs,debug_fuse,debug_fs"
+            mountOptions: "implicit-dirs,debug_gcs,debug_fuse,debug_fs"
       - name: bypassed-code
         configMap:
           name: bypassed-code

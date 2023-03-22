@@ -22,18 +22,16 @@ import (
 )
 
 var defaultFlagMap = map[string]string{
-	"implicit-dirs": "",
-	"app-name":      GCSFuseAppName,
-	"temp-dir":      "test-temp-dir",
-	"foreground":    "",
-	"log-file":      "/dev/fd/1",
-	"log-format":    "text",
-	"uid":           "0",
-	"gid":           "0",
+	"app-name":   GCSFuseAppName,
+	"temp-dir":   "test-temp-dir",
+	"foreground": "",
+	"log-file":   "/dev/fd/1",
+	"log-format": "text",
+	"uid":        "0",
+	"gid":        "0",
 }
 
 var invalidArgs = []string{
-	"implicit-dirs",
 	"app-name",
 	"temp-dir",
 	"foreground",
@@ -66,7 +64,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10"},
+				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",

@@ -104,7 +104,6 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 }
 
 var disallowedFlags = map[string]bool{
-	"implicit-dirs":        true,
 	"app-name":             true,
 	"temp-dir":             true,
 	"foreground":           true,
@@ -118,14 +117,13 @@ var disallowedFlags = map[string]bool{
 
 func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 	flagMap := map[string]string{
-		"implicit-dirs": "",
-		"app-name":      GCSFuseAppName,
-		"temp-dir":      mc.TempDir,
-		"foreground":    "",
-		"log-file":      "/dev/fd/1", // redirect the output to cmd stdout
-		"log-format":    "text",
-		"uid":           "0",
-		"gid":           "0",
+		"app-name":   GCSFuseAppName,
+		"temp-dir":   mc.TempDir,
+		"foreground": "",
+		"log-file":   "/dev/fd/1", // redirect the output to cmd stdout
+		"log-format": "text",
+		"uid":        "0",
+		"gid":        "0",
 	}
 
 	invalidArgs := []string{}
