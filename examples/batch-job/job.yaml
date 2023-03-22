@@ -66,6 +66,7 @@ spec:
         volumeMounts:
         - name: gcs-fuse-csi-ephemeral
           mountPath: /data
+          readOnly: true
       volumes:
       - name: gcs-fuse-csi-ephemeral
         csi:
