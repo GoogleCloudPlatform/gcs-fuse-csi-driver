@@ -204,6 +204,8 @@ There are two ways to bind a `PersistentVolumeClaim` to a specific `PersistentVo
 
 To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of the two resources must match, as well as `capacity` and `accessModes`. You can omit the storageClassName, but you must specify `""` to prevent Kubernetes from using the default StorageClass. The `storageClassName` does not need to refer to an existing StorageClass object. If all you need is to bind the claim to a volume, you can use any name you want. Since Cloud Storage buckets do not have size limits, you can put any number for `capacity`, but it cannot be empty.
 
+The Cloud Storage FUSE CSI Driver supports `ReadWriteOnce`, `ReadOnlyMany`, and `ReadWriteMany` access modes. See [Kubernetes Access Modes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes) for more details.
+
 1. Create a PersistentVolume using the following YAML manifest.
    
    - `spec.csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
