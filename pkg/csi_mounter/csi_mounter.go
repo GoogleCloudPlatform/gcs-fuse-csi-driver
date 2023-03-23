@@ -58,6 +58,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		"nodev",
 		"nosuid",
 		"noexec",
+		"allow_other",
 		"default_permissions",
 		"rootmode=40000",
 		fmt.Sprintf("user_id=%d", os.Getuid()),
@@ -66,7 +67,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 
 	// users may pass options that should be used by Linux mount(8),
 	// filter out these options and not pass to the sidecar mounter.
-	validMountOptions := []string{"rw", "ro", "allow_other"}
+	validMountOptions := []string{"rw", "ro"}
 	optionSet := sets.NewString(options...)
 	for _, o := range validMountOptions {
 		if optionSet.Has(o) {

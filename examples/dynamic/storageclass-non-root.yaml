@@ -22,7 +22,6 @@ reclaimPolicy: Delete
 mountOptions:
   - uid=1001
   - gid=3003
-  - allow_other
 parameters:
   csi.storage.k8s.io/provisioner-secret-name: gcs-csi-secret
   csi.storage.k8s.io/provisioner-secret-namespace: ${pvc.namespace}

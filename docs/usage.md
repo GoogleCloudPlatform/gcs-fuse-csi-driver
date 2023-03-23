@@ -192,7 +192,7 @@ spec:
       readOnly: true # optional, if all the volume mounts are read-only
       volumeAttributes:
         bucketName: my-bucket-name
-        mountOptions: "uid=1001,gid=3003,allow_other,debug_fuse" # optional
+        mountOptions: "uid=1001,gid=3003,debug_fuse" # optional
 ```
 
 ### Using a PersistentVolumeClaim bound to the PersistentVolume
@@ -230,7 +230,6 @@ The Cloud Storage FUSE CSI Driver supports `ReadWriteOnce`, `ReadOnlyMany`, and 
       mountOptions: # optional
         - uid=1001
         - gid=3003
-        - allow_other
         - debug_fuse
       csi:
         driver: gcsfuse.csi.storage.gke.io
@@ -313,11 +312,11 @@ All the other flags defined in the [Cloud Storage FUSE flags file](https://githu
 Specifically, you may consider passing the following flags as needed:
 
 - To use an existing directory, simulated by a "/" prefix, that was not originally created by Cloud Storage FUSE, pass the `implicit-dirs` flag. Otherwise, you will need to explicitly create the directory using `mkdir` before you see it in the local filesystem. See the Files and Directories section under the [Semantics documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#implicit-directories) for more details.
-- If you are using a [Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) for your Pod or container to use a non-root user and fsGroup, or your container image uses a non-root user and fsGroup, you will need to pass the uid and gid to Cloud Storage FUSE using the flag `uid` and `gid`. Meanwhile, pass the `allow_other` flag.
+- If you are using a [Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) for your Pod or container to use a non-root user and fsGroup, or your container image uses a non-root user and fsGroup, you will need to pass the uid and gid to Cloud Storage FUSE using the flag `uid` and `gid`.
 - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
 - If you need to troubleshoot Cloud Storage FUSE issues, pass the flags `debug_fuse`, `debug_fs`, and `debug_gcs`.
 
-> Note: Passing flags via `-o` to Cloud Storage FUSE is not allowed. You can pass the `allow_other` flag directly without using the `-o` flag. For read-only volumes, please follow the instructions above to configure the `readOnly` field.
+> Note: Passing flags via `-o` to Cloud Storage FUSE is not allowed. For read-only volumes, please follow the instructions above to configure the `readOnly` field.
 
 ## Workload Examples
 
@@ -378,7 +377,7 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 - Error `Permission denied` in workload Pods.
   
-  Cloud Storage FUSE does not have permission to access the file system. Please double check your container user and fsGroup. Make sure you pass `uid`, `gid`, and `allow_other` flags correctly. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+  Cloud Storage FUSE does not have permission to access the file system. Please double check your container user and fsGroup. Make sure you pass `uid` and `gid` flags correctly. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
 
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
    
