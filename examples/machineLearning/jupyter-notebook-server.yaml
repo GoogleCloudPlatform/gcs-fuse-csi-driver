@@ -85,4 +85,4 @@ spec:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: <bucket-name> # unique bucket name
-        mountOptions: "implicit-dirs,uid=1000,gid=100" # the image uses uid 1000 and gid 100 by default
+        mountOptions: "implicit-dirs,uid=1000,gid=100,allow_other" # the image uses uid 1000 and gid 100 by default
