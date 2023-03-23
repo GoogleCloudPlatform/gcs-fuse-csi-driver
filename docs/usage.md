@@ -192,7 +192,7 @@ spec:
       readOnly: true # optional, if all the volume mounts are read-only
       volumeAttributes:
         bucketName: my-bucket-name
-        mountOptions: "uid=1001,gid=3003,debug_fuse" # optional
+        mountOptions: "uid=1001,gid=3003,allow_other,debug_fuse" # optional
 ```
 
 ### Using a PersistentVolumeClaim bound to the PersistentVolume
@@ -230,6 +230,7 @@ The Cloud Storage FUSE CSI Driver supports `ReadWriteOnce`, `ReadOnlyMany`, and 
       mountOptions: # optional
         - uid=1001
         - gid=3003
+        - allow_other
         - debug_fuse
       csi:
         driver: gcsfuse.csi.storage.gke.io
@@ -311,11 +312,12 @@ All the other flags defined in the [Cloud Storage FUSE flags file](https://githu
 
 Specifically, you may consider passing the following flags as needed:
 
-- If you use some other tools, such as [gsutil](https://cloud.google.com/storage/docs/gsutil), to upload objects to the bucket, pass the flag `implicit-dirs`. See Cloud Storage FUSE [implicit directories documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#implicit-directories) for details.
-- If the Pod/container does not use the root user, pass the uid to Cloud Storage FUSE using the flag `uid`.
-- If the Pod/container does not use the default fsGroup, pass the gid to Cloud Storage FUSE using the flag `gid`.
+- To use an existing directory, simulated by a "/" prefix, that was not originally created by Cloud Storage FUSE, pass the `implicit-dirs` flag. Otherwise, you will need to explicitly create the directory using `mkdir` before you see it in the local filesystem. See the Files and Directories section under the [Semantics documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#implicit-directories) for more details.
+- If you are using a [Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) for your Pod or container to use a non-root user and fsGroup, or your container image uses a non-root user and fsGroup, you will need to pass the uid and gid to Cloud Storage FUSE using the flag `uid` and `gid`. Meanwhile, pass the `allow_other` flag.
 - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
 - If you need to troubleshoot Cloud Storage FUSE issues, pass the flags `debug_fuse`, `debug_fs`, and `debug_gcs`.
+
+> Note: Passing flags via `-o` to Cloud Storage FUSE is not allowed. You can pass the `allow_other` flag directly without using the `-o` flag. For read-only volumes, please follow the instructions above to configure the `readOnly` field.
 
 ## Workload Examples
 
@@ -370,29 +372,33 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 ## Common Issues
 
-1. Error `Transport endpoint is not connected` in workload Pods.
+- Error `Transport endpoint is not connected` in workload Pods.
+  
+  This error is due to Cloud Storage FUSE termination. In most cases, Cloud Storage FUSE was terminated because of OOM. Please use the Pod annotations `gke-gcsfuse/[cpu-limit|memory-limit|ephemeral-storage-limit]` to allocate more resources to Cloud Storage FUSE (the sidecar container). Note that the only way to fix this error is to restart your workload Pod.
+
+- Error `Permission denied` in workload Pods.
+  
+  Cloud Storage FUSE does not have permission to access the file system. Please double check your container user and fsGroup. Make sure you pass `uid`, `gid`, and `allow_other` flags correctly. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
    
-    This error is due to Cloud Storage FUSE termination. In most cases, Cloud Storage FUSE was terminated because of OOM. Please use the Pod annotations `gke-gcsfuse/[cpu-limit | memory-limit | ephemeral-storage-limit]` to allocate more resources to Cloud Storage FUSE (the sidecar container). Note that the only way to fix this error is to restart your workload Pod.
+  Please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
 
-2. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 400: Invalid bucket name: 'xxx', invalid`
    
-    Please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
+  The Cloud Storage bucket does not exist. Make sure the Cloud Storage bucket is created, and the Cloud Storage bucket name is specified correctly.
 
-3. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 400: Invalid bucket name: 'xxx', invalid`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to find the sidecar container in Pod spec`
    
-    The Cloud Storage bucket does not exist. Make sure the Cloud Storage bucket is created, and the Cloud Storage bucket name is specified correctly.
+  The Cloud Storage FUSE sidecar container was not injected. Please check the Pod annotation `gke-gcsfuse/volumes: "true"` is set correctly.
 
-4. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to find the sidecar container in Pod spec`
-   
-    The Cloud Storage FUSE sidecar container was not injected. Please check the Pod annotation `gke-gcsfuse/volumes: "true"` is set correctly.
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
 
-5. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
+  Invalid mount flags are passed to Cloud Storage FUSE. Please check [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
 
-    Invalid mount flags are passed to Cloud Storage FUSE. Please check [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to prepare storage service: rpc error: code = Internal desc = storage service manager failed to setup service: timed out waiting for the condition`
 
-6. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to prepare storage service: rpc error: code = Internal desc = storage service manager failed to setup service: timed out waiting for the condition`
-
-    After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
+  After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
 
 ## Limitations
 

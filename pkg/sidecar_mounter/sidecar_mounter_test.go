@@ -41,6 +41,7 @@ var invalidArgs = []string{
 	"token-url",
 	"reuse-token-from-url",
 	"endpoint",
+	"o",
 }
 
 func TestPrepareMountArgs(t *testing.T) {

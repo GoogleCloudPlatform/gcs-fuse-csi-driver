@@ -113,6 +113,7 @@ var disallowedFlags = map[string]bool{
 	"token-url":            true,
 	"reuse-token-from-url": true,
 	"endpoint":             true,
+	"o":                    true,
 }
 
 func prepareMountArgs(mc *MountConfig) (map[string]string, error) {

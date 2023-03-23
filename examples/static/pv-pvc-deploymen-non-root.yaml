@@ -29,6 +29,7 @@ spec:
   mountOptions:
     - uid=1001
     - gid=3003
+    - allow_other
   csi:
     driver: gcsfuse.csi.storage.gke.io
     volumeHandle: <bucket-name> # unique bucket name
