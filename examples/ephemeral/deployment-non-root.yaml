@@ -84,4 +84,4 @@ spec:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
             bucketName: <bucket-name> # unique bucket name
-            mountOptions: "uid=1001,gid=3003,allow_other"
+            mountOptions: "uid=1001,gid=3003"
