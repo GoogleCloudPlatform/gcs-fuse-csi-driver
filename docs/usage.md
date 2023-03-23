@@ -88,7 +88,7 @@ The Cloud Storage FUSE CSI driver allows developers to use standard Kubernetes A
 
 The Cloud Storage FUSE CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is under development and not officially supported.
 
-### Pod annotations and sidecar container
+### Setting up a sidecar container for mounting Cloud Storage FUSE buckets
 
 No matter which configuration method you choose, the CSI driver relies on Pod annotations to identify if the Pod uses Cloud Storage backed volumes. The CSI driver employs a mutating admission webhook controller to monitor all the Pod specs. If the proper Pod annotations are found, the webhook will inject a sidecar container into the workload Pod. The CSI driver uses [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse) to mount Cloud Storage buckets, and the fuse instances run inside the sidecar containers.
 
@@ -105,17 +105,15 @@ metadata:
     gke-gcsfuse/ephemeral-storage-limit: 50Gi # optional
 ```
 
-To decide how much resource is needed, here are some suggestions:
+For the CPU limit, you may want to allocate more CPU resource to the sidecar container if your workload requires high throughput. See [Cloud Storage FUSE Performance Benchmarks](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/benchmarks.md) for more details.
 
-1. High throughput workloads require more CPU allocated to the sidecar container. Our benchmarking test results indicate that, with `10 core` CPU specified, Cloud Storage FUSE can provide approximately 3 GB/s bandwidth for sequential read and write on files larger than 3 MB with 40 threads. See the [FIO test configuration file](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/perfmetrics/scripts/job_files/seq_rand_read_write.fio) for more details.
+For the memory limit, since Cloud Storage FUSE consumes memory for object meta data caching, when the workloads need to process a large amount of files, it is required to increase the sidecar container memory allocation. Note that the memory consumption is proportional to the file number but not file size, as Cloud Storage FUSE currently does not cache the file content. You also have options to tune the caching behavior, see the [Cloud Storage FUSE caching documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#caching) for more details. 
 
-2. Since Cloud Storage FUSE consumes memory for object meta data caching, when the workloads need to process a large amount of files, it is required to increase the sidecar container memory allocation. Our application test shows that, Cloud Storage FUSE consumes approximately 2.5 GB memory for caching 2 million files' meta data in memory. Note that the memory consumption is proportional to the file number but not file size, as Cloud Storage FUSE currently does not cache the file content. Users also have options to tune the caching behavior, see the [Cloud Storage FUSE caching documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#caching) for more details. 
-
-3. For write operations, Cloud Storage FUSE prepares the files in a local tmp directory before the files are uploaded to the Cloud Storage bucket. Users need to estimate how large files their workloads may write to the Cloud Storage bucket, and increase the sidecar container ephemeral storage limit accordingly.
+For the ephemeral storage limit, as Cloud Storage FUSE will stage files in a local temporary directory when write operation happens, you need to estimate how much free space needed to handle staged content when writing large files, and increase the sidecar container ephemeral storage limit accordingly. See [Cloud Storage FUSE documentation](https://github.com/GoogleCloudPlatform/gcsfuse#downloading-object-contents) for more details.
 
 > Note: The sidecar container resource configuration may be overridden on Autopilot clusters. See [Resource requests in Autopilot](https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-resource-requests) for more details.
 
-> Note: Users need to put the annotations under Pod `metadata` field. If the volumes are consumed by other Kubernetes workload type, for instance, [Job](https://kubernetes.io/docs/concepts/workloads/controllers/job/) or [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), please make sure the annotations are configured under `spec.template.metadata` field.
+> Note: You need to put the annotations under Pod `metadata` field. If the volumes are consumed by other Kubernetes workload type, for instance, [Job](https://kubernetes.io/docs/concepts/workloads/controllers/job/) or [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), please make sure the annotations are configured under `spec.template.metadata` field.
 
 After your workload Pod is scheduled successfully, you should see the following container is injected into your workload Pod spec.
 
@@ -152,7 +150,7 @@ containers:
 
 By using the CSI Ephemeral Inline volumes, the lifecycle of volumes backed by Cloud Storage buckets is tied with the Pod lifecycle. After the Pod termination, there is no need to maintain independent PV/PVC objects to represent Cloud Storage backed volumes.
 
-> Note: Using CSI Ephemeral Inline volumes does not mean the CSI driver will create or delete the Cloud Storage buckets. Users need to manually create the buckets before use, and manually delete the buckets after use if needed.
+> Note: Using CSI Ephemeral Inline volumes does not mean the CSI driver will create or delete the Cloud Storage buckets. You need to manually create the buckets before use, and manually delete the buckets after use if needed.
 
 Use the following YAML manifest to specify the Cloud Storage bucket directly on the Pod spec.
 
@@ -292,7 +290,7 @@ To bind a PersistentVolume to a PersistentVolumeClaim, the `storageClassName` of
 
 ## Cloud Storage FUSE Mount Flags
 
-When the Cloud Storage FUSE is initiated, the following flags are passed to the Cloud Storage FUSE binary, and these flags cannot be overwritten by users:
+When the Cloud Storage FUSE is initiated, the following flags are passed to the Cloud Storage FUSE binary, and these flags cannot be overwritten:
 
 - app-name=gke-gcs-fuse-csi
 - temp-dir=/gcsfuse-tmp/.volumes/{volume-name}/temp-dir
