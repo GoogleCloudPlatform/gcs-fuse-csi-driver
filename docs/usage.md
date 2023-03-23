@@ -391,3 +391,12 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 6. Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to prepare storage service: rpc error: code = Internal desc = storage service manager failed to setup service: timed out waiting for the condition`
 
     After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
+
+## Limitations
+
+Since the Cloud Storage FUSE CSI driver relies on Cloud Storage FUSE to mount buckets, the limitation of the FUSE driver is inherited. See Cloud Storage FUSE documentation [Key differences from a POSIX file system](https://cloud.google.com/storage/docs/gcs-fuse#expandable-1) for more details.
+
+Currently, the Cloud Storage FUSE CSI driver is not supported on the following features:
+
+  - [GKE Sandbox](https://cloud.google.com/kubernetes-engine/docs/concepts/sandbox-pods)
+  - [Arm workloads on GKE](https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke)
