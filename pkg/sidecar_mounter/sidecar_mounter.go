@@ -28,25 +28,15 @@ import (
 
 const GCSFuseAppName = "gke-gcs-fuse-csi"
 
-// Interface defines the set of methods to allow for gcsfuse mount operations on a system.
-type Interface interface {
-	// Mount mounts bucket using a file descriptor passed via a unix domain socket.
-	Mount(mc *MountConfig) (*exec.Cmd, error)
-	// GetCmds returns a list of gcsfuse process cmds.
-	GetCmds() []*exec.Cmd
-}
-
-// Mounter provides the default implementation of sidecarmounter.Interface
-// for the linux platform. This implementation assumes that the
-// gcsfuse is installed in the host's root mount namespace.
+// Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
 	mounterPath string
 	cmds        []*exec.Cmd
 }
 
-// New returns a sidecarmounter.Interface for the current system.
-// It provides an option to specify the path to `gcsfuse` binary.
-func New(mounterPath string) Interface {
+// New returns a Mounter for the current system.
+// It provides an option to specify the path to gcsfuse binary.
+func New(mounterPath string) *Mounter {
 	return &Mounter{
 		mounterPath: mounterPath,
 		cmds:        []*exec.Cmd{},
@@ -56,8 +46,8 @@ func New(mounterPath string) Interface {
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
 	FileDescriptor int       `json:"-"`
-	VolumeName     string    `json:"volume_name,omitempty"`
-	BucketName     string    `json:"bucket_name,omitempty"`
+	VolumeName     string    `json:"volumeName,omitempty"`
+	BucketName     string    `json:"bucketName,omitempty"`
 	TempDir        string    `json:"-"`
 	Options        []string  `json:"options,omitempty"`
 	ErrWriter      io.Writer `json:"-"`
@@ -67,20 +57,19 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
 	if err := os.MkdirAll(mc.TempDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to create temp dir %q: %v", mc.TempDir, err)
+		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.TempDir, err)
 	}
 
+	flagMap := mc.PrepareMountArgs()
 	args := []string{"gcsfuse"}
-	flagMap, err := prepareMountArgs(mc)
-	if err != nil {
-		klog.Warningf("got error when preparing the mount args: %v. Will discard invalid args and continue to mount.", err)
-	}
+
 	for k, v := range flagMap {
 		args = append(args, "--"+k)
 		if v != "" {
 			args = append(args, v)
 		}
 	}
+
 	args = append(args, mc.BucketName)
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
@@ -96,6 +85,7 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 	}
 
 	m.cmds = append(m.cmds, &cmd)
+
 	return &cmd, nil
 }
 
@@ -103,20 +93,20 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 	return m.cmds
 }
 
-var disallowedFlags = map[string]bool{
-	"app-name":             true,
-	"temp-dir":             true,
-	"foreground":           true,
-	"log-file":             true,
-	"log-format":           true,
-	"key-file":             true,
-	"token-url":            true,
-	"reuse-token-from-url": true,
-	"endpoint":             true,
-	"o":                    true,
-}
+func (mc *MountConfig) PrepareMountArgs() map[string]string {
+	disallowedFlags := map[string]bool{
+		"app-name":             true,
+		"temp-dir":             true,
+		"foreground":           true,
+		"log-file":             true,
+		"log-format":           true,
+		"key-file":             true,
+		"token-url":            true,
+		"reuse-token-from-url": true,
+		"endpoint":             true,
+		"o":                    true,
+	}
 
-func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 	flagMap := map[string]string{
 		"app-name":   GCSFuseAppName,
 		"temp-dir":   mc.TempDir,
@@ -128,6 +118,7 @@ func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 	}
 
 	invalidArgs := []string{}
+
 	for _, arg := range mc.Options {
 		argPair := strings.SplitN(arg, "=", 2)
 		if len(argPair) == 0 {
@@ -136,6 +127,7 @@ func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 
 		if disallowedFlags[argPair[0]] {
 			invalidArgs = append(invalidArgs, arg)
+
 			continue
 		}
 
@@ -145,9 +137,10 @@ func prepareMountArgs(mc *MountConfig) (map[string]string, error) {
 		}
 	}
 
-	var err error
 	if len(invalidArgs) > 0 {
-		err = fmt.Errorf("got invalid args %v for volume %q", invalidArgs, mc.VolumeName)
+		klog.Warningf("got invalid arguments for volume %q: %v. Will discard invalid args and continue to mount.",
+			invalidArgs, mc.VolumeName)
 	}
-	return flagMap, err
+
+	return flagMap
 }

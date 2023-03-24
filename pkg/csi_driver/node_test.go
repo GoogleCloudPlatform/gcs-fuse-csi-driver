@@ -31,16 +31,14 @@ import (
 	mount "k8s.io/mount-utils"
 )
 
-var (
-	testVolumeCapability = &csi.VolumeCapability{
-		AccessType: &csi.VolumeCapability_Mount{
-			Mount: &csi.VolumeCapability_MountVolume{},
-		},
-		AccessMode: &csi.VolumeCapability_AccessMode{
-			Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
-		},
-	}
-)
+var testVolumeCapability = &csi.VolumeCapability{
+	AccessType: &csi.VolumeCapability_Mount{
+		Mount: &csi.VolumeCapability_MountVolume{},
+	},
+	AccessMode: &csi.VolumeCapability_AccessMode{
+		Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+	},
+}
 
 type nodeServerTestEnv struct {
 	ns csi.NodeServer
@@ -48,12 +46,14 @@ type nodeServerTestEnv struct {
 }
 
 func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
+	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriver(t, mounter)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
 	}
+
 	return &nodeServerTestEnv{
 		ns: newNodeServer(driver, mounter),
 		fm: mounter,
@@ -61,7 +61,8 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 }
 
 func TestNodePublishVolume(t *testing.T) {
-	defaultPerm := os.FileMode(0750) + os.ModeDir
+	t.Parallel()
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
 
 	// Setup mount target path
 	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
@@ -173,7 +174,8 @@ func TestNodePublishVolume(t *testing.T) {
 }
 
 func TestNodeUnpublishVolume(t *testing.T) {
-	defaultPerm := os.FileMode(0750) + os.ModeDir
+	t.Parallel()
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
 
 	// Setup mount target path
 	base, err := os.MkdirTemp("", "node-publish-")
@@ -244,15 +246,18 @@ func TestNodeUnpublishVolume(t *testing.T) {
 }
 
 func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mount.MountPoint) {
+	t.Helper()
 	if e == nil {
 		if len(fm.MountPoints) != 0 {
 			t.Errorf("test %q failed: got mounts %+v, expected none", name, fm.MountPoints)
 		}
+
 		return
 	}
 
 	if mLen := len(fm.MountPoints); mLen != 1 {
 		t.Errorf("test %q failed: got %v mounts(%+v), expected %v", name, mLen, fm.MountPoints, 1)
+
 		return
 	}
 

@@ -18,6 +18,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -52,8 +53,7 @@ type gcsService struct {
 	storageClient *storage.Client
 }
 
-type gcsServiceManager struct {
-}
+type gcsServiceManager struct{}
 
 func NewGCSServiceManager() (ServiceManager, error) {
 	return &gcsServiceManager{}, nil
@@ -63,8 +63,10 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 	if err := wait.PollImmediate(5*time.Second, 30*time.Second, func() (bool, error) {
 		if _, err := ts.Token(); err != nil {
 			klog.Errorf("error fetching initial token: %v", err)
+
 			return false, nil
 		}
+
 		return true, nil
 	}); err != nil {
 		return nil, err
@@ -75,6 +77,7 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 	if err != nil {
 		return nil, err
 	}
+
 	return &gcsService{storageClient: storageClient}, nil
 }
 
@@ -83,14 +86,15 @@ func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket)
 	// Create the bucket
 	bkt := service.storageClient.Bucket(obj.Name)
 	if err := bkt.Create(ctx, obj.Project, &storage.BucketAttrs{Location: obj.Location, Labels: obj.Labels}); err != nil {
-		return nil, fmt.Errorf("CreateBucket operation failed for bucket %q: %v", obj.Name, err)
+		return nil, fmt.Errorf("CreateBucket operation failed for bucket %q: %w", obj.Name, err)
 	}
 
 	// Check that the bucket exists
 	bucket, err := service.GetBucket(ctx, obj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bucket %q after creation: %v", obj.Name, err)
+		return nil, fmt.Errorf("failed to get bucket %q after creation: %w", obj.Name, err)
 	}
+
 	return bucket, nil
 }
 
@@ -101,7 +105,8 @@ func (service *gcsService) DeleteBucket(ctx context.Context, obj *ServiceBucket)
 		if IsNotExistErr(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to get bucket %q before deletion: %v", obj.Name, err)
+
+		return fmt.Errorf("failed to get bucket %q before deletion: %w", obj.Name, err)
 	}
 
 	// Delete all objects in the bucket first
@@ -109,22 +114,23 @@ func (service *gcsService) DeleteBucket(ctx context.Context, obj *ServiceBucket)
 	it := bkt.Objects(ctx, nil)
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to iterate next object: %v", err)
+			return fmt.Errorf("failed to iterate next object: %w", err)
 		}
 		if err := bkt.Object(attrs.Name).Delete(ctx); err != nil {
-			return fmt.Errorf("failed to delete object %q: %v", attrs.Name, err)
+			return fmt.Errorf("failed to delete object %q: %w", attrs.Name, err)
 		}
 	}
 
 	// Delete the bucket
 	err = bkt.Delete(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to delete bucket %q: %v", obj.Name, err)
+		return fmt.Errorf("failed to delete bucket %q: %w", obj.Name, err)
 	}
+
 	return nil
 }
 
@@ -140,6 +146,7 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 	if attrs != nil {
 		return cloudBucketToServiceBucket(attrs)
 	}
+
 	return nil, fmt.Errorf("failed to get bucket %q: got empty attrs", obj.Name)
 }
 
@@ -169,9 +176,10 @@ func CompareBuckets(a, b *ServiceBucket) error {
 	if len(mismatches) > 0 {
 		return fmt.Errorf("bucket %q and bucket %q do not match: [%s]", a.Name, b.Name, strings.Join(mismatches, ", "))
 	}
+
 	return nil
 }
 
 func IsNotExistErr(err error) bool {
-	return err == storage.ErrBucketNotExist
+	return errors.Is(err, storage.ErrBucketNotExist)
 }

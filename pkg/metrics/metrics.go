@@ -54,6 +54,7 @@ var (
 			Subsystem: subSystem,
 			Name:      operationsLatencyMetricName,
 			Buckets:   metricBuckets,
+			Help:      "Operation latency in seconds",
 		},
 		[]string{labelStatusCode, labelMethodName},
 	)
@@ -68,6 +69,7 @@ func NewMetricsManager() *Manager {
 		registry: metrics.NewKubeRegistry(),
 	}
 	mm.registry.MustRegister(operationSeconds)
+
 	return mm
 }
 
@@ -83,11 +85,13 @@ func (mm *Manager) recordComponentVersionMetric() error {
 	v := getEnvVar(envGKEGCSCSIVersion)
 	if v == "" {
 		klog.V(2).Info("Skip emitting component version metric")
+
 		return fmt.Errorf("failed to register GKE component version metric, env variable %v not defined", envGKEGCSCSIVersion)
 	}
 
 	klog.Infof("Emit component_version metric with value %v", v)
 	gkeComponentVersion.WithLabelValues(v).Set(1.0)
+
 	return nil
 }
 
@@ -112,11 +116,8 @@ func getErrorCode(err error) string {
 
 func (mm *Manager) EmitGKEComponentVersion() error {
 	mm.registerComponentVersionMetric()
-	if err := mm.recordComponentVersionMetric(); err != nil {
-		return err
-	}
 
-	return nil
+	return mm.recordComponentVersionMetric()
 }
 
 // Server represents any type that could serve HTTP requests for the metrics
@@ -131,15 +132,18 @@ func (mm *Manager) registerToServer(s Server, metricsPath string) {
 	s.Handle(metricsPath, metrics.HandlerFor(
 		mm.GetRegistry(),
 		metrics.HandlerOpts{
-			ErrorHandling: metrics.ContinueOnError}))
+			ErrorHandling: metrics.ContinueOnError,
+		}))
 }
 
 // InitializeHTTPHandler sets up a server and creates a handler for metrics.
 func (mm *Manager) InitializeHTTPHandler(address, path string) {
 	mux := http.NewServeMux()
 	mm.registerToServer(mux, path)
+
 	go func() {
 		klog.Infof("Metric server listening at %q", address)
+		//nolint:gosec
 		if err := http.ListenAndServe(address, mux); err != nil {
 			klog.Fatalf("Failed to start metric server at specified address (%q) and path (%q): %s", address, path, err)
 		}
@@ -150,8 +154,10 @@ func getEnvVar(envVarName string) string {
 	v, ok := os.LookupEnv(envVarName)
 	if !ok {
 		klog.Warningf("%q env not set", envVarName)
+
 		return ""
 	}
+
 	return v
 }
 

@@ -17,6 +17,7 @@ limitations under the License.
 package util
 
 import (
+	"fmt"
 	"net"
 	"syscall"
 
@@ -25,7 +26,10 @@ import (
 
 func SendMsg(via net.Conn, fd int, msg []byte) error {
 	klog.V(4).Info("get the underlying socket")
-	conn := via.(*net.UnixConn)
+	conn, ok := via.(*net.UnixConn)
+	if !ok {
+		return fmt.Errorf("failed to cast via to *net.UnixConn")
+	}
 	connf, err := conn.File()
 	if err != nil {
 		return err
@@ -35,12 +39,16 @@ func SendMsg(via net.Conn, fd int, msg []byte) error {
 
 	klog.V(4).Infof("calling sendmsg...")
 	rights := syscall.UnixRights(fd)
+
 	return syscall.Sendmsg(socket, msg, rights, nil, 0)
 }
 
 func RecvMsg(via net.Conn) (int, []byte, error) {
 	klog.V(4).Info("get the underlying socket")
-	conn := via.(*net.UnixConn)
+	conn, ok := via.(*net.UnixConn)
+	if !ok {
+		return 0, nil, fmt.Errorf("failed to cast via to *net.UnixConn")
+	}
 	connf, err := conn.File()
 	if err != nil {
 		return 0, nil, err
@@ -51,6 +59,7 @@ func RecvMsg(via net.Conn) (int, []byte, error) {
 	klog.V(4).Info("calling recvmsg...")
 	buf := make([]byte, syscall.CmsgSpace(4))
 	b := make([]byte, 500)
+	//nolint:dogsled
 	n, _, _, _, err := syscall.Recvmsg(socket, b, buf, 0)
 	if err != nil {
 		return 0, nil, err

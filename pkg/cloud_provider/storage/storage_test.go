@@ -24,6 +24,7 @@ import (
 )
 
 func TestCompareBuckets(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name               string
 		a                  *ServiceBucket

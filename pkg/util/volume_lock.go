@@ -48,6 +48,7 @@ func (vl *VolumeLocks) TryAcquire(volumeID string) bool {
 		return false
 	}
 	vl.locks.Insert(volumeID)
+
 	return true
 }
 

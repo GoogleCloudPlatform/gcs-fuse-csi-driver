@@ -43,7 +43,7 @@ var (
 	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 
-	// These are set at compile time
+	// These are set at compile time.
 	version = "unknown"
 )
 
@@ -84,7 +84,10 @@ func main() {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
-		mounter = csimounter.New("")
+		mounter, err = csimounter.New("")
+		if err != nil {
+			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
+		}
 	}
 
 	if err != nil {

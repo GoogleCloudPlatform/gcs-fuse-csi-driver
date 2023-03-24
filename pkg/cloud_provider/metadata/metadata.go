@@ -44,7 +44,7 @@ var _ Service = &metadataServiceManager{}
 func NewMetadataService(identityPool, identityProvider string, clientset clientset.Interface) (Service, error) {
 	projectID, err := metadata.ProjectID()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get project: %v", err)
+		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
 
 	if identityPool == "" {
@@ -56,7 +56,7 @@ func NewMetadataService(identityPool, identityProvider string, clientset clients
 		klog.Infof("got empty identityProvider, constructing the identityProvider using the gke-metadata-server flags")
 		ds, err := clientset.GetDaemonSet(context.TODO(), "kube-system", "gke-metadata-server")
 		if err != nil {
-			return nil, fmt.Errorf("failed to get gke-metadata-server DaemonSet spec: %v", err)
+			return nil, fmt.Errorf("failed to get gke-metadata-server DaemonSet spec: %w", err)
 		}
 
 		identityProvider = getIdentityProvider(ds)
@@ -88,5 +88,6 @@ func getIdentityProvider(ds *appsv1.DaemonSet) string {
 			return l[1]
 		}
 	}
+
 	return ""
 }

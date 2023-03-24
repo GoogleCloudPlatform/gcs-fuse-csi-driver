@@ -28,6 +28,7 @@ import (
 )
 
 func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
+	t.Helper()
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
 		NodeID:                "test-node",
@@ -47,10 +48,12 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 	if driver == nil {
 		t.Fatalf("driver is nil")
 	}
+
 	return driver
 }
 
 func TestDriverValidateVolumeCapability(t *testing.T) {
+	t.Parallel()
 	driver := initTestDriver(t, nil)
 
 	cases := []struct {
@@ -186,6 +189,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 }
 
 func TestDriverValidateVolumeCapabilities(t *testing.T) {
+	t.Parallel()
 	driver := initTestDriver(t, nil)
 
 	cases := []struct {

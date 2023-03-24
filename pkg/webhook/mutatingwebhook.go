@@ -45,11 +45,12 @@ type SidecarInjector struct {
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
-func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admission.Response {
 	pod := &corev1.Pod{}
 
 	if err := si.decoder.Decode(req, pod); err != nil {
 		klog.Error("Could not decode request: name %q, namespace %q, error: ", req.Name, req.Namespace, err)
+
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
@@ -86,7 +87,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		if q, err := resource.ParseQuantity(v); err == nil {
 			configCopy.CPULimit = q
 		} else {
-			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %v", v, annotationGcsfuseSidecarCPULimitKey, err))
+			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %w", v, annotationGcsfuseSidecarCPULimitKey, err))
 		}
 	}
 
@@ -94,7 +95,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		if q, err := resource.ParseQuantity(v); err == nil {
 			configCopy.MemoryLimit = q
 		} else {
-			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %v", v, annotationGcsfuseSidecarMemoryLimitKey, err))
+			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %w", v, annotationGcsfuseSidecarMemoryLimitKey, err))
 		}
 	}
 
@@ -102,7 +103,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		if q, err := resource.ParseQuantity(v); err == nil {
 			configCopy.EphemeralStorageLimit = q
 		} else {
-			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %v", v, annotationGcsfuseSidecarEphermeralStorageLimitKey, err))
+			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %w", v, annotationGcsfuseSidecarEphermeralStorageLimitKey, err))
 		}
 	}
 
@@ -112,7 +113,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	pod.Spec.Volumes = append([]corev1.Volume{GetSidecarContainerVolumeSpec()}, pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
-		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %v", err))
+		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
@@ -123,5 +124,6 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 // A decoder will be automatically injected.
 func (si *SidecarInjector) InjectDecoder(d *admission.Decoder) error {
 	si.decoder = d
+
 	return nil
 }

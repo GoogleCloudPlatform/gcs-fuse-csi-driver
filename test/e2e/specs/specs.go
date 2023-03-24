@@ -30,20 +30,19 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
-	clientexec "k8s.io/client-go/util/exec"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
-	uexec "k8s.io/utils/exec"
 	"k8s.io/utils/pointer"
 )
 
 const (
-	TesterContainerName             = "volume-tester"
-	K8sServiceAccountName           = "gcsfuse-csi-sa"
+	TesterContainerName   = "volume-tester"
+	K8sServiceAccountName = "gcsfuse-csi-sa"
+	//nolint:gosec
 	K8sSecretName                   = "gcsfuse-csi-test-secret"
 	FakeVolumePrefix                = "gcs-fake-volume"
 	NonRootVolumePrefix             = "gcs-non-root-volume"
@@ -65,6 +64,7 @@ type TestPod struct {
 func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 	cpu, _ := resource.ParseQuantity("100m")
 	mem, _ := resource.ParseQuantity("20Mi")
+
 	return &TestPod{
 		client:    c,
 		namespace: ns,
@@ -112,39 +112,20 @@ func (t *TestPod) Create() {
 	framework.ExpectNoError(err)
 }
 
-// VerifyExecInPodSucceed verifies shell cmd in target pod succeed
+// VerifyExecInPodSucceed verifies shell cmd in target pod succeed.
 func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, shExec string) {
 	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
-	if err != nil {
-		if exiterr, ok := err.(uexec.CodeExitError); ok {
-			exitCode := exiterr.ExitStatus()
-			framework.ExpectNoError(err,
-				"%q should succeed, but failed with exit code %d and error message %q\nstdout: %s\nstderr: %s",
-				shExec, exitCode, exiterr, stdout, stderr)
-		} else {
-			framework.ExpectNoError(err,
-				"%q should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
-				shExec, err, stdout, stderr)
-		}
-	}
+	framework.ExpectNoError(err,
+		"%q should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
+		shExec, err, stdout, stderr)
 }
 
-// VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code
+// VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code.
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
 	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
-	if err != nil {
-		if exiterr, ok := err.(clientexec.ExitError); ok {
-			actualExitCode := exiterr.ExitStatus()
-			framework.ExpectEqual(actualExitCode, exitCode,
-				"%q should fail with exit code %d, but failed with exit code %d and error message %q\nstdout: %s\nstderr: %s",
-				shExec, exitCode, actualExitCode, exiterr, stdout, stderr)
-		} else {
-			framework.ExpectNoError(err,
-				"%q should fail with exit code %d, but failed with error message %q\nstdout: %s\nstderr: %s",
-				shExec, exitCode, err, stdout, stderr)
-		}
-	}
-	framework.ExpectError(err, "%q should fail with exit code %d, but exit without error", shExec, exitCode)
+	framework.ExpectError(err,
+		"%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s",
+		shExec, exitCode, stdout, stderr)
 }
 
 func (t *TestPod) WaitForSuccess() {
@@ -165,9 +146,16 @@ func (t *TestPod) WaitForFailure() {
 			switch pod.Status.Phase {
 			case v1.PodFailed:
 				ginkgo.By("Saw pod failure")
+
 				return true, nil
 			case v1.PodSucceeded:
 				return true, fmt.Errorf("pod %q succeeded with reason: %q, message: %q", pod.Name, pod.Status.Reason, pod.Status.Message)
+			case v1.PodPending:
+				return false, nil
+			case v1.PodRunning:
+				return false, nil
+			case v1.PodUnknown:
+				return false, nil
 			default:
 				return false, nil
 			}
@@ -294,6 +282,7 @@ func NewTestKubernetesServiceAccount(c clientset.Interface, ns *v1.Namespace, na
 			"iam.gke.io/gcp-service-account": gcpSAName,
 		}
 	}
+
 	return sa
 }
 
@@ -339,8 +328,9 @@ func (t *TestGCPServiceAccount) Create() {
 
 	err = wait.PollImmediate(pollInterval, pollTimeout, func() (bool, error) {
 		if _, e := iamService.Projects.ServiceAccounts.Get(t.serviceAccount.Name).Do(); e != nil {
-			return false, nil
+			return false, e
 		}
+
 		return true, nil
 	})
 	framework.ExpectNoError(err)
@@ -417,9 +407,11 @@ func (t *TestGCPProjectIAMPolicyBinding) Create() {
 	framework.ExpectNoError(err)
 
 	err = wait.PollImmediate(pollInterval, pollTimeoutSlow, func() (bool, error) {
-		if e := addBinding(crmService, t.projectID, t.member, t.role); e != nil {
+		if addBinding(crmService, t.projectID, t.member, t.role) != nil {
+			//nolint:nilerr
 			return false, nil
 		}
+
 		return true, nil
 	})
 	framework.ExpectNoError(err)
@@ -431,15 +423,17 @@ func (t *TestGCPProjectIAMPolicyBinding) Cleanup() {
 	framework.ExpectNoError(err)
 
 	err = wait.PollImmediate(pollInterval, pollTimeoutSlow, func() (bool, error) {
-		if e := removeMember(crmService, t.projectID, t.member, t.role); e != nil {
+		if removeMember(crmService, t.projectID, t.member, t.role) != nil {
+			//nolint:nilerr
 			return false, nil
 		}
+
 		return true, nil
 	})
 	framework.ExpectNoError(err)
 }
 
-// addBinding adds the member to the project's IAM policy
+// addBinding adds the member to the project's IAM policy.
 func addBinding(crmService *cloudresourcemanager.Service, projectID, member, role string) error {
 	policy, err := getPolicy(crmService, projectID)
 	if err != nil {
@@ -451,6 +445,7 @@ func addBinding(crmService *cloudresourcemanager.Service, projectID, member, rol
 	for _, b := range policy.Bindings {
 		if b.Role == role {
 			binding = b
+
 			break
 		}
 	}
@@ -470,7 +465,7 @@ func addBinding(crmService *cloudresourcemanager.Service, projectID, member, rol
 	return setPolicy(crmService, projectID, policy)
 }
 
-// removeMember removes the member from the project's IAM policy
+// removeMember removes the member from the project's IAM policy.
 func removeMember(crmService *cloudresourcemanager.Service, projectID, member, role string) error {
 	policy, err := getPolicy(crmService, projectID)
 	if err != nil {
@@ -484,6 +479,7 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 		if b.Role == role {
 			binding = b
 			bindingIndex = i
+
 			break
 		}
 	}
@@ -511,16 +507,18 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 	return setPolicy(crmService, projectID, policy)
 }
 
-// getPolicy gets the project's IAM policy
+// getPolicy gets the project's IAM policy.
 func getPolicy(crmService *cloudresourcemanager.Service, projectID string) (*cloudresourcemanager.Policy, error) {
 	request := new(cloudresourcemanager.GetIamPolicyRequest)
+
 	return crmService.Projects.GetIamPolicy(projectID, request).Do()
 }
 
-// setPolicy sets the project's IAM policy
+// setPolicy sets the project's IAM policy.
 func setPolicy(crmService *cloudresourcemanager.Service, projectID string, policy *cloudresourcemanager.Policy) error {
 	request := new(cloudresourcemanager.SetIamPolicyRequest)
 	request.Policy = policy
 	_, err := crmService.Projects.SetIamPolicy(projectID, request).Do()
+
 	return err
 }

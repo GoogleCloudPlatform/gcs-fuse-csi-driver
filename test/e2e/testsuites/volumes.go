@@ -29,11 +29,13 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
+const mountPath = "/mnt/test"
+
 type gcsFuseCSIVolumesTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
 
-// InitGcsFuseCSIVolumesTestSuite returns gcsFuseCSIVolumesTestSuite that implements TestSuite interface
+// InitGcsFuseCSIVolumesTestSuite returns gcsFuseCSIVolumesTestSuite that implements TestSuite interface.
 func InitGcsFuseCSIVolumesTestSuite() storageframework.TestSuite {
 	return &gcsFuseCSIVolumesTestSuite{
 		tsInfo: storageframework.TestSuiteInfo{
@@ -51,7 +53,7 @@ func (t *gcsFuseCSIVolumesTestSuite) GetTestSuiteInfo() storageframework.TestSui
 	return t.tsInfo
 }
 
-func (t *gcsFuseCSIVolumesTestSuite) SkipUnsupportedTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+func (t *gcsFuseCSIVolumesTestSuite) SkipUnsupportedTests(_ storageframework.TestDriver, _ storageframework.TestPattern) {
 }
 
 func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
@@ -59,9 +61,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
 	}
-	var (
-		l local
-	)
+	var l local
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
@@ -89,7 +89,6 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
-		mountPath := "/mnt/test"
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
@@ -110,7 +109,6 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		defer cleanup()
 
 		ginkgo.By("Configuring the writer pod")
-		mountPath := "/mnt/test"
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetName("gcsfuse-volume-tester-writer")
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
@@ -152,7 +150,6 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
-		mountPath := "/mnt/test"
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetNonRootSecurityContext()
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
@@ -178,7 +175,6 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
-		mountPath := "/mnt/test"
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 

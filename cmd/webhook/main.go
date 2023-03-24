@@ -40,7 +40,7 @@ var (
 	ephemeralStorageLimit  = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImageName       = flag.String("sidecar-image-name", "", "The gcsfuse sidecar container image name.")
 
-	// These are set at compile time
+	// These are set at compile time.
 	version             = "unknown"
 	sidecarImageVersion = "unknown"
 )

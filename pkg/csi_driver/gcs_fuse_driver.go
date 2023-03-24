@@ -83,29 +83,20 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 		csi.VolumeCapability_AccessMode_MULTI_NODE_SINGLE_WRITER,
 		csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER,
 	}
-	err := driver.addVolumeCapabilityAccessModes(vcam)
-	if err != nil {
-		return nil, err
-	}
+	driver.addVolumeCapabilityAccessModes(vcam)
 
 	// Setup RPC servers
 	driver.ids = newIdentityServer(driver)
 	if config.RunNode {
 		nscap := []csi.NodeServiceCapability_RPC_Type{}
 		driver.ns = newNodeServer(driver, config.Mounter)
-		err = driver.addNodeServiceCapabilities(nscap)
-		if err != nil {
-			return nil, err
-		}
+		driver.addNodeServiceCapabilities(nscap)
 	}
 	if config.RunController {
 		csc := []csi.ControllerServiceCapability_RPC_Type{
 			csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		}
-		err = driver.addControllerServiceCapabilities(csc)
-		if err != nil {
-			return nil, err
-		}
+		driver.addControllerServiceCapabilities(csc)
 
 		// Configure controller server
 		driver.cs = newControllerServer(driver, config.StorageServiceManager, config.Metrics)
@@ -114,13 +105,12 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	return driver, nil
 }
 
-func (driver *GCSDriver) addVolumeCapabilityAccessModes(vc []csi.VolumeCapability_AccessMode_Mode) error {
+func (driver *GCSDriver) addVolumeCapabilityAccessModes(vc []csi.VolumeCapability_AccessMode_Mode) {
 	for _, c := range vc {
 		klog.Infof("Enabling volume access mode: %v", c.String())
 		mode := NewVolumeCapabilityAccessMode(c)
 		driver.vcap[mode.Mode] = mode
 	}
-	return nil
 }
 
 func (driver *GCSDriver) validateVolumeCapabilities(caps []*csi.VolumeCapability) error {
@@ -133,6 +123,7 @@ func (driver *GCSDriver) validateVolumeCapabilities(caps []*csi.VolumeCapability
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -159,31 +150,26 @@ func (driver *GCSDriver) validateVolumeCapability(c *csi.VolumeCapability) error
 	if mountType == nil {
 		return fmt.Errorf("driver only supports mount access type volume capability")
 	}
-	// if mountType.FsType != "" {
-	// 	return fmt.Errorf("driver does not support fstype %v", mountType.FsType)
-	// }
-	// TODO: check if we want to allow/exclude certain mount options
+
 	return nil
 }
 
-func (driver *GCSDriver) addControllerServiceCapabilities(cl []csi.ControllerServiceCapability_RPC_Type) error {
-	var csc []*csi.ControllerServiceCapability
+func (driver *GCSDriver) addControllerServiceCapabilities(cl []csi.ControllerServiceCapability_RPC_Type) {
+	csc := []*csi.ControllerServiceCapability{}
 	for _, c := range cl {
 		klog.Infof("Enabling controller service capability: %v", c.String())
 		csc = append(csc, NewControllerServiceCapability(c))
 	}
 	driver.cscap = csc
-	return nil
 }
 
-func (driver *GCSDriver) addNodeServiceCapabilities(nl []csi.NodeServiceCapability_RPC_Type) error {
-	var nsc []*csi.NodeServiceCapability
+func (driver *GCSDriver) addNodeServiceCapabilities(nl []csi.NodeServiceCapability_RPC_Type) {
+	nsc := []*csi.NodeServiceCapability{}
 	for _, n := range nl {
 		klog.Infof("Enabling node service capability: %v", n.String())
 		nsc = append(nsc, NewNodeServiceCapability(n))
 	}
 	driver.nscap = nsc
-	return nil
 }
 
 func (driver *GCSDriver) ValidateControllerServiceRequest(c csi.ControllerServiceCapability_RPC_Type) error {
@@ -203,7 +189,6 @@ func (driver *GCSDriver) ValidateControllerServiceRequest(c csi.ControllerServic
 func (driver *GCSDriver) Run(endpoint string) {
 	klog.Infof("Running driver: %v", driver.config.Name)
 
-	//Start the nonblocking GRPC
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
 	s.Wait()

@@ -17,6 +17,7 @@ limitations under the License.
 package sidecarmounter
 
 import (
+	"fmt"
 	"io"
 	"os"
 )
@@ -30,18 +31,18 @@ func NewErrorWriter(errorFile string) io.Writer {
 }
 
 // Write writes the error message to a given local file.
-func (f *stderrWriter) Write(p []byte) (n int, err error) {
-	var ef *os.File
+func (f *stderrWriter) Write(msg []byte) (int, error) {
 	if f.errorFile != "" {
-		ef, err = os.OpenFile(f.errorFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		errFile, err := os.OpenFile(f.errorFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
-			return
+			return 0, fmt.Errorf("failed to open file: %w", err)
 		}
-		defer ef.Close()
-		if _, err = ef.Write(p); err != nil {
-			return
+		defer errFile.Close()
+
+		if _, err = errFile.Write(msg); err != nil {
+			return 0, fmt.Errorf("failed to write bytes: %w", err)
 		}
 	}
-	n = len(p)
-	return
+
+	return len(msg), nil
 }

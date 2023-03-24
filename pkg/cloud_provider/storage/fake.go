@@ -31,7 +31,7 @@ type fakeServiceManager struct {
 	createdBuckets map[string]*ServiceBucket
 }
 
-func (manager *fakeServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
+func (manager *fakeServiceManager) SetupService(_ context.Context, _ oauth2.TokenSource) (Service, error) {
 	return &fakeService{sm: *manager}, nil
 }
 
@@ -39,7 +39,7 @@ func NewFakeServiceManager() ServiceManager {
 	return &fakeServiceManager{createdBuckets: map[string]*ServiceBucket{}}
 }
 
-func (service *fakeService) CreateBucket(ctx context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
+func (service *fakeService) CreateBucket(_ context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
 	sb := &ServiceBucket{
 		Project:   obj.Project,
 		Location:  obj.Location,
@@ -49,16 +49,18 @@ func (service *fakeService) CreateBucket(ctx context.Context, obj *ServiceBucket
 	}
 
 	service.sm.createdBuckets[obj.Name] = sb
+
 	return sb, nil
 }
 
-func (service *fakeService) DeleteBucket(ctx context.Context, obj *ServiceBucket) error {
+func (service *fakeService) DeleteBucket(_ context.Context, _ *ServiceBucket) error {
 	return nil
 }
 
-func (service *fakeService) GetBucket(ctx context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
+func (service *fakeService) GetBucket(_ context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
 	if sb, ok := service.sm.createdBuckets[obj.Name]; ok {
 		return sb, nil
 	}
+
 	return nil, storage.ErrBucketNotExist
 }

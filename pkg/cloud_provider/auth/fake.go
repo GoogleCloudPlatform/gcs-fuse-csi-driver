@@ -17,8 +17,6 @@ limitations under the License.
 package auth
 
 import (
-	"context"
-
 	"golang.org/x/oauth2"
 )
 
@@ -28,7 +26,7 @@ func NewFakeTokenManager() TokenManager {
 	return &fakeTokenManager{}
 }
 
-func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(ctx context.Context, saNamespace, saName, saToken string) (oauth2.TokenSource, error) {
+func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, _ string) (oauth2.TokenSource, error) {
 	return &FakeGCPTokenSource{k8sSAName: saName, k8sSANamespace: saNamespace}, nil
 }
 
@@ -38,5 +36,5 @@ type FakeGCPTokenSource struct {
 }
 
 func (ts *FakeGCPTokenSource) Token() (*oauth2.Token, error) {
-	return nil, nil
+	return &oauth2.Token{}, nil
 }

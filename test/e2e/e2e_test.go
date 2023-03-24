@@ -28,7 +28,6 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/testsuites"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	_ "github.com/onsi/gomega"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -41,7 +40,7 @@ var (
 	m   metadata.Service
 )
 
-func init() {
+var _ = func() bool {
 	testing.Init()
 	if os.Getenv(clientcmd.RecommendedConfigPathEnvVar) == "" {
 		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
@@ -73,12 +72,15 @@ func init() {
 	if err != nil {
 		klog.Fatal(err)
 	}
-}
+
+	return true
+}()
 
 func TestE2E(t *testing.T) {
+	t.Parallel()
 	gomega.RegisterFailHandler(framework.Fail)
 	if framework.TestContext.ReportDir != "" {
-		if err := os.MkdirAll(framework.TestContext.ReportDir, 0755); err != nil {
+		if err := os.MkdirAll(framework.TestContext.ReportDir, 0o755); err != nil {
 			klog.Errorf("Failed creating report directory: %v", err)
 		}
 	}

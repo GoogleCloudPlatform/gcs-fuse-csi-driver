@@ -33,11 +33,14 @@ const (
 )
 
 func initTestController(t *testing.T) csi.ControllerServer {
+	t.Helper()
 	driver := initTestDriver(t, nil)
+
 	return newControllerServer(driver, driver.config.StorageServiceManager, nil)
 }
 
 func TestCreateVolume(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		req       *csi.CreateVolumeRequest
@@ -105,6 +108,7 @@ func TestCreateVolume(t *testing.T) {
 }
 
 func TestDeleteVolume(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		req       *csi.DeleteVolumeRequest

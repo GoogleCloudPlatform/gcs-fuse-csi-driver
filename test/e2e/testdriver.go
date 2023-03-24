@@ -56,12 +56,13 @@ type gcsVolume struct {
 	readOnly                bool
 }
 
-// InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface
+// InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
 func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
 	}
+
 	return &GCSFuseCSITestDriver{
 		driverInfo: storageframework.DriverInfo{
 			Name:        driver.DefaultName,
@@ -81,11 +82,13 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service) storage
 	}
 }
 
-var _ storageframework.TestDriver = &GCSFuseCSITestDriver{}
-var _ storageframework.PreprovisionedVolumeTestDriver = &GCSFuseCSITestDriver{}
-var _ storageframework.PreprovisionedPVTestDriver = &GCSFuseCSITestDriver{}
-var _ storageframework.EphemeralTestDriver = &GCSFuseCSITestDriver{}
-var _ storageframework.DynamicPVTestDriver = &GCSFuseCSITestDriver{}
+var (
+	_ storageframework.TestDriver                     = &GCSFuseCSITestDriver{}
+	_ storageframework.PreprovisionedVolumeTestDriver = &GCSFuseCSITestDriver{}
+	_ storageframework.PreprovisionedPVTestDriver     = &GCSFuseCSITestDriver{}
+	_ storageframework.EphemeralTestDriver            = &GCSFuseCSITestDriver{}
+	_ storageframework.DynamicPVTestDriver            = &GCSFuseCSITestDriver{}
+)
 
 func (n *GCSFuseCSITestDriver) GetDriverInfo() *storageframework.DriverInfo {
 	return &n.driverInfo
@@ -131,6 +134,7 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 		testK8sSA.Cleanup()
 		testGCPProjectIAMPolicyBinding.Cleanup()
 	})
+
 	return config
 }
 
@@ -164,6 +168,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 	default:
 		e2eframework.Failf("Unsupported volType:%v is specified", volType)
 	}
+
 	return nil
 }
 
@@ -171,14 +176,16 @@ func (v *gcsVolume) DeleteVolume() {
 	v.driver.deleteBucket(v.serviceAccountNamespace, v.bucketName)
 }
 
-func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, fsType string, volume storageframework.TestVolume) (*v1.PersistentVolumeSource, *v1.VolumeNodeAffinity) {
+func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string, volume storageframework.TestVolume) (*v1.PersistentVolumeSource, *v1.VolumeNodeAffinity) {
 	nv, _ := volume.(*gcsVolume)
 	va := map[string]string{"mountOptions": nv.mountOptions}
+
 	return &v1.PersistentVolumeSource{
 		CSI: &v1.CSIPersistentVolumeSource{
 			Driver:           n.driverInfo.Name,
 			VolumeHandle:     nv.bucketName,
 			VolumeAttributes: va,
+			ReadOnly:         readOnly,
 		},
 	}, nil
 }
@@ -219,11 +226,11 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 	return attributes, volume.shared, volume.readOnly
 }
 
-func (n *GCSFuseCSITestDriver) GetCSIDriverName(config *storageframework.PerTestConfig) string {
+func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfig) string {
 	return n.driverInfo.Name
 }
 
-func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storageframework.PerTestConfig, fsType string) *storagev1.StorageClass {
+func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storageframework.PerTestConfig, _ string) *storagev1.StorageClass {
 	parameters := map[string]string{
 		"csi.storage.k8s.io/provisioner-secret-name":      specs.K8sSecretName,
 		"csi.storage.k8s.io/provisioner-secret-namespace": "${pvc.namespace}",
@@ -254,20 +261,20 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 // There is an assumption that before this function is called, the Kubernetes service account is already created in the namespace.
 func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context, serviceAccountNamespace string) (storage.Service, error) {
 	tm := auth.NewTokenManager(n.meta, n.clientset)
-	ts, err := tm.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, specs.K8sServiceAccountName, "")
+	ts, err := tm.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, specs.K8sServiceAccountName, "")
 	if err != nil {
-		return nil, fmt.Errorf("token manager failed to get token source: %v", err)
+		return nil, fmt.Errorf("token manager failed to get token source: %w", err)
 	}
 
 	storageService, err := n.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
-		return nil, fmt.Errorf("storage service manager failed to setup service: %v", err)
+		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
 
 	return storageService, nil
 }
 
-// createBucket creates a GCS bucket
+// createBucket creates a GCS bucket.
 func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) string {
 	ctx := context.Background()
 	storageService, err := n.prepareStorageService(ctx, serviceAccountNamespace)
@@ -284,10 +291,11 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 	if err != nil {
 		e2eframework.Failf("Failed to create a new GCS bucket: %v", err)
 	}
+
 	return bucket.Name
 }
 
-// deleteBucket deletes the GCS bucket
+// deleteBucket deletes the GCS bucket.
 func (n *GCSFuseCSITestDriver) deleteBucket(serviceAccountNamespace, bucketName string) {
 	ctx := context.Background()
 	storageService, err := n.prepareStorageService(ctx, serviceAccountNamespace)
@@ -313,6 +321,7 @@ func createImplicitDir(bucketName string) {
 		}
 	}()
 
+	//nolint:gosec
 	cmd := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, specs.ImplicitDirsPath))
 	if err := cmd.Run(); err != nil {
 		e2eframework.Failf("Failed to create a implicit dir in GCS bucket: %v", err)

@@ -68,6 +68,7 @@ func (c *Clientset) GetPod(ctx context.Context, namespace, name string) (*v1.Pod
 	if err != nil {
 		return nil, err
 	}
+
 	return pod, nil
 }
 
@@ -76,6 +77,7 @@ func (c *Clientset) GetDaemonSet(ctx context.Context, namespace, name string) (*
 	if err != nil {
 		return nil, err
 	}
+
 	return ds, nil
 }
 
@@ -89,6 +91,7 @@ func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, na
 			tokenRequest,
 			metav1.CreateOptions{},
 		)
+
 	return resp, err
 }
 
@@ -102,7 +105,8 @@ func (c *Clientset) GetGCPServiceAccountName(ctx context.Context, namespace, nam
 			metav1.GetOptions{},
 		)
 	if err != nil {
-		return "", fmt.Errorf("Kubernetes ServiceAccount.Get API: %v", err)
+		return "", fmt.Errorf("failed to call Kubernetes ServiceAccount.Get API: %w", err)
 	}
+
 	return resp.Annotations["iam.gke.io/gcp-service-account"], nil
 }

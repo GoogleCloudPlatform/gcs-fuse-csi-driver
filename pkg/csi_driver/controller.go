@@ -34,14 +34,14 @@ const (
 	MinimumVolumeSizeInBytes int64 = 1 * util.Mb
 )
 
-// CreateVolume parameters
+// CreateVolume parameters.
 const (
-	// Keys for PV and PVC parameters as reported by external-provisioner
+	// Keys for PV and PVC parameters as reported by external-provisioner.
 	ParameterKeyPVCName      = "csi.storage.k8s.io/pvc/name"
 	ParameterKeyPVCNamespace = "csi.storage.k8s.io/pvc/namespace"
 	ParameterKeyPVName       = "csi.storage.k8s.io/pv/name"
 
-	// User provided labels
+	// User provided labels.
 	ParameterKeyLabels = "labels"
 
 	// Keys for tags to attach to the provisioned disk.
@@ -51,7 +51,7 @@ const (
 	tagKeyCreatedBy                = "storage_gke_io_created-by"
 )
 
-// controllerServer handles volume provisioning
+// controllerServer handles volume provisioning.
 type controllerServer struct {
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
@@ -68,7 +68,7 @@ func newControllerServer(driver *GCSDriver, storageServiceManager storage.Servic
 	}
 }
 
-func (s *controllerServer) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
+func (s *controllerServer) ControllerGetCapabilities(_ context.Context, _ *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: s.driver.cscap,
 	}, nil
@@ -183,6 +183,7 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		}
 	}
 	resp := &csi.CreateVolumeResponse{Volume: bucketToCSIVolume(bucket)}
+
 	return resp, nil
 }
 
@@ -208,10 +209,11 @@ func (s *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
-// prepareStorageService prepares the GCS Storage Service using CreateVolume/DeleteVolume sercets
+// prepareStorageService prepares the GCS Storage Service using CreateVolume/DeleteVolume sercets.
 func (s *controllerServer) prepareStorageService(ctx context.Context, secrets map[string]string) (storage.Service, error) {
 	serviceAccountName, ok := secrets["serviceAccountName"]
 	if !ok {
@@ -221,7 +223,7 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "serviceAccountNamespace must be provided in secret")
 	}
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, serviceAccountNamespace, serviceAccountName, "")
+	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, serviceAccountName, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
 	}
@@ -234,12 +236,13 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	return storageService, nil
 }
 
-// bucketToCSIVolume generates a CSI volume spec from the Google Cloud Storage Bucket
+// bucketToCSIVolume generates a CSI volume spec from the Google Cloud Storage Bucket.
 func bucketToCSIVolume(bucket *storage.ServiceBucket) *csi.Volume {
 	resp := &csi.Volume{
 		CapacityBytes: bucket.SizeBytes,
 		VolumeId:      bucket.Name,
 	}
+
 	return resp
 }
 
@@ -248,6 +251,7 @@ func getRequestCapacity(capRange *csi.CapacityRange) (int64, error) {
 	// Default case where nothing is set
 	if capRange == nil {
 		capBytes = MinimumVolumeSizeInBytes
+
 		return capBytes, nil
 	}
 
@@ -273,6 +277,7 @@ func getRequestCapacity(capRange *csi.CapacityRange) (int64, error) {
 	if capBytes < MinimumVolumeSizeInBytes {
 		capBytes = MinimumVolumeSizeInBytes
 	}
+
 	return capBytes, nil
 }
 
@@ -306,6 +311,7 @@ func extractLabels(parameters map[string]string, driverName string) (map[string]
 	for k, v := range labels {
 		labels[k] = strings.ReplaceAll(v, ".", "_")
 	}
+
 	return mergeLabels(scLabels, labels)
 }
 
