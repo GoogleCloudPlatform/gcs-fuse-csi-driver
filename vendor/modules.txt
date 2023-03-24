@@ -1005,7 +1005,7 @@ k8s.io/client-go/util/homedir
 k8s.io/client-go/util/keyutil
 k8s.io/client-go/util/retry
 k8s.io/client-go/util/workqueue
-# k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.26.2
+# k8s.io/cloud-provider v0.26.2
 ## explicit; go 1.19
 k8s.io/cloud-provider
 # k8s.io/component-base v0.26.2
@@ -1051,7 +1051,7 @@ k8s.io/kube-openapi/pkg/schemamutation
 k8s.io/kube-openapi/pkg/spec3
 k8s.io/kube-openapi/pkg/util/proto
 k8s.io/kube-openapi/pkg/validation/spec
-# k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.26.2
+# k8s.io/kubectl v0.26.2
 ## explicit; go 1.19
 k8s.io/kubectl/pkg/scale
 k8s.io/kubectl/pkg/util/podutils
@@ -1192,5 +1192,3 @@ sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.3.0
 ## explicit; go 1.12
 sigs.k8s.io/yaml
-# k8s.io/cloud-provider => k8s.io/cloud-provider v0.26.2
-# k8s.io/kubectl => k8s.io/kubectl v0.26.2

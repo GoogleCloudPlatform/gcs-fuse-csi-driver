@@ -37,7 +37,7 @@ var (
 	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
 	volumeBasePath = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
 	gracePeriod    = flag.Int("grace-period", 15, "grace period for gcsfuse termination")
-	// This is set at compile time
+	// This is set at compile time.
 	version = "unknown"
 )
 
@@ -49,7 +49,7 @@ func main() {
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPathes, err := filepath.Glob(socketPathPattern)
 	if err != nil {
-		klog.Fatalf("failed to look up socket pathes: %v", err)
+		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
 
 	mounter := sidecarmounter.New(*gcsfusePath)
@@ -68,6 +68,7 @@ func main() {
 			if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 				klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 			}
+
 			continue
 		}
 		mc.ErrWriter = errWriter
@@ -82,6 +83,7 @@ func main() {
 				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 				}
+
 				return
 			}
 
@@ -91,6 +93,7 @@ func main() {
 				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 				}
+
 				return
 			}
 
@@ -122,6 +125,7 @@ func main() {
 			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
 				klog.Info("all the other containers exited in the Job Pod, exiting the sidecar container.")
 				c <- syscall.SIGTERM
+
 				return
 			}
 		}
@@ -147,7 +151,7 @@ func main() {
 // 1. Pod volume name
 // 2. The file descriptor
 // 3. GCS bucket name
-// 4. Mount options passing to gcsfuse (passed by the csi mounter)
+// 4. Mount options passing to gcsfuse (passed by the csi mounter).
 func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	// socket path pattern: /tmp/.volumes/<volume-name>/socket
 	dir := filepath.Dir(sp)
@@ -160,12 +164,12 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	klog.Infof("connecting to socket %q", sp)
 	c, err := net.Dial("unix", sp)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to the socket %q: %v", sp, err)
+		return nil, fmt.Errorf("failed to connect to the socket %q: %w", sp, err)
 	}
 
 	fd, msg, err := util.RecvMsg(c)
 	if err != nil {
-		return nil, fmt.Errorf("failed to receive mount options from the socket %q: %v", sp, err)
+		return nil, fmt.Errorf("failed to receive mount options from the socket %q: %w", sp, err)
 	}
 	// as we got all the information from the socket, closing the connection and deleting the socket
 	c.Close()
@@ -176,7 +180,7 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	mc.FileDescriptor = fd
 
 	if err := json.Unmarshal(msg, &mc); err != nil {
-		return nil, fmt.Errorf("failed to unmarchal the mount config: %v", err)
+		return nil, fmt.Errorf("failed to unmarchal the mount config: %w", err)
 	}
 
 	if mc.BucketName == "" {

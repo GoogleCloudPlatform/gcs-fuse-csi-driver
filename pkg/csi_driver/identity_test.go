@@ -29,10 +29,13 @@ const (
 )
 
 func initTestIdentityServer(t *testing.T) csi.IdentityServer {
+	t.Helper()
+
 	return newIdentityServer(initTestDriver(t, nil))
 }
 
 func TestGetPluginInfo(t *testing.T) {
+	t.Parallel()
 	s := initTestIdentityServer(t)
 
 	resp, err := s.GetPluginInfo(context.TODO(), nil)
@@ -54,6 +57,7 @@ func TestGetPluginInfo(t *testing.T) {
 }
 
 func TestGetPluginCapabilities(t *testing.T) {
+	t.Parallel()
 	s := initTestIdentityServer(t)
 
 	resp, err := s.GetPluginCapabilities(context.TODO(), nil)
@@ -84,6 +88,7 @@ func TestGetPluginCapabilities(t *testing.T) {
 }
 
 func TestProbe(t *testing.T) {
+	t.Parallel()
 	s := initTestIdentityServer(t)
 
 	resp, err := s.Probe(context.TODO(), nil)

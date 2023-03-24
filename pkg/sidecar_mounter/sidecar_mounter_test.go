@@ -21,35 +21,38 @@ import (
 	"testing"
 )
 
-var defaultFlagMap = map[string]string{
-	"app-name":   GCSFuseAppName,
-	"temp-dir":   "test-temp-dir",
-	"foreground": "",
-	"log-file":   "/dev/fd/1",
-	"log-format": "text",
-	"uid":        "0",
-	"gid":        "0",
-}
+var (
+	defaultFlagMap = map[string]string{
+		"app-name":   GCSFuseAppName,
+		"temp-dir":   "test-temp-dir",
+		"foreground": "",
+		"log-file":   "/dev/fd/1",
+		"log-format": "text",
+		"uid":        "0",
+		"gid":        "0",
+	}
 
-var invalidArgs = []string{
-	"app-name",
-	"temp-dir",
-	"foreground",
-	"log-file",
-	"log-format",
-	"key-file",
-	"token-url",
-	"reuse-token-from-url",
-	"endpoint",
-	"o",
-}
+	invalidArgs = []string{
+		"app-name",
+		"temp-dir",
+		"foreground",
+		"log-file",
+		"log-format",
+		"key-file",
+		"token-url",
+		"reuse-token-from-url",
+		"endpoint",
+		"o",
+	}
+)
 
 func TestPrepareMountArgs(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
-		name          string
-		mc            *MountConfig
-		expectedArgs  map[string]string
-		expectedError bool
+		name         string
+		mc           *MountConfig
+		expectedArgs map[string]string
 	}{
 		{
 			name: "should return valid args correctly",
@@ -57,8 +60,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
 			},
-			expectedArgs:  defaultFlagMap,
-			expectedError: false,
+			expectedArgs: defaultFlagMap,
 		},
 		{
 			name: "should return valid args with options correctly",
@@ -79,7 +81,6 @@ func TestPrepareMountArgs(t *testing.T) {
 				"debug_gcs":          "",
 				"max-conns-per-host": "10",
 			},
-			expectedError: false,
 		},
 		{
 			name: "should return valid args with error correctly",
@@ -88,23 +89,14 @@ func TestPrepareMountArgs(t *testing.T) {
 				TempDir:    "test-temp-dir",
 				Options:    invalidArgs,
 			},
-			expectedArgs:  defaultFlagMap,
-			expectedError: true,
+			expectedArgs: defaultFlagMap,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
-		flagMap, err := prepareMountArgs(tc.mc)
-		if tc.expectedError && err == nil {
-			t.Errorf("Expected error but got none")
-		}
-		if err != nil {
-			if !tc.expectedError {
-				t.Errorf("Did not expect error but got: %v", err)
-			}
-		}
 
+		flagMap := tc.mc.PrepareMountArgs()
 		if !reflect.DeepEqual(flagMap, tc.expectedArgs) {
 			t.Errorf("Got args %v, but expected %v", flagMap, tc.expectedArgs)
 		}

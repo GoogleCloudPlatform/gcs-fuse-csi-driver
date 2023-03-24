@@ -35,9 +35,10 @@ import (
 	mount "k8s.io/mount-utils"
 )
 
-// NodePublishVolume VolumeContext parameters
+// NodePublishVolume VolumeContext parameters.
 const (
-	VolumeContextKeyServiceAccountName  = "csi.storage.k8s.io/serviceAccount.name"
+	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
+	//nolint:gosec
 	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
 	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
 	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
@@ -46,7 +47,7 @@ const (
 	VolumeContextKeyMountOptions        = "mountOptions"
 )
 
-// nodeServer handles mounting and unmounting of GCFS volumes on a node
+// nodeServer handles mounting and unmounting of GCFS volumes on a node.
 type nodeServer struct {
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
@@ -65,13 +66,13 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 	}
 }
 
-func (s *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+func (s *nodeServer) NodeGetInfo(_ context.Context, _ *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	return &csi.NodeGetInfoResponse{
 		NodeId: s.driver.config.NodeID,
 	}, nil
 }
 
-func (s *nodeServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: s.driver.nscap,
 	}, nil
@@ -142,6 +143,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	for _, o := range pod.ObjectMeta.OwnerReferences {
 		if o.Kind == "Job" {
 			isOwnedByJob = true
+
 			break
 		}
 	}
@@ -152,6 +154,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		for _, cs := range pod.Status.ContainerStatuses {
 			if cs.Name != webhook.SidecarContainerName && cs.State.Terminated == nil {
 				sidecarShouldExit = false
+
 				break
 			}
 		}
@@ -198,10 +201,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if mounted {
 		// Already mounted
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", bucketName, targetPath)
+
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 	klog.V(4).Infof("NodePublishVolume attempting mkdir for path %q", targetPath)
-	if err := os.MkdirAll(targetPath, 0750); err != nil {
+	if err := os.MkdirAll(targetPath, 0o750); err != nil {
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
@@ -211,10 +215,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
+
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Validate arguments
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -254,10 +259,11 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	}
 
 	klog.V(4).Infof("NodeUnpublishVolume succeeded on target path %q", targetPath)
+
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-// isDirMounted checks if the path is already a mount point
+// isDirMounted checks if the path is already a mount point.
 func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	mps, err := s.mounter.List()
 	if err != nil {
@@ -268,10 +274,11 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 			return true, nil
 		}
 	}
+
 	return false, nil
 }
 
-// joinMountOptions joins mount options eliminating duplicates
+// joinMountOptions joins mount options eliminating duplicates.
 func joinMountOptions(userOptions []string, systemOptions []string) []string {
 	allMountOptions := sets.NewString()
 
@@ -284,12 +291,13 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 	for _, mountOption := range systemOptions {
 		allMountOptions.Insert(mountOption)
 	}
+
 	return allMountOptions.List()
 }
 
-// prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext
+// prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
+	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
 	}

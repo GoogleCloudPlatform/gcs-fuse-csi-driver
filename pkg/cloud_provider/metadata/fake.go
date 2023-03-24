@@ -59,6 +59,7 @@ func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, e
 			clusterName,
 		),
 	}
+
 	return &s, nil
 }
 

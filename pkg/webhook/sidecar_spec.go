@@ -19,7 +19,6 @@ package webhook
 import (
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 )
 
@@ -88,7 +87,7 @@ func GetSidecarContainerVolumeSpec() v1.Volume {
 // 3. The container has a volume with the sidecar container volume name.
 // 4. The volume has the sidecar container volume mount path.
 // 5. The Pod has an emptyDir volume with the sidecar container volume name.
-func ValidatePodHasSidecarContainerInjected(image string, pod *corev1.Pod) bool {
+func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 	containerInjected := false
 	volumeInjected := false
 	for _, c := range pod.Spec.Containers {
@@ -96,9 +95,11 @@ func ValidatePodHasSidecarContainerInjected(image string, pod *corev1.Pod) bool 
 			for _, v := range c.VolumeMounts {
 				if v.Name == SidecarContainerVolumeName && v.MountPath == SidecarContainerVolumeMountPath {
 					containerInjected = true
+
 					break
 				}
 			}
+
 			break
 		}
 	}
@@ -106,8 +107,10 @@ func ValidatePodHasSidecarContainerInjected(image string, pod *corev1.Pod) bool 
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == SidecarContainerVolumeName && v.VolumeSource.EmptyDir != nil {
 			volumeInjected = true
+
 			break
 		}
 	}
+
 	return containerInjected && volumeInjected
 }

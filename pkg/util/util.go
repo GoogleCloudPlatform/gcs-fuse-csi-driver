@@ -46,16 +46,17 @@ func ConvertLabelsStringToMap(labels string) (map[string]string, error) {
 	// 1. Keys have a minimum length of 1 character and a maximum length of 63 characters, and cannot be empty.
 	// 2. Keys and values can contain only lowercase letters, numeric characters, underscores, and dashes.
 	// 3. Keys must start with a lowercase letter.
-	regexKey, _ := regexp.Compile(`^\p{Ll}[\p{Ll}0-9_-]{0,62}$`)
+	regexKey := regexp.MustCompile(`^\p{Ll}[\p{Ll}0-9_-]{0,62}$`)
 	checkLabelKeyFn := func(key string) error {
 		if !regexKey.MatchString(key) {
 			return fmt.Errorf("label value %q is invalid (should start with lowercase letter / lowercase letter, digit, _ and - chars are allowed / 1-63 characters", key)
 		}
+
 		return nil
 	}
 
 	// Values can be empty, and have a maximum length of 63 characters.
-	regexValue, _ := regexp.Compile(`^[\p{Ll}0-9_-]{0,63}$`)
+	regexValue := regexp.MustCompile(`^[\p{Ll}0-9_-]{0,63}$`)
 	checkLabelValueFn := func(value string) error {
 		if !regexValue.MatchString(value) {
 			return fmt.Errorf("label value %q is invalid (lowercase letter, digit, _ and - chars are allowed / 0-63 characters", value)
@@ -100,18 +101,20 @@ func ParseEndpoint(endpoint string, cleanupSocket bool) (string, string, error) 
 	}
 
 	var addr string
-	if u.Scheme == "unix" {
+	switch u.Scheme {
+	case "unix":
 		addr = u.Path
 		if cleanupSocket {
 			if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
-				klog.Fatalf("Failed to remove %s, error: %s", addr, err.Error())
+				klog.Fatalf("Failed to remove %s, error: %s", addr, err)
 			}
 		}
-	} else if u.Scheme == "tcp" {
+	case "tcp":
 		addr = u.Host
-	} else {
+	default:
 		klog.Fatalf("%v endpoint scheme not supported", u.Scheme)
 	}
+
 	return u.Scheme, addr, nil
 }
 
@@ -123,21 +126,22 @@ func ParsePodIDVolumeFromTargetpath(targetPath string) (string, string, error) {
 	}
 	podID := matched[1]
 	volume := matched[2]
+
 	return podID, volume, nil
 }
 
 func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 	_, _, err := ParsePodIDVolumeFromTargetpath(targetPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse volume name from target path %q: %v", targetPath, err)
+		return "", fmt.Errorf("failed to parse volume name from target path %q: %w", targetPath, err)
 	}
 
 	r := regexp.MustCompile("kubernetes.io~csi/(.*)/mount")
 	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerVolumeName))
 
 	if createEmptyDir {
-		if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
-			return "", fmt.Errorf("mkdir failed for path %q: %v", emptyDirBasePath, err)
+		if err := os.MkdirAll(emptyDirBasePath, 0o750); err != nil {
+			return "", fmt.Errorf("mkdir failed for path %q: %w", emptyDirBasePath, err)
 		}
 	}
 

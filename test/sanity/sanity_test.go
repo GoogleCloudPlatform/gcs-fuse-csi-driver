@@ -40,13 +40,14 @@ const (
 )
 
 func TestSanity(t *testing.T) {
+	t.Parallel()
 	// Set up temp working dir
 	cleanUp := func() {
 		if err := os.RemoveAll(tmpDir); err != nil {
 			t.Fatalf("Failed to clean up sanity temp working dir %s: %v", tmpDir, err)
 		}
 	}
-	err := os.MkdirAll(tmpDir, 0755)
+	err := os.MkdirAll(tmpDir, 0o755)
 	if err != nil {
 		if err.Error() == "file exists" {
 			cleanUp()

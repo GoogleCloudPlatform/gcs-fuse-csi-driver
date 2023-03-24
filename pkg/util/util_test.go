@@ -25,7 +25,9 @@ import (
 )
 
 func TestConvertLabelsStringToMap(t *testing.T) {
+	t.Parallel()
 	t.Run("parsing labels string into map", func(t *testing.T) {
+		t.Parallel()
 		testCases := []struct {
 			name           string
 			labels         string
@@ -102,6 +104,7 @@ func TestConvertLabelsStringToMap(t *testing.T) {
 				if !tc.expectedError {
 					t.Errorf("Did not expect error but got: %v", err)
 				}
+
 				continue
 			}
 
@@ -112,6 +115,7 @@ func TestConvertLabelsStringToMap(t *testing.T) {
 	})
 
 	t.Run("checking google requirements", func(t *testing.T) {
+		t.Parallel()
 		testCases := []struct {
 			name          string
 			labels        string
@@ -210,10 +214,10 @@ func TestConvertLabelsStringToMap(t *testing.T) {
 			}
 		}
 	})
-
 }
 
 func TestParseEndpoint(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name            string
 		endpoint        string
@@ -240,6 +244,7 @@ func TestParseEndpoint(t *testing.T) {
 			if !tc.expectedError {
 				t.Errorf("Did not expect error but got: %v", err)
 			}
+
 			continue
 		}
 
@@ -254,6 +259,7 @@ func TestParseEndpoint(t *testing.T) {
 }
 
 func TestParsePodIDVolumeFromTargetpath(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name           string
 		targetPath     string
@@ -287,6 +293,7 @@ func TestParsePodIDVolumeFromTargetpath(t *testing.T) {
 			if !tc.expectedError {
 				t.Errorf("Did not expect error but got: %v", err)
 			}
+
 			continue
 		}
 
@@ -300,6 +307,7 @@ func TestParsePodIDVolumeFromTargetpath(t *testing.T) {
 }
 
 func TestPrepareEmptyDir(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		name                     string
 		targetPath               string
@@ -330,6 +338,7 @@ func TestPrepareEmptyDir(t *testing.T) {
 			if !tc.expectedError {
 				t.Errorf("Did not expect error but got: %v", err)
 			}
+
 			continue
 		}
 

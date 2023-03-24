@@ -36,7 +36,6 @@ import (
 
 // GCPTokenSource generates a GCP IAM SA token with a Kubernetes Service Account token.
 type GCPTokenSource struct {
-	ctx            context.Context
 	meta           metadata.Service
 	k8sSAName      string
 	k8sSANamespace string
@@ -46,29 +45,33 @@ type GCPTokenSource struct {
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.
 func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
-	k8sSAToken, err := ts.fetchK8sSAToken()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	k8sSAToken, err := ts.fetchK8sSAToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("k8s service account token fetch error: %v", err)
+		return nil, fmt.Errorf("k8s service account token fetch error: %w", err)
 	}
 
-	identityBindingToken, err := ts.fetchIdentityBindingToken(k8sSAToken)
+	identityBindingToken, err := ts.fetchIdentityBindingToken(ctx, k8sSAToken)
 	if err != nil {
-		return nil, fmt.Errorf("identity binding token fetch error: %v", err)
+		return nil, fmt.Errorf("identity binding token fetch error: %w", err)
 	}
 
-	token, err := ts.fetchGCPSAToken(identityBindingToken)
+	token, err := ts.fetchGCPSAToken(ctx, identityBindingToken)
 	if err != nil {
-		return nil, fmt.Errorf("GCP service account token fetch error: %v", err)
+		return nil, fmt.Errorf("GCP service account token fetch error: %w", err)
 	}
+
 	return token, nil
 }
 
-// fetch Kubernetes Service Account token by calling Kubernetes API
-func (ts *GCPTokenSource) fetchK8sSAToken() (*oauth2.Token, error) {
+// fetch Kubernetes Service Account token by calling Kubernetes API.
+func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, error) {
 	if ts.k8sSAToken != "" {
 		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
 		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal TokenRequestStatus: %v", err)
+			return nil, fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
 		}
 		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
 			return &oauth2.Token{
@@ -76,12 +79,13 @@ func (ts *GCPTokenSource) fetchK8sSAToken() (*oauth2.Token, error) {
 				Expiry:      trs.ExpirationTimestamp.Time,
 			}, nil
 		}
+
 		return nil, fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
 	}
 
 	ttl := int64(10 * time.Minute.Seconds())
 	resp, err := ts.k8sClients.CreateServiceAccountToken(
-		ts.ctx,
+		ctx,
 		ts.k8sSANamespace,
 		ts.k8sSAName,
 		&authenticationv1.TokenRequest{
@@ -91,7 +95,7 @@ func (ts *GCPTokenSource) fetchK8sSAToken() (*oauth2.Token, error) {
 			},
 		})
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %v", err)
+		return nil, fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %w", err)
 	}
 
 	return &oauth2.Token{
@@ -102,10 +106,10 @@ func (ts *GCPTokenSource) fetchK8sSAToken() (*oauth2.Token, error) {
 
 // fetch GCP IdentityBindingToken using the Kubernetes Service Account token
 // by calling Security Token Service (STS) API.
-func (ts *GCPTokenSource) fetchIdentityBindingToken(k8sSAToken *oauth2.Token) (*oauth2.Token, error) {
-	stsService, err := sts.NewService(ts.ctx, option.WithHTTPClient(&http.Client{}))
+func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSAToken *oauth2.Token) (*oauth2.Token, error) {
+	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
 	if err != nil {
-		return nil, fmt.Errorf("new STS service error: %v", err)
+		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
 
 	audience := fmt.Sprintf(
@@ -124,7 +128,7 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(k8sSAToken *oauth2.Token) (*
 
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
 	if err != nil {
-		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %v", audience, err)
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w", audience, err)
 	}
 
 	return &oauth2.Token{
@@ -135,26 +139,27 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(k8sSAToken *oauth2.Token) (*
 }
 
 // fetch GCP service account token by calling the IAM credentials endpoint using an IdentityBindingToken.
-func (ts *GCPTokenSource) fetchGCPSAToken(identityBindingToken *oauth2.Token) (*oauth2.Token, error) {
+func (ts *GCPTokenSource) fetchGCPSAToken(ctx context.Context, identityBindingToken *oauth2.Token) (*oauth2.Token, error) {
 	gcpSAClient, err := credentials.NewIamCredentialsClient(
-		ts.ctx,
+		ctx,
 		option.WithTokenSource(oauth2.StaticTokenSource(identityBindingToken)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create credentials client error: %v", err)
+		return nil, fmt.Errorf("create credentials client error: %w", err)
 	}
 
-	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ts.ctx, ts.k8sSANamespace, ts.k8sSAName)
+	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ctx, ts.k8sSANamespace, ts.k8sSAName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get GCP SA from Kubernetes SA [%s/%s] annotation: %v", ts.k8sSANamespace, ts.k8sSAName, err)
+		return nil, fmt.Errorf("failed to get GCP SA from Kubernetes SA [%s/%s] annotation: %w", ts.k8sSANamespace, ts.k8sSAName, err)
 	}
 	if gcpSAName == "" {
 		klog.V(4).Infof("Kubernetes SA [%s/%s] is not bound with a GCP SA, proceed with the IdentityBindingToken", ts.k8sSANamespace, ts.k8sSAName)
+
 		return identityBindingToken, nil
 	}
 
 	resp, err := gcpSAClient.GenerateAccessToken(
-		ts.ctx,
+		ctx,
 		&credentialspb.GenerateAccessTokenRequest{
 			Name: fmt.Sprintf(
 				"projects/-/serviceAccounts/%s",
@@ -166,12 +171,13 @@ func (ts *GCPTokenSource) fetchGCPSAToken(identityBindingToken *oauth2.Token) (*
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("fetch GCP service account token error: %v", err)
+		return nil, fmt.Errorf("fetch GCP service account token error: %w", err)
 	}
 
 	token := &oauth2.Token{AccessToken: resp.GetAccessToken()}
 	if t := resp.GetExpireTime(); t != nil {
-		token.Expiry = time.Unix(int64(t.GetSeconds()), int64(t.GetNanos())).UTC()
+		token.Expiry = time.Unix(t.GetSeconds(), int64(t.GetNanos())).UTC()
 	}
+
 	return token, nil
 }

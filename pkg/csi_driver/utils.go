@@ -36,21 +36,21 @@ func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *c
 	return &csi.VolumeCapability_AccessMode{Mode: mode}
 }
 
-func NewControllerServiceCapability(cap csi.ControllerServiceCapability_RPC_Type) *csi.ControllerServiceCapability {
+func NewControllerServiceCapability(c csi.ControllerServiceCapability_RPC_Type) *csi.ControllerServiceCapability {
 	return &csi.ControllerServiceCapability{
 		Type: &csi.ControllerServiceCapability_Rpc{
 			Rpc: &csi.ControllerServiceCapability_RPC{
-				Type: cap,
+				Type: c,
 			},
 		},
 	}
 }
 
-func NewNodeServiceCapability(cap csi.NodeServiceCapability_RPC_Type) *csi.NodeServiceCapability {
+func NewNodeServiceCapability(c csi.NodeServiceCapability_RPC_Type) *csi.NodeServiceCapability {
 	return &csi.NodeServiceCapability{
 		Type: &csi.NodeServiceCapability_Rpc{
 			Rpc: &csi.NodeServiceCapability_RPC{
-				Type: cap,
+				Type: c,
 			},
 		},
 	}
@@ -64,13 +64,16 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 	case DeleteVolumeCSIFullMethod:
 		strippedReq = pbSanitizer.StripSecrets(req).String()
 	case NodePublishVolumeCSIFullMethod:
-		nodePublishReq := req.(*csi.NodePublishVolumeRequest)
-		if token, ok := nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken]; ok {
-			nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = "***stripped***"
-			strippedReq = fmt.Sprintf("%+v", nodePublishReq)
-			nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = token
+		if nodePublishReq, ok := req.(*csi.NodePublishVolumeRequest); ok {
+			if token, ok := nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken]; ok {
+				nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = "***stripped***"
+				strippedReq = fmt.Sprintf("%+v", nodePublishReq)
+				nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = token
+			} else {
+				strippedReq = fmt.Sprintf("%+v", req)
+			}
 		} else {
-			strippedReq = fmt.Sprintf("%+v", req)
+			klog.Errorf("failed to case req to *csi.NodePublishVolumeRequest")
 		}
 	default:
 		strippedReq = fmt.Sprintf("%+v", req)
@@ -83,5 +86,6 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 	} else {
 		klog.V(4).Infof("%s succeeded with response: %s", info.FullMethod, resp)
 	}
+
 	return resp, err
 }

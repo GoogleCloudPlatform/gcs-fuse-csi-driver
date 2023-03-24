@@ -20,14 +20,13 @@ import (
 	"net"
 	"sync"
 
+	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
-
-	csi "github.com/container-storage-interface/spec/lib/go/csi"
 )
 
-// Defines Non blocking GRPC server interfaces
+// Defines Non blocking GRPC server interfaces.
 type NonBlockingGRPCServer interface {
 	// Start services at the endpoint
 	Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer)
@@ -43,14 +42,13 @@ func NewNonBlockingGRPCServer() NonBlockingGRPCServer {
 	return &nonBlockingGRPCServer{}
 }
 
-// NonBlocking server
+// NonBlocking server.
 type nonBlockingGRPCServer struct {
 	wg     sync.WaitGroup
 	server *grpc.Server
 }
 
 func (s *nonBlockingGRPCServer) Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) {
-
 	s.wg.Add(1)
 
 	go s.serve(endpoint, ids, cs, ns)
@@ -71,7 +69,7 @@ func (s *nonBlockingGRPCServer) ForceStop() {
 func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) {
 	scheme, addr, err := util.ParseEndpoint(endpoint, true)
 	if err != nil {
-		klog.Fatalf("failed to parse endpoint %v", err.Error())
+		klog.Fatalf("failed to parse endpoint %v", err)
 	}
 
 	klog.Infof("Start listening with scheme %v, addr %v", scheme, addr)

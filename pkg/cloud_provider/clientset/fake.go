@@ -26,10 +26,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type FakeClientset struct {
-}
+type FakeClientset struct{}
 
-func (c *FakeClientset) GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error) {
+func (c *FakeClientset) GetPod(_ context.Context, namespace, name string) (*v1.Pod, error) {
 	config := webhook.FakeConfig()
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -45,17 +44,18 @@ func (c *FakeClientset) GetPod(ctx context.Context, namespace, name string) (*v1
 			},
 		},
 	}
+
 	return pod, nil
 }
 
-func (c *FakeClientset) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
-	return nil, nil
+func (c *FakeClientset) GetDaemonSet(_ context.Context, _, _ string) (*appsv1.DaemonSet, error) {
+	return &appsv1.DaemonSet{}, nil
 }
 
-func (c *FakeClientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
-	return nil, nil
+func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
+	return &authenticationv1.TokenRequest{}, nil
 }
 
-func (c *FakeClientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error) {
+func (c *FakeClientset) GetGCPServiceAccountName(_ context.Context, _, _ string) (string, error) {
 	return "", nil
 }

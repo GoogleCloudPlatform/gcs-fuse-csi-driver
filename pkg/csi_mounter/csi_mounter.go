@@ -44,15 +44,19 @@ type Mounter struct {
 // New returns a mount.MounterForceUnmounter for the current system.
 // It provides options to override the default mounter behavior.
 // mounterPath allows using an alternative to `/bin/mount` for mounting.
-func New(mounterPath string) mount.Interface {
-	return &Mounter{
-		mount.New(mounterPath).(mount.MounterForceUnmounter),
-		sync.Mutex{},
+func New(mounterPath string) (mount.Interface, error) {
+	m, ok := mount.New(mounterPath).(mount.MounterForceUnmounter)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast mounter to MounterForceUnmounter")
 	}
+
+	return &Mounter{
+		m,
+		sync.Mutex{},
+	}, nil
 }
 
-func (m *Mounter) Mount(source string, target string, fstype string, options []string) error {
-
+func (m *Mounter) Mount(source string, target string, _ string, options []string) error {
 	// Prepare the mount options
 	mountOptions := []string{
 		"nodev",
@@ -80,20 +84,20 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	// Prepare the temp emptyDir path
 	emptyDirBasePath, err := util.PrepareEmptyDir(target, false)
 	if err != nil {
-		return fmt.Errorf("failed to prepare emptyDir path: %v", err)
+		return fmt.Errorf("failed to prepare emptyDir path: %w", err)
 	}
 
 	klog.V(4).Info("opening the device /dev/fuse")
-	fd, err := syscall.Open("/dev/fuse", syscall.O_RDWR, 0644)
+	fd, err := syscall.Open("/dev/fuse", syscall.O_RDWR, 0o644)
 	if err != nil {
-		return fmt.Errorf("failed to open the device /dev/fuse: %v", err)
+		return fmt.Errorf("failed to open the device /dev/fuse: %w", err)
 	}
 	mountOptions = append(mountOptions, fmt.Sprintf("fd=%v", fd))
 
 	klog.V(4).Info("mounting the fuse filesystem")
 	err = m.MountSensitiveWithoutSystemdWithMountFlags(source, target, "fuse", mountOptions, nil, []string{"--internal-only"})
 	if err != nil {
-		return fmt.Errorf("failed to mount the fuse filesystem: %v", err)
+		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
 	klog.V(4).Info("passing the descriptor")
@@ -103,30 +107,30 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	m.chdirMu.Lock()
 	exPwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get the current directory to %v", err)
+		return fmt.Errorf("failed to get the current directory to %w", err)
 	}
 	if err = os.Chdir(emptyDirBasePath); err != nil {
-		return fmt.Errorf("failed to change directory to %q: %v", emptyDirBasePath, err)
+		return fmt.Errorf("failed to change directory to %q: %w", emptyDirBasePath, err)
 	}
 
 	klog.V(4).Info("creating a listener for the socket")
 	l, err := net.Listen("unix", "./socket")
 	if err != nil {
-		return fmt.Errorf("failed to create the listener for the socket: %v", err)
+		return fmt.Errorf("failed to create the listener for the socket: %w", err)
 	}
 
 	// Change the socket ownership
 	err = os.Chown(filepath.Dir(emptyDirBasePath), webhook.NobodyUID, webhook.NobodyGID)
 	if err != nil {
-		return fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %v", err)
+		return fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %w", err)
 	}
 	err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID)
 	if err != nil {
-		return fmt.Errorf("failed to change ownership on emptyDirBasePath: %v", err)
+		return fmt.Errorf("failed to change ownership on emptyDirBasePath: %w", err)
 	}
 	err = os.Chown("./socket", webhook.NobodyUID, webhook.NobodyGID)
 	if err != nil {
-		return fmt.Errorf("failed to change ownership on socket: %v", err)
+		return fmt.Errorf("failed to change ownership on socket: %w", err)
 	}
 
 	// Close the listener after 15 minutes
@@ -137,7 +141,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}(l)
 
 	if err = os.Chdir(exPwd); err != nil {
-		return fmt.Errorf("failed to change directory to %q: %v", exPwd, err)
+		return fmt.Errorf("failed to change directory to %q: %w", exPwd, err)
 	}
 	m.chdirMu.Unlock()
 
@@ -148,7 +152,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 	mcb, err := json.Marshal(mc)
 	if err != nil {
-		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %v", mc, err)
+		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %w", mc, err)
 	}
 
 	// Asynchronously waiting for the sidecar container to connect to the listener
@@ -163,6 +167,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		a, err := l.Accept()
 		if err != nil {
 			klog.Errorf("%v failed to accept connections to the listener: %v", logPrefix, err)
+
 			return
 		}
 		defer a.Close()
