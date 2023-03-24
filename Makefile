@@ -225,7 +225,7 @@ endif
 
 init-ginkgo:
 	export PATH=${PATH}:$(go env GOPATH)/bin
-	go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.1
+	go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.2
 
 init-buildx:
 	# Ensure we use a builder that can leverage it (the default on linux will not)
