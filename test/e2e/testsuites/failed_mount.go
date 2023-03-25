@@ -180,4 +180,26 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError("Incorrect Usage. flag provided but not defined: -invalid-option")
 	})
+
+	ginkgo.It("should fail when the sidecar container is specified with high resource usage", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/volumes":      "true",
+			"gke-gcsfuse/memory-limit": "1000000000G",
+			"gke-gcsfuse/cpu-limit":    "1000000000",
+		})
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod is in Unschedulable status")
+		tPod.WaitForUnschedulable()
+	})
 }

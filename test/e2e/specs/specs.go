@@ -146,6 +146,11 @@ func (t *TestPod) WaitForFailure(reason string) {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestPod) WaitForUnschedulable() {
+	err := e2epod.WaitForPodNameUnschedulableInNamespace(t.client, t.pod.Name, t.namespace.Name)
+	framework.ExpectNoError(err)
+}
+
 func (t *TestPod) WaitForFailedMountError(msg string) {
 	err := e2eevents.WaitTimeoutForEvent(
 		t.client,
