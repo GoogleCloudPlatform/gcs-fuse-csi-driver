@@ -21,9 +21,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,7 +33,9 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
+	e2ejob "k8s.io/kubernetes/test/e2e/framework/job"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -138,28 +141,8 @@ func (t *TestPod) WaitForRunning() {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitForFailure() {
-	// Ideally this would be in "k8s.io/kubernetes/test/e2e/framework"
-	// Similar to framework.WaitForPodSuccessInNamespaceSlow
-	err := e2epod.WaitForPodCondition(t.client, t.namespace.Name, t.pod.Name, "Error status code", pollTimeoutSlow,
-		func(pod *v1.Pod) (bool, error) {
-			switch pod.Status.Phase {
-			case v1.PodFailed:
-				ginkgo.By("Saw pod failure")
-
-				return true, nil
-			case v1.PodSucceeded:
-				return true, fmt.Errorf("pod %q succeeded with reason: %q, message: %q", pod.Name, pod.Status.Reason, pod.Status.Message)
-			case v1.PodPending:
-				return false, nil
-			case v1.PodRunning:
-				return false, nil
-			case v1.PodUnknown:
-				return false, nil
-			default:
-				return false, nil
-			}
-		})
+func (t *TestPod) WaitForFailure(reason string) {
+	err := e2epod.WaitForPodFailedReason(t.client, t.pod, reason, pollTimeoutSlow)
 	framework.ExpectNoError(err)
 }
 
@@ -222,6 +205,10 @@ func (t *TestPod) SetNonRootSecurityContext() {
 
 func (t *TestPod) SetCommand(cmd string) {
 	t.pod.Spec.Containers[0].Args = []string{"-c", cmd}
+}
+
+func (t *TestPod) SetPod(pod *v1.Pod) {
+	t.pod = pod
 }
 
 func (t *TestPod) Cleanup() {
@@ -521,4 +508,121 @@ func setPolicy(crmService *cloudresourcemanager.Service, projectID string, polic
 	_, err := crmService.Projects.SetIamPolicy(projectID, request).Do()
 
 	return err
+}
+
+type TestDeployment struct {
+	client     clientset.Interface
+	deployment *appsv1.Deployment
+	namespace  *v1.Namespace
+}
+
+func NewTestDeployment(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestDeployment {
+	tPod.pod.Spec.RestartPolicy = v1.RestartPolicyAlways
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "gcsfuse-volume-deployment-tester-",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: pointer.Int32(1),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "gcsfuse-volume-deployment-tester",
+				},
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: tPod.pod.ObjectMeta,
+				Spec:       tPod.pod.Spec,
+			},
+		},
+	}
+	deployment.Spec.Template.ObjectMeta.Labels = deployment.Spec.Selector.MatchLabels
+
+	return &TestDeployment{
+		client:     c,
+		namespace:  ns,
+		deployment: deployment,
+	}
+}
+
+func (t *TestDeployment) Create() {
+	framework.Logf("Creating Deployment %s", t.deployment.Name)
+	var err error
+	t.deployment, err = t.client.AppsV1().Deployments(t.namespace.Name).Create(context.TODO(), t.deployment, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
+}
+
+func (t *TestDeployment) WaitForComplete() {
+	framework.Logf("Waiting Deployment %s to complete", t.deployment.Name)
+	err := e2edeployment.WaitForDeploymentComplete(t.client, t.deployment)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestDeployment) GetPod() *v1.Pod {
+	podList, err := e2edeployment.GetPodsForDeployment(t.client, t.deployment)
+	framework.ExpectNoError(err)
+	framework.ExpectEqual(len(podList.Items), 1)
+
+	pod := podList.Items[0]
+
+	return &pod
+}
+
+func (t *TestDeployment) Cleanup() {
+	framework.Logf("Deleting Deployment %s", t.deployment.Name)
+	err := t.client.AppsV1().Deployments(t.namespace.Name).Delete(context.TODO(), t.deployment.Name, metav1.DeleteOptions{})
+	framework.ExpectNoError(err)
+}
+
+type TestJob struct {
+	client    clientset.Interface
+	job       *batchv1.Job
+	namespace *v1.Namespace
+}
+
+func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "gcsfuse-volume-job-tester",
+		},
+		Spec: batchv1.JobSpec{
+			ManualSelector: pointer.Bool(true),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					e2ejob.JobSelectorKey: "gcsfuse-volume-job-tester",
+				},
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: tPod.pod.ObjectMeta,
+				Spec:       tPod.pod.Spec,
+			},
+			BackoffLimit: pointer.Int32(1),
+		},
+	}
+	job.Spec.Template.ObjectMeta.Labels = job.Spec.Selector.MatchLabels
+
+	return &TestJob{
+		client:    c,
+		namespace: ns,
+		job:       job,
+	}
+}
+
+func (t *TestJob) Create() {
+	framework.Logf("Creating Job %s", t.job.Name)
+	var err error
+	t.job, err = t.client.BatchV1().Jobs(t.namespace.Name).Create(context.TODO(), t.job, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
+}
+
+func (t *TestJob) WaitForJobPodsSucceeded() {
+	framework.Logf("Waiting Job %s to have 1 succeeded pod", t.job.Name)
+	err := e2ejob.WaitForJobPodsSucceeded(t.client, t.namespace.Name, t.job.Name, 1)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestJob) Cleanup() {
+	framework.Logf("Deleting Job %s", t.job.Name)
+	d := metav1.DeletePropagationBackground
+	err := t.client.BatchV1().Jobs(t.namespace.Name).Delete(context.TODO(), t.job.Name, metav1.DeleteOptions{PropagationPolicy: &d})
+	framework.ExpectNoError(err)
 }
