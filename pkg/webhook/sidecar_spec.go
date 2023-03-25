@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/utils/pointer"
 )
 
 const (
@@ -38,17 +39,17 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 		Image:           c.ContainerImage + ":" + c.ImageVersion,
 		ImagePullPolicy: v1.PullPolicy(c.ImagePullPolicy),
 		SecurityContext: &v1.SecurityContext{
-			AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-			ReadOnlyRootFilesystem:   func(b bool) *bool { return &b }(true),
+			AllowPrivilegeEscalation: pointer.Bool(false),
+			ReadOnlyRootFilesystem:   pointer.Bool(true),
 			Capabilities: &v1.Capabilities{
 				Drop: []v1.Capability{
 					v1.Capability("all"),
 				},
 			},
 			SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
-			RunAsNonRoot:   func(b bool) *bool { return &b }(true),
-			RunAsUser:      func(i int64) *int64 { return &i }(NobodyUID),
-			RunAsGroup:     func(i int64) *int64 { return &i }(NobodyGID),
+			RunAsNonRoot:   pointer.Bool(true),
+			RunAsUser:      pointer.Int64(NobodyUID),
+			RunAsGroup:     pointer.Int64(NobodyGID),
 		},
 		Args: []string{"--v=5"},
 		Resources: v1.ResourceRequirements{
