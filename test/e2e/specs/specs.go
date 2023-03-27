@@ -47,10 +47,13 @@ const (
 	K8sServiceAccountName = "gcsfuse-csi-sa"
 	//nolint:gosec
 	K8sSecretName                   = "gcsfuse-csi-test-secret"
-	FakeVolumePrefix                = "gcs-fake-volume"
-	NonRootVolumePrefix             = "gcs-non-root-volume"
-	InvalidMountOptionsVolumePrefix = "gcs-invalid-mount-options-volume"
-	ImplicitDirsVolumePrefix        = "gcs-implicit-dirs-volume"
+	FakeVolumePrefix                = "gcsfuse-csi-fake-volume"
+	NonRootVolumePrefix             = "gcsfuse-csi-non-root-volume"
+	InvalidMountOptionsVolumePrefix = "gcsfuse-csi-invalid-mount-options-volume"
+	ImplicitDirsVolumePrefix        = "gcsfuse-csi-implicit-dirs-volume"
+	ForceNewBucketPrefix            = "gcsfuse-csi-force-new-bucket"
+	SameBucketDifferentDirPrefix    = "gcsfuse-csi-same-bucket-different-dir"
+	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
 	ImplicitDirsPath                = "implicit-dir"
 
 	pollInterval    = 1 * time.Second
@@ -131,18 +134,11 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 		shExec, exitCode, stdout, stderr)
 }
 
-func (t *TestPod) WaitForSuccess() {
-	err := e2epod.WaitForPodSuccessInNamespace(t.client, t.pod.Name, t.namespace.Name)
-	framework.ExpectNoError(err)
-}
-
 func (t *TestPod) WaitForRunning() {
 	err := e2epod.WaitForPodRunningInNamespace(t.client, t.pod)
 	framework.ExpectNoError(err)
-}
 
-func (t *TestPod) WaitForFailure(reason string) {
-	err := e2epod.WaitForPodFailedReason(t.client, t.pod, reason, pollTimeoutSlow)
+	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(context.TODO(), t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
 }
 
@@ -189,8 +185,20 @@ func (t *TestPod) SetName(name string) {
 	t.pod.Name = name
 }
 
-func (t *TestPod) SetNodeSelector(nodeSelector map[string]string) {
-	t.pod.Spec.NodeSelector = nodeSelector
+func (t *TestPod) GetNode() string {
+	return t.pod.Spec.NodeName
+}
+
+func (t *TestPod) SetNodeSelector(nodeName string, sameNode bool) {
+	framework.ExpectNotEqual(nodeName, "")
+
+	ns := &e2epod.NodeSelection{}
+	if sameNode {
+		e2epod.SetAffinity(ns, nodeName)
+	} else {
+		e2epod.SetAntiAffinity(ns, nodeName)
+	}
+	t.pod.Spec.Affinity = ns.Affinity
 }
 
 func (t *TestPod) SetAnnotations(annotations map[string]string) {
