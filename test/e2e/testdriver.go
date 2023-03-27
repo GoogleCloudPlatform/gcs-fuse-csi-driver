@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
@@ -48,7 +49,6 @@ type GCSFuseCSITestDriver struct {
 }
 
 type gcsVolume struct {
-	driver                  *GCSFuseCSITestDriver
 	bucketName              string
 	serviceAccountNamespace string
 	mountOptions            string
@@ -126,7 +126,7 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 
 	ginkgo.DeferCleanup(func() {
 		for _, v := range n.volumeStore {
-			v.driver.deleteBucket(v.serviceAccountNamespace, v.bucketName)
+			n.deleteBucket(v.serviceAccountNamespace, v.bucketName)
 		}
 		n.volumeStore = []*gcsVolume{}
 
@@ -141,9 +141,43 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConfig, volType storageframework.TestVolType) storageframework.TestVolume {
 	switch volType {
 	case storageframework.PreprovisionedPV:
-		bucketName := specs.FakeVolumePrefix
-		if config.Prefix != specs.FakeVolumePrefix {
+		var bucketName string
+		isMultipleBucketsPrefix := false
+
+		switch config.Prefix {
+		case specs.FakeVolumePrefix:
+			bucketName = uuid.NewString()
+		case specs.ForceNewBucketPrefix:
 			bucketName = n.createBucket(config.Framework.Namespace.Name)
+		case specs.MultipleBucketsPrefix:
+			isMultipleBucketsPrefix = true
+			l := []string{}
+			for i := 0; i < 2; i++ {
+				bucketName = n.createBucket(config.Framework.Namespace.Name)
+				n.volumeStore = append(n.volumeStore, &gcsVolume{
+					bucketName:              bucketName,
+					serviceAccountNamespace: config.Framework.Namespace.Name,
+				})
+
+				l = append(l, bucketName)
+			}
+
+			bucketName = "_"
+
+			// Use config.Prefix to pass the bucket names back to the test suite.
+			config.Prefix = strings.Join(l, ",")
+		case specs.SameBucketDifferentDirPrefix:
+			if len(n.volumeStore) == 0 {
+				bucketName = n.createBucket(config.Framework.Namespace.Name)
+			} else {
+				bucketName = n.volumeStore[len(n.volumeStore)-1].bucketName
+			}
+		default:
+			if len(n.volumeStore) == 0 {
+				bucketName = n.createBucket(config.Framework.Namespace.Name)
+			} else {
+				return n.volumeStore[0]
+			}
 		}
 
 		mountOptions := "debug_gcs,debug_fuse,debug_fs"
@@ -153,16 +187,25 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		case specs.InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 		case specs.ImplicitDirsVolumePrefix:
-			createImplicitDir(bucketName)
+			createImplicitDir(specs.ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
+		case specs.SameBucketDifferentDirPrefix:
+			dirPath := uuid.NewString()
+			createImplicitDir(dirPath, bucketName)
+			mountOptions += ",implicit-dirs,only-dir=" + dirPath
 		}
 
-		return &gcsVolume{
-			driver:                  n,
+		v := &gcsVolume{
 			bucketName:              bucketName,
 			serviceAccountNamespace: config.Framework.Namespace.Name,
 			mountOptions:            mountOptions,
 		}
+
+		if !isMultipleBucketsPrefix {
+			n.volumeStore = append(n.volumeStore, v)
+		}
+
+		return v
 	case storageframework.DynamicPV:
 		// Do nothing
 	default:
@@ -173,57 +216,31 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 }
 
 func (v *gcsVolume) DeleteVolume() {
-	v.driver.deleteBucket(v.serviceAccountNamespace, v.bucketName)
+	// Does nothing because the driver cleanup will delete all the buckets.
 }
 
 func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string, volume storageframework.TestVolume) (*v1.PersistentVolumeSource, *v1.VolumeNodeAffinity) {
-	nv, _ := volume.(*gcsVolume)
-	va := map[string]string{"mountOptions": nv.mountOptions}
+	gv, _ := volume.(*gcsVolume)
+	va := map[string]string{"mountOptions": gv.mountOptions}
 
 	return &v1.PersistentVolumeSource{
 		CSI: &v1.CSIPersistentVolumeSource{
 			Driver:           n.driverInfo.Name,
-			VolumeHandle:     nv.bucketName,
+			VolumeHandle:     gv.bucketName,
 			VolumeAttributes: va,
 			ReadOnly:         readOnly,
 		},
 	}, nil
 }
 
-func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig, volumeNumber int) (map[string]string, bool, bool) {
-	if config.Prefix == specs.FakeVolumePrefix {
-		return map[string]string{
-			"bucketName": specs.FakeVolumePrefix,
-		}, true, false
-	}
+func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig, _ int) (map[string]string, bool, bool) {
+	volume := n.CreateVolume(config, storageframework.PreprovisionedPV)
+	gv, _ := volume.(*gcsVolume)
 
-	for len(n.volumeStore) <= volumeNumber {
-		bucketName := n.createBucket(config.Framework.Namespace.Name)
-		n.volumeStore = append(n.volumeStore, &gcsVolume{
-			driver:                  n,
-			bucketName:              bucketName,
-			serviceAccountNamespace: config.Framework.Namespace.Name,
-			shared:                  true,
-			readOnly:                false,
-		})
-	}
-
-	volume := n.volumeStore[volumeNumber]
-	attributes := map[string]string{
-		"bucketName":   volume.bucketName,
-		"mountOptions": "debug_gcs,debug_fuse,debug_fs",
-	}
-	switch config.Prefix {
-	case specs.NonRootVolumePrefix:
-		attributes["mountOptions"] += ",uid=1001,gid=3003"
-	case specs.InvalidMountOptionsVolumePrefix:
-		attributes["mountOptions"] += ",invalid-option"
-	case specs.ImplicitDirsVolumePrefix:
-		createImplicitDir(volume.bucketName)
-		attributes["mountOptions"] += ",implicit-dirs"
-	}
-
-	return attributes, volume.shared, volume.readOnly
+	return map[string]string{
+		"bucketName":   gv.bucketName,
+		"mountOptions": gv.mountOptions,
+	}, gv.shared, gv.readOnly
 }
 
 func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfig) string {
@@ -287,6 +304,8 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 		Project: n.meta.GetProjectID(),
 		Name:    uuid.NewString(),
 	}
+
+	ginkgo.By(fmt.Sprintf("Creating bucket %q", newBucket.Name))
 	bucket, err := storageService.CreateBucket(ctx, newBucket)
 	if err != nil {
 		e2eframework.Failf("Failed to create a new GCS bucket: %v", err)
@@ -302,13 +321,16 @@ func (n *GCSFuseCSITestDriver) deleteBucket(serviceAccountNamespace, bucketName 
 	if err != nil {
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
 	}
+
+	ginkgo.By(fmt.Sprintf("Deleting bucket %q", bucketName))
 	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 	if err != nil {
 		e2eframework.Failf("Failed to delete the GCS bucket: %v", err)
 	}
 }
 
-func createImplicitDir(bucketName string) {
+func createImplicitDir(dirPath, bucketName string) {
+	// Use bucketName as the name of a temp file since bucketName is unique.
 	f, err := os.Create(bucketName)
 	if err != nil {
 		e2eframework.Failf("Failed to create an empty data file: %v", err)
@@ -322,8 +344,7 @@ func createImplicitDir(bucketName string) {
 	}()
 
 	//nolint:gosec
-	cmd := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, specs.ImplicitDirsPath))
-	if err := cmd.Run(); err != nil {
-		e2eframework.Failf("Failed to create a implicit dir in GCS bucket: %v", err)
+	if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
+		e2eframework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
 	}
 }

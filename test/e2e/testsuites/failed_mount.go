@@ -17,8 +17,6 @@ limitations under the License.
 package testsuites
 
 import (
-	"fmt"
-
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -99,7 +97,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(fmt.Sprintf("failed to get GCS bucket %q: storage: bucket doesn't exist", specs.FakeVolumePrefix))
+		tPod.WaitForFailedMountError("storage: bucket doesn't exist")
 	})
 
 	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
