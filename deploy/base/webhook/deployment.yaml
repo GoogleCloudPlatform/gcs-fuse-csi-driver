@@ -52,11 +52,14 @@ spec:
             - --cert-dir=/etc/tls-certs
             - --port=22030
             - --health-probe-bind-address=:22031
+            - --http-endpoint=:22032
           env:
             - name: SIDECAR_IMAGE_PULL_POLICY
               value: "IfNotPresent"
             - name: SIDECAR_IMAGE_REGISTRY
               value: ""
+            - name: GKE_GCSFUSECSI_VERSION
+              value: "v999.999.999"
           resources:
             limits:
               cpu: 200m
@@ -69,6 +72,9 @@ spec:
               containerPort: 22030
             - name: readyz
               containerPort: 22031
+            - name: http-endpoint
+              containerPort: 22032
+              protocol: TCP
           livenessProbe:
             httpGet:
               scheme: HTTP
@@ -95,6 +101,11 @@ spec:
   selector:
     app: gcs-fuse-csi-driver-webhook
   ports:
-    - protocol: TCP
+    - name: injector
+      protocol: TCP
       port: 443
       targetPort: 22030
+    - name: metrics
+      protocol: TCP
+      port: 8080
+      targetPort: 22032
