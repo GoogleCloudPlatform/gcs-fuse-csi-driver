@@ -36,7 +36,7 @@ import (
 var (
 	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
 	volumeBasePath = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
-	gracePeriod    = flag.Int("grace-period", 15, "grace period for gcsfuse termination")
+	gracePeriod    = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -113,17 +113,27 @@ func main() {
 	}
 
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	klog.Info("waiting for termination signals...")
+	signal.Notify(c, syscall.SIGTERM)
+	klog.Info("waiting for SIGTERM signal...")
 
 	// Monitor the exit file.
-	// If the exit file is detected, send a syscall.SIGTERM signal to the singal channel.
+	// If the exit file is detected, send a syscall.SIGTERM signal to the signal channel.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
 			<-ticker.C
 			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
-				klog.Info("all the other containers exited in the Job Pod, exiting the sidecar container.")
+				klog.Infof("all the other containers exited in the Job Pod, exiting the sidecar container. Sleep %v seconds before terminating gcsfuse processes.", *gracePeriod)
+				time.Sleep(time.Duration(*gracePeriod) * time.Second)
+
+				for _, cmd := range mounter.GetCmds() {
+					klog.V(4).Infof("killing gcsfue process: %v", cmd)
+					err := cmd.Process.Kill()
+					if err != nil {
+						klog.Errorf("failed to kill process %v with error: %v", cmd, err)
+					}
+				}
+
 				c <- syscall.SIGTERM
 
 				return
@@ -131,20 +141,11 @@ func main() {
 		}
 	}()
 
-	sig := <-c // blocking the process
-	klog.Infof("received signal: %v, sleep %v seconds before terminating gcsfuse processes.", sig, *gracePeriod)
-	time.Sleep(time.Duration(*gracePeriod) * time.Second)
-
-	for _, cmd := range mounter.GetCmds() {
-		klog.V(4).Infof("killing gcsfue process: %v", cmd)
-		err := cmd.Process.Kill()
-		if err != nil {
-			klog.Errorf("failed to kill process %v with error: %v", cmd, err)
-		}
-	}
-
+	<-c // blocking the process
+	klog.Info("received SIGTERM signal, waiting for all the gcsfuse processes exit...")
 	wg.Wait()
-	klog.Info("existing sidecar mounter...")
+
+	klog.Info("exiting sidecar mounter...")
 }
 
 // Fetch the following information from a given socket path:
