@@ -22,43 +22,21 @@ import (
 	"os"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"k8s.io/component-base/metrics"
 	"k8s.io/klog/v2"
 )
 
 const (
-	// envGKEGCSCSIVersion is an environment variable set in the Cloud Storage FUSE CSI driver controller manifest
+	// envGKEGCSFuseCSIVersion is an environment variable set in the Cloud Storage FUSE CSI driver webhook manifest
 	// with the current version of the GKE component.
-	envGKEGCSCSIVersion = "GKE_GCSCSI_VERSION"
-
-	subSystem                   = "gcscsi"
-	operationsLatencyMetricName = "operations_seconds"
-
-	labelStatusCode = "grpc_status_code"
-	labelMethodName = "method_name"
+	envGKEGCSFuseCSIVersion = "GKE_GCSFUSECSI_VERSION"
 )
 
-var (
-	metricBuckets = []float64{.1, .25, .5, 1, 2.5, 5, 10, 15, 30, 60, 120, 300, 600}
-
-	// This metric is exposed only from the controller driver component when GKE_GCSCSI_VERSION env variable is set.
-	gkeComponentVersion = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name: "component_version",
-		Help: "Metric to expose the version of the GCSCSI GKE component.",
-	}, []string{"component_version"})
-
-	operationSeconds = metrics.NewHistogramVec(
-		&metrics.HistogramOpts{
-			Subsystem: subSystem,
-			Name:      operationsLatencyMetricName,
-			Buckets:   metricBuckets,
-			Help:      "Operation latency in seconds",
-		},
-		[]string{labelStatusCode, labelMethodName},
-	)
-)
+// This metric is exposed only from the webhook component when GKE_GCSFUSECSI_VERSION env variable is set.
+var gkeComponentVersion = metrics.NewGaugeVec(&metrics.GaugeOpts{
+	Name: "component_version",
+	Help: "Metric to expose the version of the gcsfusecsi GKE component.",
+}, []string{"component_version"})
 
 type Manager struct {
 	registry metrics.KubeRegistry
@@ -68,86 +46,50 @@ func NewMetricsManager() *Manager {
 	mm := &Manager{
 		registry: metrics.NewKubeRegistry(),
 	}
-	mm.registry.MustRegister(operationSeconds)
 
 	return mm
 }
 
-func (mm *Manager) GetRegistry() metrics.KubeRegistry {
-	return mm.registry
+// InitializeHTTPHandler sets up a server and creates a handler for metrics.
+func (mm *Manager) InitializeHTTPHandler(address, path string) {
+	mux := http.NewServeMux()
+	mux.Handle(path, metrics.HandlerFor(
+		mm.registry,
+		metrics.HandlerOpts{
+			ErrorHandling: metrics.ContinueOnError,
+		}))
+	server := &http.Server{
+		Addr:              address,
+		ReadHeaderTimeout: 3 * time.Second,
+		Handler:           mux,
+	}
+
+	go func() {
+		klog.Infof("Metric server listening at %q", address)
+		if err := server.ListenAndServe(); err != nil {
+			klog.Fatalf("Failed to start metric server at specified address (%q) and path (%q): %s", address, path, err)
+		}
+	}()
 }
 
-func (mm *Manager) registerComponentVersionMetric() {
+func (mm *Manager) EmitGKEComponentVersion() error {
 	mm.registry.MustRegister(gkeComponentVersion)
+
+	return mm.recordComponentVersionMetric()
 }
 
 func (mm *Manager) recordComponentVersionMetric() error {
-	v := getEnvVar(envGKEGCSCSIVersion)
+	v := getEnvVar(envGKEGCSFuseCSIVersion)
 	if v == "" {
 		klog.V(2).Info("Skip emitting component version metric")
 
-		return fmt.Errorf("failed to register GKE component version metric, env variable %v not defined", envGKEGCSCSIVersion)
+		return fmt.Errorf("failed to register GKE component version metric, env variable %v not defined", envGKEGCSFuseCSIVersion)
 	}
 
 	klog.Infof("Emit component_version metric with value %v", v)
 	gkeComponentVersion.WithLabelValues(v).Set(1.0)
 
 	return nil
-}
-
-func (mm *Manager) RecordOperationMetrics(opErr error, methodName string, opDuration time.Duration) {
-	operationSeconds.WithLabelValues(getErrorCode(opErr), methodName).Observe(opDuration.Seconds())
-}
-
-func getErrorCode(err error) string {
-	if err == nil {
-		return codes.OK.String()
-	}
-
-	st, ok := status.FromError(err)
-	if !ok {
-		// This is not gRPC error. The operation must have failed before gRPC
-		// method was called, otherwise we would get gRPC error.
-		return "unknown-non-grpc"
-	}
-
-	return st.Code().String()
-}
-
-func (mm *Manager) EmitGKEComponentVersion() error {
-	mm.registerComponentVersionMetric()
-
-	return mm.recordComponentVersionMetric()
-}
-
-// Server represents any type that could serve HTTP requests for the metrics
-// endpoint.
-type Server interface {
-	Handle(pattern string, handler http.Handler)
-}
-
-// RegisterToServer registers an HTTP handler for this metrics manager to the
-// given server at the specified address/path.
-func (mm *Manager) registerToServer(s Server, metricsPath string) {
-	s.Handle(metricsPath, metrics.HandlerFor(
-		mm.GetRegistry(),
-		metrics.HandlerOpts{
-			ErrorHandling: metrics.ContinueOnError,
-		}))
-}
-
-// InitializeHTTPHandler sets up a server and creates a handler for metrics.
-func (mm *Manager) InitializeHTTPHandler(address, path string) {
-	mux := http.NewServeMux()
-	mm.registerToServer(mux, path)
-
-	go func() {
-		klog.Infof("Metric server listening at %q", address)
-		//nolint:gosec
-		if err := http.ListenAndServe(address, mux); err != nil {
-			klog.Fatalf("Failed to start metric server at specified address (%q) and path (%q): %s", address, path, err)
-		}
-	}()
 }
 
 func getEnvVar(envVarName string) string {
@@ -162,5 +104,5 @@ func getEnvVar(envVarName string) string {
 }
 
 func IsGKEComponentVersionAvailable() bool {
-	return getEnvVar(envGKEGCSCSIVersion) != ""
+	return getEnvVar(envGKEGCSFuseCSIVersion) != ""
 }

@@ -74,10 +74,6 @@ func main() {
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
 			mm = metrics.NewMetricsManager()
 			mm.InitializeHTTPHandler(*httpEndpoint, *metricsPath)
-			err = mm.EmitGKEComponentVersion()
-			if err != nil {
-				klog.Fatalf("Failed to emit GKE compoent version: %v", err)
-			}
 		}
 	} else {
 		if *nodeID == "" {
