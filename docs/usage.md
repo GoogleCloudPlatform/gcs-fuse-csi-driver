@@ -154,6 +154,7 @@ By using the CSI Ephemeral Inline volumes, the lifecycle of volumes backed by Cl
 
 Use the following YAML manifest to specify the Cloud Storage bucket directly on the Pod spec.
 
+- `spec.terminationGracePeriodSeconds`: if your application needs to write large files to the Cloud Storage bucket, increase the Pod termination grace period seconds to make sure the Cloud Storage FUSE has enough time to flush the data after your application exits. The sidecar container respects the Pod termination grace period and handles the `SIGTERM` signal. The Cloud Storage FUSE termination is delayed until the sidecar container receives the `SIGKILL` signal. See [Kubernetes best practices: terminating with grace](https://cloud.google.com/blog/products/containers-kubernetes/kubernetes-best-practices-terminating-with-grace) for more information.
 - `spec.serviceAccountName`: use the same Kubernetes service account in the [Cloud Storage bucket access setup step](#set-up-access-to-cloud-storage-buckets-via-gke-workload-identity).
 - `spec.volumes[n].csi.driver`: use `gcsfuse.csi.storage.gke.io` as the csi driver name.
 - `spec.volumes[n].csi.volumeAttributes.bucketName`: specify your Cloud Storage bucket name. You can pass an underscore `_` to mount all the buckets that the service account is configured to have access to. See [Dynamic Mounting](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#dynamic-mounting) for more information.
@@ -173,6 +174,7 @@ metadata:
     gke-gcsfuse/memory-limit: 100Mi # optional
     gke-gcsfuse/ephemeral-storage-limit: 50Gi # optional
 spec:
+  terminationGracePeriodSeconds: 60 # optional, 30 by default
   securityContext: # optional, if Pod does not use the root user
     runAsUser: 1001
     runAsGroup: 2002

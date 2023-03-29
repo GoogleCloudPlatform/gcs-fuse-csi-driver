@@ -82,8 +82,9 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 				},
 			},
 			Spec: v1.PodSpec{
-				NodeSelector:       map[string]string{"kubernetes.io/os": "linux"},
-				ServiceAccountName: K8sServiceAccountName,
+				TerminationGracePeriodSeconds: pointer.Int64(5),
+				NodeSelector:                  map[string]string{"kubernetes.io/os": "linux"},
+				ServiceAccountName:            K8sServiceAccountName,
 				Containers: []v1.Container{
 					{
 						Name:         TesterContainerName,
