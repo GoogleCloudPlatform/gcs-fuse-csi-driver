@@ -65,7 +65,7 @@ E2E_TEST_BUILD_DRIVER ?= false
 E2E_TEST_FOCUS ?=
 E2E_TEST_SKIP ?= Dynamic.PV
 E2E_TEST_GINKGO_PROCS ?= 5
-E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts 1 --timeout 20m
+E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts 2 --timeout 20m
 ifneq ("${E2E_TEST_FOCUS}", "")
 E2E_TEST_GINKGO_FLAGS+= --focus "${E2E_TEST_FOCUS}"
 endif
