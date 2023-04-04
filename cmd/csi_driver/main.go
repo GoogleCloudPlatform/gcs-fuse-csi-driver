@@ -109,7 +109,7 @@ func main() {
 		klog.Fatalf("Failed to initialize Google Cloud Storage FUSE CSI Driver: %v", err)
 	}
 
-	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v, sidecar container image %v", version, sidecarImageName)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v, sidecar container image %v", version, *sidecarImageName)
 	gcfsDriver.Run(*endpoint)
 
 	os.Exit(0)
