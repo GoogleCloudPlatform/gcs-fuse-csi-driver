@@ -68,7 +68,7 @@ func TestSanity(t *testing.T) {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
 		K8sClients:            &clientset.FakeClientset{},
-		SidecarImageName:      "fake-sidecar-image",
+		SidecarImage:          "fake-sidecar-image",
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(driverConfig)

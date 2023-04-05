@@ -24,14 +24,13 @@ import (
 
 type Config struct {
 	ContainerImage        string
-	ImageVersion          string
 	ImagePullPolicy       string
 	CPULimit              resource.Quantity
 	MemoryLimit           resource.Quantity
 	EphemeralStorageLimit resource.Quantity
 }
 
-func LoadConfig(containerImage, imageVersion, imagePullPolicy, cpuLimit, memoryLimit, ephemeralStorageLimit string) (*Config, error) {
+func LoadConfig(containerImage, imagePullPolicy, cpuLimit, memoryLimit, ephemeralStorageLimit string) (*Config, error) {
 	c, err := resource.ParseQuantity(cpuLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse CPU limit %q: %w", cpuLimit, err)
@@ -46,7 +45,6 @@ func LoadConfig(containerImage, imageVersion, imagePullPolicy, cpuLimit, memoryL
 	}
 	cfg := &Config{
 		ContainerImage:        containerImage,
-		ImageVersion:          imageVersion,
 		ImagePullPolicy:       imagePullPolicy,
 		CPULimit:              c,
 		MemoryLimit:           m,
@@ -57,7 +55,7 @@ func LoadConfig(containerImage, imageVersion, imagePullPolicy, cpuLimit, memoryL
 }
 
 func FakeConfig() *Config {
-	c, _ := LoadConfig("fake-sidecar-image", "latest", "Always", "100m", "30Mi", "5Gi")
+	c, _ := LoadConfig("fake-sidecar-image", "Always", "100m", "30Mi", "5Gi")
 
 	return c
 }

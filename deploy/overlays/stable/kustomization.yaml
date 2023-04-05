@@ -22,21 +22,9 @@ resources:
 transformers:
 - ../../images/stable
 patches:
-- path: registry_patch_node.json
-  target:
-    group: apps
-    version: v1
-    kind: DaemonSet
-    name: gcsfusecsi-node
-- path: registry_patch_webhook.json
-  target:
-    group: apps
-    version: v1
-    kind: Deployment
-    name: gcs-fuse-csi-driver-webhook
 - path: project_patch_csi_driver.json
   target:
     group: storage.k8s.io
-    version: v1
     kind: CSIDriver
     name: gcsfuse.csi.storage.gke.io
+    version: v1

@@ -39,7 +39,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               fm,
 		K8sClients:            &clientset.FakeClientset{},
-		SidecarImageName:      "fake-sidecar-image",
+		SidecarImage:          "fake-sidecar-image",
 	}
 	driver, err := NewGCSDriver(config)
 	if err != nil {
