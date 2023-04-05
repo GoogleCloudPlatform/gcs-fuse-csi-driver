@@ -50,7 +50,7 @@ spec:
             - --endpoint=unix:/csi/csi.sock
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
-            - --sidecar-image-name=$(SIDECAR_IMAGE_REGISTRY)/gcs-fuse-csi-driver-sidecar-mounter
+            - --sidecar-image=$(SIDECAR_IMAGE)
           resources:
             limits:
               cpu: 200m
@@ -63,8 +63,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: SIDECAR_IMAGE_REGISTRY
-              value: ""
+            - name: SIDECAR_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: gcsfusecsi-image-config
+                  key: sidecar-image
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet/pods
@@ -117,3 +120,10 @@ spec:
       # be scheduled on all nodes.
       tolerations:
         - operator: Exists
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gcsfusecsi-image-config
+data:
+  sidecar-image: gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter

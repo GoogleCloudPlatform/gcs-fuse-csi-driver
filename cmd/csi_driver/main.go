@@ -39,7 +39,7 @@ var (
 	httpEndpoint     = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
 	metricsPath      = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
 	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	sidecarImageName = flag.String("sidecar-image-name", "", "The gcsfuse sidecar container image name.")
+	sidecarImage     = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 
@@ -101,7 +101,7 @@ func main() {
 		Metrics:               mm,
 		Mounter:               mounter,
 		K8sClients:            clientset,
-		SidecarImageName:      *sidecarImageName,
+		SidecarImage:          *sidecarImage,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)
@@ -109,7 +109,7 @@ func main() {
 		klog.Fatalf("Failed to initialize Google Cloud Storage FUSE CSI Driver: %v", err)
 	}
 
-	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v, sidecar container image %v", version, *sidecarImageName)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v, sidecar container image %v", version, *sidecarImage)
 	gcfsDriver.Run(*endpoint)
 
 	os.Exit(0)

@@ -77,7 +77,6 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	configCopy := &Config{
 		ContainerImage:        si.Config.ContainerImage,
-		ImageVersion:          si.Config.ImageVersion,
 		ImagePullPolicy:       si.Config.ImagePullPolicy,
 		CPULimit:              si.Config.CPULimit.DeepCopy(),
 		MemoryLimit:           si.Config.MemoryLimit.DeepCopy(),

@@ -43,7 +43,7 @@ type GCSDriverConfig struct {
 	Metrics               *metrics.Manager
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
-	SidecarImageName      string
+	SidecarImage          string
 }
 
 type GCSDriver struct {

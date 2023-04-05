@@ -134,7 +134,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
 	}
-	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarImageName, pod) {
+	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarImage, pod) {
 		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
 	}
 

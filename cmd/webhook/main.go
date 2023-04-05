@@ -39,20 +39,19 @@ var (
 	cpuLimit               = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
 	memoryLimit            = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
 	ephemeralStorageLimit  = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
-	sidecarImageName       = flag.String("sidecar-image-name", "", "The gcsfuse sidecar container image name.")
+	sidecarImage           = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 	httpEndpoint           = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
 	metricsPath            = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
 
 	// These are set at compile time.
-	version             = "unknown"
-	sidecarImageVersion = "unknown"
+	version = "unknown"
 )
 
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
-	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v:%v", version, *sidecarImageName, sidecarImageVersion)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", version, *sidecarImage)
 
 	if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
 		mm := metrics.NewMetricsManager()
@@ -63,7 +62,7 @@ func main() {
 	}
 
 	// Load webhook config
-	c, err := wh.LoadConfig(*sidecarImageName, sidecarImageVersion, *imagePullPolicy, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
+	c, err := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
 	if err != nil {
 		klog.Fatalf("Unable to load webhook config: %v", err)
 	}

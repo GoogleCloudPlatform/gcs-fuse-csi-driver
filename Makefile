@@ -92,7 +92,7 @@ sidecar-mounter:
 
 webhook:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS} -X main.sidecarImageVersion=${STAGINGVERSION}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
+	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
 
 download-gcsfuse:
 	mkdir -p ${BINDIR}
@@ -184,13 +184,10 @@ generate-spec-yaml:
 	mkdir -p ${BINDIR}
 	cd ./deploy/overlays/${OVERLAY}; kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
-	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${REGISTRY}\"}]" > ./deploy/overlays/${OVERLAY}/registry_patch_node.json
-	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${REGISTRY}\"}]" > ./deploy/overlays/${OVERLAY}/registry_patch_webhook.json
+	cd ./deploy/overlays/${OVERLAY}; kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${PROJECT}.svc.id.goog\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml > /dev/null
 	git restore ./deploy/overlays/${OVERLAY}/kustomization.yaml
-	git restore ./deploy/overlays/${OVERLAY}/registry_patch_node.json
-	git restore ./deploy/overlays/${OVERLAY}/registry_patch_webhook.json
 	git restore ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 
 verify:
