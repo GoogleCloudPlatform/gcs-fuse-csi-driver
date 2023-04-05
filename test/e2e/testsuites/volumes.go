@@ -27,6 +27,7 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
+	"k8s.io/utils/pointer"
 )
 
 const mountPath = "/mnt/test"
@@ -145,6 +146,10 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the reader pod")
 		tPod = specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetName("gcsfuse-volume-tester-reader")
+		// Make the CSI ephemeral inline volume read-only.
+		if pattern.VolType == storageframework.CSIInlineVolume && l.volumeResource.VolSource != nil {
+			l.volumeResource.VolSource.CSI.ReadOnly = pointer.Bool(true)
+		}
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, true)
 
 		ginkgo.By("Deploying the reader pod")
