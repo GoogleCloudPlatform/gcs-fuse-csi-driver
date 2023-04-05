@@ -75,7 +75,7 @@ func (m *Mounter) Mount(source string, target string, _ string, options []string
 	optionSet := sets.NewString(options...)
 	for _, o := range validMountOptions {
 		if optionSet.Has(o) {
-			mountOptions = append(mountOptions, options[0])
+			mountOptions = append(mountOptions, o)
 			optionSet.Delete(o)
 		}
 	}
