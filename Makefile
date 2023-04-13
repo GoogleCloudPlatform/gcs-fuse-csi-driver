@@ -170,7 +170,7 @@ build-image-and-push-linux-arm64: init-buildx download-gcsfuse
 		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 
-install:	
+install:
 	./deploy/base/webhook/patch-ca-bundle.sh
 	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
