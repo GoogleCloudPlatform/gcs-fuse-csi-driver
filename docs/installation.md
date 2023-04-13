@@ -29,25 +29,16 @@
   ```
 
 ## Install
-- If you aren't using your own containers, you will need to checkout a release tag, otherwise the build will generate a "dirty" tag for a git commit version that does not exist. From the root of the gcs-fuse-csi-driver clone, that might look like this:
-  
+- Run the following command to install the latest driver with version `v0.1.2`. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
   ```bash
-  # fetch tags to build a release version
-  $ git fetch
-
-  # View tags with "git tag" and then choose one
-  $ git checkout v0.1.0
+  # Replace <cluster-project-id> with your cluster project ID.
+  make install STAGINGVERSION=v0.1.2 PROJECT=<cluster-project-id>
   ```
 
-- Run the following command to install the driver. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
+- If you would like to build your own images, follow the [Cloud Storage FUSE CSI Driver Development Guide](development.md) to build and push the images. Run the following command to install the driver.
   ```bash
-  # Optionally, specify the image registry and image version if you have built the images from source code.
-  # If you do not choose a custom registry and staging version you will need to fetch and checkout a tag, shown in the previous step.
-  export REGISTRY=<your-container-registry>
-  export STAGINGVERSION=<staging-version>
-  # Optionally, specify the overlay if you want to try out features that are only available in the dev overlay.
-  export OVERLAY=dev  
-  make install
+  # Specify the image registry and image version if you have built the images from source code.
+  make install REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version> PROJECT=<cluster-project-id>
   ```
 
 ## Check the Driver Status
@@ -64,13 +55,13 @@ NAME                                          READY   UP-TO-DATE   AVAILABLE   A
 deployment.apps/gcs-fuse-csi-driver-webhook   1/1     1            1           3m49s
 
 NAME                               DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
-daemonset.apps/gcsfusecsi-node   3         3         3       3            3           kubernetes.io/os=linux   3m49s
+daemonset.apps/gcsfusecsi-node     3         3         3       3            3           kubernetes.io/os=linux   3m49s
 
 NAME                                               READY   STATUS    RESTARTS   AGE
 pod/gcs-fuse-csi-driver-webhook-565f85dcb9-pdlb9   1/1     Running   0          3m49s
-pod/gcsfusecsi-node-b6rs2                        3/3     Running   0          3m49s
-pod/gcsfusecsi-node-ng9xs                        3/3     Running   0          3m49s
-pod/gcsfusecsi-node-t9zq5                        3/3     Running   0          3m49s
+pod/gcsfusecsi-node-b6rs2                          3/3     Running   0          3m49s
+pod/gcsfusecsi-node-ng9xs                          3/3     Running   0          3m49s
+pod/gcsfusecsi-node-t9zq5                          3/3     Running   0          3m49s
 ```
 
 ## Uninstall
