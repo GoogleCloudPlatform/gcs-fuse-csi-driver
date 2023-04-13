@@ -48,7 +48,7 @@ kubectl get CSIDriver,Deployment,DaemonSet,Pods -n gcs-fuse-csi-driver
 ```
 should contain the driver application information, something like
 ```
-NAME                                                  ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS                    REQUIRESREPUBLISH   MODES                  AGE
+NAME                                                  ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS                              REQUIRESREPUBLISH   MODES                  AGE
 csidriver.storage.k8s.io/gcsfuse.csi.storage.gke.io   false            true             false             <cluster-project-id>-gke-dev.svc.id.goog   true                Persistent,Ephemeral   3m49s
 
 NAME                                          READY   UP-TO-DATE   AVAILABLE   AGE
@@ -59,9 +59,9 @@ daemonset.apps/gcsfusecsi-node     3         3         3       3            3   
 
 NAME                                               READY   STATUS    RESTARTS   AGE
 pod/gcs-fuse-csi-driver-webhook-565f85dcb9-pdlb9   1/1     Running   0          3m49s
-pod/gcsfusecsi-node-b6rs2                          3/3     Running   0          3m49s
-pod/gcsfusecsi-node-ng9xs                          3/3     Running   0          3m49s
-pod/gcsfusecsi-node-t9zq5                          3/3     Running   0          3m49s
+pod/gcsfusecsi-node-b6rs2                          2/2     Running   0          3m49s
+pod/gcsfusecsi-node-ng9xs                          2/2     Running   0          3m49s
+pod/gcsfusecsi-node-t9zq5                          2/2     Running   0          3m49s
 ```
 
 ## Uninstall
