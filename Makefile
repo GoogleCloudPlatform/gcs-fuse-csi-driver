@@ -95,80 +95,86 @@ webhook:
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
 
 download-gcsfuse:
-	mkdir -p ${BINDIR}
+	mkdir -p ${BINDIR}/linux/amd64
+	mkdir -p ${BINDIR}/linux/arm64
+	
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
-	docker build --file ./cmd/sidecar_mounter/Dockerfile.gcsfuse --build-arg STAGINGVERSION=${STAGINGVERSION} --tag local/gcsfuse:latest .
+	docker rm -f local_gcsfuse 2> /dev/null || true
+	
+	docker buildx build \
+		--file ./cmd/sidecar_mounter/Dockerfile.gcsfuse \
+		--tag local/gcsfuse:latest \
+		--build-arg STAGINGVERSION=${STAGINGVERSION}  \
+		--load .
 	docker create --name local_gcsfuse local/gcsfuse:latest
-	docker cp local_gcsfuse:/tmp/gcsfuse/bin/gcsfuse ${BINDIR}/gcsfuse
+	docker cp local_gcsfuse:/tmp/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
+	docker cp local_gcsfuse:/tmp/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
 	docker rm -f local_gcsfuse
 else
-	gsutil cp ${GCSFUSE_PATH} ${BINDIR}/gcsfuse
-	chmod +x ${BINDIR}/gcsfuse
+	gsutil cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
+	gsutil cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
 endif
 
-	chmod 0555 ${BINDIR}/gcsfuse
+	chmod +x ${BINDIR}/linux/amd64/gcsfuse
+	chmod +x ${BINDIR}/linux/arm64/gcsfuse
+	
+	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
+	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
 
-build-image-and-push-multi-arch: build-image-and-push-linux-amd64 build-image-and-push-linux-arm64
+build-image-and-push-multi-arch: init-buildx build-image-linux-amd64 build-image-linux-arm64
+	docker manifest create \
+		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
+	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 
-build-image-and-push-linux-amd64: init-buildx download-gcsfuse
+	docker manifest create \
+		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
+	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
+
+	docker manifest create \
+		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
+
+build-image-linux-amd64: download-gcsfuse
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
 		--platform linux/amd64 \
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
-		--build-arg BUILDPLATFORM=linux/amd64 \
 		--build-arg REGISTRY=${REGISTRY} \
 		--push .
-	docker manifest create \
-		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64
-	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 
 	docker buildx build \
 		--file ./cmd/sidecar_mounter/Dockerfile \
 		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 \
 		--platform linux/amd64 \
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
-		--build-arg BUILDPLATFORM=linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 \
 		--push .
-	docker manifest create \
-		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64
-	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 
 	docker buildx build \
 		--file ./cmd/webhook/Dockerfile \
 		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64 \
 		--platform linux/amd64 \
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
-		--build-arg BUILDPLATFORM=linux/amd64 \
 		--build-arg REGISTRY=${REGISTRY} \
 		--push .
-	docker manifest create \
-		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
-	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
-build-image-and-push-linux-arm64: init-buildx download-gcsfuse
+build-image-linux-arm64: download-gcsfuse	
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 \
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
-		--build-arg BUILDPLATFORM=linux/arm64 \
 		--build-arg REGISTRY=${REGISTRY} \
 		--push .
-	docker manifest create \
-		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 
 	docker buildx build \
 		--file ./cmd/sidecar_mounter/Dockerfile \
 		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 \
 		--build-arg STAGINGVERSION=${STAGINGVERSION} \
-		--build-arg BUILDPLATFORM=linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 \
 		--push .
-	docker manifest create \
-		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 
 install:
 	./deploy/base/webhook/patch-ca-bundle.sh
@@ -207,7 +213,7 @@ endif
 
 ifeq (${E2E_TEST_USE_MANAGED_DRIVER}, false)
 ifeq (${E2E_TEST_BUILD_DRIVER}, true)
-	make build-image-and-push-linux-amd64 REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
+	make build-image-and-push-multi-arch REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 endif
 
 	make uninstall OVERLAY=${OVERLAY} || true

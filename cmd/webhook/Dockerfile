@@ -13,8 +13,7 @@
 # limitations under the License.
 
 # Build webhook go binary
-ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM golang:1.19.5 as webhook-builder
+FROM golang:1.19.5 as webhook-builder
 
 ARG STAGINGVERSION
 ARG REGISTRY
