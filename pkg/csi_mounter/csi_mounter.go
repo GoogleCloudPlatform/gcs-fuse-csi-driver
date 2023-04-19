@@ -61,7 +61,6 @@ func (m *Mounter) Mount(source string, target string, _ string, options []string
 	mountOptions := []string{
 		"nodev",
 		"nosuid",
-		"noexec",
 		"allow_other",
 		"default_permissions",
 		"rootmode=40000",
