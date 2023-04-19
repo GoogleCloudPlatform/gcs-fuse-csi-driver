@@ -11,19 +11,15 @@ The following software are required for local development.
     ```
 
 ## Build
-1. Define the following variables.
-   ```bash
-   # Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
-   export REGISTRY=<your-container-registry>
-   # Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.
-   export STAGINGVERSION=<staging-version>
-   # Optional. If you want to build the gcsfuse binary from source code. Otherwise, a pre-built gcsfuse binary will be downloaded automatically.
-   export BUILD_GCSFUSE_FROM_SOURCE=true
-   ```
-2. Build and push the images.
-   ``` bash
-   make build-image-and-push-multi-arch
-   ```
+
+Run the following command to build and push the images.
+
+``` bash
+# BUILD_GCSFUSE_FROM_SOURCE=true: Required. You have to build the gcsfuse binary from source code as well.
+# REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
+# STAGINGVERSION=<staging-version>: Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.
+make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
+```
 
 ## Test
 Refer to [Test](../test/README.md) documentation.
