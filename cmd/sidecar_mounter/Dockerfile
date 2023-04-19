@@ -13,8 +13,7 @@
 # limitations under the License.
 
 # Build sidecar-mounter go binary
-ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM golang:1.19.5 as sidecar-mounter-builder
+FROM golang:1.19.5 as sidecar-mounter-builder
 
 ARG STAGINGVERSION
 
@@ -25,9 +24,10 @@ RUN make sidecar-mounter BINDIR=/bin
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
 FROM gcr.io/distroless/base-debian11
+ARG TARGETPLATFORM
 
 # Copy the binaries
-COPY ./bin/gcsfuse /gcsfuse
+COPY ./bin/${TARGETPLATFORM}/gcsfuse /gcsfuse
 COPY --from=sidecar-mounter-builder /bin/gcs-fuse-csi-driver-sidecar-mounter /gcs-fuse-csi-driver-sidecar-mounter
 
 ENTRYPOINT ["/gcs-fuse-csi-driver-sidecar-mounter"]
