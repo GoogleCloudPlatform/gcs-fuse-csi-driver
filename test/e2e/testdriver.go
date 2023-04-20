@@ -147,6 +147,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		switch config.Prefix {
 		case specs.FakeVolumePrefix:
 			bucketName = uuid.NewString()
+		case specs.InvalidVolumePrefix:
+			bucketName = specs.InvalidVolume
 		case specs.ForceNewBucketPrefix:
 			bucketName = n.createBucket(config.Framework.Namespace.Name)
 		case specs.MultipleBucketsPrefix:
@@ -278,11 +280,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 // There is an assumption that before this function is called, the Kubernetes service account is already created in the namespace.
 func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context, serviceAccountNamespace string) (storage.Service, error) {
 	tm := auth.NewTokenManager(n.meta, n.clientset)
-	ts, err := tm.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, specs.K8sServiceAccountName, "")
-	if err != nil {
-		return nil, fmt.Errorf("token manager failed to get token source: %w", err)
-	}
-
+	ts := tm.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, specs.K8sServiceAccountName, "")
 	storageService, err := n.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
@@ -316,6 +314,10 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 
 // deleteBucket deletes the GCS bucket.
 func (n *GCSFuseCSITestDriver) deleteBucket(serviceAccountNamespace, bucketName string) {
+	if bucketName == specs.InvalidVolume {
+		return
+	}
+
 	ctx := context.Background()
 	storageService, err := n.prepareStorageService(ctx, serviceAccountNamespace)
 	if err != nil {

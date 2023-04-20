@@ -87,7 +87,7 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 
 	storageService, err := s.prepareStorageService(ctx, req.GetSecrets())
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
 
 	// Check that the volume exists
@@ -147,13 +147,13 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	param := req.GetParameters()
 	newBucket := &storage.ServiceBucket{
 		Project:   projectID,
-		Name:      name,
+		Name:      volumeID,
 		SizeBytes: capBytes,
 	}
 
 	storageService, err := s.prepareStorageService(ctx, secrets)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
 
 	// Check if the bucket already exists
@@ -201,7 +201,7 @@ func (s *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 
 	storageService, err := s.prepareStorageService(ctx, req.GetSecrets())
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
 
 	// Delete the volume
@@ -223,14 +223,11 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "serviceAccountNamespace must be provided in secret")
 	}
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, serviceAccountName, "")
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
-	}
 
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, serviceAccountName, "")
 	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "storage service manager failed to setup service: %v", err)
+		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
 
 	return storageService, nil

@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	annotationGcsfuseVolumeEnableKey                  = "gke-gcsfuse/volumes"
+	AnnotationGcsfuseVolumeEnableKey                  = "gke-gcsfuse/volumes"
 	annotationGcsfuseSidecarCPULimitKey               = "gke-gcsfuse/cpu-limit"
 	annotationGcsfuseSidecarMemoryLimitKey            = "gke-gcsfuse/memory-limit"
 	annotationGcsfuseSidecarEphermeralStorageLimitKey = "gke-gcsfuse/ephemeral-storage-limit"
@@ -58,17 +58,17 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Allowed(fmt.Sprintf("No injection required for operation %v.", req.Operation))
 	}
 
-	if v, ok := pod.Annotations[annotationGcsfuseVolumeEnableKey]; !ok || strings.ToLower(v) != "true" {
-		return admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", annotationGcsfuseVolumeEnableKey))
+	if v, ok := pod.Annotations[AnnotationGcsfuseVolumeEnableKey]; !ok || strings.ToLower(v) != "true" {
+		return admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey))
 	}
 
-	enableGcsfuseVolumes, ok := pod.Annotations[annotationGcsfuseVolumeEnableKey]
+	enableGcsfuseVolumes, ok := pod.Annotations[AnnotationGcsfuseVolumeEnableKey]
 	if !ok || strings.ToLower(enableGcsfuseVolumes) == "false" {
 		return admission.Allowed("No injection required.")
 	}
 
 	if strings.ToLower(enableGcsfuseVolumes) != "true" {
-		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", annotationGcsfuseVolumeEnableKey))
+		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", AnnotationGcsfuseVolumeEnableKey))
 	}
 
 	if ValidatePodHasSidecarContainerInjected(si.Config.ContainerImage, pod) {
