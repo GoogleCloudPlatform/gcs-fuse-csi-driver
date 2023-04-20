@@ -103,7 +103,6 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 		"key-file":             true,
 		"token-url":            true,
 		"reuse-token-from-url": true,
-		"endpoint":             true,
 		"o":                    true,
 	}
 
