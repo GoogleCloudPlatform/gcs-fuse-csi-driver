@@ -29,7 +29,7 @@ const (
 )
 
 type TokenManager interface {
-	GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) (oauth2.TokenSource, error)
+	GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource
 }
 
 type tokenManager struct {
@@ -46,14 +46,12 @@ func NewTokenManager(meta metadata.Service, clientset clientset.Interface) Token
 	return &tm
 }
 
-func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) (oauth2.TokenSource, error) {
-	tokenSource := &GCPTokenSource{
+func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource {
+	return &GCPTokenSource{
 		meta:           tm.meta,
 		k8sSAName:      saName,
 		k8sSANamespace: saNamespace,
 		k8sSAToken:     saToken,
 		k8sClients:     tm.k8sClients,
 	}
-
-	return tokenSource, nil
 }

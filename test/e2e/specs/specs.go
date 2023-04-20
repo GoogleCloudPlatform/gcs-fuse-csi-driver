@@ -48,6 +48,7 @@ const (
 	//nolint:gosec
 	K8sSecretName                   = "gcsfuse-csi-test-secret"
 	FakeVolumePrefix                = "gcsfuse-csi-fake-volume"
+	InvalidVolumePrefix             = "gcsfuse-csi-invalid-volume"
 	NonRootVolumePrefix             = "gcsfuse-csi-non-root-volume"
 	InvalidMountOptionsVolumePrefix = "gcsfuse-csi-invalid-mount-options-volume"
 	ImplicitDirsVolumePrefix        = "gcsfuse-csi-implicit-dirs-volume"
@@ -55,6 +56,7 @@ const (
 	SameBucketDifferentDirPrefix    = "gcsfuse-csi-same-bucket-different-dir"
 	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
 	ImplicitDirsPath                = "implicit-dir"
+	InvalidVolume                   = "<invalid-name>"
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 1 * time.Minute

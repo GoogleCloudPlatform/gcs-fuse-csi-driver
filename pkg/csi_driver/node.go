@@ -17,6 +17,7 @@ limitations under the License.
 package driver
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ const (
 	VolumeContextKeyMountOptions        = "mountOptions"
 )
 
-// nodeServer handles mounting and unmounting of GCFS volumes on a node.
+// nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
 type nodeServer struct {
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
@@ -116,16 +117,26 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists
+	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	if bucketName != "_" {
 		storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to prepare storage service: %v", err)
+			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 		}
 
 		_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get GCS bucket %q: %v", bucketName, err)
+			// In most cases, GCS API failures are caused by incorrect SA setup.
+			code := codes.Unauthenticated
+			if storage.IsNotExistErr(err) {
+				code = codes.NotFound
+			}
+
+			if storage.IsInvalidBucketNameErr(err) {
+				code = codes.InvalidArgument
+			}
+
+			return nil, status.Errorf(code, "failed to get GCS bucket %q: %v", bucketName, err)
 		}
 	}
 
@@ -135,7 +146,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
 	}
 	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarImage, pod) {
-		return nil, status.Errorf(codes.Internal, "failed to find the sidecar container in Pod spec")
+		if pod.Annotations[webhook.AnnotationGcsfuseVolumeEnableKey] != "true" {
+			return nil, status.Error(codes.InvalidArgument, "failed to find the sidecar container in Pod spec")
+		}
+
+		return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
 	}
 
 	// Check if the Pod is owned by a Job
@@ -187,7 +202,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to open error file %q: %v", emptyDirBasePath+"/error", err)
 	}
 	if err == nil && len(errMsg) > 0 {
-		return nil, status.Errorf(codes.Internal, "the sidecar container failed with error: %v", string(errMsg))
+		errMsgStr := string(errMsg)
+		if strings.Contains(errMsgStr, "Incorrect Usage") {
+			return nil, status.Errorf(codes.InvalidArgument, "the sidecar container failed with error: %v", errMsgStr)
+		}
+
+		return nil, status.Errorf(codes.Internal, "the sidecar container failed with error: %v", errMsgStr)
 	}
 
 	// TODO: Check if the socket listener timed out
@@ -297,14 +317,10 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts, err := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "token manager failed to get token source: %v", err)
-	}
-
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
 	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "storage service manager failed to setup service: %v", err)
+		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
 
 	return storageService, nil

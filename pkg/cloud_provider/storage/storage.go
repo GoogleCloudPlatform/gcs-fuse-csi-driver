@@ -183,3 +183,7 @@ func CompareBuckets(a, b *ServiceBucket) error {
 func IsNotExistErr(err error) bool {
 	return errors.Is(err, storage.ErrBucketNotExist)
 }
+
+func IsInvalidBucketNameErr(err error) bool {
+	return strings.Contains(err.Error(), "googleapi: Error 400: Invalid bucket name:")
+}

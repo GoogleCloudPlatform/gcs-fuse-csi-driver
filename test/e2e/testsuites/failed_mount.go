@@ -100,6 +100,26 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod.WaitForFailedMountError("storage: bucket doesn't exist")
 	})
 
+	ginkgo.It("should fail when the specified GCS bucket name is invalid", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+
+		init(specs.InvalidVolumePrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create()
+		defer tPod.Cleanup()
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError("googleapi: Error 400: Invalid bucket name")
+	})
+
 	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
 		init()
 		defer cleanup()

@@ -381,25 +381,29 @@ See the documentation [Example Applications](../examples/README.md) for more exa
   
   Cloud Storage FUSE does not have permission to access the file system. Please double check your container user and fsGroup. Make sure you pass `uid` and `gid` flags correctly. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
 
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Unauthenticated desc = failed to prepare storage service: storage service manager failed to setup service: timed out waiting for the condition`
+
+  After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
+
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Unauthenticated desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
    
   Please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
 
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to get GCS bucket "xxx": googleapi: Error 400: Invalid bucket name: 'xxx', invalid`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = NotFound desc = failed to get GCS bucket "xxx": storage: bucket doesn't exist`
    
   The Cloud Storage bucket does not exist. Make sure the Cloud Storage bucket is created, and the Cloud Storage bucket name is specified correctly.
 
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to find the sidecar container in Pod spec`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = InvalidArgument desc = failed to get GCS bucket "xxx": googleapi: Error 400: Invalid bucket name: 'xxx', invalid`
+   
+  The Cloud Storage bucket name is invalid. Make sure the Cloud Storage bucket is created, and the Cloud Storage bucket name is specified correctly.
+
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = InvalidArgument desc = failed to find the sidecar container in Pod spec`
    
   The Cloud Storage FUSE sidecar container was not injected. Please check the Pod annotation `gke-gcsfuse/volumes: "true"` is set correctly.
 
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = InvalidArgument desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
 
   Invalid mount flags are passed to Cloud Storage FUSE. Please check [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
-
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = failed to prepare storage service: rpc error: code = Internal desc = storage service manager failed to setup service: timed out waiting for the condition`
-
-  After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
 
 ## Limitations
 
