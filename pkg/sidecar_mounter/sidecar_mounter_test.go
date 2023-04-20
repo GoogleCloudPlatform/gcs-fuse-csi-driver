@@ -41,7 +41,6 @@ var (
 		"key-file",
 		"token-url",
 		"reuse-token-from-url",
-		"endpoint",
 		"o",
 	}
 )
