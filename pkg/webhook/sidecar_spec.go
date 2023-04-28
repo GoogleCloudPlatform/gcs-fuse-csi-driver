@@ -17,6 +17,8 @@ limitations under the License.
 package webhook
 
 import (
+	"strings"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/utils/pointer"
 )
@@ -89,8 +91,9 @@ func GetSidecarContainerVolumeSpec() v1.Volume {
 func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 	containerInjected := false
 	volumeInjected := false
+	expectedImageWithoutTag := strings.Split(image, ":")[0]
 	for _, c := range pod.Spec.Containers {
-		if c.Name == SidecarContainerName && c.Image == image {
+		if c.Name == SidecarContainerName && strings.Split(c.Image, ":")[0] == expectedImageWithoutTag {
 			for _, v := range c.VolumeMounts {
 				if v.Name == SidecarContainerVolumeName && v.MountPath == SidecarContainerVolumeMountPath {
 					containerInjected = true
