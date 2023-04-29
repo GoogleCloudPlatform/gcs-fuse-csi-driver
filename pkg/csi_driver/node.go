@@ -127,7 +127,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 		if err != nil {
 			// In most cases, GCS API failures are caused by incorrect SA setup.
-			code := codes.Unauthenticated
+			code := codes.PermissionDenied
 			if storage.IsNotExistErr(err) {
 				code = codes.NotFound
 			}
@@ -147,7 +147,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarImage, pod) {
 		if pod.Annotations[webhook.AnnotationGcsfuseVolumeEnableKey] != "true" {
-			return nil, status.Error(codes.InvalidArgument, "failed to find the sidecar container in Pod spec")
+			return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
 		}
 
 		return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
@@ -203,11 +203,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	if err == nil && len(errMsg) > 0 {
 		errMsgStr := string(errMsg)
+		code := codes.Internal
 		if strings.Contains(errMsgStr, "Incorrect Usage") {
-			return nil, status.Errorf(codes.InvalidArgument, "the sidecar container failed with error: %v", errMsgStr)
+			code = codes.InvalidArgument
 		}
 
-		return nil, status.Errorf(codes.Internal, "the sidecar container failed with error: %v", errMsgStr)
+		if strings.Contains(errMsgStr, "signal: killed") {
+			code = codes.ResourceExhausted
+		}
+
+		return nil, status.Errorf(code, "the sidecar container failed with error: %v", errMsgStr)
 	}
 
 	// TODO: Check if the socket listener timed out

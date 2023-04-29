@@ -19,6 +19,7 @@ package testsuites
 import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
+	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -97,6 +98,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(codes.NotFound.String())
 		tPod.WaitForFailedMountError("storage: bucket doesn't exist")
 	})
 
@@ -117,6 +119,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(codes.InvalidArgument.String())
 		tPod.WaitForFailedMountError("googleapi: Error 400: Invalid bucket name")
 	})
 
@@ -132,15 +135,22 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		saName := "sa-without-access"
 		testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, saName, "")
 		testK8sSA.Create()
-		defer testK8sSA.Cleanup()
 		tPod.SetServiceAccount(saName)
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create()
 		defer tPod.Cleanup()
 
-		ginkgo.By("Checking that the pod has failed mount error")
+		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
+		tPod.WaitForFailedMountError(codes.PermissionDenied.String())
 		tPod.WaitForFailedMountError("googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket.")
+
+		ginkgo.By("Deleting the Kubernetes service account")
+		testK8sSA.Cleanup()
+
+		ginkgo.By("Checking that the pod has failed mount error Unauthenticated")
+		tPod.WaitForFailedMountError(codes.Unauthenticated.String())
+		tPod.WaitForFailedMountError("storage service manager failed to setup service: timed out waiting for the condition")
 	})
 
 	ginkgo.It("should fail when the sidecar container is not injected", func() {
@@ -158,6 +168,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(codes.FailedPrecondition.String())
 		tPod.WaitForFailedMountError("failed to find the sidecar container in Pod spec")
 	})
 
@@ -180,6 +191,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(codes.ResourceExhausted.String())
 		tPod.WaitForFailedMountError("gcsfuse exited with error: signal: killed")
 	})
 
@@ -196,6 +208,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(codes.InvalidArgument.String())
 		tPod.WaitForFailedMountError("Incorrect Usage. flag provided but not defined: -invalid-option")
 	})
 
