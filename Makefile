@@ -21,6 +21,7 @@ BUILD_GCSFUSE_FROM_SOURCE ?= false
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 OVERLAY ?= stable
 PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
+CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
 
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
@@ -177,11 +178,9 @@ build-image-linux-arm64: download-gcsfuse
 		--push .
 
 install:
-	./deploy/base/webhook/patch-ca-bundle.sh
 	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
 	./deploy/base/webhook/create-cert.sh
-	git restore ./deploy/base/webhook/mutatingwebhook.yaml
 
 uninstall:
 	kubectl delete -k deploy/overlays/${OVERLAY} --wait
@@ -192,9 +191,11 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${PROJECT}.svc.id.goog\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
+	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml > /dev/null
 	git restore ./deploy/overlays/${OVERLAY}/kustomization.yaml
 	git restore ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
+	git restore ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 
 verify:
 	hack/verify-all.sh
