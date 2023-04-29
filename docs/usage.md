@@ -1,16 +1,20 @@
 # Cloud Storage FUSE CSI Driver Usage
 
+> NOTE: This documentation is basically the same as the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver). In case of discrepancy, the GKE documentation shall prevail.
+
 ## Before you begin
+
+### Enable the CSI driver
+
+See the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver#enable).
+
+If you need to manually install the CSI driver, refer to the documentation [Cloud Storage FUSE CSI Driver Installation](./installation.md).
+
+> WARNING: Manual deployment of this driver to your GKE cluster is not recommended. Instead users should use GKE to automatically deploy and manage the CSI driver as an add-on feature.
 
 ### Enable Workload Identity on GKE cluster
 
 The CSI driver depends on the Workload Identity feature to authenticate with GCP APIs. Follow the doc to [Enable Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable) on your GKE cluster.
-
-### Install the CSI driver
-
-Refer to the documentation [Cloud Storage FUSE CSI Driver Installation](./installation.md) to manually install the CSI driver.
-
-> Note: We are actively working on integrating the CSI driver with GKE service to make it a GKE managed add-on feature. After the integration work is done, manual installation will not be needed. The instruction will be provided afterwards.
 
 ### Create Cloud Storage buckets
 
@@ -80,19 +84,35 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
         iam.gke.io/gcp-service-account=${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
     ```
 
+## Limitations
+
+* The Cloud Storage FUSE file system has [differences in performance, availability, access authorization, and semantics](https://cloud.devsite.corp.google.com/storage/docs/gcs-fuse#differences-and-limitations) compared to a POSIX file system.
+
+* The Cloud Storage FUSE CSI driver is not supported on [GKE Sandbox](https://cloud.google.com/kubernetes-engine/docs/concepts/sandbox-pods) or [Arm workloads](https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke).
+
+* The Cloud Storage FUSE CSI driver does not support volume snapshots, volume cloning, or volume expansions.
+
+* See the [open issues](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues) in the Cloud Storage FUSE CSI driver GitHub project.
+
 ## Using the Cloud Storage FUSE CSI driver
 
 The Cloud Storage FUSE CSI driver allows developers to use standard Kubernetes API to consume pre-existing Cloud Storage buckets. There are two types of volume configuration supported:
 1. [Static Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#static) using a PersistentVolumeClaim bound to the PersistentVolume
 2. Using [CSI Ephemeral Inline volumes](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#csi-ephemeral-volumes)
 
-The Cloud Storage FUSE CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is under development and not officially supported.
+The Cloud Storage FUSE CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is not officially supported.
 
-### Setting up a sidecar container for mounting Cloud Storage FUSE buckets
+### Prepare to mount Cloud Storage FUSE buckets
 
 No matter which configuration method you choose, the CSI driver relies on Pod annotations to identify if the Pod uses Cloud Storage backed volumes. The CSI driver employs a mutating admission webhook controller to monitor all the Pod specs. If the proper Pod annotations are found, the webhook will inject a sidecar container into the workload Pod. The CSI driver uses [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse) to mount Cloud Storage buckets, and the fuse instances run inside the sidecar containers.
 
-In order to let the webhook identify the Cloud Storage backed volumes, the annotation `gke-gcsfuse/volumes: "true"` is required. By default, the sidecar container has **250m CPU, 256Mi memory, and 10Gi ephemeral storage** allocated. You can overwrite these values by specifying the annotation `gke-gcsfuse/[cpu-limit|memory-limit|ephemeral-storage-limit]`. For example:
+In order to let the webhook identify the Cloud Storage backed volumes, the annotation `gke-gcsfuse/volumes: "true"` is required. By default, the sidecar container is configured with the following resources:
+
+* 250m CPU
+* 256Mi memory
+* 5Gi ephemeral storage
+ 
+You can overwrite these values by specifying the annotation `gke-gcsfuse/[cpu-limit|memory-limit|ephemeral-storage-limit]`. For example:
 
 ```yaml
 apiVersion: v1
@@ -104,12 +124,13 @@ metadata:
     gke-gcsfuse/memory-limit: 100Mi # optional
     gke-gcsfuse/ephemeral-storage-limit: 50Gi # optional
 ```
+Use the following considerations when deciding the amount of resources to allocate:
 
-For the CPU limit, you may want to allocate more CPU resource to the sidecar container if your workload requires high throughput. See [Cloud Storage FUSE Performance Benchmarks](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/benchmarks.md) for more details.
+* For the CPU limit, you may want to allocate more CPU resource to the sidecar container if your workload requires high throughput. See [Cloud Storage FUSE Performance Benchmarks](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/benchmarks.md) for more details.
 
-For the memory limit, since Cloud Storage FUSE consumes memory for object meta data caching, when the workloads need to process a large amount of files, it is required to increase the sidecar container memory allocation. Note that the memory consumption is proportional to the file number but not file size, as Cloud Storage FUSE currently does not cache the file content. You also have options to tune the caching behavior, see the [Cloud Storage FUSE caching documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#caching) for more details. 
+* For the memory limit, since Cloud Storage FUSE consumes memory for object meta data caching, when the workloads need to process a large amount of files, it is required to increase the sidecar container memory allocation. Note that the memory consumption is proportional to the file number but not file size, as Cloud Storage FUSE currently does not cache the file content. You also have options to tune the caching behavior, see the [Cloud Storage FUSE caching documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#caching) for more details. 
 
-For the ephemeral storage limit, as Cloud Storage FUSE will stage files in a local temporary directory when write operation happens, you need to estimate how much free space needed to handle staged content when writing large files, and increase the sidecar container ephemeral storage limit accordingly. See [Cloud Storage FUSE documentation](https://github.com/GoogleCloudPlatform/gcsfuse#downloading-object-contents) for more details.
+* For the ephemeral storage limit, as Cloud Storage FUSE will stage files in a local temporary directory when write operation happens, you need to estimate how much free space needed to handle staged content when writing large files, and increase the sidecar container ephemeral storage limit accordingly. See [Cloud Storage FUSE documentation](https://github.com/GoogleCloudPlatform/gcsfuse#downloading-object-contents) for more details.
 
 > Note: The sidecar container resource configuration may be overridden on Autopilot clusters. See [Resource requests in Autopilot](https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-resource-requests) for more details.
 
@@ -146,7 +167,7 @@ containers:
     name: gke-gcsfuse-tmp
 ```
 
-### Using CSI Ephemeral Inline volumes
+### Provision your volume as a CSI ephemeral volume
 
 By using the CSI Ephemeral Inline volumes, the lifecycle of volumes backed by Cloud Storage buckets is tied with the Pod lifecycle. After the Pod termination, there is no need to maintain independent PV/PVC objects to represent Cloud Storage backed volumes.
 
@@ -197,7 +218,7 @@ spec:
         mountOptions: "uid=1001,gid=3003,debug_fuse" # optional
 ```
 
-### Using a PersistentVolumeClaim bound to the PersistentVolume
+### Provision your volume using static provisioning
 
 There are two ways to bind a `PersistentVolumeClaim` to a specific `PersistentVolume`.
 
@@ -307,7 +328,6 @@ The following flags are disallowed to be passed to the Cloud Storage FUSE binary
 - key-file
 - token-url
 - reuse-token-from-url
-- endpoint
 
 All the other flags defined in the [Cloud Storage FUSE flags file](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/flags.go) are allowed. You can pass the flags via `spec.mountOptions` on a `PersistentVolume` manifest, or `spec.volumes[n].csi.volumeAttributes.mountOptions` if you are using the CSI Ephemeral Inline volumes.
 
@@ -408,12 +428,3 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = ResourceExhausted desc = the sidecar container failed with error: signal: killed`
 
   The gcsfuse process was killed by cgroup. This is typically caused by OOM. Please consider increasing the sidecar container memory limit by using the annotation `gke-gcsfuse/memory-limit`.
-
-## Limitations
-
-Since the Cloud Storage FUSE CSI driver relies on Cloud Storage FUSE to mount buckets, the limitation of the FUSE driver is inherited. See Cloud Storage FUSE documentation [Key differences from a POSIX file system](https://cloud.google.com/storage/docs/gcs-fuse#expandable-1) for more details.
-
-Currently, the Cloud Storage FUSE CSI driver is not supported on the following features:
-
-  - [GKE Sandbox](https://cloud.google.com/kubernetes-engine/docs/concepts/sandbox-pods)
-  - [Arm workloads on GKE](https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke)
