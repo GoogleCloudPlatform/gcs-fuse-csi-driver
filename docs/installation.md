@@ -1,18 +1,18 @@
 # Cloud Storage FUSE CSI Driver Installation
 
 ## Prerequisites
-- Clone the repo by running the following command
+- Clone the repo by running the following command.
   ```bash
   git clone https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver.git
   cd gcs-fuse-csi-driver
   ```
-- Install `jq` utility
+- Install `jq` utility.
   ```bash
   sudo apt-get update
   sudo apt-get install jq
   ```
-- A standard GKE cluster. Autopilot clusters are not supported for now.
-- [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) is enabled on the cluster.
+- Install Kustomize by following the [official Kustomize documentation](https://kubectl.docs.kubernetes.io/installation/kustomize/).
+- Create a standard GKE cluster with [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) enabled. Autopilot clusters are not supported for manual installation.
 - Run the following commands to create a GKE cluster with Workload Identity enabled.
   ```bash
   CLUSTER_PROJECT_ID=<cluster-project-id>
@@ -26,6 +26,13 @@
   CLUSTER_NAME=<cluster-name>
   gcloud container clusters update ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
   gcloud container clusters get-credentials ${CLUSTER_NAME}
+  ```
+- Run the following command to ensure the kubectl context is set up correctly.
+  ```bash
+  kubectl config set-context ${CLUSTER_NAME} --cluster=${CLUSTER_NAME}
+
+  # check the current context
+  kubectl config current-context
   ```
 
 ## Install

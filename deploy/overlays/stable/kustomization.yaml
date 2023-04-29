@@ -28,3 +28,9 @@ patches:
     kind: CSIDriver
     name: gcsfuse.csi.storage.gke.io
     version: v1
+- path: caBundle_patch_MutatingWebhookConfiguration.json
+  target:
+    group: admissionregistration.k8s.io
+    kind: MutatingWebhookConfiguration
+    name: gcsfuse-sidecar-injector.csi.storage.gke.io
+    version: v1
