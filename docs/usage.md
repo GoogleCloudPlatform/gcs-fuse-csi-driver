@@ -385,7 +385,7 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
   After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
 
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Unauthenticated desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = PermissionDenied desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
    
   Please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
 
@@ -397,13 +397,17 @@ See the documentation [Example Applications](../examples/README.md) for more exa
    
   The Cloud Storage bucket name is invalid. Make sure the Cloud Storage bucket is created, and the Cloud Storage bucket name is specified correctly.
 
-- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = InvalidArgument desc = failed to find the sidecar container in Pod spec`
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = FailedPrecondition desc = failed to find the sidecar container in Pod spec`
    
   The Cloud Storage FUSE sidecar container was not injected. Please check the Pod annotation `gke-gcsfuse/volumes: "true"` is set correctly.
 
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = InvalidArgument desc = the sidecar container failed with error: Incorrect Usage. flag provided but not defined: -xxx`
 
   Invalid mount flags are passed to Cloud Storage FUSE. Please check [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+
+- Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = ResourceExhausted desc = the sidecar container failed with error: signal: killed`
+
+  The gcsfuse process was killed by cgroup. This is typically caused by OOM. Please consider increasing the sidecar container memory limit by using the annotation `gke-gcsfuse/memory-limit`.
 
 ## Limitations
 
