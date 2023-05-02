@@ -45,17 +45,17 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
     # Specify a proper IAM role for Cloud Storage.
     STORAGE_ROLE=<cloud-storage-role>
     
-    # Choose "[2] None" for binding condition if you want to apply the permissions to all the Cloud Storage buckets in the project.
+    # Run the following command if you want to apply the permissions to all the Cloud Storage buckets in the project.
+    # Choose "[2] None" for the binding condition.
     gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
         --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
         --role "${STORAGE_ROLE}"
 
     # Optionally, run the following command if you only want to apply permissions to a specific bucket.
     BUCKET_NAME=<gcs-bucket-name>
-    gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
+    gcloud storage buckets add-iam-policy-binding gs://$BUCKET_NAME \
         --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
-        --role "${STORAGE_ROLE}" \
-        --condition="expression=resource.name.startsWith(\"projects/_/buckets/$BUCKET_NAME\"),title=access-to-$BUCKET_NAME"
+        --role "${STORAGE_ROLE}"
     ```
 
 3. Create a Kubernetes Service Account.
