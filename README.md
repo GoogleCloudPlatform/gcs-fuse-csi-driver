@@ -42,6 +42,14 @@ Status: Public Preview
 ## Development and Contribution
 Refer to the [Cloud Storage FUSE CSI Driver Development Guide](./docs/development.md).
 
+## Attribution
+
+This project is inspired by the following open source projects:
+
+- [Google Cloud Filestore CSI Driver](https://github.com/kubernetes-sigs/gcp-filestore-csi-driver) by the Kubernetes authors
+- [Azure Blob Storage CSI Driver](https://github.com/kubernetes-sigs/blob-csi-driver) by the Kubernetes authors
+- [Kubernetes CSI driver for Google Cloud Storage](https://github.com/ofek/csi-gcs) by [Ofek Lev](https://github.com/ofek)
+
 ## References
 
 - [Kubernetes CSI Documentation](https://kubernetes-csi.github.io/docs/)

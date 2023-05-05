@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-# Copyright 2015 Google LLC
+# Copyright 2015 The Kubernetes Authors.
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -126,8 +127,6 @@ def file_passes(filename, refs, regexs):
         p = regexs["date"]
         for i, d in enumerate(data):
             (data[i], found) = p.subn('YEAR', d)
-            if found != 0:
-                break
 
     # if we don't match the reference at this point, fail
     if ref != data:
