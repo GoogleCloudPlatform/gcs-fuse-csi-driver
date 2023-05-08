@@ -2,6 +2,8 @@
 
 > WARNING: This documentation describes how to manually install the driver to your GKE clusters. The manual installation should only be used for test purposes. To get official support from Google, users should use GKE to automatically deploy and manage the CSI driver as an add-on feature. See the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver).
 
+> NOTE: The manual installation only works on GKE Standard clusters. To enable the CSI driver on GKE Autopilot clusters, see the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver).
+
 ## Prerequisites
 - Clone the repo by running the following command.
   ```bash
