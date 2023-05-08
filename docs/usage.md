@@ -29,31 +29,35 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
 1. Create a GCP Service Account
 
    ```bash
-    # The ID of the project where your Cloud Storage bucket lives.
+    # Cloud Storage bucket project ID.
     GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
-    # The name of the GCP service account. The service account should be in the Cloud Storage bucket project.
+    # GCP service account name.
     GCP_SA_NAME=<gcp-service-account-name>
-    # The ID of the project where your GKE cluster lives.
-    CLUSTER_PROJECT_ID=<cluster-project-id>
-    
+    # Create a GCP service account in the Cloud Storage bucket project.
     gcloud iam service-accounts create ${GCP_SA_NAME} --project=${GCS_BUCKET_PROJECT_ID}
     ```
 
-2. Grant the Cloud Storage permissions to the GCP Service Account. Select a proper IAM role according to the doc [IAM roles for Cloud Storage](https://cloud.google.com/storage/docs/access-control/iam-roles).
+2. Grant the Cloud Storage permissions to the GCP Service Account.
+
+   The CSI driver requires `storage.objects.list` and `storage.buckets.get` permissions to successfully mount Cloud Storage buckets. Select proper IAM role according to the doc [IAM roles for Cloud Storage](https://cloud.google.com/storage/docs/access-control/iam-roles) that are associated with proper permissions. Here are some recommendations for the IAM role selection:
+   
+   - For read-only workloads: `roles/storage.insightsCollectorService` and `roles/storage.objectViewer`.
+   - For read-write workloads: `roles/storage.insightsCollectorService` and `roles/storage.objectAdmin`.
+   - Note that the following commands can be used multiple times to add IAM policy bindings for different roles to one Cloud Storage bucket or project.
     
     ```bash
     # Specify a proper IAM role for Cloud Storage.
     STORAGE_ROLE=<cloud-storage-role>
     
-    # Run the following command if you want to apply the permissions to all the Cloud Storage buckets in the project.
-    # Choose "[2] None" for the binding condition.
-    gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
+    # Run the following command to apply permissions to a specific bucket.
+    BUCKET_NAME=<gcs-bucket-name>
+    gcloud storage buckets add-iam-policy-binding gs://$BUCKET_NAME \
         --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
         --role "${STORAGE_ROLE}"
 
-    # Optionally, run the following command if you only want to apply permissions to a specific bucket.
-    BUCKET_NAME=<gcs-bucket-name>
-    gcloud storage buckets add-iam-policy-binding gs://$BUCKET_NAME \
+    # Optionally, run the following command if you want to apply the permissions to all the Cloud Storage buckets in the project.
+    # Choose "[2] None" for the binding condition.
+    gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
         --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
         --role "${STORAGE_ROLE}"
     ```
@@ -61,11 +65,11 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
 3. Create a Kubernetes Service Account.
     
     ```bash
-    # a new Kubernetes namespace
+    # Kubernetes namespace where your workload runs.
     K8S_NAMESPACE=<k8s-namespace>
-    # Kubernetes SA name
+    # Kubernetes service account name.
     K8S_SA_NAME=<k8s-sa-name>
-
+    # Create a Kubernetes namespace and a service account.
     kubectl create namespace ${K8S_NAMESPACE}
     kubectl create serviceaccount ${K8S_SA_NAME} --namespace ${K8S_NAMESPACE}
     ```
@@ -75,6 +79,9 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
 4. Bind the the Kubernetes Service Account with the GCP Service Account.
     
     ```bash
+    # GKE cluster project ID.
+    CLUSTER_PROJECT_ID=<cluster-project-id>
+    
     gcloud iam service-accounts add-iam-policy-binding ${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com \
         --role roles/iam.workloadIdentityUser \
         --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[${K8S_NAMESPACE}/${K8S_SA_NAME}]"
@@ -134,7 +141,7 @@ Use the following considerations when deciding the amount of resources to alloca
 
 > Note: The sidecar container resource configuration may be overridden on Autopilot clusters. See [Resource requests in Autopilot](https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-resource-requests) for more details.
 
-> Note: You need to put the annotations under Pod `metadata` field. If the volumes are consumed by other Kubernetes workload type, for instance, [Job](https://kubernetes.io/docs/concepts/workloads/controllers/job/) or [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), please make sure the annotations are configured under `spec.template.metadata` field.
+> Note: You need to put the annotations under Pod `metadata` field. If the volumes are consumed by other Kubernetes workload types (for instance, [Job](https://kubernetes.io/docs/concepts/workloads/controllers/job/), [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), or [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)), please make sure the annotations are configured under the `spec.template.metadata.annotations` field.
 
 After your workload Pod is scheduled successfully, you should see the following container is injected into your workload Pod spec.
 
@@ -201,8 +208,10 @@ spec:
     runAsGroup: 2002
     fsGroup: 3003
   containers:
-  - image: nginx
-    name: nginx
+  - image: busybox
+    name: busybox
+    command: ["sleep"]
+    args: ["infinity"]
     volumeMounts:
     - name: gcs-fuse-csi-ephemeral
       mountPath: /data
@@ -215,7 +224,7 @@ spec:
       readOnly: true # optional, if all the volume mounts are read-only
       volumeAttributes:
         bucketName: my-bucket-name
-        mountOptions: "uid=1001,gid=3003,debug_fuse" # optional
+        mountOptions: "implicit-dirs,uid=1001,gid=3003" # optional
 ```
 
 ### Provision your volume using static provisioning
@@ -251,9 +260,9 @@ The Cloud Storage FUSE CSI Driver supports `ReadWriteOnce`, `ReadOnlyMany`, and 
         namespace: my_namespace
         name: gcs-fuse-csi-static-pvc
       mountOptions: # optional
+        - implicit-dirs
         - uid=1001
         - gid=3003
-        - debug_fuse
       csi:
         driver: gcsfuse.csi.storage.gke.io
         volumeHandle: my-bucket-name
@@ -300,8 +309,10 @@ The Cloud Storage FUSE CSI Driver supports `ReadWriteOnce`, `ReadOnlyMany`, and 
         runAsGroup: 2002
         fsGroup: 3003
       containers:
-      - image: nginx
-        name: nginx
+      - image: busybox
+        name: busybox
+        command: ["sleep"]
+        args: ["infinity"]
         volumeMounts:
         - name: gcs-fuse-csi-static
           mountPath: /data
@@ -328,17 +339,19 @@ The following flags are disallowed to be passed to the Cloud Storage FUSE binary
 - key-file
 - token-url
 - reuse-token-from-url
+- o
 
-All the other flags defined in the [Cloud Storage FUSE flags file](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/flags.go) are allowed. You can pass the flags via `spec.mountOptions` on a `PersistentVolume` manifest, or `spec.volumes[n].csi.volumeAttributes.mountOptions` if you are using the CSI Ephemeral Inline volumes.
+> Note: Passing flags via `-o` to Cloud Storage FUSE is not allowed. For read-only volumes, please follow the instructions above to configure the `readOnly` field.
+
+All the other flags defined in the [Cloud Storage FUSE documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/mounting.md#full-list-of-mount-options) are allowed. You can pass the flags via `spec.mountOptions` on a `PersistentVolume` manifest, or `spec.volumes[n].csi.volumeAttributes.mountOptions` if you are using the CSI Ephemeral Inline volumes.
 
 Specifically, you may consider passing the following flags as needed:
 
 - To use an existing directory, simulated by a "/" prefix, that was not originally created by Cloud Storage FUSE, pass the `implicit-dirs` flag. Otherwise, you will need to explicitly create the directory using `mkdir` before you see it in the local filesystem. See the Files and Directories section under the [Semantics documentation](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#implicit-directories) for more details.
 - If you are using a [Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) for your Pod or container to use a non-root user and fsGroup, or your container image uses a non-root user and fsGroup, you will need to pass the uid and gid to Cloud Storage FUSE using the flag `uid` and `gid`.
 - If you only want to mount a directory in the bucket instead of the entire bucket, pass the directory relative path via the flag `only-dir=relative/path/to/the/bucket/root`.
+- To tune Cloud Storage FUSE caching behavior, refer to [Caching](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/semantics.md#caching) in the Cloud Storage FUSE GitHub documentation.
 - If you need to troubleshoot Cloud Storage FUSE issues, pass the flags `debug_fuse`, `debug_fs`, and `debug_gcs`.
-
-> Note: Passing flags via `-o` to Cloud Storage FUSE is not allowed. For read-only volumes, please follow the instructions above to configure the `readOnly` field.
 
 ## Workload Examples
 
@@ -393,21 +406,31 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 ## Common Issues
 
+### I/O errors in your workloads
+
 - Error `Transport endpoint is not connected` in workload Pods.
   
   This error is due to Cloud Storage FUSE termination. In most cases, Cloud Storage FUSE was terminated because of OOM. Please use the Pod annotations `gke-gcsfuse/[cpu-limit|memory-limit|ephemeral-storage-limit]` to allocate more resources to Cloud Storage FUSE (the sidecar container). Note that the only way to fix this error is to restart your workload Pod.
 
 - Error `Permission denied` in workload Pods.
   
-  Cloud Storage FUSE does not have permission to access the file system. Please double check your container user and fsGroup. Make sure you pass `uid` and `gid` flags correctly. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+  Cloud Storage FUSE does not have permission to access the file system.
+  
+  Please double check your container user and fsGroup. Make sure you pass `uid` and `gid` flags correctly. See [Cloud Storage FUSE Mount Flags](#cloud-storage-fuse-mount-flags) for more details.
+  
+  Please double check your service account setup. See [Set up access to Cloud Storage buckets via GKE Workload Identity](#set-up-access-to-cloud-storage-buckets-via-gke-workload-identity) for more details.
+
+### Pod event warnings
+
+If your workload Pods cannot start up, please run `kubectl describe pod <your-pod-name> -n <your-namespace>` to check the Pod events. Find the troubleshooting guide below according to the Pod event.
 
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Unauthenticated desc = failed to prepare storage service: storage service manager failed to setup service: timed out waiting for the condition`
 
-  After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
+  After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account in the same namespace.
 
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = PermissionDenied desc = failed to get GCS bucket "xxx": googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource (or it may not exist)., forbidden`
    
-  Please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account.
+  Please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account in the same namespace.
 
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = NotFound desc = failed to get GCS bucket "xxx": storage: bucket doesn't exist`
    
@@ -427,4 +450,8 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = ResourceExhausted desc = the sidecar container failed with error: signal: killed`
 
-  The gcsfuse process was killed by cgroup. This is typically caused by OOM. Please consider increasing the sidecar container memory limit by using the annotation `gke-gcsfuse/memory-limit`.
+  The gcsfuse process was killed, which is usually caused by OOM. Please consider increasing the sidecar container memory limit by using the annotation `gke-gcsfuse/memory-limit`.
+
+- Other Pod event warnings: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = xxx` or `UnmountVolume.TearDown failed for volume "xxx" : rpc error: code = Internal desc = xxx`
+  
+  If you see other Pod events that are not listed above, please create a [new issue](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/new). Please include your workload information as detailed as possible, and the Pod event warning.
