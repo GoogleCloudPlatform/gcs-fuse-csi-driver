@@ -424,6 +424,10 @@ See the documentation [Example Applications](../examples/README.md) for more exa
 
 If your workload Pods cannot start up, please run `kubectl describe pod <your-pod-name> -n <your-namespace>` to check the Pod events. Find the troubleshooting guide below according to the Pod event.
 
+- Pod event warning: `MountVolume.MountDevice failed for volume "xxx" : kubernetes.io/csi: attacher.MountDevice failed to create newCsiDriverClient: driver name gcsfuse.csi.storage.gke.io not found in the list of registered CSI drivers`, or Pod event warning: `MountVolume.SetUp failed for volume "xxx" : kubernetes.io/csi: mounter.SetUpAt failed to get CSI client: driver name gcsfuse.csi.storage.gke.io not found in the list of registered CSI drivers`
+
+  This warning indicates that the CSI driver is not enabled, or the CSI driver is not up and running. Please double check if the CSI driver is enabled on your cluster. See [Enable the CSI driver](#enable-the-csi-driver) for details. If the CSI is enabled, on each node you should see a Pod called `gcsfusecsi-node-xxxxx` up and running. If the cluster was just scaled, updated, or upgraded, this warning is normal and should be transient because it takes a few minutes for the CSI driver Pods to be functional after the cluster operations.
+
 - Pod event warning: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Unauthenticated desc = failed to prepare storage service: storage service manager failed to setup service: timed out waiting for the condition`
 
   After you follow the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to configure the Kubernetes service account, it usually takes a few minutes for the credentials being propagated. Whenever the credentials are propagated into the Kubernetes cluster, this warning will disappear, and your Pod scheduling should continue. If you still see this warning after 5 minutes, please double check the [service account setup steps](#set-up-access-to-gcs-buckets-via-gke-workload-identity) to make sure your Kubernetes service account is set up correctly. Make sure your workload Pod is using the Kubernetes service account in the same namespace.
@@ -454,4 +458,4 @@ If your workload Pods cannot start up, please run `kubectl describe pod <your-po
 
 - Other Pod event warnings: `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = xxx` or `UnmountVolume.TearDown failed for volume "xxx" : rpc error: code = Internal desc = xxx`
   
-  If you see other Pod events that are not listed above, please create a [new issue](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/new). Please include your workload information as detailed as possible, and the Pod event warning.
+  Warnings that are not listed above and include a rpc error code `Internal` mean that other unexpected issues occurred in the CSI driver, please create a [new issue](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/new) on the GitHub project page. Please include your workload information as detailed as possible, and the Pod event warning in the issue.
