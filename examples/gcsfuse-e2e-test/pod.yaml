@@ -44,7 +44,7 @@ spec:
         go version;
         echo "Cloning the gcsfuse repo...";
         git clone https://github.com/GoogleCloudPlatform/gcsfuse.git;
-        cd gcsfuse/tools/integration_tests/implicitdir;
+        cd gcsfuse/tools/integration_tests/operations;
         echo "Running the gcsfuse e2e test...";
         GODEBUG="asyncpreemptoff=1" go test -v --mountedDirectory="/gcs" > /output.log;
         echo "Copying gcsfuse E2E test result...";
