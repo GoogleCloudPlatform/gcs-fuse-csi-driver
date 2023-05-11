@@ -37,7 +37,7 @@ func initTestController(t *testing.T) csi.ControllerServer {
 	t.Helper()
 	driver := initTestDriver(t, nil)
 
-	return newControllerServer(driver, driver.config.StorageServiceManager, nil)
+	return newControllerServer(driver, driver.config.StorageServiceManager)
 }
 
 func TestCreateVolume(t *testing.T) {

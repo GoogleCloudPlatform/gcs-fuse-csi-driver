@@ -24,7 +24,6 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -41,7 +40,6 @@ type GCSDriverConfig struct {
 	RunNode               bool   // Run CSI node service
 	StorageServiceManager storage.ServiceManager
 	TokenManager          auth.TokenManager
-	Metrics               *metrics.Manager
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
 	SidecarImage          string
@@ -100,7 +98,7 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 		driver.addControllerServiceCapabilities(csc)
 
 		// Configure controller server
-		driver.cs = newControllerServer(driver, config.StorageServiceManager, config.Metrics)
+		driver.cs = newControllerServer(driver, config.StorageServiceManager)
 	}
 
 	return driver, nil

@@ -23,7 +23,6 @@ import (
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
@@ -57,15 +56,13 @@ type controllerServer struct {
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
 	volumeLocks           *util.VolumeLocks
-	metricsManager        *metrics.Manager
 }
 
-func newControllerServer(driver *GCSDriver, storageServiceManager storage.ServiceManager, metricsManager *metrics.Manager) csi.ControllerServer {
+func newControllerServer(driver *GCSDriver, storageServiceManager storage.ServiceManager) csi.ControllerServer {
 	return &controllerServer{
 		driver:                driver,
 		storageServiceManager: storageServiceManager,
 		volumeLocks:           util.NewVolumeLocks(),
-		metricsManager:        metricsManager,
 	}
 }
 
