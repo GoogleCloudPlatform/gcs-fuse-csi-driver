@@ -19,7 +19,6 @@ require (
 	k8s.io/api v0.26.4
 	k8s.io/apimachinery v0.26.4
 	k8s.io/client-go v0.26.4
-	k8s.io/component-base v0.26.4
 	k8s.io/klog/v2 v2.90.1
 	k8s.io/kubernetes v1.26.4
 	k8s.io/mount-utils v0.26.4
@@ -108,6 +107,7 @@ require (
 	k8s.io/apiextensions-apiserver v0.26.4 // indirect
 	k8s.io/apiserver v0.26.4 // indirect
 	k8s.io/cloud-provider v0.26.4 // indirect
+	k8s.io/component-base v0.26.4 // indirect
 	k8s.io/component-helpers v0.26.4 // indirect
 	k8s.io/csi-translation-lib v0.26.4 // indirect
 	k8s.io/kube-openapi v0.0.0-20221012153701-172d655c2280 // indirect

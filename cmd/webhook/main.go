@@ -21,7 +21,6 @@ import (
 	"flag"
 	"net/http"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -41,8 +40,6 @@ var (
 	memoryLimit            = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
 	ephemeralStorageLimit  = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImage           = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
-	httpEndpoint           = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
-	metricsPath            = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -53,14 +50,6 @@ func main() {
 	flag.Parse()
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", version, *sidecarImage)
-
-	if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
-		mm := metrics.NewMetricsManager()
-		mm.InitializeHTTPHandler(*httpEndpoint, *metricsPath)
-		if err := mm.EmitGKEComponentVersion(); err != nil {
-			klog.Fatalf("Failed to emit GKE component version: %v", err)
-		}
-	}
 
 	// Load webhook config
 	c, err := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
