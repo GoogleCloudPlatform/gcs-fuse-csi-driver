@@ -32,6 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/utils/pointer"
+
+	// TODO(songjiaxun): Try to remove usage from  k8s.io/kubernetes.
+	//  From https://github.com/kubernetes/kubernetes/#to-start-using-k8s, Use of the k8s.io/kubernetes module or k8s.io/kubernetes/... packages as libraries is not supported.
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
@@ -40,7 +44,6 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
-	"k8s.io/utils/pointer"
 )
 
 const (
