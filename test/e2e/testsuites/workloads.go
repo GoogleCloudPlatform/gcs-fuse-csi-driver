@@ -22,6 +22,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
+	v1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -115,6 +116,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetRestartPolicy(v1.RestartPolicyNever)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 		tPod.SetCommand("touch /mnt/test/test_file && echo $(date) >> /mnt/test/test_file && cat /mnt/test/test_file")
 
