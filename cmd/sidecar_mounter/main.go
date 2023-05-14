@@ -124,7 +124,7 @@ func main() {
 		for {
 			<-ticker.C
 			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
-				klog.Infof("all the other containers exited in the Job Pod, exiting the sidecar container. Sleep %v seconds before terminating gcsfuse processes.", *gracePeriod)
+				klog.Infof("all the other containers terminated in the Pod, exiting the sidecar container. Sleep %v seconds before terminating gcsfuse processes.", *gracePeriod)
 				time.Sleep(time.Duration(*gracePeriod) * time.Second)
 
 				for _, cmd := range mounter.GetCmds() {

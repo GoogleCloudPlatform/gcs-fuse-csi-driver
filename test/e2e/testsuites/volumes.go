@@ -22,6 +22,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
+	v1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -186,6 +187,41 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the first pod command exits with no error")
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+
+		ginkgo.By("Deleting the first pod")
+		tPod1.Cleanup()
+
+		ginkgo.By("Configuring the second pod")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Deploying the second pod")
+		tPod2.Create()
+		defer tPod2.Cleanup()
+
+		ginkgo.By("Checking that the second pod is running")
+		tPod2.WaitForRunning()
+
+		ginkgo.By("Checking that the second pod command exits with no error")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+	})
+
+	ginkgo.It("should store data and retain the data when Pod RestartPolicy is Never", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the first pod")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetRestartPolicy(v1.RestartPolicyNever)
+		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod1.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+
+		ginkgo.By("Deploying the first pod")
+		tPod1.Create()
+
+		ginkgo.By("Checking that the first pod is running")
+		tPod1.WaitFoSuccess()
 
 		ginkgo.By("Deleting the first pod")
 		tPod1.Cleanup()

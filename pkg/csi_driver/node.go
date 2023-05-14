@@ -32,6 +32,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
@@ -164,9 +165,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	//Check if the Pod RestartPolicy is Never
+	podRestartPolicyIsNever := pod.Spec.RestartPolicy == v1.RestartPolicyNever
+
 	// Check if all the containers besides the sidecar container exited
 	sidecarShouldExit := true
-	if isOwnedByJob {
+	if isOwnedByJob || podRestartPolicyIsNever {
 		for _, cs := range pod.Status.ContainerStatuses {
 			if cs.Name != webhook.SidecarContainerName && cs.State.Terminated == nil {
 				sidecarShouldExit = false
@@ -183,8 +187,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Put an exit file to notify the sidecar container to exit
-	if isOwnedByJob && sidecarShouldExit {
-		klog.V(4).Info("all the other containers exited in the Job Pod, put the exit file.")
+	if (isOwnedByJob || podRestartPolicyIsNever) && sidecarShouldExit {
+		klog.V(4).Info("all the other containers terminated in the Pod, put the exit file.")
 		exitFilePath := filepath.Dir(emptyDirBasePath) + "/exit"
 		f, err := os.Create(exitFilePath)
 		if err != nil {

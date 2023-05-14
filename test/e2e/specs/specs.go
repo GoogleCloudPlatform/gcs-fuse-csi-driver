@@ -107,7 +107,7 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 						},
 					},
 				},
-				RestartPolicy:                v1.RestartPolicyNever,
+				RestartPolicy:                v1.RestartPolicyAlways,
 				Volumes:                      make([]v1.Volume, 0),
 				AutomountServiceAccountToken: pointer.Bool(false),
 				Tolerations: []v1.Toleration{
@@ -146,6 +146,11 @@ func (t *TestPod) WaitForRunning() {
 	framework.ExpectNoError(err)
 
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(context.TODO(), t.pod.Name, metav1.GetOptions{})
+	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) WaitFoSuccess() {
+	err := e2epod.WaitForPodSuccessInNamespace(t.client, t.pod.Name, t.pod.Namespace)
 	framework.ExpectNoError(err)
 }
 
@@ -229,6 +234,10 @@ func (t *TestPod) SetCommand(cmd string) {
 
 func (t *TestPod) SetPod(pod *v1.Pod) {
 	t.pod = pod
+}
+
+func (t *TestPod) SetRestartPolicy(rp v1.RestartPolicy) {
+	t.pod.Spec.RestartPolicy = rp
 }
 
 func (t *TestPod) Cleanup() {
