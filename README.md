@@ -35,6 +35,7 @@ Status: Public Preview
 | Cloud Storage FUSE CSI Driver Version                                                    | Cloud Storage FUSE Version                                                     | Supported GKE Kubernetes Version |
 | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------- |
 | [v0.1.2](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v0.1.2) | [v0.42.3](https://github.com/GoogleCloudPlatform/gcsfuse/releases/tag/v0.42.3) | 1.26.3-gke.400 or later          |
+| [v0.1.3](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v0.1.3) | [v0.42.4](https://github.com/GoogleCloudPlatform/gcsfuse/releases/tag/v0.42.4) | 1.26.3-gke.400 or later          |
 
 ## Get Started
 - [Cloud Storage FUSE CSI Driver Installation](./docs/installation.md)

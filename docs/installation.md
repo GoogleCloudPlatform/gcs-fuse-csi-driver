@@ -40,10 +40,10 @@
   ```
 
 ## Install
-- Run the following command to install the latest driver with version `v0.1.2`. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
+- Run the following command to install the latest driver with version `v0.1.3`. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
   ```bash
   # Replace <cluster-project-id> with your cluster project ID.
-  make install STAGINGVERSION=v0.1.2 PROJECT=<cluster-project-id>
+  make install STAGINGVERSION=v0.1.3 PROJECT=<cluster-project-id>
   ```
 
 - If you would like to build your own images, follow the [Cloud Storage FUSE CSI Driver Development Guide](development.md) to build and push the images. Run the following command to install the driver.
