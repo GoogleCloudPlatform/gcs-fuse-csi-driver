@@ -107,7 +107,7 @@ The Cloud Storage FUSE CSI driver allows developers to use standard Kubernetes A
 1. [Static Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#static) using a PersistentVolumeClaim bound to the PersistentVolume
 2. Using [CSI Ephemeral Inline volumes](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#csi-ephemeral-volumes)
 
-The Cloud Storage FUSE CSI driver natively supports the above volume configuration methods. Currently, the [Dynamic Provisioning](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#dynamic) is not officially supported.
+The Cloud Storage FUSE CSI driver natively supports the above volume configuration methods. Currently, the driver does not support [Dynamic Volume Provisioning](https://kubernetes.io/docs/concepts/storage/dynamic-provisioning/).
 
 ### Prepare to mount Cloud Storage FUSE buckets
 
