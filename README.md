@@ -15,6 +15,8 @@ The driver natively supports the following ways for you to provision your Cloud 
 
 * **Static provisioning**: You create a PersistentVolume resource that refers to the Cloud Storage buckets bucket. Your client Pod can then reference a PersistentVolumeClaim that is bound to this PersistentVolume. To learn more about this workflow, see [Configure a Pod to Use a PersistentVolume for Storage](https://kubernetes.io/docs/tasks/configure-pod-container/configure-persistent-volume-storage/).
 
+Currently, the driver does not support [Dynamic Volume Provisioning](https://kubernetes.io/docs/concepts/storage/dynamic-provisioning/).
+
 ### Benefits
 
 * The Cloud Storage FUSE CSI driver on your cluster turns on automatic deployment and management of the driver. The driver works on both GKE Standard and Autopilot clusters. To leverage this benefit, you need to use GKE to automatically deploy and manage the CSI driver as a add-on feature. See the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver).
