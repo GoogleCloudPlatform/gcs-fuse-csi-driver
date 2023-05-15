@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
@@ -102,23 +101,8 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storageframework.PerTestConfig {
-	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(
-		n.meta.GetProjectID(),
-		fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), f.Namespace.Name, specs.K8sServiceAccountName),
-		"roles/storage.admin",
-		"",
-	)
-	testGCPProjectIAMPolicyBinding.Create()
-
 	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, "")
 	testK8sSA.Create()
-
-	testSecret := specs.NewTestSecret(f.ClientSet, f.Namespace, specs.K8sSecretName, map[string]string{
-		"projectID":               n.meta.GetProjectID(),
-		"serviceAccountName":      specs.K8sServiceAccountName,
-		"serviceAccountNamespace": f.Namespace.Name,
-	})
-	testSecret.Create()
 
 	config := &storageframework.PerTestConfig{
 		Driver:    n,
@@ -127,13 +111,11 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 
 	ginkgo.DeferCleanup(func() {
 		for _, v := range n.volumeStore {
-			n.deleteBucket(v.serviceAccountNamespace, v.bucketName)
+			n.deleteBucket(v.bucketName)
 		}
 		n.volumeStore = []*gcsVolume{}
 
-		testSecret.Cleanup()
 		testK8sSA.Cleanup()
-		testGCPProjectIAMPolicyBinding.Cleanup()
 	})
 
 	return config
@@ -251,6 +233,27 @@ func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfi
 }
 
 func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storageframework.PerTestConfig, _ string) *storagev1.StorageClass {
+	// Set up the GCP Project IAM Policy
+	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(
+		n.meta.GetProjectID(),
+		fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), config.Framework.Namespace.Name, specs.K8sServiceAccountName),
+		"roles/storage.admin",
+		"",
+	)
+	testGCPProjectIAMPolicyBinding.Create()
+
+	testSecret := specs.NewTestSecret(config.Framework.ClientSet, config.Framework.Namespace, specs.K8sSecretName, map[string]string{
+		"projectID":               n.meta.GetProjectID(),
+		"serviceAccountName":      specs.K8sServiceAccountName,
+		"serviceAccountNamespace": config.Framework.Namespace.Name,
+	})
+	testSecret.Create()
+
+	ginkgo.DeferCleanup(func() {
+		testSecret.Cleanup()
+		testGCPProjectIAMPolicyBinding.Cleanup()
+	})
+
 	parameters := map[string]string{
 		"csi.storage.k8s.io/provisioner-secret-name":      specs.K8sSecretName,
 		"csi.storage.k8s.io/provisioner-secret-namespace": "${pvc.namespace}",
@@ -277,12 +280,9 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 	}
 }
 
-// prepareStorageService prepares the GCS Storage Service using a given Kubernetes service account
-// There is an assumption that before this function is called, the Kubernetes service account is already created in the namespace.
-func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context, serviceAccountNamespace string) (storage.Service, error) {
-	tm := auth.NewTokenManager(n.meta, n.clientset)
-	ts := tm.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, specs.K8sServiceAccountName, "")
-	storageService, err := n.storageServiceManager.SetupService(ctx, ts)
+// prepareStorageService prepares the GCS Storage Service using the default GCP credentials.
+func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (storage.Service, error) {
+	storageService, err := n.storageServiceManager.SetupServiceWithDefaultCredential(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
@@ -293,7 +293,7 @@ func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context, servic
 // createBucket creates a GCS bucket.
 func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) string {
 	ctx := context.Background()
-	storageService, err := n.prepareStorageService(ctx, serviceAccountNamespace)
+	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
 	}
@@ -310,17 +310,24 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 		e2eframework.Failf("Failed to create a new GCS bucket: %v", err)
 	}
 
+	if err := storageService.SetIAMPolicy(ctx, bucket,
+		fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, specs.K8sServiceAccountName),
+		"roles/storage.admin",
+	); err != nil {
+		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
+	}
+
 	return bucket.Name
 }
 
 // deleteBucket deletes the GCS bucket.
-func (n *GCSFuseCSITestDriver) deleteBucket(serviceAccountNamespace, bucketName string) {
+func (n *GCSFuseCSITestDriver) deleteBucket(bucketName string) {
 	if bucketName == specs.InvalidVolume {
 		return
 	}
 
 	ctx := context.Background()
-	storageService, err := n.prepareStorageService(ctx, serviceAccountNamespace)
+	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
 	}

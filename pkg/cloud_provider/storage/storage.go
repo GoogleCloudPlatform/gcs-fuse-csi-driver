@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/iam"
 	"cloud.google.com/go/storage"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/iterator"
@@ -44,10 +45,12 @@ type Service interface {
 	CreateBucket(ctx context.Context, b *ServiceBucket) (*ServiceBucket, error)
 	GetBucket(ctx context.Context, b *ServiceBucket) (*ServiceBucket, error)
 	DeleteBucket(ctx context.Context, b *ServiceBucket) error
+	SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 }
 
 type ServiceManager interface {
 	SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error)
+	SetupServiceWithDefaultCredential(ctx context.Context) (Service, error)
 }
 
 type gcsService struct {
@@ -75,6 +78,15 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 
 	client := oauth2.NewClient(ctx, ts)
 	storageClient, err := storage.NewClient(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return nil, err
+	}
+
+	return &gcsService{storageClient: storageClient}, nil
+}
+
+func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.Context) (Service, error) {
+	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +161,21 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 	}
 
 	return nil, fmt.Errorf("failed to get bucket %q: got empty attrs", obj.Name)
+}
+
+func (service *gcsService) SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error {
+	bkt := service.storageClient.Bucket(obj.Name)
+	policy, err := bkt.IAM().Policy(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get bucket %q IAM policy: %w", obj.Name, err)
+	}
+
+	policy.Add(member, iam.RoleName(roleName))
+	if err := bkt.IAM().SetPolicy(ctx, policy); err != nil {
+		return fmt.Errorf("failed to set bucket %q IAM policy: %w", obj.Name, err)
+	}
+
+	return nil
 }
 
 func cloudBucketToServiceBucket(attrs *storage.BucketAttrs) (*ServiceBucket, error) {

@@ -36,6 +36,10 @@ func (manager *fakeServiceManager) SetupService(_ context.Context, _ oauth2.Toke
 	return &fakeService{sm: *manager}, nil
 }
 
+func (manager *fakeServiceManager) SetupServiceWithDefaultCredential(_ context.Context) (Service, error) {
+	return &fakeService{sm: *manager}, nil
+}
+
 func NewFakeServiceManager() ServiceManager {
 	return &fakeServiceManager{createdBuckets: map[string]*ServiceBucket{}}
 }
@@ -64,4 +68,8 @@ func (service *fakeService) GetBucket(_ context.Context, obj *ServiceBucket) (*S
 	}
 
 	return nil, storage.ErrBucketNotExist
+}
+
+func (service *fakeService) SetIAMPolicy(_ context.Context, _ *ServiceBucket, _, _ string) error {
+	return nil
 }
