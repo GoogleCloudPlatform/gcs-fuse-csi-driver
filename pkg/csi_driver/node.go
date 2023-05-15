@@ -165,7 +165,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	//Check if the Pod RestartPolicy is Never
 	podRestartPolicyIsNever := pod.Spec.RestartPolicy == v1.RestartPolicyNever
 
 	// Check if all the containers besides the sidecar container exited
