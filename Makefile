@@ -207,6 +207,9 @@ unit-test:
 sanity-test:
 	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
 
+e2e-test-ci: 
+	go build -mod=vendor -o bin/e2e-test-ci ./test/e2e
+
 e2e-test: init-ginkgo
 ifeq (${E2E_TEST_CREATE_CLUSTER}, true)
 	gcloud container clusters create ${E2E_TEST_CLUSTER_NAME} ${E2E_TEST_CREATE_CLUSTER_ARGS}
