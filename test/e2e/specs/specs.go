@@ -32,6 +32,9 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+
+	// TODO(songjiaxun): Try to remove usage from k8s.io/kubernetes if possible. This will make release-tools/go-get-kubernetes.sh script no longer necessary.
+	//  From https://github.com/kubernetes/kubernetes/#to-start-using-k8s, Use of the k8s.io/kubernetes module or k8s.io/kubernetes/... packages as libraries is not supported.
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
