@@ -29,10 +29,10 @@ import (
 
 var (
 	// Kubernetes cluster flags
-	gceRegion          = flag.String("gce-region", "", "region that gke regional cluster should be created in")
+	gceRegion          = flag.String("region", "", "region that gke regional cluster should be created in")
 	gkeClusterVer      = flag.String("gke-cluster-version", "", "version of Kubernetes master and node for gke")
 	gkeNodeVersion     = flag.String("gke-node-version", "", "GKE cluster worker node version")
-	numNodes           = flag.Int("num-nodes", 3, "the number of nodes in the test cluster")
+	numNodes           = flag.Int("number-nodes", 3, "the number of nodes in the test cluster")
 	gkeTestClusterName = flag.String("gke-cluster-name", "", "Name of test cluster")
 	useGKEAutopilot    = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
 
@@ -80,11 +80,6 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Set("logtostderr", "true")
 	flag.Parse()
-
-	// TODO(amacaskill): when does this happen? Its non managed pointing to custom cluster maybe?
-	// if !*inProw && *doDriverBuild {
-	// 	ensureVariable(stagingImage, true, "staging-image is a required flag, please specify the name of image to stage to")
-	// }
 
 	if *useGKEManagedDriver {
 		ensureFlag(doDriverBuild, false, "'do-driver-build' must be false when using GKE managed driver")
