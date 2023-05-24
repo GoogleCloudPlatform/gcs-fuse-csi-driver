@@ -53,14 +53,6 @@ var (
 	parallel = flag.Int("parallel", 4, "the number of parallel tests setting for ginkgo parallelism")
 )
 
-const (
-	pdImagePlaceholder        = "gke.gcr.io/gcp-compute-persistent-disk-csi-driver"
-	k8sInDockerBuildBinDir    = "_output/dockerized/bin/linux/amd64"
-	k8sOutOfDockerBuildBinDir = "_output/bin"
-	externalDriverNamespace   = "gce-pd-csi-driver"
-	managedDriverNamespace    = "kube-system"
-)
-
 type testParameters struct {
 	stagingVersion       string
 	goPath               string
@@ -134,7 +126,7 @@ func handle() error {
 		return fmt.Errorf("Could not find env variable GOPATH")
 	}
 	testParams.goPath = goPath
-	testParams.pkgDir = filepath.Join(goPath, "src", "sigs.k8s.io", "gcp-compute-persistent-disk-csi-driver")
+	testParams.pkgDir = filepath.Join(goPath, "src", "GoogleCloudPlatform", "gcs-fuse-csi-driver")
 
 	// If running in Prow, then acquire and set up a project through Boskos
 	if *inProw {
@@ -158,7 +150,7 @@ func handle() error {
 		}()
 		project = newproject
 		if *doDriverBuild {
-			*stagingImage = fmt.Sprintf("gcr.io/%s/gcp-persistent-disk-csi-driver", strings.TrimSpace(string(project)))
+			*stagingImage = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(string(project)))
 		}
 		if _, ok := os.LookupEnv("USER"); !ok {
 			err = os.Setenv("USER", "prow")
