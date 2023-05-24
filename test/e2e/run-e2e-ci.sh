@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-readonly PKGDIR=${GOPATH}/src/sigs.k8s.io/gcp-compute-persistent-disk-csi-driver
+readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
 
 readonly overlay_name="${GCS_FUSE_OVERLAY_NAME:-stable}"
 readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
