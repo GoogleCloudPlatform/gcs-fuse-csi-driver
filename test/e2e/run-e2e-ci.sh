@@ -13,7 +13,7 @@ readonly use_gke_managed_driver=${USE_GKE_MANAGED_DRIVER:-false}
 
 readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
 
-# Make e2e-test will initialize ginko. We can't use e2e-test to build / install the driver /overlays because the registry depends on the boskos project. 
+# Make e2e-test will initialize ginkgo. We can't use e2e-test to build / install the driver / overlays because the registry depends on the boskos project. 
 make -C "${PKGDIR}" init-ginkgo 
 
 make -C "${PKGDIR}" e2e-test-ci
@@ -21,13 +21,13 @@ make -C "${PKGDIR}" e2e-test-ci
 # Note that for all tests:
 # - a regional cluster will be created (GCS does not support zonal buckets)
 # - run-in-prow true
-# - image_type is cos_containerd
-# - num_nodes is 3  
+# - image-type is cos_containerd
+# - number-nodes is 3  
 base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --run-in-prow=true \
-            --image_type:cos_containerd --num-nodes=3 \
-            --gce-region=${gce_region} \
-            --use-gke-autopilot=${use_gke_autopilot} \ 
+            --image-type:cos_containerd --number-nodes=3 \
+            --region=${gce_region} \
+            --use-gke-autopilot=${use_gke_autopilot} \
             --gke-cluster-version=${gke_cluster_version} \
             --boskos-resource-type=${boskos_resource_type}"
 

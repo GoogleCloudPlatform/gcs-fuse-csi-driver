@@ -209,6 +209,7 @@ sanity-test:
 
 e2e-test-ci: 
 	go build -mod=vendor -o bin/e2e-test-ci ./test/e2e
+	chmod +x bin/e2e-test-ci
 
 e2e-test: init-ginkgo
 ifeq (${E2E_TEST_CREATE_CLUSTER}, true)
