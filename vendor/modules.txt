@@ -384,14 +384,10 @@ go.opentelemetry.io/proto/otlp/collector/trace/v1
 go.opentelemetry.io/proto/otlp/common/v1
 go.opentelemetry.io/proto/otlp/resource/v1
 go.opentelemetry.io/proto/otlp/trace/v1
-<<<<<<< HEAD
-# golang.org/x/crypto v0.7.0
-=======
 # go4.org v0.0.0-20201209231011-d4a079459e60
 ## explicit; go 1.13
 go4.org/bytereplacer
-# golang.org/x/crypto v0.1.0
->>>>>>> dbd36cc (add changes for managed prow ci tests)
+# golang.org/x/crypto v0.7.0
 ## explicit; go 1.17
 golang.org/x/crypto/blowfish
 golang.org/x/crypto/chacha20
@@ -1170,9 +1166,6 @@ k8s.io/mount-utils
 ## explicit; go 1.19
 k8s.io/pod-security-admission/api
 k8s.io/pod-security-admission/policy
-<<<<<<< HEAD
-# k8s.io/utils v0.0.0-20230505201702-9f6742963106
-=======
 # k8s.io/test-infra v0.0.0-20220913174101-46ac1a6cf806
 ## explicit; go 1.18
 k8s.io/test-infra/prow/config/secret
@@ -1180,7 +1173,6 @@ k8s.io/test-infra/prow/logrusutil
 k8s.io/test-infra/prow/secretutil
 k8s.io/test-infra/prow/version
 # k8s.io/utils v0.0.0-20230406110748-d93618cff8a2
->>>>>>> dbd36cc (add changes for managed prow ci tests)
 ## explicit; go 1.18
 k8s.io/utils/buffer
 k8s.io/utils/clock

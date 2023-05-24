@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
 
 readonly overlay_name="${GCS_FUSE_OVERLAY_NAME:-stable}"
