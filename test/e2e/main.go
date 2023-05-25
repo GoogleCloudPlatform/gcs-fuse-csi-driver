@@ -91,7 +91,7 @@ func main() {
 		ensureVariable(deployOverlayName, true, "deploy-overlay-name is a required flag")
 	}
 
-	ensureVariable(gceRegion, true, "gce-region must be set")
+	ensureVariable(gceRegion, true, "region must be set")
 
 	// TODO(amacaskill): make sure cluster version is greater than 1.26.3-gke.1000.
 	ensureVariable(gkeClusterVer, true, "'gke-cluster-version' must be set")
