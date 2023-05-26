@@ -27,16 +27,13 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func gkeLocationArgs(gceRegion string) (locationArg, locationVal string, err error) {
+func gkeLocationArgs(gceRegion string) (string, string, error) {
 	switch {
 	case len(gceRegion) > 0:
-		locationArg = "--region"
-		locationVal = gceRegion
+		return "--region", gceRegion, nil
 	default:
 		return "", "", fmt.Errorf("region unspecified")
 	}
-
-	return
 }
 
 func clusterDownGKE(gceRegion string) error {
@@ -45,8 +42,7 @@ func clusterDownGKE(gceRegion string) error {
 		return err
 	}
 
-	cmd := exec.Command("gcloud", "container", "clusters", "delete", *gkeTestClusterName,
-		locationArg, locationVal, "--quiet")
+	cmd := exec.Command("gcloud", "container", "clusters", "delete", *gkeTestClusterName, locationArg, locationVal, "--quiet")
 	err = runCommand("Bringing Down E2E Cluster on GKE", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to bring down kubernetes e2e cluster on gke: %v", err.Error())
@@ -82,8 +78,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 	cmdParams := []string{
 		"beta", "container", "clusters", createCmd, *gkeTestClusterName,
-		locationArg, locationVal,
-		"--quiet", "--machine-type", "n1-standard-2",
+		locationArg, locationVal, "--quiet",
 	}
 
 	if isVariableSet(gkeClusterVer) {
@@ -93,6 +88,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	standardClusterFlags := []string{
 		"--num-nodes", strconv.Itoa(numNodes), "--image-type", imageType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
+		"--machine-type", "n1-standard-2",
 	}
 	if isVariableSet(gkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", *gkeNodeVersion)
@@ -136,7 +132,7 @@ func getKubeClusterVersion() (string, error) {
 	var v version
 	err = json.Unmarshal(out, &v)
 	if err != nil {
-		return "", fmt.Errorf("Failed to parse kubectl version output, error: %v", err.Error())
+		return "", fmt.Errorf("failed to parse kubectl version output, error: %v", err.Error())
 	}
 
 	return v.ServerVersion.GitVersion, nil
