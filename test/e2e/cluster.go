@@ -82,22 +82,28 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 	cmdParams := []string{
 		"beta", "container", "clusters", createCmd, *gkeTestClusterName,
-		locationArg, locationVal, "--num-nodes", strconv.Itoa(numNodes),
-		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType,
-		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
+		locationArg, locationVal,
+		"--quiet", "--machine-type", "n1-standard-2",
 	}
 
 	if isVariableSet(gkeClusterVer) {
 		cmdParams = append(cmdParams, "--cluster-version", *gkeClusterVer)
 	}
 
+	standardClusterFlags := []string{
+		"--num-nodes", strconv.Itoa(numNodes), "--image-type", imageType,
+		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
+	}
 	if isVariableSet(gkeNodeVersion) {
-		cmdParams = append(cmdParams, "--node-version", *gkeNodeVersion)
+		standardClusterFlags = append(standardClusterFlags, "--node-version", *gkeNodeVersion)
+	}
+	if useManagedDriver {
+		standardClusterFlags = append(standardClusterFlags, "--addons", "GcsFuseCsiDriver")
 	}
 
-	// The GcsFuseCsiDriver is enabled by default on autopilot.
-	if useManagedDriver && !useGKEAutopilot {
-		cmdParams = append(cmdParams, "--addons", "GcsFuseCsiDriver")
+	// If using standard cluster, add required flags.
+	if !useGKEAutopilot {
+		cmdParams = append(cmdParams, standardClusterFlags...)
 	}
 
 	// TODO(amacaskill): change from beta to GA.
