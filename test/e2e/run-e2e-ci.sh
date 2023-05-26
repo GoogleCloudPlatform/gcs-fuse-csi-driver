@@ -1,17 +1,17 @@
 #!/bin/bash
 
+set -o xtrace
+set -o nounset
+set -o errexit
 
 readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
-
 readonly overlay_name="${GCS_FUSE_OVERLAY_NAME:-stable}"
 readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
-readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-} 
+readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest} 
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
 readonly gce_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_managed_driver=${USE_GKE_MANAGED_DRIVER:-false}
-
-readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
 
 # Make e2e-test will initialize ginkgo. We can't use e2e-test to build / install the driver / overlays because the registry depends on the boskos project. 
 make -C "${PKGDIR}" init-ginkgo 
@@ -25,7 +25,7 @@ make -C "${PKGDIR}" e2e-test-ci
 # - number-nodes is 3  
 base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --run-in-prow=true \
-            --image-type:cos_containerd --number-nodes=3 \
+            --image-type=cos_containerd --number-nodes=3 \
             --region=${gce_region} \
             --use-gke-autopilot=${use_gke_autopilot} \
             --gke-cluster-version=${gke_cluster_version} \
