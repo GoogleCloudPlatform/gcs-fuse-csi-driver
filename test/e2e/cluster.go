@@ -81,7 +81,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 		createCmd = "create-auto"
 	}
 	cmdParams := []string{
-		"container", "clusters", createCmd, *gkeTestClusterName,
+		"beta", "container", "clusters", createCmd, *gkeTestClusterName,
 		locationArg, locationVal, "--num-nodes", strconv.Itoa(numNodes),
 		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
@@ -101,7 +101,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 
 	// TODO(amacaskill): change from beta to GA.
-	cmd = exec.Command("gcloud beta", cmdParams...)
+	cmd = exec.Command("gcloud", cmdParams...)
 	err = runCommand("Starting E2E Cluster on GKE", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on gke: %v", err.Error())
