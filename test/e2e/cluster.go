@@ -104,6 +104,13 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	// If using standard cluster, add required flags.
 	if !useGKEAutopilot {
 		cmdParams = append(cmdParams, standardClusterFlags...)
+
+		// Update gcloud to latest version.
+		cmd = exec.Command("gcloud", "components", "update")
+		err = runCommand("Updating gcloud to the latest version", cmd)
+		if err != nil {
+			return fmt.Errorf("failed to update gcloud to latest version: %v", err.Error())
+		}
 	}
 
 	// TODO(amacaskill): change from beta to GA.
