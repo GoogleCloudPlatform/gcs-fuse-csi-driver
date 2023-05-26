@@ -98,6 +98,7 @@ var _ = ginkgo.Describe("Cloud Storage FUSE CSI Driver E2E", func() {
 		testsuites.InitGcsFuseCSIFailedMountTestSuite,
 		testsuites.InitGcsFuseCSIWorkloadsTestSuite,
 		testsuites.InitGcsFuseCSIMultiVolumeTestSuite,
+		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
 	}
 
 	testDriver := InitGCSFuseCSITestDriver(c, m)

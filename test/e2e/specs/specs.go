@@ -20,6 +20,7 @@ package specs
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
@@ -61,6 +62,8 @@ const (
 	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
 	ImplicitDirsPath                = "implicit-dir"
 	InvalidVolume                   = "<invalid-name>"
+
+	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 1 * time.Minute
@@ -136,6 +139,16 @@ func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, 
 		shExec, err, stdout, stderr)
 }
 
+// VerifyExecInPodSucceedWithFullOutput verifies shell cmd in target pod succeed with full output.
+func (t *TestPod) VerifyExecInPodSucceedWithFullOutput(f *framework.Framework, containerName, shExec string) {
+	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+	framework.ExpectNoError(err,
+		"%q should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
+		shExec, err, stdout, stderr)
+
+	framework.Logf("Output of %q: \n%s", shExec, stdout)
+}
+
 // VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code.
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
 	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
@@ -172,7 +185,7 @@ func (t *TestPod) WaitForFailedMountError(msg string) {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool) {
+func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {
 	volumeMount := v1.VolumeMount{
 		Name:      name,
 		MountPath: mountPath,
@@ -191,6 +204,10 @@ func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, n
 		}
 	} else if volumeResource.VolSource != nil {
 		volume.VolumeSource = *volumeResource.VolSource
+		volume.VolumeSource.CSI.ReadOnly = &readOnly
+		if len(mountOptions) > 0 {
+			volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
+		}
 	}
 
 	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, volume)
@@ -241,6 +258,25 @@ func (t *TestPod) SetPod(pod *v1.Pod) {
 
 func (t *TestPod) SetRestartPolicy(rp v1.RestartPolicy) {
 	t.pod.Spec.RestartPolicy = rp
+}
+
+func (t *TestPod) SetImage(image string) {
+	t.pod.Spec.Containers[0].Image = image
+}
+
+func (t *TestPod) SetResource(cpuLimit, memoryLimit string) {
+	cpu, _ := resource.ParseQuantity(cpuLimit)
+	mem, _ := resource.ParseQuantity(memoryLimit)
+	t.pod.Spec.Containers[0].Resources = v1.ResourceRequirements{
+		Limits: v1.ResourceList{
+			v1.ResourceCPU:    cpu,
+			v1.ResourceMemory: mem,
+		},
+		Requests: v1.ResourceList{
+			v1.ResourceCPU:    cpu,
+			v1.ResourceMemory: mem,
+		},
+	}
 }
 
 func (t *TestPod) Cleanup() {
