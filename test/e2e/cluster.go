@@ -1,10 +1,13 @@
 /*
 Copyright 2018 The Kubernetes Authors.
 Copyright 2022 Google LLC
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     https://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,6 +35,7 @@ func gkeLocationArgs(gceRegion string) (locationArg, locationVal string, err err
 	default:
 		return "", "", fmt.Errorf("region unspecified")
 	}
+
 	return
 }
 
@@ -47,6 +51,7 @@ func clusterDownGKE(gceRegion string) error {
 	if err != nil {
 		return fmt.Errorf("failed to bring down kubernetes e2e cluster on gke: %v", err.Error())
 	}
+
 	return nil
 }
 
@@ -59,7 +64,6 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	out, err := exec.Command("gcloud", "container", "clusters", "list",
 		locationArg, locationVal, "--verbosity", "none", "--filter",
 		fmt.Sprintf("name=%s", *gkeTestClusterName)).CombinedOutput()
-
 	if err != nil {
 		return fmt.Errorf("failed to check for previous test cluster: %v %s", err.Error(), out)
 	}
@@ -76,7 +80,8 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	if useGKEAutopilot {
 		createCmd = "create-auto"
 	}
-	cmdParams := []string{"container", "clusters", createCmd, *gkeTestClusterName,
+	cmdParams := []string{
+		"container", "clusters", createCmd, *gkeTestClusterName,
 		locationArg, locationVal, "--num-nodes", strconv.Itoa(numNodes),
 		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
@@ -129,5 +134,6 @@ func mustGetKubeClusterVersion() string {
 	if err != nil {
 		klog.Fatalf("Error: %v", err.Error())
 	}
+
 	return ver
 }

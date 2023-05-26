@@ -1,10 +1,13 @@
 /*
 Copyright 2018 The Kubernetes Authors.
 Copyright 2022 Google LLC
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     https://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -77,14 +80,13 @@ func runCommand(action string, cmd *exec.Cmd) error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
-var (
-	boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), "http://boskos", "", "")
-)
+var boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), "http://boskos", "", "")
 
-// getBoskosProject retries acquiring a boskos project until success or timeout
+// getBoskosProject retries acquiring a boskos project until success or timeout.
 func getBoskosProject(resourceType string) *common.Resource {
 	timer := time.NewTimer(30 * time.Minute)
 	defer timer.Stop()
@@ -106,7 +108,6 @@ func getBoskosProject(resourceType string) *common.Resource {
 			}
 		}
 	}
-
 }
 
 func SetupProwConfig(resourceType string) (project, serviceAccount string) {
@@ -147,5 +148,6 @@ func SetupProwConfig(resourceType string) (project, serviceAccount string) {
 	// [PROJECT_NUMBER]-compute@developer.gserviceaccount.com
 	serviceAccount = fmt.Sprintf("%v-compute@developer.gserviceaccount.com", resp.ProjectNumber)
 	klog.Infof("Using project %v and service account %v", project, serviceAccount)
+
 	return project, serviceAccount
 }
