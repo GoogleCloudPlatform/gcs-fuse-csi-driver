@@ -1,10 +1,13 @@
 /*
 Copyright 2018 The Kubernetes Authors.
 Copyright 2022 Google LLC
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     https://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -28,7 +31,7 @@ import (
 )
 
 var (
-	// Kubernetes cluster flags
+	// Kubernetes cluster flags.
 	gceRegion          = flag.String("region", "", "region that gke regional cluster should be created in")
 	gkeClusterVer      = flag.String("gke-cluster-version", "", "version of Kubernetes master and node for gke")
 	gkeNodeVersion     = flag.String("gke-node-version", "", "GKE cluster worker node version")
@@ -38,18 +41,18 @@ var (
 
 	imageType = flag.String("image-type", "cos_containerd", "the image type to use for the cluster")
 
-	// Test infrastructure flags
+	// Test infrastructure flags.
 	boskosResourceType = flag.String("boskos-resource-type", "gce-project", "name of the boskos resource type to reserve")
 	inProw             = flag.Bool("run-in-prow", true, "is the test running in PROW")
 
-	// Driver flags
+	// Driver flags.
 	stagingImage        = flag.String("staging-image", "", "name of image to stage to")
 	saFile              = flag.String("service-account-file", "", "path of service account file")
 	deployOverlayName   = flag.String("deploy-overlay-name", "", "which kustomize overlay to deploy the driver with")
 	doDriverBuild       = flag.Bool("do-driver-build", true, "building the driver from source")
 	useGKEManagedDriver = flag.Bool("use-gke-managed-driver", false, "use GKE managed PD CSI driver for the tests")
 
-	// Test flags
+	// Test flags.
 	parallel = flag.Int("parallel", 4, "the number of parallel tests setting for ginkgo parallelism")
 )
 
@@ -106,7 +109,7 @@ func main() {
 }
 
 func handle() error {
-	oldmask := syscall.Umask(0000)
+	oldmask := syscall.Umask(0o000)
 	defer syscall.Umask(oldmask)
 
 	testParams := &testParameters{
@@ -213,6 +216,7 @@ func handle() error {
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}
+
 	return nil
 }
 
@@ -221,6 +225,7 @@ func generateTestSkip(testParams *testParameters) string {
 	if testParams.useGKEAutopilot {
 		skipString = skipString + "|OOM|high.resource.usage"
 	}
+
 	return skipString
 }
 
@@ -234,5 +239,6 @@ func setEnvProject(project string) error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
