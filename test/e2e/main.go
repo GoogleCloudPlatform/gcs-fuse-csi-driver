@@ -47,41 +47,29 @@ var (
 
 	// Driver flags.
 	stagingImage        = flag.String("staging-image", "", "name of image to stage to")
-	saFile              = flag.String("service-account-file", "", "path of service account file")
 	deployOverlayName   = flag.String("deploy-overlay-name", "", "which kustomize overlay to deploy the driver with")
 	doDriverBuild       = flag.Bool("do-driver-build", true, "building the driver from source")
 	useGKEManagedDriver = flag.Bool("use-gke-managed-driver", false, "use GKE managed PD CSI driver for the tests")
-
-	// Test flags.
-	parallel = flag.Int("parallel", 4, "the number of parallel tests setting for ginkgo parallelism")
 )
 
 type testParameters struct {
-	stagingVersion       string
-	goPath               string
-	pkgDir               string
-	testParentDir        string
-	k8sSourceDir         string
-	testSkip             string
-	cloudProviderArgs    []string
-	outputDir            string
-	allowedNotReadyNodes int
-	useGKEManagedDriver  bool
-	useGKEAutopilot      bool
-	clusterVersion       string
-	nodeVersion          string
-	projectID            string
-	imageType            string
-	parallel             int
-}
-
-func init() {
-	flag.Set("logtostderr", "true")
+	stagingVersion      string
+	goPath              string
+	pkgDir              string
+	testSkip            string
+	useGKEManagedDriver bool
+	useGKEAutopilot     bool
+	clusterVersion      string
+	nodeVersion         string
+	projectID           string
+	imageType           string
 }
 
 func main() {
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "true")
+	if err := flag.Set("logtostderr", "true"); err != nil {
+		klog.Warningf("Failed to set flags: %w", err)
+	}
 	flag.Parse()
 
 	if *useGKEManagedDriver {
@@ -121,7 +109,7 @@ func handle() error {
 
 	goPath, ok := os.LookupEnv("GOPATH")
 	if !ok {
-		return fmt.Errorf("Could not find env variable GOPATH")
+		return fmt.Errorf("could not find env variable GOPATH")
 	}
 	testParams.goPath = goPath
 	testParams.pkgDir = filepath.Join(goPath, "src", "GoogleCloudPlatform", "gcs-fuse-csi-driver")
@@ -129,7 +117,6 @@ func handle() error {
 	// If running in Prow, then acquire and set up a project through Boskos
 	if *inProw {
 		oldProject, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
-		project := strings.TrimSpace(string(oldProject))
 		if err != nil {
 			return fmt.Errorf("failed to get gcloud project: %s, err: %w", oldProject, err)
 		}
@@ -146,9 +133,9 @@ func handle() error {
 				klog.Errorf("failed to set project environment to %s: %w", oldProject, err.Error())
 			}
 		}()
-		project = newproject
+		project := newproject
 		if *doDriverBuild {
-			*stagingImage = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(string(project)))
+			*stagingImage = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(project))
 		}
 		if _, ok := os.LookupEnv("USER"); !ok {
 			err = os.Setenv("USER", "prow")
@@ -206,13 +193,11 @@ func handle() error {
 	testParams.nodeVersion = *gkeNodeVersion
 	testParams.testSkip = generateTestSkip(testParams)
 
-	// Now that clusters are running, we need to actually run the tests on the cluster with the following. We can probably just do exec.Command for this. Eventually I think it
-	// would be good to change change the e2e-test make file function to work for manual test runs and this so that we can just call make run-e2e test so we don't have code copied,
-	// but for the first iteration, I think its fine to just copy it into exec.command to see if it runs. It choses a cluster based on the current context (so we are good there)
+	// Now that clusters are running, we need to actually run the tests on the cluster with the following.
 	// TODO(amacaskill): make ginkgo procs and artifacts path variables configurable.
 	e2eGinkgoProcs := "5"
 	e2eArtifactsPath := "../../_artifacts"
-	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", "20m", "--skip", testParams.testSkip, "./test/e2e/", "--", "-report-dir", e2eArtifactsPath).CombinedOutput()
+	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", "20m", "--skip", testParams.testSkip, "./test/e2e/", "--", "-report-dir", e2eArtifactsPath, "--provider", "gke").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}
@@ -223,7 +208,7 @@ func handle() error {
 func generateTestSkip(testParams *testParameters) string {
 	skipString := "Dynamic.PV"
 	if testParams.useGKEAutopilot {
-		skipString = skipString + "|OOM|high.resource.usage"
+		skipString += "|OOM|high.resource.usage"
 	}
 
 	return skipString

@@ -45,19 +45,6 @@ func ensureVariable(v *string, set bool, msgOnError string) {
 	}
 }
 
-func ensureExactlyOneVariableSet(vars []*string, msgOnError string) {
-	var count int
-	for _, v := range vars {
-		if len(*v) != 0 {
-			count++
-		}
-	}
-
-	if count != 1 {
-		klog.Fatal(msgOnError)
-	}
-}
-
 func isVariableSet(v *string) bool {
 	return len(*v) != 0
 }
@@ -99,26 +86,27 @@ func getBoskosProject(resourceType string) *common.Resource {
 			klog.Fatalf("timed out trying to acquire boskos project")
 		case <-ticker.C:
 			p, err := boskos.Acquire(resourceType, "free", "busy")
-			if err != nil {
+			switch {
+			case err != nil:
 				klog.Warningf("boskos failed to acquire project: %w", err)
-			} else if p == nil {
+			case p == nil:
 				klog.Warningf("boskos does not have a free %s at the moment", resourceType)
-			} else {
+			default:
 				return p
 			}
 		}
 	}
 }
 
-func SetupProwConfig(resourceType string) (project, serviceAccount string) {
+func SetupProwConfig(resourceType string) (string, string) {
 	// Try to get a Boskos project
 	klog.V(4).Infof("Running in PROW")
 	klog.V(4).Infof("Fetching a Boskos loaned project")
 
 	p := getBoskosProject(resourceType)
-	project = p.Name
+	project := p.Name
 
-	go func(c *boskosclient.Client, proj string) {
+	go func(c *boskosclient.Client, _ string) {
 		for range time.Tick(time.Minute * 5) {
 			if err := c.UpdateOne(p.Name, "busy", nil); err != nil {
 				klog.Warningf("[Boskos] Update %s failed with %v", p.Name, err)
@@ -146,7 +134,7 @@ func SetupProwConfig(resourceType string) (project, serviceAccount string) {
 
 	// Default Compute Engine service account
 	// [PROJECT_NUMBER]-compute@developer.gserviceaccount.com
-	serviceAccount = fmt.Sprintf("%v-compute@developer.gserviceaccount.com", resp.ProjectNumber)
+	serviceAccount := fmt.Sprintf("%v-compute@developer.gserviceaccount.com", resp.ProjectNumber)
 	klog.Infof("Using project %v and service account %v", project, serviceAccount)
 
 	return project, serviceAccount

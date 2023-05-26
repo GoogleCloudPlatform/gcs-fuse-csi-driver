@@ -17,14 +17,6 @@ limitations under the License.
 
 package main
 
-import (
-	"path/filepath"
-)
-
-func getOverlayDir(pkgDir, deployOverlayName string) string {
-	return filepath.Join(pkgDir, "deploy", "kubernetes", "overlays", deployOverlayName)
-}
-
 // TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
 func installDriver(testParams *testParameters, stagingImage, deployOverlayName string, doDriverBuild bool) error {
 	return nil
