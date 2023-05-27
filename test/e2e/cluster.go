@@ -108,6 +108,10 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 			return fmt.Errorf("failed to update gcloud to latest version: %v", err.Error())
 		}
 	}
+	// TODO(amacaskill): make this configurable within GoB.
+	if useGKEAutopilot {
+		cmdParams = append(cmdParams, "--release-channel", "Rapid")
+	}
 
 	// TODO(amacaskill): change from beta to GA.
 	cmd = exec.Command("gcloud", cmdParams...)
