@@ -73,3 +73,7 @@ func (service *fakeService) GetBucket(_ context.Context, obj *ServiceBucket) (*S
 func (service *fakeService) SetIAMPolicy(_ context.Context, _ *ServiceBucket, _, _ string) error {
 	return nil
 }
+
+func (service *fakeService) CheckBucketExists(_ context.Context, _ *ServiceBucket) (bool, error) {
+	return true, nil
+}

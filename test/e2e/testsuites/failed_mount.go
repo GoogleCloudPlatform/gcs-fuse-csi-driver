@@ -120,8 +120,8 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup()
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(codes.InvalidArgument.String())
-		tPod.WaitForFailedMountError("googleapi: Error 400: Invalid bucket name")
+		tPod.WaitForFailedMountError(codes.NotFound.String())
+		tPod.WaitForFailedMountError("storage: bucket doesn't exist")
 	})
 
 	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
@@ -144,7 +144,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
 		tPod.WaitForFailedMountError(codes.PermissionDenied.String())
-		tPod.WaitForFailedMountError("googleapi: Error 403: Caller does not have storage.buckets.get access to the Google Cloud Storage bucket.")
+		tPod.WaitForFailedMountError("does not have storage.objects.list access to the Google Cloud Storage bucket.")
 
 		ginkgo.By("Deleting the Kubernetes service account")
 		testK8sSA.Cleanup()
