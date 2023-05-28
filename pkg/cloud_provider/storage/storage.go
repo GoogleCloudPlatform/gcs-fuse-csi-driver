@@ -46,6 +46,7 @@ type Service interface {
 	GetBucket(ctx context.Context, b *ServiceBucket) (*ServiceBucket, error)
 	DeleteBucket(ctx context.Context, b *ServiceBucket) error
 	SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
+	CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error)
 }
 
 type ServiceManager interface {
@@ -163,6 +164,17 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 	return nil, fmt.Errorf("failed to get bucket %q: got empty attrs", obj.Name)
 }
 
+func (service *gcsService) CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error) {
+	bkt := service.storageClient.Bucket(obj.Name)
+	_, err := bkt.Objects(ctx, &storage.Query{Prefix: ""}).Next()
+
+	if err == nil || errors.Is(err, iterator.Done) {
+		return true, nil
+	}
+
+	return false, err
+}
+
 func (service *gcsService) SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error {
 	bkt := service.storageClient.Bucket(obj.Name)
 	policy, err := bkt.IAM().Policy(ctx)
@@ -212,6 +224,6 @@ func IsNotExistErr(err error) bool {
 	return errors.Is(err, storage.ErrBucketNotExist)
 }
 
-func IsInvalidBucketNameErr(err error) bool {
-	return strings.Contains(err.Error(), "googleapi: Error 400: Invalid bucket name:")
+func IsPermissionDeniedErr(err error) bool {
+	return strings.Contains(err.Error(), "does not have storage.objects.list access to the Google Cloud Storage bucket.")
 }

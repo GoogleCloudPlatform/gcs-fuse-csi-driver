@@ -126,16 +126,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 		}
 
-		_, err = storageService.GetBucket(ctx, &storage.ServiceBucket{Name: bucketName})
-		if err != nil {
-			// In most cases, GCS API failures are caused by incorrect SA setup.
-			code := codes.PermissionDenied
+		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
+			code := codes.Internal
 			if storage.IsNotExistErr(err) {
 				code = codes.NotFound
 			}
 
-			if storage.IsInvalidBucketNameErr(err) {
-				code = codes.InvalidArgument
+			if storage.IsPermissionDeniedErr(err) {
+				code = codes.PermissionDenied
 			}
 
 			return nil, status.Errorf(code, "failed to get GCS bucket %q: %v", bucketName, err)
