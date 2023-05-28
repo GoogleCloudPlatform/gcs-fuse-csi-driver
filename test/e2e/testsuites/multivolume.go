@@ -108,7 +108,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 			volIndex = 1
 		}
 		tPod2.SetupVolume(l.volumeResourceList[volIndex], "test-gcsfuse-volume", mountPath, false)
-		tPod2.SetNodeSelector(tPod1.GetNode(), sameNode)
+		tPod2.SetNodeAffinity(tPod1.GetNode(), sameNode)
 
 		ginkgo.By("Deploying the second pod")
 		tPod2.Create()

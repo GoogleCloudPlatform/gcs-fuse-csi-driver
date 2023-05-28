@@ -61,13 +61,16 @@ else ifeq (${E2E_TEST_API_ENV}, sandbox)
 	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = ${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER}
 endif
 
+export E2E_TEST_BUCKET_LOCATION ?= us
+
 E2E_TEST_USE_MANAGED_DRIVER ?= false
 E2E_TEST_BUILD_DRIVER ?= false
 
 E2E_TEST_FOCUS ?=
 E2E_TEST_SKIP ?= Dynamic.PV
 E2E_TEST_GINKGO_PROCS ?= 5
-E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts 2 --timeout 20m
+E2E_TEST_GINKGO_TIMEOUT ?= 20m
+E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts 2 --timeout ${E2E_TEST_GINKGO_TIMEOUT}
 ifneq ("${E2E_TEST_FOCUS}", "")
 E2E_TEST_GINKGO_FLAGS+= --focus "${E2E_TEST_FOCUS}"
 endif
@@ -231,6 +234,9 @@ endif
 ifeq (${E2E_TEST_CLEANUP_CLUSTER}, true)
 	gcloud container clusters delete ${E2E_TEST_CLUSTER_NAME} --quiet --region ${E2E_TEST_CLUSTER_REGION}
 endif
+
+perf-test:
+	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=5h E2E_TEST_FOCUS=.*should.succeed.in.performance.test.* E2E_TEST_BUCKET_LOCATION=us-central1
 
 init-ginkgo:
 	export PATH=${PATH}:$(go env GOPATH)/bin
