@@ -25,7 +25,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -124,7 +123,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
 		//nolint:gosec
 		if output, err := exec.Command("gsutil", "cp", fmt.Sprintf("gs://%v/fio-logs/output.json", bucketName), "../../_artifacts/output.json").CombinedOutput(); err != nil {
-			e2eframework.Failf("Failed to download the FIO metrics from GCS bucket %q: %v, output: %s", bucketName, err, output)
+			framework.Failf("Failed to download the FIO metrics from GCS bucket %q: %v, output: %s", bucketName, err, output)
 		}
 	})
 }

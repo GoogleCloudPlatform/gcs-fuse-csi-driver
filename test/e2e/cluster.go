@@ -42,6 +42,7 @@ func clusterDownGKE(gceRegion string) error {
 		return err
 	}
 
+	//nolint:gosec
 	cmd := exec.Command("gcloud", "container", "clusters", "delete", *gkeTestClusterName, locationArg, locationVal, "--quiet")
 	err = runCommand("Bringing Down E2E Cluster on GKE", cmd)
 	if err != nil {

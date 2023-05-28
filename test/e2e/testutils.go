@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/oauth2/google"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/option"
 	"k8s.io/klog/v2"
 	boskosclient "sigs.k8s.io/boskos/client"
 	"sigs.k8s.io/boskos/common"
@@ -122,7 +123,7 @@ func SetupProwConfig(resourceType string) (string, string) {
 		klog.Fatalf("Failed to get Google Default Client: %w", err)
 	}
 
-	cloudresourcemanagerService, err := cloudresourcemanager.New(c)
+	cloudresourcemanagerService, err := cloudresourcemanager.NewService(context.Background(), option.WithHTTPClient(c))
 	if err != nil {
 		klog.Fatalf("Failed to create new cloudresourcemanager: %w", err)
 	}
