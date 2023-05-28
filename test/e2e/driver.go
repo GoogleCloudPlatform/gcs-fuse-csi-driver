@@ -18,21 +18,29 @@ limitations under the License.
 package main
 
 // TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
+//
+//nolint:revive
 func installDriver(testParams *testParameters, stagingImage, deployOverlayName string, doDriverBuild bool) error {
 	return nil
 }
 
 // TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
+//
+//nolint:revive
 func deleteDriver(testParams *testParameters, deployOverlayName string) error {
 	return nil
 }
 
 // TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
+//
+//nolint:revive
 func pushImage(pkgDir, stagingImage, stagingVersion string) error {
 	return nil
 }
 
 // TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
+//
+//nolint:revive
 func deleteImage(stagingImage, stagingVersion string) error {
 	return nil
 }
