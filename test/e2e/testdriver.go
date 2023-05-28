@@ -46,6 +46,7 @@ type GCSFuseCSITestDriver struct {
 	meta                  metadata.Service
 	storageServiceManager storage.ServiceManager
 	volumeStore           []*gcsVolume
+	bucketLocation        string
 }
 
 type gcsVolume struct {
@@ -57,7 +58,7 @@ type gcsVolume struct {
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
-func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service) storageframework.TestDriver {
+func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
@@ -79,6 +80,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service) storage
 		meta:                  m,
 		storageServiceManager: ssm,
 		volumeStore:           []*gcsVolume{},
+		bucketLocation:        bl,
 	}
 }
 
@@ -300,8 +302,9 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 	// the GCS bucket name is always new and unique,
 	// so there is no need to check if the bucket already exists
 	newBucket := &storage.ServiceBucket{
-		Project: n.meta.GetProjectID(),
-		Name:    uuid.NewString(),
+		Project:  n.meta.GetProjectID(),
+		Name:     uuid.NewString(),
+		Location: n.bucketLocation,
 	}
 
 	ginkgo.By(fmt.Sprintf("Creating bucket %q", newBucket.Name))

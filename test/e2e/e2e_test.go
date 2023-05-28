@@ -39,6 +39,7 @@ var (
 	err error
 	c   clientset.Interface
 	m   metadata.Service
+	bl  string
 )
 
 var _ = func() bool {
@@ -74,6 +75,8 @@ var _ = func() bool {
 		klog.Fatal(err)
 	}
 
+	bl = os.Getenv("E2E_TEST_BUCKET_LOCATION")
+
 	return true
 }()
 
@@ -98,9 +101,10 @@ var _ = ginkgo.Describe("Cloud Storage FUSE CSI Driver E2E", func() {
 		testsuites.InitGcsFuseCSIWorkloadsTestSuite,
 		testsuites.InitGcsFuseCSIMultiVolumeTestSuite,
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
+		testsuites.InitGcsFuseCSIPerformanceTestSuite,
 	}
 
-	testDriver := InitGCSFuseCSITestDriver(c, m)
+	testDriver := InitGCSFuseCSITestDriver(c, m, bl)
 
 	ginkgo.Context(storageframework.GetDriverNameWithFeatureTags(testDriver), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)

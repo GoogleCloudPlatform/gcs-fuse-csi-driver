@@ -61,6 +61,7 @@ const (
 	InvalidVolume                   = "<invalid-name>"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
+	UbuntuImage         = "ubuntu:20.04"
 
 	pollInterval    = 1 * time.Second
 	pollTimeout     = 1 * time.Minute
@@ -218,7 +219,7 @@ func (t *TestPod) GetNode() string {
 	return t.pod.Spec.NodeName
 }
 
-func (t *TestPod) SetNodeSelector(nodeName string, sameNode bool) {
+func (t *TestPod) SetNodeAffinity(nodeName string, sameNode bool) {
 	framework.ExpectNotEqual(nodeName, "")
 
 	ns := &e2epod.NodeSelection{}
@@ -228,6 +229,10 @@ func (t *TestPod) SetNodeSelector(nodeName string, sameNode bool) {
 		e2epod.SetAntiAffinity(ns, nodeName)
 	}
 	t.pod.Spec.Affinity = ns.Affinity
+}
+
+func (t *TestPod) SetNodeSelector(nodeSelector map[string]string) {
+	t.pod.Spec.NodeSelector = nodeSelector
 }
 
 func (t *TestPod) SetAnnotations(annotations map[string]string) {
