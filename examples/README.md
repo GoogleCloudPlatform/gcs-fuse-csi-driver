@@ -81,23 +81,14 @@ kubectl delete -f ./examples/batch-job/job.yaml
 
 ### PyTorch Application Example
 
+#### Prepare the training dataset
+
+Follow the following steps to download the dataset from Kaggle, then unzip and upload the dataset to a GCS bucket. You only need to do this step once.
+
 ```bash
-# add a new nood pool with GPU
-CLUSTER_NAME=<cluster-name>
-gcloud container node-pools create pool-gpu-pytorch \
-  --accelerator type=nvidia-tesla-a100,count=8 \
-  --zone us-central1-c --cluster ${CLUSTER_NAME} \
-  --num-nodes 1 \
-  --machine-type a2-highgpu-8g
-
-# install nvidia driver
-# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
-kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
-
 # replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/data-loader-pod.yaml
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-pytorch.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/data-loader-job.yaml
 
 # replace <kaggle-key> with your kaggle API key
 # Go to https://www.kaggle.com/docs/api to get your kaggle API key. The format is {"username":"xxx","key":"xxx"}.
@@ -105,29 +96,79 @@ KAGGLE_KEY=<your-kaggle-key>
 sed -i "s/<kaggle-key>/$KAGGLE_KEY/g" ./examples/pytorch/data-loader-pod.yaml
 
 # prepare the data
-kubectl apply -f ./examples/pytorch/data-loader-pod.yaml
+kubectl apply -f ./examples/pytorch/data-loader-job.yaml
+
 # clean up
-kubectl delete -f ./examples/pytorch/data-loader-pod.yaml
+kubectl delete -f ./examples/pytorch/data-loader-job.yaml
+```
+
+#### Train the job using PyTorch
+
+```bash
+# add a new nood pool with GPU
+CLUSTER_NAME=<cluster-name>
+ZONE=<node-pool-zone>
+gcloud container node-pools create pool-gpu-pytorch \
+  --accelerator type=nvidia-tesla-a100,count=8 \
+  --zone ${ZONE} --cluster ${CLUSTER_NAME} \
+  --num-nodes 1 \
+  --machine-type a2-highgpu-8g
+
+# install the nvidia driver
+# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
+
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-pytorch.yaml
 
 # start the pytorch training job
 kubectl apply -f ./examples/pytorch/train-job-pytorch.yaml
+
 # clean up
 kubectl delete -f ./examples/pytorch/train-job-pytorch.yaml
 ```
 
-### Machine Learning Application Example
+### Train the job using PyTorch on Deep Learning Container (DLC)
+
+```bash
+# add a new nood pool with GPU
+CLUSTER_NAME=<cluster-name>
+ZONE=<node-pool-zone>
+gcloud container node-pools create pool-gpu-pytorch \
+  --accelerator type=nvidia-tesla-a100,count=8 \
+  --zone ${ZONE} --cluster ${CLUSTER_NAME} \
+  --num-nodes 1 \
+  --machine-type a2-highgpu-8g
+
+# install the nvidia driver
+# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
+
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-pytorch-dlc.yaml
+
+# start the pytorch training job
+kubectl apply -f ./examples/pytorch/train-job-pytorch-dlc.yaml
+
+# clean up
+kubectl delete -f ./examples/pytorch/train-job-pytorch-dlc.yaml
+```
+
+### Jupyter Notebook Example
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/machineLearning/jupyter-notebook-server.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/jupyter/jupyter-notebook-server.yaml
 
 # install a Jupyter Notebook server using CSI Ephemeral Inline volume
-kubectl apply -f ./examples/machineLearning/jupyter-notebook-server.yaml
+kubectl apply -f ./examples/jupyter/jupyter-notebook-server.yaml
 
 # access the Jupyter Notebook via http://localhost:8888
 kubectl port-forward jupyter-notebook-server 8888:8888
 
 # clean up
-kubectl delete -f ./examples/machineLearning/jupyter-notebook-server.yaml
+kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
 ```
