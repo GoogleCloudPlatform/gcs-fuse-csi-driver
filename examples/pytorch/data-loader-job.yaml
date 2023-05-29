@@ -37,13 +37,13 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: gcp-gcs-csi-job-example
+  name: data-loader-job
 spec:
   backoffLimit: 0
   template:
     metadata:
       namespace: gcs-csi-example
-      name: data-loader-pod
+      name: data-loader-job
     spec:
       restartPolicy: Never
       containers:

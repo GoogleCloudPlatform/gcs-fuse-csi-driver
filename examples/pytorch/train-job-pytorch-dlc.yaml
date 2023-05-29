@@ -25,13 +25,13 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: train-job-pytorch
+  name: train-job-pytorch-dlc
 spec:
   backoffLimit: 0
   template:
     metadata:
       namespace: gcs-csi-example
-      name: train-job-pytorch
+      name: train-job-pytorch-dlc
       annotations:
         gke-gcsfuse/volumes: "true"
         gke-gcsfuse/cpu-limit: "10"
@@ -40,8 +40,8 @@ spec:
     spec:
       restartPolicy: Never
       containers:
-      - name: pytorch-test
-        image: nvcr.io/nvidia/pytorch:22.03-py3
+      - name: pytorch-test-dlc
+        image: gcr.io/deeplearning-platform-release/pytorch-gpu:latest
         securityContext:
           privileged: true
         env:
@@ -54,10 +54,10 @@ spec:
           - "-c"
           - git clone https://github.com/facebookresearch/dino.git;
             mkdir -p /pytorch_output;
-            controller_file="/workspace/dino/main_dino.py";
+            controller_file="/dino/main_dino.py";
             x=$(grep -n "# ============ training one epoch of DINO ... ============" $controller_file | cut -f1 -d ':');
             x=$((x - 2));
-            sed -i "$x"'r /workspace/bypass-code/bypassed_code.py' $controller_file;
+            sed -i "$x"'r /bypass-code/bypassed_code.py' $controller_file;
             pip install timm;
             python -c 'import torch;torch.hub.list("facebookresearch/xcit:main")';
             python -m torch.distributed.launch --nproc_per_node=8 $controller_file --arch vit_small --num_workers 20 --data_path /gcs/imagenet/ILSVRC/Data/CLS-LOC/train/ --output_dir /pytorch_output --norm_last_layer False --use_fp16 False --clip_grad 0 --epochs 800 --global_crops_scale 0.25 1.0 --local_crops_number 10 --local_crops_scale 0.05 0.25 --teacher_temp 0.07 --warmup_teacher_temp_epochs 30 --min_lr 0.00001  2>&1 | tee /pytorch_output/pytorch_test.log;
@@ -78,7 +78,7 @@ spec:
         - name: gcs-fuse-csi-ephemeral
           mountPath: /gcs
         - name: bypassed-code
-          mountPath: /workspace/bypass-code
+          mountPath: /bypass-code
       serviceAccountName: gcs-csi
       volumes:
       - name: dshm
