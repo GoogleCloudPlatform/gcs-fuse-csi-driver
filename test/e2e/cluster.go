@@ -111,7 +111,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 	// TODO(amacaskill): make this configurable within GoB.
 	if useGKEAutopilot {
-		cmdParams = append(cmdParams, "--release-channel", "Rapid")
+		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	}
 
 	// TODO(amacaskill): change from beta to GA.
