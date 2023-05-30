@@ -114,6 +114,15 @@ func handle() error {
 	testParams.goPath = goPath
 	testParams.pkgDir = filepath.Join(goPath, "src", "GoogleCloudPlatform", "gcs-fuse-csi-driver")
 
+	// TODO(amacaskill): Change e2e_test.go / Makefile to assign and use CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER directly.
+	gkeEnv, ok := os.LookupEnv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
+	if !ok {
+		return fmt.Errorf("could not find env variable CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
+	}
+	if err := os.Setenv("E2E_TEST_API_ENV", gkeEnv); err != nil {
+		return fmt.Errorf("failed to set E2E_TEST_API_ENV to %q: %v", gkeEnv, err.Error())
+	}
+
 	// If running in Prow, then acquire and set up a project through Boskos
 	if *inProw {
 		oldProject, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
