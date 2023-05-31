@@ -103,7 +103,11 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storageframework.PerTestConfig {
-	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, "")
+	testGcpSA := specs.NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
+	testGcpSA.Create()
+	testGcpSA.AddIAMPolicyBinding(f.Namespace)
+
+	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, testGcpSA.GetEmail())
 	testK8sSA.Create()
 
 	config := &storageframework.PerTestConfig{
@@ -118,6 +122,7 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 		n.volumeStore = []*gcsVolume{}
 
 		testK8sSA.Cleanup()
+		testGcpSA.Cleanup()
 	})
 
 	return config
@@ -238,7 +243,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storagefr
 	// Set up the GCP Project IAM Policy
 	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(
 		n.meta.GetProjectID(),
-		fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), config.Framework.Namespace.Name, specs.K8sServiceAccountName),
+		fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(config.Framework.Namespace.Name), n.meta.GetProjectID()),
 		"roles/storage.admin",
 		"",
 	)
@@ -314,8 +319,8 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 	}
 
 	if err := storageService.SetIAMPolicy(ctx, bucket,
-		fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, specs.K8sServiceAccountName),
-		"roles/storage.admin",
+		fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID()),
+		"roles/storage.objectAdmin",
 	); err != nil {
 		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
 	}
@@ -360,4 +365,12 @@ func createImplicitDir(dirPath, bucketName string) {
 	if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
 		e2eframework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
 	}
+}
+
+func prepareGcpSAName(ns string) string {
+	if len(ns) > 30 {
+		return ns[:30]
+	}
+
+	return ns
 }
