@@ -30,6 +30,13 @@ import (
 	"k8s.io/klog/v2"
 )
 
+var envAPIMap = map[string]string{
+	"https://container.googleapis.com/":                  "prod",
+	"https://staging-container.sandbox.googleapis.com/":  "staging",
+	"https://staging2-container.sandbox.googleapis.com/": "staging2",
+	"https://test-container.sandbox.googleapis.com/":     "test",
+}
+
 var (
 	// Kubernetes cluster flags.
 	gceRegion          = flag.String("region", "", "region that gke regional cluster should be created in")
@@ -119,8 +126,8 @@ func handle() error {
 	if !ok {
 		return fmt.Errorf("could not find env variable CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
 	}
-	if err := os.Setenv("E2E_TEST_API_ENV", gkeEnv); err != nil {
-		return fmt.Errorf("failed to set E2E_TEST_API_ENV to %q: %v", gkeEnv, err.Error())
+	if err := os.Setenv("E2E_TEST_API_ENV", envAPIMap[gkeEnv]); err != nil {
+		return fmt.Errorf("failed to set E2E_TEST_API_ENV to %q: %v", envAPIMap[gkeEnv], err.Error())
 	}
 
 	// If running in Prow, then acquire and set up a project through Boskos
