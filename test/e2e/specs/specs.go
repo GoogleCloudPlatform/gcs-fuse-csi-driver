@@ -324,7 +324,7 @@ type TestKubernetesServiceAccount struct {
 	namespace      *v1.Namespace
 }
 
-func NewTestKubernetesServiceAccount(c clientset.Interface, ns *v1.Namespace, name, gcpSAName string) *TestKubernetesServiceAccount {
+func NewTestKubernetesServiceAccount(c clientset.Interface, ns *v1.Namespace, name, gcpSAEmail string) *TestKubernetesServiceAccount {
 	sa := &TestKubernetesServiceAccount{
 		client:    c,
 		namespace: ns,
@@ -334,9 +334,9 @@ func NewTestKubernetesServiceAccount(c clientset.Interface, ns *v1.Namespace, na
 			},
 		},
 	}
-	if gcpSAName != "" {
+	if gcpSAEmail != "" {
 		sa.serviceAccount.Annotations = map[string]string{
-			"iam.gke.io/gcp-service-account": gcpSAName,
+			"iam.gke.io/gcp-service-account": gcpSAEmail,
 		}
 	}
 
@@ -377,7 +377,7 @@ func (t *TestGCPServiceAccount) Create() {
 	request := &iam.CreateServiceAccountRequest{
 		AccountId: t.serviceAccount.Name,
 		ServiceAccount: &iam.ServiceAccount{
-			DisplayName: "Cloud Storage FUSE CSI Driver E2E Test SA " + t.serviceAccount.Name,
+			DisplayName: "Cloud Storage FUSE CSI Driver E2E Test SA",
 		},
 	}
 	t.serviceAccount, err = iamService.Projects.ServiceAccounts.Create("projects/"+t.serviceAccount.ProjectId, request).Do()
@@ -385,7 +385,8 @@ func (t *TestGCPServiceAccount) Create() {
 
 	err = wait.PollImmediate(pollInterval, pollTimeout, func() (bool, error) {
 		if _, e := iamService.Projects.ServiceAccounts.Get(t.serviceAccount.Name).Do(); e != nil {
-			return false, e
+			//nolint:nilerr
+			return false, nil
 		}
 
 		return true, nil
@@ -393,52 +394,40 @@ func (t *TestGCPServiceAccount) Create() {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ns *v1.Namespace) {
+	framework.Logf("Binding the GCP IAM Service Account %s with Role roles/iam.workloadIdentityUser", t.serviceAccount.Name)
+	iamService, err := iam.NewService(context.TODO())
+	framework.ExpectNoError(err)
+
+	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(t.serviceAccount.Name).Do()
+	framework.ExpectNoError(err)
+
+	policy.Bindings = append(policy.Bindings,
+		&iam.Binding{
+			Role: "roles/iam.workloadIdentityUser",
+			Members: []string{
+				fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", t.serviceAccount.ProjectId, ns.Name, K8sServiceAccountName),
+			},
+		})
+
+	iamPolicyRequest := &iam.SetIamPolicyRequest{Policy: policy}
+	_, err = iamService.Projects.ServiceAccounts.SetIamPolicy(t.serviceAccount.Name, iamPolicyRequest).Do()
+	framework.ExpectNoError(err)
+}
+
+func (t *TestGCPServiceAccount) GetEmail() string {
+	if t.serviceAccount != nil {
+		return t.serviceAccount.Email
+	}
+
+	return ""
+}
+
 func (t *TestGCPServiceAccount) Cleanup() {
 	framework.Logf("Deleting GCP IAM Service Account %s", t.serviceAccount.Name)
 	service, err := iam.NewService(context.TODO())
 	framework.ExpectNoError(err)
 	_, err = service.Projects.ServiceAccounts.Delete(t.serviceAccount.Name).Do()
-	framework.ExpectNoError(err)
-}
-
-type TestGCPServiceAccountIAMPolicyBinding struct {
-	serviceAccount *iam.ServiceAccount
-	namespace      *v1.Namespace
-}
-
-func NewTestGCPServiceAccountIAMPolicyBinding(ns *v1.Namespace, serviceAccount *iam.ServiceAccount) *TestGCPServiceAccountIAMPolicyBinding {
-	return &TestGCPServiceAccountIAMPolicyBinding{
-		namespace:      ns,
-		serviceAccount: serviceAccount,
-	}
-}
-
-func (t *TestGCPServiceAccountIAMPolicyBinding) Create() {
-	framework.Logf("Binding the GCP IAM Service Account %s with Role roles/iam.workloadIdentityUser", t.serviceAccount.Name)
-	iamService, err := iam.NewService(context.TODO())
-	framework.ExpectNoError(err)
-
-	iamPolicyRequest := &iam.SetIamPolicyRequest{
-		Policy: &iam.Policy{
-			Bindings: []*iam.Binding{
-				{
-					Role: "roles/iam.workloadIdentityUser",
-					Members: []string{
-						fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", t.serviceAccount.ProjectId, t.namespace.Name, K8sServiceAccountName),
-					},
-				},
-			},
-		},
-	}
-	_, err = iamService.Projects.ServiceAccounts.SetIamPolicy(t.serviceAccount.Name, iamPolicyRequest).Do()
-	framework.ExpectNoError(err)
-}
-
-func (t *TestGCPServiceAccountIAMPolicyBinding) Cleanup() {
-	framework.Logf("Removing Workload Identity User role from GCP IAM Service Account %s", t.serviceAccount.Name)
-	iamService, err := iam.NewService(context.TODO())
-	framework.ExpectNoError(err)
-	_, err = iamService.Projects.ServiceAccounts.SetIamPolicy(t.serviceAccount.Name, &iam.SetIamPolicyRequest{}).Do()
 	framework.ExpectNoError(err)
 }
 

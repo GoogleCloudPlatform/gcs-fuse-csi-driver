@@ -20,6 +20,7 @@ package testsuites
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
@@ -283,6 +284,9 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResourceList[0], "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Sleeping 2 minutes for the service account being propagated")
+		time.Sleep(time.Minute * 2)
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create()
