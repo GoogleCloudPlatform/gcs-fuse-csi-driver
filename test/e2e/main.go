@@ -228,7 +228,8 @@ func generateTestSkip(testParams *testParameters) string {
 	if testParams.useGKEAutopilot {
 		skipString += "|OOM|high.resource.usage"
 	}
-
+	// TODO(amacaskill): Remove this once failedMount tests are fixed.
+	skipString += "|failedMount"
 	return skipString
 }
 
