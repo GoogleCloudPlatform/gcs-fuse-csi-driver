@@ -94,19 +94,33 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 	return m.cmds
 }
 
-func (mc *MountConfig) PrepareMountArgs() map[string]string {
-	disallowedFlags := map[string]bool{
-		"app-name":             true,
-		"temp-dir":             true,
-		"foreground":           true,
-		"log-file":             true,
-		"log-format":           true,
-		"key-file":             true,
-		"token-url":            true,
-		"reuse-token-from-url": true,
-		"o":                    true,
-	}
+var disallowedFlags = map[string]bool{
+	"app-name":             true,
+	"temp-dir":             true,
+	"foreground":           true,
+	"log-file":             true,
+	"log-format":           true,
+	"key-file":             true,
+	"token-url":            true,
+	"reuse-token-from-url": true,
+	"o":                    true,
+}
 
+var boolFlags = map[string]bool{
+	"implicit-dirs":                 true,
+	"experimental-local-file-cache": true,
+	"enable-nonexistent-type-cache": true,
+	"debug_fuse_errors":             true,
+	"debug_fuse":                    true,
+	"debug_fs":                      true,
+	"debug_gcs":                     true,
+	"debug_http":                    true,
+	"debug_invariants":              true,
+	"debug_mutex":                   true,
+	"enable-storage-client-library": true,
+}
+
+func (mc *MountConfig) PrepareMountArgs() map[string]string {
 	flagMap := map[string]string{
 		"app-name":   GCSFuseAppName,
 		"temp-dir":   mc.TempDir,
@@ -129,6 +143,11 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 			invalidArgs = append(invalidArgs, arg)
 
 			continue
+		}
+
+		if boolFlags[argPair[0]] && len(argPair) > 1 {
+			argPair[0] = argPair[0] + "=" + argPair[1]
+			argPair = argPair[:1]
 		}
 
 		flagMap[argPair[0]] = ""
