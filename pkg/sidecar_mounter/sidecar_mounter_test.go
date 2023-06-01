@@ -83,6 +83,27 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 		},
 		{
+			name: "should return valid args with bool options correctly",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				TempDir:    "test-temp-dir",
+				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs=true", "enable-storage-client-library=false"},
+			},
+			expectedArgs: map[string]string{
+				"implicit-dirs=true":                  "",
+				"enable-storage-client-library=false": "",
+				"app-name":                            GCSFuseAppName,
+				"temp-dir":                            "test-temp-dir",
+				"foreground":                          "",
+				"log-file":                            "/dev/fd/1",
+				"log-format":                          "text",
+				"uid":                                 "100",
+				"gid":                                 "200",
+				"debug_gcs":                           "",
+				"max-conns-per-host":                  "10",
+			},
+		},
+		{
 			name: "should return valid args with error correctly",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
