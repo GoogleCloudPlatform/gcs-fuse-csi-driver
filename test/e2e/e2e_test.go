@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,10 +37,11 @@ import (
 )
 
 var (
-	err error
-	c   clientset.Interface
-	m   metadata.Service
-	bl  string
+	err           error
+	c             clientset.Interface
+	m             metadata.Service
+	bl            string
+	skipGcpSaTest bool
 )
 
 var _ = func() bool {
@@ -72,10 +74,14 @@ var _ = func() bool {
 	}
 	m, err = metadata.NewFakeService(l[1], l[2], l[3], os.Getenv("E2E_TEST_API_ENV"))
 	if err != nil {
-		klog.Fatal(err)
+		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
 
 	bl = os.Getenv("E2E_TEST_BUCKET_LOCATION")
+	skipGcpSaTest, err = strconv.ParseBool(os.Getenv("E2E_TEST_SKIP_GCP_SA_TEST"))
+	if err != nil {
+		klog.Fatalf("Failed to parse E2E_TEST_SKIP_GCP_SA_TEST: %v", err)
+	}
 
 	return true
 }()
@@ -104,7 +110,7 @@ var _ = ginkgo.Describe("Cloud Storage FUSE CSI Driver E2E", func() {
 		testsuites.InitGcsFuseCSIPerformanceTestSuite,
 	}
 
-	testDriver := InitGCSFuseCSITestDriver(c, m, bl)
+	testDriver := InitGCSFuseCSITestDriver(c, m, bl, skipGcpSaTest)
 
 	ginkgo.Context(storageframework.GetDriverNameWithFeatureTags(testDriver), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)

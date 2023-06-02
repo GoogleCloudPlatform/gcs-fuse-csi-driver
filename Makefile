@@ -62,6 +62,7 @@ else ifeq (${E2E_TEST_API_ENV}, sandbox)
 endif
 
 export E2E_TEST_BUCKET_LOCATION ?= us
+export E2E_TEST_SKIP_GCP_SA_TEST ?= true
 
 E2E_TEST_USE_MANAGED_DRIVER ?= false
 E2E_TEST_BUILD_DRIVER ?= false

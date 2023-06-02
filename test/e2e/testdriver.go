@@ -47,6 +47,7 @@ type GCSFuseCSITestDriver struct {
 	storageServiceManager storage.ServiceManager
 	volumeStore           []*gcsVolume
 	bucketLocation        string
+	skipGcpSaTest         bool
 }
 
 type gcsVolume struct {
@@ -58,7 +59,7 @@ type gcsVolume struct {
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
-func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string) storageframework.TestDriver {
+func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest bool) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
@@ -81,6 +82,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		storageServiceManager: ssm,
 		volumeStore:           []*gcsVolume{},
 		bucketLocation:        bl,
+		skipGcpSaTest:         skipGcpSaTest,
 	}
 }
 
@@ -103,11 +105,15 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storageframework.PerTestConfig {
-	testGcpSA := specs.NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
-	testGcpSA.Create()
-	testGcpSA.AddIAMPolicyBinding(f.Namespace)
+	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, "")
+	var testGcpSA *specs.TestGCPServiceAccount
+	if !n.skipGcpSaTest {
+		testGcpSA = specs.NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
+		testGcpSA.Create()
+		testGcpSA.AddIAMPolicyBinding(f.Namespace)
 
-	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, testGcpSA.GetEmail())
+		testK8sSA = specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, testGcpSA.GetEmail())
+	}
 	testK8sSA.Create()
 
 	config := &storageframework.PerTestConfig{
@@ -122,7 +128,9 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 		n.volumeStore = []*gcsVolume{}
 
 		testK8sSA.Cleanup()
-		testGcpSA.Cleanup()
+		if !n.skipGcpSaTest {
+			testGcpSA.Cleanup()
+		}
 	})
 
 	return config
@@ -241,12 +249,11 @@ func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfi
 
 func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storageframework.PerTestConfig, _ string) *storagev1.StorageClass {
 	// Set up the GCP Project IAM Policy
-	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(
-		n.meta.GetProjectID(),
-		fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(config.Framework.Namespace.Name), n.meta.GetProjectID()),
-		"roles/storage.admin",
-		"",
-	)
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), config.Framework.Namespace.Name, specs.K8sServiceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(config.Framework.Namespace.Name), n.meta.GetProjectID())
+	}
+	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/storage.admin", "")
 	testGCPProjectIAMPolicyBinding.Create()
 
 	testSecret := specs.NewTestSecret(config.Framework.ClientSet, config.Framework.Namespace, specs.K8sSecretName, map[string]string{
@@ -307,9 +314,10 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 	// the GCS bucket name is always new and unique,
 	// so there is no need to check if the bucket already exists
 	newBucket := &storage.ServiceBucket{
-		Project:  n.meta.GetProjectID(),
-		Name:     uuid.NewString(),
-		Location: n.bucketLocation,
+		Project:                        n.meta.GetProjectID(),
+		Name:                           uuid.NewString(),
+		Location:                       n.bucketLocation,
+		EnableUniformBucketLevelAccess: true,
 	}
 
 	ginkgo.By(fmt.Sprintf("Creating bucket %q", newBucket.Name))
@@ -318,10 +326,11 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 		e2eframework.Failf("Failed to create a new GCS bucket: %v", err)
 	}
 
-	if err := storageService.SetIAMPolicy(ctx, bucket,
-		fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID()),
-		"roles/storage.objectAdmin",
-	); err != nil {
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, specs.K8sServiceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
+	}
+	if err := storageService.SetIAMPolicy(ctx, bucket, member, "roles/storage.objectAdmin"); err != nil {
 		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
 	}
 
