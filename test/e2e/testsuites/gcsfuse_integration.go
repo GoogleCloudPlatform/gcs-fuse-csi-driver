@@ -123,28 +123,28 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "enable-storage-client-library=false", "implicit-dirs=false")
+		gcsfuseIntegrationTest("operations", false)
 	})
 
 	ginkgo.It("should succeed in operations test 2", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "enable-storage-client-library=true", "implicit-dirs=false")
+		gcsfuseIntegrationTest("operations", false, "enable-storage-client-library")
 	})
 
 	ginkgo.It("should succeed in operations test 3", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "enable-storage-client-library=false", "implicit-dirs=true")
+		gcsfuseIntegrationTest("operations", false, "implicit-dirs")
 	})
 
 	ginkgo.It("should succeed in operations test 4", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "enable-storage-client-library=true", "implicit-dirs=true")
+		gcsfuseIntegrationTest("operations", false, "enable-storage-client-library", "implicit-dirs")
 	})
 
 	ginkgo.It("should succeed in rename_dir_limit test 1", func() {
