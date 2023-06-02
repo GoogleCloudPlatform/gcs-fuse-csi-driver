@@ -144,9 +144,10 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 
 	param := req.GetParameters()
 	newBucket := &storage.ServiceBucket{
-		Project:   projectID,
-		Name:      volumeID,
-		SizeBytes: capBytes,
+		Project:                        projectID,
+		Name:                           volumeID,
+		SizeBytes:                      capBytes,
+		EnableUniformBucketLevelAccess: true,
 	}
 
 	storageService, err := s.prepareStorageService(ctx, secrets)

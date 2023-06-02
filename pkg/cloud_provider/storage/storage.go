@@ -34,11 +34,12 @@ import (
 )
 
 type ServiceBucket struct {
-	Project   string
-	Name      string
-	Location  string
-	SizeBytes int64
-	Labels    map[string]string
+	Project                        string
+	Name                           string
+	Location                       string
+	SizeBytes                      int64
+	Labels                         map[string]string
+	EnableUniformBucketLevelAccess bool
 }
 
 type Service interface {
@@ -99,7 +100,12 @@ func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket)
 	klog.V(4).Infof("Creating bucket %q: project %q, location %q", obj.Name, obj.Project, obj.Location)
 	// Create the bucket
 	bkt := service.storageClient.Bucket(obj.Name)
-	if err := bkt.Create(ctx, obj.Project, &storage.BucketAttrs{Location: obj.Location, Labels: obj.Labels}); err != nil {
+	bktAttrs := &storage.BucketAttrs{
+		Location:                 obj.Location,
+		Labels:                   obj.Labels,
+		UniformBucketLevelAccess: storage.UniformBucketLevelAccess{Enabled: obj.EnableUniformBucketLevelAccess},
+	}
+	if err := bkt.Create(ctx, obj.Project, bktAttrs); err != nil {
 		return nil, fmt.Errorf("CreateBucket operation failed for bucket %q: %w", obj.Name, err)
 	}
 
