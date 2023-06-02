@@ -35,7 +35,7 @@ spec:
       annotations:
         gke-gcsfuse/volumes: "true"
         gke-gcsfuse/cpu-limit: "10"
-        gke-gcsfuse/memory-limit: 20Gi
+        gke-gcsfuse/memory-limit: 40Gi
         gke-gcsfuse/ephemeral-storage-limit: 20Gi
     spec:
       restartPolicy: Never
@@ -66,11 +66,11 @@ spec:
         resources:
           limits:
             cpu: "85"
-            memory: 620Gi
+            memory: 600Gi
             nvidia.com/gpu: "8"
           requests:
             cpu: "85"
-            memory: 620Gi
+            memory: 600Gi
             nvidia.com/gpu: "8"
         volumeMounts:
         - name: dshm
