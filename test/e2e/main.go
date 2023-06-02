@@ -129,6 +129,9 @@ func handle() error {
 	if err := os.Setenv("E2E_TEST_API_ENV", envAPIMap[gkeEnv]); err != nil {
 		return fmt.Errorf("failed to set E2E_TEST_API_ENV to %q: %v", envAPIMap[gkeEnv], err.Error())
 	}
+	if err := os.Setenv("E2E_TEST_SKIP_GCP_SA_TEST", "true"); err != nil {
+		return fmt.Errorf("failed to set E2E_TEST_SKIP_GCP_SA_TEST to true: %v", err.Error())
+	}
 
 	// If running in Prow, then acquire and set up a project through Boskos
 	if *inProw {
