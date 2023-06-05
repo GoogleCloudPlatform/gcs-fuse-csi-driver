@@ -17,10 +17,20 @@ limitations under the License.
 
 package main
 
-// TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
-//
-//nolint:revive
-func installDriver(testParams *testParameters, stagingImage, deployOverlayName string, doDriverBuild bool) error {
+import (
+	"fmt"
+	"os"
+	"os/exec"
+
+	"k8s.io/klog/v2"
+)
+
+func installDriver(pkgDir string) error {
+	cmd := exec.Command("make", "-C", pkgDir, "install-driver")
+	err := runCommand("Installing non-managed driver", cmd)
+	if err != nil {
+		return fmt.Errorf("failed to run make command: err: %v", err.Error())
+	}
 	return nil
 }
 
@@ -31,10 +41,25 @@ func deleteDriver(testParams *testParameters, deployOverlayName string) error {
 	return nil
 }
 
-// TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
-//
-//nolint:revive
-func pushImage(pkgDir, stagingImage, stagingVersion string) error {
+func pushImage(pkgDir, registry, stagingVersion string) error {
+	klog.Infof("Pushing image to REGISTRY=%q STAGINGVERSION=%q", registry, stagingVersion)
+
+	err := os.Setenv("REGISTRY", registry)
+	if err != nil {
+		return err
+	}
+	// TODO(amacaskill): Revert this once prow docker version allows arm build.
+	err = os.Setenv("BUILD_ARM_IMAGE", "false")
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("make", "-C", pkgDir, "build-gcs-fuse")
+	err = runCommand("Pushing image", cmd)
+	if err != nil {
+		return fmt.Errorf("failed to run make command: err: %v", err.Error())
+	}
+
 	return nil
 }
 

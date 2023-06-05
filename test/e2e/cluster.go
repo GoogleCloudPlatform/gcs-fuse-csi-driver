@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"time"
 
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 	"k8s.io/klog/v2"
@@ -52,15 +53,13 @@ func clusterDownGKE(gceRegion string) error {
 	return nil
 }
 
-func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType string, useManagedDriver, useGKEAutopilot bool) error {
+func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType string, useManagedDriver, useGKEAutopilot bool, nodeMachineType string) error {
 	locationArg, locationVal, err := gkeLocationArgs(gceRegion)
 	if err != nil {
 		return err
 	}
 
-	out, err := exec.Command("gcloud", "container", "clusters", "list",
-		locationArg, locationVal, "--verbosity", "none", "--filter",
-		fmt.Sprintf("name=%s", *gkeTestClusterName)).CombinedOutput()
+	out, err := exec.Command("gcloud", "container", "clusters", "list", locationArg, locationVal, "--verbosity", "none", "--filter", fmt.Sprintf("name=%s", *gkeTestClusterName)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to check for previous test cluster: %v %s", err.Error(), out)
 	}
@@ -89,7 +88,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	standardClusterFlags := []string{
 		"--num-nodes", strconv.Itoa(numNodes), "--image-type", imageType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
-		"--machine-type", "n1-standard-2",
+		"--machine-type", nodeMachineType, "--no-enable-autoupgrade",
 	}
 	if isVariableSet(gkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", *gkeNodeVersion)
@@ -99,7 +98,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 
 	// If using standard cluster, add required flags.
-	if !useGKEAutopilot {
+	if !useGKEAutopilot && *inProw {
 		cmdParams = append(cmdParams, standardClusterFlags...)
 
 		// Update gcloud to latest version.
@@ -119,6 +118,20 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	err = runCommand("Starting E2E Cluster on GKE", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on gke: %v", err.Error())
+	}
+	// Call update because --add-maintenance-exclusion is not an available flag for create-auto.
+	if useGKEAutopilot {
+		startExclusionTime := time.Now().UTC()
+		//nolint:gosec
+		cmd = exec.Command("gcloud", "container", "clusters", "update", *gkeTestClusterName, locationArg, locationVal,
+			"--add-maintenance-exclusion-name", "no-upgrades-during-test",
+			"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
+			"--add-maintenance-exclusion-end", startExclusionTime.Add(2*time.Hour).Format(time.RFC3339),
+			"--add-maintenance-exclusion-scope", "no_upgrades")
+		err = runCommand("Updating Autopilot Cluster with maintenance window", cmd)
+		if err != nil {
+			return fmt.Errorf("failed to update autopilot cluster with maintenance window: %v", err.Error())
+		}
 	}
 
 	return nil

@@ -39,22 +39,29 @@ var envAPIMap = map[string]string{
 
 var (
 	// Kubernetes cluster flags.
-	gceRegion          = flag.String("region", "", "region that gke regional cluster should be created in")
-	gkeClusterVer      = flag.String("gke-cluster-version", "", "version of Kubernetes master and node for gke")
-	gkeNodeVersion     = flag.String("gke-node-version", "", "GKE cluster worker node version")
-	numNodes           = flag.Int("number-nodes", 3, "the number of nodes in the test cluster")
-	gkeTestClusterName = flag.String("gke-cluster-name", "", "Name of test cluster")
-	useGKEAutopilot    = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
+	gceRegion           = flag.String("region", "", "region that gke regional cluster should be created in")
+	gkeClusterVer       = flag.String("gke-cluster-version", "", "version of Kubernetes master and node for gke")
+	gkeNodeVersion      = flag.String("gke-node-version", "", "GKE cluster worker node version")
+	nodeMachineType     = flag.String("node-machine-type", "n1-standard-2", "GKE cluster worker node machine type")
+	numNodes            = flag.Int("number-nodes", 3, "the number of nodes in the test cluster")
+	gkeTestClusterName  = flag.String("gke-cluster-name", "", "Name of test cluster")
+	testProjectID       = flag.String("test-project-id", "", "Project ID of the test cluster")
+	bringUpCluster      = flag.Bool("bring-up-cluster", true, "Whether or not to create a cluster")
+	tearDownCluster     = flag.Bool("tear-down-cluster", true, "Whether or not to create a cluster")
+	useGKEAutopilot     = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
+	apiEndpointOverride = flag.String("api-endpoint-override", "", "The CloudSDK api endpoint override to use for the cluster environment.")
 
 	imageType = flag.String("image-type", "cos_containerd", "the image type to use for the cluster")
 
 	// Test infrastructure flags.
-	boskosResourceType = flag.String("boskos-resource-type", "gce-project", "name of the boskos resource type to reserve")
-	inProw             = flag.Bool("run-in-prow", true, "is the test running in PROW")
+	boskosResourceType = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
+	inProw             = flag.Bool("run-in-prow", false, "is the test running in PROW")
+	testFocus          = flag.String("test-focus", "", "The ginkgo test focus.")
+	testSkip           = flag.String("test-skip", "", "The ginkgo test focus.")
 
 	// Driver flags.
 	stagingImage        = flag.String("staging-image", "", "name of image to stage to")
-	deployOverlayName   = flag.String("deploy-overlay-name", "", "which kustomize overlay to deploy the driver with")
+	deployOverlayName   = flag.String("deploy-overlay-name", "stable", "which kustomize overlay to deploy the driver with")
 	doDriverBuild       = flag.Bool("do-driver-build", true, "building the driver from source")
 	useGKEManagedDriver = flag.Bool("use-gke-managed-driver", false, "use GKE managed PD CSI driver for the tests")
 )
@@ -79,23 +86,32 @@ func main() {
 	}
 	flag.Parse()
 
+	ensureVariable(gceRegion, true, "region must be set")
+
 	if *useGKEManagedDriver {
 		ensureFlag(doDriverBuild, false, "'do-driver-build' must be false when using GKE managed driver")
 		ensureVariable(stagingImage, false, "'staging-image' must not be set when using GKE managed driver")
-		ensureVariable(deployOverlayName, false, "'deploy-overlay-name' must not be set when using GKE managed driver")
 	}
 
-	if !*useGKEManagedDriver {
-		ensureVariable(deployOverlayName, true, "deploy-overlay-name is a required flag")
+	if !*bringUpCluster {
+		ensureVariable(gkeTestClusterName, true, "'gke-cluster-name' must be set when 'bring-up-cluster' is false")
 	}
-
-	ensureVariable(gceRegion, true, "region must be set")
+	if !*inProw {
+		ensureVariable(testProjectID, true, "'test-project-id' must be set when not running in prow")
+	}
+	if len(*apiEndpointOverride) != 0 {
+		if err := os.Setenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER", *apiEndpointOverride); err != nil {
+			klog.Fatalf("failed to set CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER to %q: %v", *apiEndpointOverride, err.Error())
+		}
+	}
 
 	// TODO(amacaskill): make sure cluster version is greater than 1.26.3-gke.1000.
 	ensureVariable(gkeClusterVer, true, "'gke-cluster-version' must be set")
 
-	randSuffix := string(uuid.NewUUID())[0:4]
-	*gkeTestClusterName = "gcsfuse" + randSuffix
+	if len(*gkeTestClusterName) == 0 {
+		randSuffix := string(uuid.NewUUID())[0:4]
+		*gkeTestClusterName = "gcsfuse" + randSuffix
+	}
 
 	err := handle()
 	if err != nil {
@@ -124,7 +140,7 @@ func handle() error {
 	// TODO(amacaskill): Change e2e_test.go / Makefile to assign and use CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER directly.
 	gkeEnv, ok := os.LookupEnv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
 	if !ok {
-		return fmt.Errorf("could not find env variable CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
+		gkeEnv = "https://container.googleapis.com/"
 	}
 	if err := os.Setenv("E2E_TEST_API_ENV", envAPIMap[gkeEnv]); err != nil {
 		return fmt.Errorf("failed to set E2E_TEST_API_ENV to %q: %v", envAPIMap[gkeEnv], err.Error())
@@ -133,29 +149,15 @@ func handle() error {
 		return fmt.Errorf("failed to set E2E_TEST_SKIP_GCP_SA_TEST to true: %v", err.Error())
 	}
 
-	// If running in Prow, then acquire and set up a project through Boskos
-	if *inProw {
-		oldProject, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to get gcloud project: %s, err: %w", oldProject, err)
-		}
-		newproject, _ := SetupProwConfig(*boskosResourceType)
-		err = setEnvProject(newproject)
-		if err != nil {
-			return fmt.Errorf("failed to set project environment to %s: %w", newproject, err)
-		}
-		testParams.projectID = newproject
+	oldProject, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get gcloud project: %s, err: %w", oldProject, err)
+	}
 
-		defer func() {
-			err = setEnvProject(string(oldProject))
-			if err != nil {
-				klog.Errorf("failed to set project environment to %s: %w", oldProject, err.Error())
-			}
-		}()
-		project := newproject
-		if *doDriverBuild {
-			*stagingImage = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(project))
-		}
+	newproject := *testProjectID
+	// If running in Prow, then acquire and set up a project through Boskos.
+	if *inProw {
+		newproject, _ = SetupProwConfig(*boskosResourceType)
 		if _, ok := os.LookupEnv("USER"); !ok {
 			err = os.Setenv("USER", "prow")
 			if err != nil {
@@ -164,12 +166,29 @@ func handle() error {
 		}
 	}
 
+	err = setEnvProject(newproject)
+	if err != nil {
+		return fmt.Errorf("failed to set project environment to %s: %w", newproject, err)
+	}
+	testParams.projectID = newproject
+
+	defer func() {
+		err = setEnvProject(string(oldProject))
+		if err != nil {
+			klog.Errorf("failed to set project environment to %s: %w", oldProject, err.Error())
+		}
+	}()
+	project := newproject
+	if *doDriverBuild {
+		*stagingImage = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(project))
+	}
+
 	// Build and push the driver, if required. Defer the driver image deletion.
 	if *doDriverBuild {
 		klog.Infof("Building GCS Fuse CSI Driver")
-		err := pushImage(testParams.pkgDir, *stagingImage, testParams.stagingVersion)
+		err := pushImage(testParams.pkgDir, fmt.Sprintf("gcr.io/%s", testParams.projectID), testParams.stagingVersion)
 		if err != nil {
-			return fmt.Errorf("failed pushing image: %v", err.Error())
+			return fmt.Errorf("failed pushing GCSFuse image: %v", err.Error())
 		}
 		// Defer the cluster teardown.
 		defer func() {
@@ -181,20 +200,22 @@ func handle() error {
 	}
 
 	// Create a cluster through GKE.
-	if err := clusterUpGKE(testParams.projectID, *gceRegion, *numNodes, *imageType, testParams.useGKEManagedDriver, testParams.useGKEAutopilot); err != nil {
+	if err := clusterUpGKE(testParams.projectID, *gceRegion, *numNodes, *imageType, testParams.useGKEManagedDriver, testParams.useGKEAutopilot, *nodeMachineType); err != nil {
 		return fmt.Errorf("failed to cluster up: %w", err)
 	}
 
 	// Defer the tear down of the cluster through GKE.
-	defer func() {
-		if err := clusterDownGKE(*gceRegion); err != nil {
-			klog.Errorf("failed to cluster down: %w", err)
-		}
-	}()
+	if *tearDownCluster {
+		defer func() {
+			if err := clusterDownGKE(*gceRegion); err != nil {
+				klog.Errorf("failed to cluster down: %w", err)
+			}
+		}()
+	}
 
 	if !testParams.useGKEManagedDriver {
 		// Install the driver and defer its teardown
-		err := installDriver(testParams, *stagingImage, *deployOverlayName, *doDriverBuild)
+		err := installDriver(testParams.pkgDir)
 		defer func() {
 			if teardownErr := deleteDriver(testParams, *deployOverlayName); teardownErr != nil {
 				klog.Errorf("failed to delete driver: %w", teardownErr)
@@ -215,10 +236,19 @@ func handle() error {
 	// Now that clusters are running, we need to actually run the tests on the cluster with the following.
 	// TODO(amacaskill): make ginkgo procs and artifacts path variables configurable.
 	e2eGinkgoProcs := "5"
-	e2eArtifactsPath := "../../_artifacts"
+	timeout := "20m"
+	artifactsDir, ok := os.LookupEnv("ARTIFACTS")
+	if !ok {
+		artifactsDir = "../../_artifacts"
+	}
+	klog.Infof("artifacts dir is %q", artifactsDir)
+	testFocusStr := *testFocus
+	if len(*testFocus) != 0 {
+		testFocusStr = fmt.Sprintf(".*%s.*", *testFocus)
+	}
 
 	//nolint:gosec
-	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", "20m", "--skip", testParams.testSkip, "./test/e2e/", "--", "-report-dir", e2eArtifactsPath, "--provider", "skeleton").CombinedOutput()
+	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--focus", testFocusStr, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}
@@ -227,12 +257,13 @@ func handle() error {
 }
 
 func generateTestSkip(testParams *testParameters) string {
-	skipString := "Dynamic.PV"
+	skipString := *testSkip
 	if testParams.useGKEAutopilot {
 		skipString += "|OOM|high.resource.usage"
 	}
 	// TODO(amacaskill): Remove this once these tests are ready to be run.
-	skipString += "|failedMount|should.succeed.in.performance.test|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
+	skipString += "|failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
+	klog.Infof("Generated testskip %q", skipString)
 
 	return skipString
 }
