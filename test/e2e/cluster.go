@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"time"
 
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 	"k8s.io/klog/v2"
@@ -99,7 +100,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 
 	// If using standard cluster, add required flags.
-	if !useGKEAutopilot {
+	if !useGKEAutopilot && *inProw {
 		cmdParams = append(cmdParams, standardClusterFlags...)
 
 		// Update gcloud to latest version.
@@ -119,6 +120,14 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	err = runCommand("Starting E2E Cluster on GKE", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on gke: %v", err.Error())
+	}
+	// Call update because --maintenance-window is not an available flag for create-auto.
+	if useGKEAutopilot {
+		cmd = exec.Command("gcloud", "container", "clusters", "update", *gkeTestClusterName, locationArg, locationVal, "--maintenance-window", time.Now().UTC().Format("15:04"))
+		err = runCommand("Updating Autopilot Cluster with maintenance window", cmd)
+		if err != nil {
+			return fmt.Errorf("failed to update autopilot cluster with maintenance window: %v", err.Error())
+		}
 	}
 
 	return nil
