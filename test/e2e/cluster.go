@@ -128,7 +128,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 			"--add-maintenance-exclusion-name", "no-upgrades-during-test",
 			"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
 			"--add-maintenance-exclusion-end", startExclusionTime.Add(2*time.Hour).Format(time.RFC3339),
-			"--add-maintenance-exclusion-scope", "no-upgrades")
+			"--add-maintenance-exclusion-scope", "no_upgrades")
 		err = runCommand("Updating Autopilot Cluster with maintenance window", cmd)
 		if err != nil {
 			return fmt.Errorf("failed to update autopilot cluster with maintenance window: %v", err.Error())
