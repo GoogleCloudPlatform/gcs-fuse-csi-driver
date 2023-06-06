@@ -121,9 +121,14 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	if err != nil {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on gke: %v", err.Error())
 	}
-	// Call update because --maintenance-window is not an available flag for create-auto.
+	// Call update because --add-maintenance-exclusion is not an available flag for create-auto.
 	if useGKEAutopilot {
-		cmd = exec.Command("gcloud", "container", "clusters", "update", *gkeTestClusterName, locationArg, locationVal, "--maintenance-window", time.Now().UTC().Format("15:04"))
+		startExclusionTime := time.Now().UTC()
+		cmd = exec.Command("gcloud", "container", "clusters", "update", *gkeTestClusterName, locationArg, locationVal,
+			"--add-maintenance-exclusion-name", "no-upgrades-during-test",
+			"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
+			"--add-maintenance-exclusion-end", startExclusionTime.Add(2*time.Hour).Format(time.RFC3339),
+			"--add-maintenance-exclusion-scope", "no-upgrades")
 		err = runCommand("Updating Autopilot Cluster with maintenance window", cmd)
 		if err != nil {
 			return fmt.Errorf("failed to update autopilot cluster with maintenance window: %v", err.Error())
