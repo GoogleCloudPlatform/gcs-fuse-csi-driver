@@ -98,7 +98,7 @@ func main() {
 	if !*bringUpCluster {
 		ensureVariable(gkeTestClusterName, true, "'gke-cluster-name' must be set when 'bring-up-cluster' is false")
 	}
-	if *inProw {
+	if !*inProw {
 		ensureVariable(testProjectID, true, "'test-project-id' must be set when not running in prow")
 	}
 	if len(*apiEndpointOverride) != 0 {
