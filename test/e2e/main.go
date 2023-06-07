@@ -239,10 +239,6 @@ func handle() error {
 	// TODO(amacaskill): make ginkgo procs and artifacts path variables configurable.
 	e2eGinkgoProcs := "5"
 	timeout := "20m"
-	if testParams.useGKEAutopilot {
-		e2eGinkgoProcs = "2"
-		timeout = "40m"
-	}
 
 	//nolint:gosec
 	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", "artifacts", "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
