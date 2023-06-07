@@ -260,6 +260,6 @@ build-gcs-fuse:
 	git stash
 	git checkout tags/v0.1.3 -b v0.1.3-branch
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
-	git checkout main-local-new
+	git checkout main
 	git stash pop
 	git branch --delete -D v0.1.3-branch
