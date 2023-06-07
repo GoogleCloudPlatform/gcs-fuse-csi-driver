@@ -188,9 +188,9 @@ func handle() error {
 	// Build and push the driver, if required. Defer the driver image deletion.
 	if *doDriverBuild {
 		klog.Infof("Building GCS Fuse CSI Driver")
-		err := pushImage(testParams.pkgDir, *stagingImage, testParams.stagingVersion)
+		err := pushImage(testParams.pkgDir, fmt.Sprintf("gcr.io/%s", testParams.projectID), testParams.stagingVersion)
 		if err != nil {
-			return fmt.Errorf("failed pushing image: %v", err.Error())
+			return fmt.Errorf("failed pushing GCSFuse image: %v", err.Error())
 		}
 		// Defer the cluster teardown.
 		defer func() {

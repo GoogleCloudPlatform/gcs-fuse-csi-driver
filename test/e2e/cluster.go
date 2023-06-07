@@ -124,6 +124,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	// Call update because --add-maintenance-exclusion is not an available flag for create-auto.
 	if useGKEAutopilot {
 		startExclusionTime := time.Now().UTC()
+		//nolint:gosec
 		cmd = exec.Command("gcloud", "container", "clusters", "update", *gkeTestClusterName, locationArg, locationVal,
 			"--add-maintenance-exclusion-name", "no-upgrades-during-test",
 			"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
