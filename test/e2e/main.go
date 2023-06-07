@@ -239,9 +239,14 @@ func handle() error {
 	// TODO(amacaskill): make ginkgo procs and artifacts path variables configurable.
 	e2eGinkgoProcs := "5"
 	timeout := "20m"
+	artifactsDir, ok := os.LookupEnv("ARTIFACTS")
+	if !ok {
+		artifactsDir = "../../_artifacts"
+	}
+	klog.Infof("artifacts dir is %q", artifactsDir)
 
 	//nolint:gosec
-	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", "artifacts", "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
+	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}
