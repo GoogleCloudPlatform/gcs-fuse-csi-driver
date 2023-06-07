@@ -243,10 +243,9 @@ func handle() error {
 		e2eGinkgoProcs = "2"
 		timeout = "40m"
 	}
-	e2eArtifactsPath := "../../_artifacts"
 
 	//nolint:gosec
-	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--skip", testParams.testSkip, "./test/e2e/", "--", "-report-dir", e2eArtifactsPath, "--provider", "skeleton").CombinedOutput()
+	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", "artifacts", "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}
