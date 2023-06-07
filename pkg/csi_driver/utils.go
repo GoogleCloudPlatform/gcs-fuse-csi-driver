@@ -85,7 +85,11 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 	if err != nil {
 		klog.Errorf("%s failed with error: %v", info.FullMethod, err)
 	} else {
-		klog.V(4).Infof("%s succeeded with response: %s", info.FullMethod, resp)
+		if fmt.Sprintf("%v", resp) == "" {
+			klog.V(4).Infof("%s succeeded.", info.FullMethod)
+		} else {
+			klog.V(4).Infof("%s succeeded with response: %s", info.FullMethod, resp)
+		}
 	}
 
 	return resp, err
