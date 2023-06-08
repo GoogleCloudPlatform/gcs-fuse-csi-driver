@@ -46,6 +46,12 @@ func pushImage(pkgDir, registry, stagingVersion string) error {
 	if err != nil {
 		return err
 	}
+	// TODO(amacaskill): Revert this once prow docker version allows arm build.
+	err = os.Setenv("BUILD_ARM_IMAGE", "false")
+	if err != nil {
+		return err
+	}
+
 	cmd := exec.Command("make", "-C", pkgDir, "build-gcs-fuse")
 	err = runCommand("Pushing image", cmd)
 	if err != nil {
