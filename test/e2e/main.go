@@ -142,7 +142,7 @@ func handle() error {
 	// TODO(amacaskill): Change e2e_test.go / Makefile to assign and use CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER directly.
 	gkeEnv, ok := os.LookupEnv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
 	if !ok {
-		return fmt.Errorf("could not find env variable CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER")
+		gkeEnv = "https://container.googleapis.com/"
 	}
 	if err := os.Setenv("E2E_TEST_API_ENV", envAPIMap[gkeEnv]); err != nil {
 		return fmt.Errorf("failed to set E2E_TEST_API_ENV to %q: %v", envAPIMap[gkeEnv], err.Error())
