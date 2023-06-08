@@ -252,14 +252,11 @@ init-buildx:
 	# Required for "docker buildx build --push".
 	gcloud auth configure-docker --quiet
 
-# TODO(amacaskill): Replace v0.1.3 with GCSFUSECSI_TAG.
-# GCSFUSECSI_TAG = $(shell git describe --tags ${REV})
-# git checkout tags/${GCSFUSECSI_TAG} -b ${GCSFUSECSI_TAG}
-
 build-gcs-fuse:
+	git fetch
 	git stash
-	git checkout tags/v0.1.3 -b v0.1.3-branch
+	git checkout -b release-0.1 origin/release-0.1
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
 	git checkout main
 	git stash pop
-	git branch --delete -D v0.1.3-branch
+	git branch --delete -D release-0.1
