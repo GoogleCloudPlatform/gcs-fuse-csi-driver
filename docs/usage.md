@@ -112,7 +112,7 @@ In order to let the CSI driver authenticate with GCP APIs, you will need to do t
 
 * The Cloud Storage FUSE file system has [differences in performance, availability, access authorization, and semantics](https://cloud.devsite.corp.google.com/storage/docs/gcs-fuse#differences-and-limitations) compared to a POSIX file system.
 
-* The Cloud Storage FUSE CSI driver is not supported on [GKE Sandbox](https://cloud.google.com/kubernetes-engine/docs/concepts/sandbox-pods) or [Arm workloads](https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke).
+* The Cloud Storage FUSE CSI driver is not supported on [GKE Sandbox](https://cloud.google.com/kubernetes-engine/docs/concepts/sandbox-pods).
 
 * The Cloud Storage FUSE CSI driver does not support volume snapshots, volume cloning, or volume expansions.
 
