@@ -139,6 +139,14 @@ ifeq (${BUILD_ARM_IMAGE}, true)
 	docker manifest create \
 		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
+else
+	docker manifest create \
+		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
+
+	docker manifest create \
+		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 endif
 
 	docker manifest create \
