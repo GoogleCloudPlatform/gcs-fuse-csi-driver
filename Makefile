@@ -255,8 +255,8 @@ init-buildx:
 build-gcs-fuse:
 	git fetch --all
 	git stash
-	git switch release-0.1
+	git checkout tags/v0.1.3 -b v0.1.3-branch
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
 	git checkout main
 	git stash pop
-	git branch --delete -D release-0.1
+	git branch --delete -D v0.1.3-branch
