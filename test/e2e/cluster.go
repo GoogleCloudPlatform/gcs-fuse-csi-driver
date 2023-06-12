@@ -90,7 +90,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	standardClusterFlags := []string{
 		"--num-nodes", strconv.Itoa(numNodes), "--image-type", imageType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
-		"--machine-type", "n1-standard-2",
+		"--machine-type", "n1-standard-2", "--no-enable-autoupgrade",
 	}
 	if isVariableSet(gkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", *gkeNodeVersion)
