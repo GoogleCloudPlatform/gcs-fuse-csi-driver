@@ -255,7 +255,7 @@ init-buildx:
 build-gcs-fuse:
 	git fetch
 	git stash
-	git checkout -b release-0.1 origin/release-0.1
+	git switch release-0.1
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
 	git checkout main
 	git stash pop
