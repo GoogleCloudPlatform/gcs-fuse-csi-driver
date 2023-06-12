@@ -42,6 +42,7 @@ var (
 	gceRegion           = flag.String("region", "", "region that gke regional cluster should be created in")
 	gkeClusterVer       = flag.String("gke-cluster-version", "", "version of Kubernetes master and node for gke")
 	gkeNodeVersion      = flag.String("gke-node-version", "", "GKE cluster worker node version")
+	nodeMachineType     = flag.String("node-machine-type", "n1-standard-2", "GKE cluster worker node machine type")
 	numNodes            = flag.Int("number-nodes", 3, "the number of nodes in the test cluster")
 	gkeTestClusterName  = flag.String("gke-cluster-name", "", "Name of test cluster")
 	testProjectID       = flag.String("test-project-id", "", "Project ID of the test cluster")
@@ -55,6 +56,7 @@ var (
 	// Test infrastructure flags.
 	boskosResourceType = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
 	inProw             = flag.Bool("run-in-prow", false, "is the test running in PROW")
+	testFocus          = flag.String("test-focus", "*", "The ginkgo test focus.")
 
 	// Driver flags.
 	stagingImage        = flag.String("staging-image", "", "name of image to stage to")
@@ -202,7 +204,7 @@ func handle() error {
 	}
 
 	// Create a cluster through GKE.
-	if err := clusterUpGKE(testParams.projectID, *gceRegion, *numNodes, *imageType, testParams.useGKEManagedDriver, testParams.useGKEAutopilot); err != nil {
+	if err := clusterUpGKE(testParams.projectID, *gceRegion, *numNodes, *imageType, testParams.useGKEManagedDriver, testParams.useGKEAutopilot, *nodeMachineType); err != nil {
 		return fmt.Errorf("failed to cluster up: %w", err)
 	}
 
@@ -246,7 +248,7 @@ func handle() error {
 	klog.Infof("artifacts dir is %q", artifactsDir)
 
 	//nolint:gosec
-	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
+	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--focus", *testFocus, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}

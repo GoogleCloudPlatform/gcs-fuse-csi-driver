@@ -53,7 +53,7 @@ func clusterDownGKE(gceRegion string) error {
 	return nil
 }
 
-func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType string, useManagedDriver, useGKEAutopilot bool) error {
+func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType string, useManagedDriver, useGKEAutopilot bool, nodeMachineType string) error {
 	locationArg, locationVal, err := gkeLocationArgs(gceRegion)
 	if err != nil {
 		return err
@@ -88,7 +88,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	standardClusterFlags := []string{
 		"--num-nodes", strconv.Itoa(numNodes), "--image-type", imageType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", projectID),
-		"--machine-type", "n1-standard-2", "--no-enable-autoupgrade",
+		"--machine-type", nodeMachineType, "--no-enable-autoupgrade",
 	}
 	if isVariableSet(gkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", *gkeNodeVersion)
