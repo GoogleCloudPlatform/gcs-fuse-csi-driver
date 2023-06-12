@@ -253,9 +253,9 @@ init-buildx:
 	gcloud auth configure-docker --quiet
 
 build-gcs-fuse:
-	git fetch
+	git fetch --all
 	git stash
-	git switch release-0.1
+	git checkout -b release-0.1 origin/release-0.1
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
 	git checkout main
 	git stash pop
