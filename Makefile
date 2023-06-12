@@ -66,6 +66,7 @@ export E2E_TEST_SKIP_GCP_SA_TEST ?= true
 
 E2E_TEST_USE_MANAGED_DRIVER ?= false
 E2E_TEST_BUILD_DRIVER ?= false
+BUILD_ARM_IMAGE =? true
 
 E2E_TEST_FOCUS ?=
 E2E_TEST_SKIP ?= Dynamic.PV|should.succeed.in.performance.test
@@ -127,7 +128,9 @@ endif
 	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
 	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
 
-build-image-and-push-multi-arch: init-buildx build-image-linux-amd64 build-image-linux-arm64
+build-image-and-push-multi-arch: init-buildx build-image-linux-amd64
+ifeq (${BUILD_ARM_IMAGE}, true)
+	build-image-linux-arm64
 	docker manifest create \
 		--amend ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
@@ -135,6 +138,7 @@ build-image-and-push-multi-arch: init-buildx build-image-linux-amd64 build-image
 	docker manifest create \
 		--amend ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
+endif
 
 	docker manifest create \
 		--amend ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
