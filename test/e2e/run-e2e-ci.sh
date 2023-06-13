@@ -26,8 +26,8 @@ readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
 readonly node_machine_type=${MACHINE_TYPE:-n1-standard-2}
-readonly test_focus=${TEST_FOCUS:-}
-readonly test_skip=${TEST_SKIP:-}
+readonly test_focus="${TEST_FOCUS:-}"
+readonly test_skip="${TEST_SKIP:-}"
 readonly gce_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_managed_driver=${USE_GKE_MANAGED_DRIVER:-false}
 
