@@ -56,7 +56,8 @@ var (
 	// Test infrastructure flags.
 	boskosResourceType = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
 	inProw             = flag.Bool("run-in-prow", false, "is the test running in PROW")
-	testFocus          = flag.String("test-focus", "*", "The ginkgo test focus.")
+	testFocus          = flag.String("test-focus", "", "The ginkgo test focus.")
+	testSkip           = flag.String("test-skip", "", "The ginkgo test focus.")
 
 	// Driver flags.
 	stagingImage        = flag.String("staging-image", "", "name of image to stage to")
@@ -257,6 +258,7 @@ func handle() error {
 }
 
 func generateTestSkip(testParams *testParameters) string {
+	// TODO(amacaskill): Amend the skip string passed in by prow.
 	skipString := "Dynamic.PV"
 	if testParams.useGKEAutopilot {
 		skipString += "|OOM|high.resource.usage"

@@ -25,6 +25,9 @@ readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-proje
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
+readonly node_machine_type=${MACHINE_TYPE:-n1-standard-2}
+readonly test_focus=${TEST_FOCUS:-}
+readonly test_skip=${TEST_SKIP:-}
 readonly gce_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_managed_driver=${USE_GKE_MANAGED_DRIVER:-false}
 
@@ -45,6 +48,9 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --use-gke-autopilot=${use_gke_autopilot} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
+            --node-machine-type=${node_machine_type} \
+            --test-focus=${test_focus} \
+            --test-skip=${test_skip} \
             --boskos-resource-type=${boskos_resource_type}"
 
 # do-driver-build must be false when using GKE managed driver. Otherwise, do-driver-build must be true and deploy-overlay-name should be set.
