@@ -61,7 +61,7 @@ var (
 
 	// Driver flags.
 	stagingImage        = flag.String("staging-image", "", "name of image to stage to")
-	deployOverlayName   = flag.String("deploy-overlay-name", "", "which kustomize overlay to deploy the driver with")
+	deployOverlayName   = flag.String("deploy-overlay-name", "stable", "which kustomize overlay to deploy the driver with")
 	doDriverBuild       = flag.Bool("do-driver-build", true, "building the driver from source")
 	useGKEManagedDriver = flag.Bool("use-gke-managed-driver", false, "use GKE managed PD CSI driver for the tests")
 )
@@ -92,10 +92,6 @@ func main() {
 		ensureFlag(doDriverBuild, false, "'do-driver-build' must be false when using GKE managed driver")
 		ensureVariable(stagingImage, false, "'staging-image' must not be set when using GKE managed driver")
 		ensureVariable(deployOverlayName, false, "'deploy-overlay-name' must not be set when using GKE managed driver")
-	}
-
-	if !*useGKEManagedDriver {
-		ensureVariable(deployOverlayName, true, "deploy-overlay-name is a required flag")
 	}
 
 	if !*bringUpCluster {
