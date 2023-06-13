@@ -22,7 +22,7 @@ set -o errexit
 # To run in a dev project, run
 # export GOPATH=$HOME/go /
 # export PATH=$PATH:$GOPATH/bin /
-# ~/go/src/GoogleCloudPlatform/gcs-fuse-csi-driver$ GKE_CLUSTER_VERSION=1.27  USE_GKE_MANAGED_DRIVER=true PROJECT_ID=$USER-gke-dev CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER=https://staging-container.sandbox.googleapis.com/ ./test/e2e/run-e2e-local.sh
+# ~/go/src/GoogleCloudPlatform/gcs-fuse-csi-driver$ GKE_CLUSTER_VERSION=1.27  USE_GKE_MANAGED_DRIVER=true PROJECT_ID=$USER-gke-dev  ./test/e2e/run-e2e-local.sh
 
 readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
 readonly overlay_name="${GCS_FUSE_OVERLAY_NAME:-stable}"
@@ -37,7 +37,7 @@ readonly gke_cluster_name=${CLUSTER_NAME:-}
 readonly test_project_id=${PROJECT_ID:-}
 readonly bring_up_cluster=${BRING_UP_CLUSTER:-true}
 readonly tear_down_cluster=${TEAR_DOWN_CLUSTER:-false}
-readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com}
+readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
 
 
 # Make e2e-test will initialize ginkgo.

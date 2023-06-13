@@ -128,17 +128,14 @@ endif
 	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
 
 build-image-and-push-multi-arch: init-buildx build-image-linux-amd64 build-image-linux-arm64
-	docker manifest create \
-		${DRIVER_IMAGE}:${STAGINGVERSION} --amend ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 --amend ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
+	docker buildx imagetools create -t ${DRIVER_IMAGE}:${STAGINGVERSION} \
+    ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
 
-	docker manifest create \
-		${SIDECAR_IMAGE}:${STAGINGVERSION} --amend ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 --amend ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
+	docker buildx imagetools create -t ${SIDECAR_IMAGE}:${STAGINGVERSION} \
+    ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
 
-	docker manifest create \
-		${WEBHOOK_IMAGE}:${STAGINGVERSION} --amend ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
-	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
+	docker buildx imagetools create -t ${WEBHOOK_IMAGE}:${STAGINGVERSION} \
+    ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
 
 build-image-linux-amd64: download-gcsfuse
 	docker buildx build \
