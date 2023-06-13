@@ -91,7 +91,6 @@ func main() {
 	if *useGKEManagedDriver {
 		ensureFlag(doDriverBuild, false, "'do-driver-build' must be false when using GKE managed driver")
 		ensureVariable(stagingImage, false, "'staging-image' must not be set when using GKE managed driver")
-		ensureVariable(deployOverlayName, false, "'deploy-overlay-name' must not be set when using GKE managed driver")
 	}
 
 	if !*bringUpCluster {
@@ -243,9 +242,13 @@ func handle() error {
 		artifactsDir = "../../_artifacts"
 	}
 	klog.Infof("artifacts dir is %q", artifactsDir)
+	testFocusStr := *testFocus
+	if len(*testFocus) != 0 {
+		testFocusStr = fmt.Sprintf(".*%s.*", *testFocus)
+	}
 
 	//nolint:gosec
-	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--focus", *testFocus, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
+	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--focus", testFocusStr, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run tests with ginkgo: %s, err: %w", out, err)
 	}
