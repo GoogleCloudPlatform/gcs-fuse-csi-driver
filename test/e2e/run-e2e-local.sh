@@ -31,6 +31,9 @@ readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
 readonly gce_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_managed_driver=${USE_GKE_MANAGED_DRIVER:-false}
+readonly test_focus="${TEST_FOCUS:-}"
+readonly test_skip="${TEST_SKIP:-}"
+
 # To run on an existing cluster, set PROJECT_ID, CLUSTER_NAME, and GCE_CLUSTER_REGION, and set BRING_UP_CLUSTER=false. 
 # If BRING_UP_CLUSTER is not set, a new cluster will be created.
 readonly gke_cluster_name=${CLUSTER_NAME:-}
@@ -57,6 +60,8 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --use-gke-autopilot=${use_gke_autopilot} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
+            --test-focus=${test_focus} \
+            --test-skip=${test_skip} \
             --gke-cluster-name=${gke_cluster_name} --test-project-id=${test_project_id} \
             --bring-up-cluster=${bring_up_cluster} --tear-down-cluster=${tear_down_cluster} \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container}"
