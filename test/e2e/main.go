@@ -258,13 +258,12 @@ func handle() error {
 }
 
 func generateTestSkip(testParams *testParameters) string {
-	// TODO(amacaskill): Amend the skip string passed in by prow.
-	skipString := "Dynamic.PV"
+	skipString := *testSkip
 	if testParams.useGKEAutopilot {
 		skipString += "|OOM|high.resource.usage"
 	}
 	// TODO(amacaskill): Remove this once these tests are ready to be run.
-	skipString += "|failedMount|should.succeed.in.performance.test|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
+	skipString += "|failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
 	klog.Infof("Generated testskip %q", skipString)
 
 	return skipString
