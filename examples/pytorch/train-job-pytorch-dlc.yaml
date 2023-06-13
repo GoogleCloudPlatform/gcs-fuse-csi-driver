@@ -18,9 +18,18 @@ metadata:
   name: bypassed-code
   namespace: gcs-csi-example
 data:
-  # drop the cache after each epoch to make the training job pull data via Cloud Storage FUSE
+  # Update the pytorch library code to bypass the kernel-cache.
+  # This change is only for testing purposes.
   bypassed_code.py: |2-
-            os.system("sh -c 'echo 3 > /proc/sys/vm/drop_caches'")
+    def pil_loader(path: str) -> Image.Image:
+        fd = os.open(path, os.O_DIRECT)
+        f = os.fdopen(fd, "rb")
+        img = Image.open(f)
+        rgb_img = img.convert("RGB")
+        f.close()
+        return rgb_img
+  start_line: "def pil_loader(path: str) -> Image.Image:"
+  end_line: "def accimage_loader(path: str) -> Any:"
 ---
 apiVersion: batch/v1
 kind: Job
@@ -34,44 +43,60 @@ spec:
       name: train-job-pytorch-dlc
       annotations:
         gke-gcsfuse/volumes: "true"
-        gke-gcsfuse/cpu-limit: "10"
-        gke-gcsfuse/memory-limit: 40Gi
-        gke-gcsfuse/ephemeral-storage-limit: 20Gi
+        gke-gcsfuse/cpu-limit: "2"
+        gke-gcsfuse/memory-limit: 14Gi
+        gke-gcsfuse/ephemeral-storage-limit: 1Gi
     spec:
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-tesla-a100
       restartPolicy: Never
       containers:
       - name: pytorch-test-dlc
         image: gcr.io/deeplearning-platform-release/pytorch-gpu:latest
-        securityContext:
-          privileged: true
         env:
           - name: MY_POD_NAME
             valueFrom:
               fieldRef:
                 fieldPath: metadata.name
+          - name: START_LINE
+            valueFrom:
+              configMapKeyRef:
+                name: bypassed-code
+                key: start_line
+          - name: END_LINE
+            valueFrom:
+              configMapKeyRef:
+                name: bypassed-code
+                key: end_line
         command:
           - "/bin/sh"
           - "-c"
-          - git clone https://github.com/facebookresearch/dino.git;
+          - pip3 install timm; 
+            git clone https://github.com/facebookresearch/dino.git;
             mkdir -p /pytorch_output;
+            folder_file="/opt/conda/lib/python3.8/site-packages/torchvision/datasets/folder.py";
+            x=$(grep -n "$START_LINE" $folder_file | cut -f1 -d ':');
+            y=$(grep -n "$END_LINE" $folder_file | cut -f1 -d ':');
+            y=$((y - 4));
+            lines="$x,$y";
+            sed -i "$lines"'d' $folder_file;
+            sed -i "$x"'r /bypass-code/bypassed_code.py' $folder_file;
+            python3 -c 'import torch;torch.hub.list("facebookresearch/xcit:main")';
             controller_file="/dino/main_dino.py";
-            x=$(grep -n "# ============ training one epoch of DINO ... ============" $controller_file | cut -f1 -d ':');
-            x=$((x - 2));
-            sed -i "$x"'r /bypass-code/bypassed_code.py' $controller_file;
-            pip install timm;
-            python -c 'import torch;torch.hub.list("facebookresearch/xcit:main")';
-            python -m torch.distributed.launch --nproc_per_node=8 $controller_file --arch vit_small --num_workers 20 --data_path /gcs/imagenet/ILSVRC/Data/CLS-LOC/train/ --output_dir /pytorch_output --norm_last_layer False --use_fp16 False --clip_grad 0 --epochs 800 --global_crops_scale 0.25 1.0 --local_crops_number 10 --local_crops_scale 0.05 0.25 --teacher_temp 0.07 --warmup_teacher_temp_epochs 30 --min_lr 0.00001  2>&1 | tee /pytorch_output/pytorch_test.log;
+            python3 -m torch.distributed.launch --nproc_per_node=2 $controller_file --arch vit_small --num_workers 20 --data_path /gcs/imagenet/ILSVRC/Data/CLS-LOC/train/ --output_dir /pytorch_output --norm_last_layer False --use_fp16 False --clip_grad 0 --epochs 100 --global_crops_scale 0.25 1.0 --local_crops_number 10 --local_crops_scale 0.05 0.25 --teacher_temp 0.07 --warmup_teacher_temp_epochs 30 --min_lr 0.00001  2>&1 | tee /pytorch_output/pytorch_test.log;
             mkdir -p /gcs/pytorch_output;
             cp -r /pytorch_output /gcs/pytorch_output/${MY_POD_NAME};
         resources:
           limits:
-            cpu: "85"
-            memory: 600Gi
-            nvidia.com/gpu: "8"
+            cpu: "20"
+            memory: 134Gi
+            ephemeral-storage: 9Gi
+            nvidia.com/gpu: "2"
           requests:
-            cpu: "85"
-            memory: 600Gi
-            nvidia.com/gpu: "8"
+            cpu: "20"
+            memory: 134Gi
+            ephemeral-storage: 9Gi
+            nvidia.com/gpu: "2"
         volumeMounts:
         - name: dshm
           mountPath: /dev/shm
@@ -90,7 +115,7 @@ spec:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
             bucketName: <bucket-name>
-            mountOptions: "implicit-dirs,debug_gcs,debug_fuse,debug_fs"
+            mountOptions: "type-cache-ttl=1728000s,stat-cache-ttl=1728000s,stat-cache-capacity=1320000,implicit-dirs,max-conns-per-host=100,debug_gcs,debug_fuse"
       - name: bypassed-code
         configMap:
           name: bypassed-code

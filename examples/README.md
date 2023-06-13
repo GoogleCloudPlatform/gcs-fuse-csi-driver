@@ -81,6 +81,25 @@ kubectl delete -f ./examples/batch-job/job.yaml
 
 ### PyTorch Application Example
 
+#### Prerequisites
+
+If you are using a GKE Autopilot cluster, you do not need to do anything in this step.
+
+```bash
+# when you are using a Standard cluster, add a new node pool with GPU:
+CLUSTER_NAME=<cluster-name>
+ZONE=<node-pool-zone>
+gcloud container node-pools create pool-gpu-pytorch \
+  --accelerator type=nvidia-tesla-a100,count=2 \
+  --zone ${ZONE} --cluster ${CLUSTER_NAME} \
+  --num-nodes 1 \
+  --machine-type a2-highgpu-2g
+
+# install the nvidia driver
+# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
+```
+
 #### Prepare the training dataset
 
 Follow the following steps to download the dataset from Kaggle, then unzip and upload the dataset to a GCS bucket. You only need to do this step once.
@@ -105,19 +124,6 @@ kubectl delete -f ./examples/pytorch/data-loader-job.yaml
 #### Train the job using PyTorch
 
 ```bash
-# add a new nood pool with GPU
-CLUSTER_NAME=<cluster-name>
-ZONE=<node-pool-zone>
-gcloud container node-pools create pool-gpu-pytorch \
-  --accelerator type=nvidia-tesla-a100,count=8 \
-  --zone ${ZONE} --cluster ${CLUSTER_NAME} \
-  --num-nodes 1 \
-  --machine-type a2-highgpu-8g
-
-# install the nvidia driver
-# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
-kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
-
 # replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-pytorch.yaml
@@ -132,19 +138,6 @@ kubectl delete -f ./examples/pytorch/train-job-pytorch.yaml
 ### Train the job using PyTorch on Deep Learning Container (DLC)
 
 ```bash
-# add a new nood pool with GPU
-CLUSTER_NAME=<cluster-name>
-ZONE=<node-pool-zone>
-gcloud container node-pools create pool-gpu-pytorch \
-  --accelerator type=nvidia-tesla-a100,count=8 \
-  --zone ${ZONE} --cluster ${CLUSTER_NAME} \
-  --num-nodes 1 \
-  --machine-type a2-highgpu-8g
-
-# install the nvidia driver
-# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
-kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
-
 # replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-pytorch-dlc.yaml
