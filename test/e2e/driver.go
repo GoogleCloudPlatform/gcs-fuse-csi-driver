@@ -25,10 +25,12 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// TODO(amacaskill): Implement this function. This is used when useManagedDriver is false, but doDriverBuild is true.
-//
-//nolint:revive
-func installDriver(testParams *testParameters, stagingImage, deployOverlayName string, doDriverBuild bool) error {
+func installDriver(pkgDir string) error {
+	cmd := exec.Command("make", "-C", pkgDir, "install-driver")
+	err := runCommand("Installing non-managed driver", cmd)
+	if err != nil {
+		return fmt.Errorf("failed to run make command: err: %v", err.Error())
+	}
 	return nil
 }
 

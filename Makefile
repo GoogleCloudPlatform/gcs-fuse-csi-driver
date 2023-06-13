@@ -256,4 +256,6 @@ build-gcs-fuse:
 	git remote -v
 	docker version
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
+
+install-driver:
 	make install OVERLAY=stable REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}

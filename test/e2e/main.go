@@ -220,7 +220,7 @@ func handle() error {
 
 	if !testParams.useGKEManagedDriver {
 		// Install the driver and defer its teardown
-		err := installDriver(testParams, *stagingImage, *deployOverlayName, *doDriverBuild)
+		err := installDriver(testParams.pkgDir)
 		defer func() {
 			if teardownErr := deleteDriver(testParams, *deployOverlayName); teardownErr != nil {
 				klog.Errorf("failed to delete driver: %w", teardownErr)
