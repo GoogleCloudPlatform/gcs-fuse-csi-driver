@@ -86,6 +86,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetImage(specs.GoogleCloudCliImage)
 		tPod.SetResource("1", "1Gi")
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, readOnly, mountOptions...)
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/volumes":                 "true",
+			"gke-gcsfuse/cpu-limit":               "250m",
+			"gke-gcsfuse/memory-limit":            "256Mi",
+			"gke-gcsfuse/ephemeral-storage-limit": "1Gi",
+		})
 
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
 
