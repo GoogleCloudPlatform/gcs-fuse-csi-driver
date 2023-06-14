@@ -247,6 +247,7 @@ func handle() error {
 		testFocusStr = fmt.Sprintf(".*%s.*", *testFocus)
 	}
 
+	klog.Infof("Ginkgo --focus=%q", testFocusStr)
 	//nolint:gosec
 	out, err := exec.Command("ginkgo", "run", "--procs", e2eGinkgoProcs, "-v", "--flake-attempts", "2", "--timeout", timeout, "--focus", testFocusStr, "--skip", testParams.testSkip, "--junit-report", "junit-gcsfusecsi.xml", "--output-dir", artifactsDir, "./test/e2e/", "--", "--provider", "skeleton").CombinedOutput()
 	if err != nil {
@@ -258,11 +259,14 @@ func handle() error {
 
 func generateTestSkip(testParams *testParameters) string {
 	skipString := *testSkip
+	if skipString != "" {
+		skipString += "|"
+	}
 	if testParams.useGKEAutopilot {
-		skipString += "|OOM|high.resource.usage"
+		skipString += "OOM|high.resource.usage"
 	}
 	// TODO(amacaskill): Remove this once these tests are ready to be run.
-	skipString += "|failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
+	skipString += "failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
 	klog.Infof("Generated testskip %q", skipString)
 
 	return skipString
