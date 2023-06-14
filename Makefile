@@ -184,9 +184,10 @@ uninstall:
 
 generate-spec-yaml:
 	mkdir -p ${BINDIR}
-	cd ./deploy/overlays/${OVERLAY}; kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION};
-	cd ./deploy/overlays/${OVERLAY}; kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
-	cd ./deploy/overlays/${OVERLAY}; kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
+	./deploy/install-kustomize.sh
+	cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION};
+	cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
+	cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${PROJECT}.svc.id.goog\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml > /dev/null

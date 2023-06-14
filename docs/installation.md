@@ -32,7 +32,6 @@ limitations under the License.
   sudo apt-get update
   sudo apt-get install jq
   ```
-- Install Kustomize by following the [official Kustomize documentation](https://kubectl.docs.kubernetes.io/installation/kustomize/).
 - Create a standard GKE cluster with [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) enabled. Autopilot clusters are not supported for manual installation.
 - Run the following commands to create a GKE cluster with Workload Identity enabled.
   ```bash
