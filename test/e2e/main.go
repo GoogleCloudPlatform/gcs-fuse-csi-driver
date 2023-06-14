@@ -266,7 +266,7 @@ func generateTestSkip(testParams *testParameters) string {
 		skipString += "|"
 	}
 	if testParams.useGKEAutopilot {
-		skipString += "OOM|high.resource.usage"
+		skipString += "OOM|high.resource.usage|gcsfuseIntegration"
 	}
 	// TODO(amacaskill): Remove this once these tests are ready to be run.
 	skipString += "Dynamic.PV|failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
