@@ -237,6 +237,9 @@ func handle() error {
 	// TODO(amacaskill): make ginkgo procs and artifacts path variables configurable.
 	e2eGinkgoProcs := "5"
 	timeout := "20m"
+	if strings.Contains(*testFocus, "performance") {
+		timeout = "180m"
+	}
 	artifactsDir, ok := os.LookupEnv("ARTIFACTS")
 	if !ok {
 		artifactsDir = "../../_artifacts"
