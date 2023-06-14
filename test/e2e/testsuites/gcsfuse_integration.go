@@ -29,6 +29,12 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
+const (
+	gcsfuseIntegrationTestsBasePath = "gcsfuse/tools/integration_tests"
+	exportGoPath                    = "export PATH=$PATH:/usr/local/go/bin"
+	commonTestCommand               = "GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory="
+)
+
 type gcsFuseCSIGCSFuseIntegrationTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
@@ -114,14 +120,19 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "wget https://go.dev/dl/go1.20.4.linux-$(dpkg --print-architecture).tar.gz -q && tar -C /usr/local -xzf go1.20.4.linux-$(dpkg --print-architecture).tar.gz")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "git clone https://github.com/GoogleCloudPlatform/gcsfuse.git")
 
-		if testName == "readonly" {
+		switch testName {
+		case "readonly":
 			if readOnly {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd gcsfuse/tools/integration_tests/readonly && GODEBUG='asyncpreemptoff=1' go test -v --integrationTest --mountedDirectory='%v' --testbucket='%v'", mountPath, bucketName))
+				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/readonly && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, commonTestCommand, mountPath, bucketName))
 			} else {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 gcsfuse/tools/integration_tests/readonly && useradd -u 6666 -m test-user && su test-user -c 'export PATH=$PATH:/usr/local/go/bin && cd gcsfuse/tools/integration_tests/readonly && GODEBUG=asyncpreemptoff=1 go test -v --integrationTest --mountedDirectory=%v --testbucket=%v'", mountPath, bucketName))
+				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v && cd %v/readonly && %v%v --testbucket=%v'", gcsfuseIntegrationTestsBasePath, exportGoPath, gcsfuseIntegrationTestsBasePath, commonTestCommand, mountPath, bucketName))
 			}
-		} else {
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd gcsfuse/tools/integration_tests/%v && GODEBUG='asyncpreemptoff=1' go test -v --integrationTest --mountedDirectory='%v'", testName, mountPath))
+		case "explicit_dir":
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
+		case "implicit_dir":
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
+		default:
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath))
 		}
 	}
 
@@ -179,5 +190,33 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest("readonly", false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs")
+	})
+
+	ginkgo.It("should succeed in explicit_dir test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("explicit_dir", false)
+	})
+
+	ginkgo.It("should succeed in explicit_dir test 2", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("explicit_dir", false, "enable-storage-client-library")
+	})
+
+	ginkgo.It("should succeed in implicit_dir test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs")
+	})
+
+	ginkgo.It("should succeed in implicit_dir test 2", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs", "enable-storage-client-library")
 	})
 }
