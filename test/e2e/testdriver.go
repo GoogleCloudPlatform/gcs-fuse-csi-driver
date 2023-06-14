@@ -330,7 +330,7 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 	if !n.skipGcpSaTest {
 		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
 	}
-	if err := storageService.SetIAMPolicy(ctx, bucket, member, "roles/storage.objectAdmin"); err != nil {
+	if err := storageService.SetIAMPolicy(ctx, bucket, member, "roles/storage.admin"); err != nil {
 		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
 	}
 
