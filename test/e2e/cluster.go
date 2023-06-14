@@ -78,7 +78,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 	}
 	cmdParams := []string{
 		"beta", "container", "clusters", createCmd, *gkeTestClusterName,
-		locationArg, locationVal, "--quiet",
+		locationArg, locationVal, "--quiet", "--release-channel", "rapid",
 	}
 
 	if isVariableSet(gkeClusterVer) {
@@ -107,10 +107,6 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 		if err != nil {
 			return fmt.Errorf("failed to update gcloud to latest version: %v", err.Error())
 		}
-	}
-	// TODO(amacaskill): make this configurable within GoB.
-	if useGKEAutopilot {
-		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	}
 
 	// TODO(amacaskill): change from beta to GA.
