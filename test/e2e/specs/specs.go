@@ -85,7 +85,10 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "gcsfuse-volume-tester-",
 				Annotations: map[string]string{
-					"gke-gcsfuse/volumes": "true",
+					"gke-gcsfuse/volumes":                 "true",
+					"gke-gcsfuse/cpu-limit":               "50m",
+					"gke-gcsfuse/memory-limit":            "50Mi",
+					"gke-gcsfuse/ephemeral-storage-limit": "50Mi",
 				},
 			},
 			Spec: v1.PodSpec{
