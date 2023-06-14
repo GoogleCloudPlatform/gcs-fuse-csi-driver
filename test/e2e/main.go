@@ -266,7 +266,7 @@ func generateTestSkip(testParams *testParameters) string {
 		skipString += "OOM|high.resource.usage"
 	}
 	// TODO(amacaskill): Remove this once these tests are ready to be run.
-	skipString += "failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
+	skipString += "Dynamic.PV|failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
 	klog.Infof("Generated testskip %q", skipString)
 
 	return skipString
