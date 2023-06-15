@@ -261,15 +261,23 @@ func handle() error {
 }
 
 func generateTestSkip(testParams *testParameters) string {
-	skipString := *testSkip
-	if skipString != "" {
-		skipString += "|"
+	skipTests := []string{"Dynamic.PV"}
+
+	if *testSkip != "" {
+		skipTests = append(skipTests, *testSkip)
 	}
+
 	if testParams.useGKEAutopilot {
-		skipString += "OOM|high.resource.usage|gcsfuseIntegration|"
+		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
 	}
-	// TODO(amacaskill): Remove this once these tests are ready to be run.
-	skipString += "Dynamic.PV|failedMount|should.store.data.and.retain.the.data.when.Pod.RestartPolicy.is.Never"
+
+	if testParams.useGKEManagedDriver {
+		// TODO(songjiaxun): Remove this once v0.1.4 is released.
+		skipTests = append(skipTests, "failedMount")
+	}
+
+	skipString := strings.Join(skipTests, "|")
+
 	klog.Infof("Generated testskip %q", skipString)
 
 	return skipString
