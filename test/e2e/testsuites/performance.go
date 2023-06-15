@@ -19,6 +19,7 @@ package testsuites
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
@@ -121,8 +122,14 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the metrics are downloaded with no error")
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+
+		artifactsDir, ok := os.LookupEnv("ARTIFACTS")
+		if !ok {
+			artifactsDir = "../../_artifacts"
+		}
+
 		//nolint:gosec
-		if output, err := exec.Command("gsutil", "cp", fmt.Sprintf("gs://%v/fio-logs/output.json", bucketName), "../../_artifacts/output.json").CombinedOutput(); err != nil {
+		if output, err := exec.Command("gsutil", "cp", fmt.Sprintf("gs://%v/fio-logs/output.json", bucketName), artifactsDir+"/output.json").CombinedOutput(); err != nil {
 			framework.Failf("Failed to download the FIO metrics from GCS bucket %q: %v, output: %s", bucketName, err, output)
 		}
 	})
