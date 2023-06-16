@@ -88,6 +88,8 @@ func main() {
 
 	ensureVariable(gceRegion, true, "region must be set")
 
+	os.Setenv("E2E_TEST_BUCKET_LOCATION", *gceRegion)
+
 	if *useGKEManagedDriver {
 		ensureFlag(doDriverBuild, false, "'do-driver-build' must be false when using GKE managed driver")
 		ensureVariable(stagingImage, false, "'staging-image' must not be set when using GKE managed driver")
