@@ -116,7 +116,6 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	docker buildx build \
 		--file ./cmd/sidecar_mounter/Dockerfile.gcsfuse \
 		--tag local/gcsfuse:latest \
-		--build-arg STAGINGVERSION=${STAGINGVERSION}  \
 		--load .
 	docker create --name local_gcsfuse local/gcsfuse:latest
 	docker cp local_gcsfuse:/tmp/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
@@ -206,8 +205,8 @@ sanity-test:
 	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
 
 e2e-test-ci: 
-	go build -mod=vendor -o bin/e2e-test-ci ./test/e2e
-	chmod +x bin/e2e-test-ci
+	go build -mod=vendor -o ${BINDIR}/e2e-test-ci ./test/e2e
+	chmod +x ${BINDIR}/e2e-test-ci
 
 e2e-test: init-ginkgo
 ifeq (${E2E_TEST_CREATE_CLUSTER}, true)
@@ -251,7 +250,6 @@ build-gcs-fuse:
 	git version
 	git branch -r
 	git remote -v
-	docker version
 	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
 
 install-driver:

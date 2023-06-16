@@ -16,11 +16,9 @@
 # Build gcsfuse binary
 FROM golang:1.20.4
 
-ARG STAGINGVERSION
-
 ADD https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/git/refs/heads/master version.json
 WORKDIR ${GOPATH}/src/github.com/GoogleCloudPlatform/gcsfuse
 RUN git clone -b master https://github.com/GoogleCloudPlatform/gcsfuse.git . -q
 RUN mkdir -p /tmp/linux/arm64 && mkdir -p /tmp/linux/amd64
-RUN GO111MODULE=auto GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.gcsfuseVersion=${STAGINGVERSION} -extldflags '-static'" -o /tmp/linux/amd64/gcsfuse
-RUN GO111MODULE=auto GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.gcsfuseVersion=${STAGINGVERSION} -extldflags '-static'" -o /tmp/linux/arm64/gcsfuse
+RUN GO111MODULE=auto GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.gcsfuseVersion=$(git rev-parse HEAD) -extldflags '-static'" -o /tmp/linux/amd64/gcsfuse
+RUN GO111MODULE=auto GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.gcsfuseVersion=$(git rev-parse HEAD) -extldflags '-static'" -o /tmp/linux/arm64/gcsfuse

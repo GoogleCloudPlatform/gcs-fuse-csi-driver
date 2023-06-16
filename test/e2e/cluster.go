@@ -102,7 +102,7 @@ func clusterUpGKE(projectID string, gceRegion string, numNodes int, imageType st
 		cmdParams = append(cmdParams, standardClusterFlags...)
 
 		// Update gcloud to latest version.
-		cmd = exec.Command("gcloud", "components", "update")
+		cmd = exec.Command("gcloud", "components", "update", "--quiet")
 		err = runCommand("Updating gcloud to the latest version", cmd)
 		if err != nil {
 			return fmt.Errorf("failed to update gcloud to latest version: %v", err.Error())
