@@ -1,7 +1,7 @@
 {
     "read_256k": {
-        "iops": 23000,
-        "bw_bytes": 370000000
+        "iops": 19000,
+        "bw_bytes": 300000000
     },
     "write_256k": {
         "iops": 80,
@@ -28,39 +28,39 @@
         "bw_bytes": 3500000000
     },
     "write_50M": {
-        "iops": 30,
-        "bw_bytes": 68000000
+        "iops": 12,
+        "bw_bytes": 27000000
     },
     "randread_256k": {
-        "iops": 1700,
-        "bw_bytes": 28000000
+        "iops": 1300,
+        "bw_bytes": 21000000
     },
     "randwrite_256k": {
         "iops": 90,
         "bw_bytes": 2000000
     },
     "randread_3M": {
-        "iops": 1400,
-        "bw_bytes": 1500000000
+        "iops": 1200,
+        "bw_bytes": 1300000000
     },
     "randwrite_3M": {
         "iops": 90,
         "bw_bytes": 140000000
     },
     "randread_5M": {
-        "iops": 1200,
-        "bw_bytes": 1300000000
+        "iops": 1000,
+        "bw_bytes": 1100000000
     },
     "randwrite_5M": {
         "iops": 90,
         "bw_bytes": 130000000
     },
     "randread_50M": {
-        "iops": 800,
-        "bw_bytes": 900000000
+        "iops": 700,
+        "bw_bytes": 800000000
     },
     "randwrite_50M": {
-        "iops": 25,
-        "bw_bytes": 50000000
+        "iops": 20,
+        "bw_bytes": 40000000
     }
 }
