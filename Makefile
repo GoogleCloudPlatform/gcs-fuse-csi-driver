@@ -71,7 +71,8 @@ E2E_TEST_FOCUS ?=
 E2E_TEST_SKIP ?= Dynamic.PV|should.succeed.in.performance.test
 E2E_TEST_GINKGO_PROCS ?= 5
 E2E_TEST_GINKGO_TIMEOUT ?= 30m
-E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts 2 --timeout ${E2E_TEST_GINKGO_TIMEOUT}
+E2E_TEST_GINKGO_FLAKE_ATTEMPTS ?= 2
+E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts ${E2E_TEST_GINKGO_FLAKE_ATTEMPTS} --timeout ${E2E_TEST_GINKGO_TIMEOUT}
 ifneq ("${E2E_TEST_FOCUS}", "")
 E2E_TEST_GINKGO_FLAGS+= --focus "${E2E_TEST_FOCUS}"
 endif
@@ -230,7 +231,7 @@ ifeq (${E2E_TEST_CLEANUP_CLUSTER}, true)
 endif
 
 perf-test:
-	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=5h E2E_TEST_SKIP= E2E_TEST_FOCUS=.*should.succeed.in.performance.test.* E2E_TEST_BUCKET_LOCATION=us-central1
+	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=3h E2E_TEST_SKIP= E2E_TEST_FOCUS=.*should.succeed.in.performance.test.* E2E_TEST_BUCKET_LOCATION=us-central1 E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
 
 init-ginkgo:
 	export PATH=${PATH}:$(go env GOPATH)/bin
