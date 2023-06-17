@@ -21,15 +21,15 @@
     },
     "write_5M": {
         "iops": 90,
-        "bw_bytes": 130000000
+        "bw_bytes": 120000000
     },
     "read_50M": {
         "iops": 3500,
         "bw_bytes": 3500000000
     },
     "write_50M": {
-        "iops": 12,
-        "bw_bytes": 27000000
+        "iops": 10,
+        "bw_bytes": 22000000
     },
     "randread_256k": {
         "iops": 1300,
