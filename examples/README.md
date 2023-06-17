@@ -81,14 +81,16 @@ kubectl delete -f ./examples/batch-job/job.yaml
 
 ### PyTorch Application Example
 
+This example is inspired by the TensorFlow example in [Cloud Storage FUSE repo](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/perfmetrics/scripts/ml_tests/pytorch/dino/README-usage.md). The training jobs in this repo run exactly the same code from the Cloud Storage FUSE repo with GKE settings.
+
 #### Prerequisites
 
 If you are using a GKE Autopilot cluster, you do not need to do anything in this step.
 
 ```bash
 # when you are using a Standard cluster, add a new node pool with GPU:
-CLUSTER_NAME=<cluster-name>
-ZONE=<node-pool-zone>
+CLUSTER_NAME=cluster-name
+ZONE=node-pool-zone
 gcloud container node-pools create pool-gpu-pytorch \
   --accelerator type=nvidia-tesla-a100,count=2 \
   --zone ${ZONE} --cluster ${CLUSTER_NAME} \
@@ -96,7 +98,7 @@ gcloud container node-pools create pool-gpu-pytorch \
   --machine-type a2-highgpu-2g
 
 # install the nvidia driver
-# see the GKE doc: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
+# see the GKE doc for details: https://cloud.google.com/kubernetes-engine/docs/how-to/gpus#installing_drivers
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
 ```
 
@@ -111,7 +113,7 @@ sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/data-loader-job.y
 
 # replace <kaggle-key> with your kaggle API key
 # Go to https://www.kaggle.com/docs/api to get your kaggle API key. The format is {"username":"xxx","key":"xxx"}.
-KAGGLE_KEY=<your-kaggle-key>
+KAGGLE_KEY=your-kaggle-key
 sed -i "s/<kaggle-key>/$KAGGLE_KEY/g" ./examples/pytorch/data-loader-pod.yaml
 
 # prepare the data
@@ -121,7 +123,7 @@ kubectl apply -f ./examples/pytorch/data-loader-job.yaml
 kubectl delete -f ./examples/pytorch/data-loader-job.yaml
 ```
 
-#### Train the job using PyTorch
+#### PyTorch training job
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -135,7 +137,7 @@ kubectl apply -f ./examples/pytorch/train-job-pytorch.yaml
 kubectl delete -f ./examples/pytorch/train-job-pytorch.yaml
 ```
 
-### Train the job using PyTorch on Deep Learning Container (DLC)
+### PyTorch training job in Deep Learning Container (DLC)
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -147,6 +149,32 @@ kubectl apply -f ./examples/pytorch/train-job-pytorch-dlc.yaml
 
 # clean up
 kubectl delete -f ./examples/pytorch/train-job-pytorch-dlc.yaml
+```
+
+### TensorFlow Application Example
+
+This example is inspired by the TensorFlow example in [Cloud Storage FUSE repo](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/perfmetrics/scripts/ml_tests/tf/resnet/README.md). The training jobs in this repo run exactly the same code from the Cloud Storage FUSE repo with GKE settings.
+
+#### Prerequisites
+
+See [Prerequisites](#prerequisites) for PyTorch applications. The prerequisites are the same for Tensorflow applications.
+
+#### Prepare the training dataset
+
+Follow the training dataset [imagenet2012 documentation](https://www.tensorflow.org/datasets/catalog/imagenet2012) to download the dataset from [ImageNet](https://image-net.org/challenges/LSVRC/2012/2012-downloads.php#Images). You need to manually download the dataset to a local filesystem, unzip and upload the dataset to your bucket.
+
+#### TensorFlow training job in Deep Learning Container (DLC)
+
+```bash
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/train-job-tensorflow-dlc.yaml
+
+# start the tensorflow training job
+kubectl apply -f ./examples/tensorflow/train-job-tensorflow-dlc.yaml
+
+# clean up
+kubectl delete -f ./examples/tensorflow/train-job-tensorflow-dlc.yaml
 ```
 
 ### Jupyter Notebook Example
