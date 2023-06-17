@@ -15,13 +15,13 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: train-job-pytorch-dlc
+  name: train-job-tensorflow-dlc
 spec:
   backoffLimit: 0
   template:
     metadata:
       namespace: gcs-csi-example
-      name: train-job-pytorch-dlc
+      name: train-job-tensorflow-dlc
       annotations:
         gke-gcsfuse/volumes: "true"
         gke-gcsfuse/cpu-limit: "2"
@@ -32,16 +32,15 @@ spec:
         cloud.google.com/gke-accelerator: nvidia-tesla-a100
       restartPolicy: Never
       containers:
-      - name: pytorch-test-dlc
-        image: gcr.io/deeplearning-platform-release/pytorch-gpu:latest
+      - name: tensorflow-test-dlc
+        image: gcr.io/deeplearning-platform-release/tf-gpu.2-10
         command:
           - "/bin/sh"
           - "-c"
-          - pip3 install timm;
-            git clone https://github.com/facebookresearch/dino /dino;
-            git clone https://github.com/GoogleCloudPlatform/gcsfuse.git;
-            cp ./gcsfuse/perfmetrics/scripts/ml_tests/pytorch/dino/setup_container.sh /setup_container.sh;
-            sed -i "3,27"'d' /setup_container.sh;
+          - git clone https://github.com/GoogleCloudPlatform/gcsfuse.git /gcsfuse;
+            cp /gcsfuse/perfmetrics/scripts/ml_tests/tf/resnet/setup_scripts/setup_container.sh /setup_container.sh;
+            cp /gcsfuse/perfmetrics/scripts/ml_tests/tf/resnet/setup_scripts/resnet_runner.py /resnet_runner.py;
+            sed -i "7,20"'d' /setup_container.sh;
             chmod +x /setup_container.sh;
             cd / && /setup_container.sh;
         resources:
@@ -59,16 +58,16 @@ spec:
         - name: dshm
           mountPath: /dev/shm
         - name: gcs-fuse-csi-ephemeral
-          mountPath: /gcsfuse_data
+          mountPath: /myBucket
       serviceAccountName: gcs-csi
       volumes:
       - name: dshm
         emptyDir:
           medium: Memory
-          sizeLimit: 128Gi
+          sizeLimit: 24Gi
       - name: gcs-fuse-csi-ephemeral
         csi:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
             bucketName: <bucket-name>
-            mountOptions: "type-cache-ttl=1728000s,stat-cache-ttl=1728000s,stat-cache-capacity=1320000,implicit-dirs,max-conns-per-host=100,debug_gcs,debug_fuse"
+            mountOptions: "implicit-dirs,enable-storage-client-library,debug_fuse,debug_gcs,max-conns-per-host=100"
