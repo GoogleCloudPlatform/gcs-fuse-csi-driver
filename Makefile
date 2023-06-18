@@ -107,8 +107,7 @@ webhook:
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
 
 download-gcsfuse:
-	mkdir -p ${BINDIR}/linux/amd64
-	mkdir -p ${BINDIR}/linux/arm64
+	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
 	
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	docker rm -f local_gcsfuse 2> /dev/null || true
@@ -132,7 +131,7 @@ endif
 	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
 	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
 
-build-image-and-push-multi-arch: init-buildx build-image-linux-amd64 build-image-linux-arm64
+build-image-and-push-multi-arch: init-buildx download-gcsfuse build-image-linux-amd64 build-image-linux-arm64
 	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 
@@ -142,7 +141,13 @@ build-image-and-push-multi-arch: init-buildx build-image-linux-amd64 build-image
 	docker manifest create ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
-build-image-linux-amd64: download-gcsfuse
+build-image-linux-amd64:
+	docker buildx build \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag validation_linux_amd64 \
+		--platform=linux/amd64 \
+		--target validation-image .
+
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
@@ -161,7 +166,13 @@ build-image-linux-amd64: download-gcsfuse
 		--platform linux/amd64 \
 		--build-arg REGISTRY=${REGISTRY} .
 
-build-image-linux-arm64: download-gcsfuse	
+build-image-linux-arm64:
+	docker buildx build \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag validation_linux_arm64 \
+		--platform=linux/arm64 \
+		--target validation-image .
+	
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
