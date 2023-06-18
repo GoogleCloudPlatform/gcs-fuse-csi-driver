@@ -31,6 +31,7 @@ func installDriver(pkgDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to run make command: err: %v", err.Error())
 	}
+
 	return nil
 }
 
