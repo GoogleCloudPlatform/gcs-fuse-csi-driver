@@ -34,8 +34,9 @@ import (
 )
 
 type metrics struct {
-	IOPS     float32 `json:"iops"`
-	BW_Bytes float32 `json:"bw_bytes"`
+	IOPS float32 `json:"iops"`
+	//nolint:tagliatelle
+	BwBytes float32 `json:"bw_bytes"`
 }
 
 type fioJobOptions struct {
@@ -44,7 +45,8 @@ type fioJobOptions struct {
 }
 
 type fioJob struct {
-	Options     fioJobOptions `json:"job options"`
+	//nolint:tagliatelle
+	JobOptions  fioJobOptions `json:"job options"`
 	ReadMetric  metrics       `json:"read"`
 	WriteMetric metrics       `json:"write"`
 }
@@ -76,6 +78,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) GetTestSuiteInfo() storageframework.Tes
 func (t *gcsFuseCSIPerformanceTestSuite) SkipUnsupportedTests(_ storageframework.TestDriver, _ storageframework.TestPattern) {
 }
 
+//nolint:maintidx
 func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
 	type local struct {
 		config         *storageframework.PerTestConfig
@@ -117,25 +120,25 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 		}
 
 		var fr fioResult
-		if err := json.Unmarshal([]byte(byteValue), &fr); err != nil {
+		if err := json.Unmarshal(byteValue, &fr); err != nil {
 			framework.Failf("Failed to parse the fio output file %q: %v", outputPath, err)
 		}
 
 		l.fioOutput = map[string]metrics{}
 
 		for _, job := range fr.Jobs {
-			if job.Options.ReadWrite == "" {
-				job.Options.ReadWrite = "read"
+			if job.JobOptions.ReadWrite == "" {
+				job.JobOptions.ReadWrite = "read"
 			}
 
-			metricKey := job.Options.ReadWrite + "_" + job.Options.FileSize
-			if job.Options.ReadWrite == "read" || job.Options.ReadWrite == "randread" {
+			metricKey := job.JobOptions.ReadWrite + "_" + job.JobOptions.FileSize
+			if job.JobOptions.ReadWrite == "read" || job.JobOptions.ReadWrite == "randread" {
 				l.fioOutput[metricKey] = job.ReadMetric
 			} else {
 				l.fioOutput[metricKey] = job.WriteMetric
 			}
 
-			ginkgo.By(fmt.Sprintf("[%v %v] IOPS: %v, bandwidth bytes: %v", job.Options.ReadWrite, job.Options.FileSize, l.fioOutput[metricKey].IOPS, l.fioOutput[metricKey].BW_Bytes))
+			ginkgo.By(fmt.Sprintf("[%v %v] IOPS: %v, bandwidth bytes: %v", job.JobOptions.ReadWrite, job.JobOptions.FileSize, l.fioOutput[metricKey].IOPS, l.fioOutput[metricKey].BwBytes))
 		}
 	}
 
@@ -150,7 +153,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			framework.Failf("Failed to read the threshold file %q: %v", thresholdFile, err)
 		}
 
-		if err := json.Unmarshal([]byte(byteValue), &l.thresholds); err != nil {
+		if err := json.Unmarshal(byteValue, &l.thresholds); err != nil {
 			framework.Failf("Failed to parse the threshold file %q: %v", thresholdFile, err)
 		}
 	}
@@ -168,11 +171,11 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By(fmt.Sprintf("[%v %v] The IOPS %v is higher than the threshold %v", rw, fileSize, l.fioOutput[metricKey].IOPS, l.thresholds[metricKey].IOPS))
 
-		if l.fioOutput[metricKey].BW_Bytes < l.thresholds[metricKey].BW_Bytes {
-			framework.Failf("[%v %v] The bandwidth bytes %v is lower than the threshold %v", rw, fileSize, l.fioOutput[metricKey].BW_Bytes, l.thresholds[metricKey].BW_Bytes)
+		if l.fioOutput[metricKey].BwBytes < l.thresholds[metricKey].BwBytes {
+			framework.Failf("[%v %v] The bandwidth bytes %v is lower than the threshold %v", rw, fileSize, l.fioOutput[metricKey].BwBytes, l.thresholds[metricKey].BwBytes)
 		}
 
-		ginkgo.By(fmt.Sprintf("[%v %v] The bandwidth bytes %v is higher than the threshold %v", rw, fileSize, l.fioOutput[metricKey].BW_Bytes, l.thresholds[metricKey].BW_Bytes))
+		ginkgo.By(fmt.Sprintf("[%v %v] The bandwidth bytes %v is higher than the threshold %v", rw, fileSize, l.fioOutput[metricKey].BwBytes, l.thresholds[metricKey].BwBytes))
 	}
 
 	cleanup := func() {
@@ -183,7 +186,6 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 	}
 
 	ginkgo.Context("fio benchmarking", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
-
 		ginkgo.It("should succeed in performance test - fio job", func() {
 			init()
 			defer cleanup()
@@ -299,6 +301,5 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.It("should succeed in performance test - random write 50M", func() {
 			checkFioResult("randwrite", "50M")
 		})
-
 	})
 }
