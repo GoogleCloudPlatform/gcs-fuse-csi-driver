@@ -32,6 +32,6 @@ golangci-lint run --no-config --deadline=10m --sort-results \
 --enable-all  \
 --max-same-issues 100 \
 --disable maligned,varcheck,nosnakecase,golint,scopelint,interfacer,deadcode,ifshort,structcheck,exhaustivestruct,exhaustruct,gomnd,lll,gochecknoglobals,funlen,varnamelen,wsl,testpackage,wrapcheck,goerr113,ireturn,gocyclo,cyclop,godox,gocognit,nestif,gomoddirectives \
---go 1.20.4 # the builder verison
+--go 1.20.5 # the builder verison
 
 echo "Congratulations! Lint check completed for all Go source files."
