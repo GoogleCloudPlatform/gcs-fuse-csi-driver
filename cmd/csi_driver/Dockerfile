@@ -17,7 +17,6 @@
 FROM golang:1.20.5 as driver-builder
 
 ARG STAGINGVERSION
-ARG REGISTRY
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
