@@ -96,15 +96,15 @@ all: build-image-and-push-multi-arch
 
 driver:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
 
 sidecar-mounter:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${SIDECAR_BINARY} cmd/sidecar_mounter/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${SIDECAR_BINARY} cmd/sidecar_mounter/main.go
 
 webhook:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
 
 download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
@@ -151,8 +151,7 @@ build-image-linux-amd64:
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 \
-		--build-arg REGISTRY=${REGISTRY} .
+		--platform linux/amd64 .
 
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/sidecar_mounter/Dockerfile \
@@ -163,8 +162,7 @@ build-image-linux-amd64:
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/webhook/Dockerfile \
 		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 \
-		--build-arg REGISTRY=${REGISTRY} .
+		--platform linux/amd64 .
 
 build-image-linux-arm64:
 	docker buildx build \
@@ -176,8 +174,7 @@ build-image-linux-arm64:
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 \
-		--build-arg REGISTRY=${REGISTRY} .
+		--platform linux/arm64 .
 
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/sidecar_mounter/Dockerfile \
