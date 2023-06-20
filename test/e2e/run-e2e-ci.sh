@@ -51,18 +51,12 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \
             --build-gcs-fuse-csi-driver=true \
             --build-gcs-fuse-from-source=true \
-            --deploy-overlay-name=stable \
             --use-gke-managed-driver=${use_gke_managed_driver} \
             --ginkgo-focus=${ginkgo_focus} \
             --ginkgo-skip=${ginkgo_skip} \
-            --ginkgo-procs=5 \
-            --ginkgo-timeout=30m \
-            --ginkgo-flake-attempts=2 \
             --boskos-resource-type=${boskos_resource_type} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
-            --node-machine-type=${node_machine_type} \
-            --image-type=cos_containerd \
-            --number-nodes=3"
+            --node-machine-type=${node_machine_type}"
 
 eval "$base_cmd"
