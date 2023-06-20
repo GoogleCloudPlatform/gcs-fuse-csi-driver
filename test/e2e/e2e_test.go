@@ -21,7 +21,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -37,11 +36,12 @@ import (
 )
 
 var (
-	err           error
-	c             clientset.Interface
-	m             metadata.Service
-	bl            string
-	skipGcpSaTest bool
+	err            error
+	c              clientset.Interface
+	m              metadata.Service
+	bucketLocation = flag.String("test-bucket-location", "us-central1", "the test bucket location")
+	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
+	apiEnv         = flag.String("api-env", "prod", "cluster API env")
 )
 
 var _ = func() bool {
@@ -72,15 +72,9 @@ var _ = func() bool {
 	if len(l) < 4 || l[0] != "gke" {
 		klog.Fatalf("Got invalid cluster name %v, please make sure the cluster is created on GKE", currentCluster)
 	}
-	m, err = metadata.NewFakeService(l[1], l[2], l[3], os.Getenv("E2E_TEST_API_ENV"))
+	m, err = metadata.NewFakeService(l[1], l[2], l[3], *apiEnv)
 	if err != nil {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
-	}
-
-	bl = os.Getenv("E2E_TEST_BUCKET_LOCATION")
-	skipGcpSaTest, err = strconv.ParseBool(os.Getenv("E2E_TEST_SKIP_GCP_SA_TEST"))
-	if err != nil {
-		klog.Fatalf("Failed to parse E2E_TEST_SKIP_GCP_SA_TEST: %v", err)
 	}
 
 	return true
@@ -110,7 +104,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIPerformanceTestSuite,
 	}
 
-	testDriver := InitGCSFuseCSITestDriver(c, m, bl, skipGcpSaTest)
+	testDriver := InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest)
 
 	ginkgo.Context(storageframework.GetDriverNameWithFeatureTags(testDriver), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
