@@ -78,11 +78,14 @@ func main() {
 
 	testParams := &utils.TestParameters{
 		PkgDir:                 *pkgDir,
+		InProw:                 *inProw,
+		BoskosResourceType:     *boskosResourceType,
 		UseGKEManagedDriver:    *useGKEManagedDriver,
 		NodeImageType:          *nodeImageType,
 		UseGKEAutopilot:        *useGKEAutopilot,
 		APIEndpointOverride:    *apiEndpointOverride,
 		GkeClusterRegion:       *gkeClusterRegion,
+		GkeClusterVersion:      *gkeClusterVersion,
 		GkeNodeVersion:         *gkeNodeVersion,
 		NodeMachineType:        *nodeMachineType,
 		NumNodes:               *numNodes,
