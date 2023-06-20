@@ -70,7 +70,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 		"--num-nodes", strconv.Itoa(testParams.NumNodes), "--image-type", testParams.NodeImageType,
 		"--machine-type", testParams.NodeMachineType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", testParams.ProjectID),
-		"--no-enable-autoupgrade",
 	}
 
 	if testParams.UseGKEManagedDriver {
@@ -79,6 +78,13 @@ func clusterUpGKE(testParams *TestParameters) error {
 
 	if isVariableSet(testParams.GkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", testParams.GkeNodeVersion)
+	}
+
+	// TODO(songjiaxun): remove this after 1.27 is available in prod environment.
+	if strings.Contains(testParams.GkeClusterVersion, "1.27") {
+		cmdParams = append(cmdParams, "--release-channel", "rapid")
+	} else {
+		standardClusterFlags = append(standardClusterFlags, "--no-enable-autoupgrade")
 	}
 
 	// If using standard cluster, add required flags.
@@ -90,11 +96,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 		if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
 			return fmt.Errorf("failed to update gcloud to latest version: %w", err)
 		}
-	}
-
-	// TODO(songjiaxun): remove this after 1.27 is available in prod environment.
-	if strings.Contains(testParams.GkeClusterVersion, "1.27") {
-		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	}
 
 	cmd = exec.Command("gcloud", cmdParams...)
