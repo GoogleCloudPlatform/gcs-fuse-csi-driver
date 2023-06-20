@@ -13,14 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-REV = $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
+export REGISTRY ?= jiaxun
+export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
+export OVERLAY ?= stable
+export BUILD_GCSFUSE_FROM_SOURCE ?= false
 BINDIR ?= bin
-REGISTRY ?= jiaxun
-STAGINGVERSION ?= ${REV}
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
-BUILD_GCSFUSE_FROM_SOURCE ?= false
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
-OVERLAY ?= stable
 PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
 CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
 
@@ -31,55 +30,6 @@ WEBHOOK_BINARY = gcs-fuse-csi-driver-webhook
 DRIVER_IMAGE = ${REGISTRY}/${DRIVER_BINARY}
 SIDECAR_IMAGE = ${REGISTRY}/${SIDECAR_BINARY}
 WEBHOOK_IMAGE = ${REGISTRY}/${WEBHOOK_BINARY}
-
-RAND := $(shell od -An -N2 -i /dev/random | tr -d ' ')
-E2E_TEST_GCP_PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
-E2E_TEST_CREATE_CLUSTER ?= false
-E2E_TEST_CLUSTER_NAME ?= gcs-fuse-csi-driver-test-${RAND}
-E2E_TEST_CLUSTER_VERSION ?=
-E2E_TEST_NODE_VERSION ?=
-E2E_TEST_CLUSTER_NUM_NODES ?= 3
-E2E_TEST_CLUSTER_REGION ?= us-central1
-E2E_TEST_IMAGE_TYPE ?= cos_containerd
-E2E_TEST_CLEANUP_CLUSTER ?= false
-E2E_TEST_CREATE_CLUSTER_ARGS = --quiet --region ${E2E_TEST_CLUSTER_REGION} --num-nodes ${E2E_TEST_CLUSTER_NUM_NODES} --machine-type n1-standard-2 --image-type ${E2E_TEST_IMAGE_TYPE} --workload-pool=${E2E_TEST_GCP_PROJECT}.svc.id.goog
-ifneq ("${E2E_TEST_CLUSTER_VERSION}", "")
-E2E_TEST_CREATE_CLUSTER_ARGS += --cluster-version ${E2E_TEST_CLUSTER_VERSION}
-endif
-ifneq ("${E2E_TEST_NODE_VERSION}", "")
-E2E_TEST_CREATE_CLUSTER_ARGS += --node-version ${E2E_TEST_NODE_VERSION}
-endif
-
-export E2E_TEST_API_ENV ?= prod
-ifeq (${E2E_TEST_API_ENV}, staging)
-	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://staging-container.sandbox.googleapis.com/
-else ifeq (${E2E_TEST_API_ENV}, staging2)
-	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://staging2-container.sandbox.googleapis.com/
-else ifeq (${E2E_TEST_API_ENV}, test)
-	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = https://test-container.sandbox.googleapis.com/
-else ifeq (${E2E_TEST_API_ENV}, sandbox)
-	export CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER = ${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER}
-endif
-
-export E2E_TEST_BUCKET_LOCATION ?= us
-export E2E_TEST_SKIP_GCP_SA_TEST ?= true
-
-E2E_TEST_USE_MANAGED_DRIVER ?= false
-E2E_TEST_BUILD_DRIVER ?= false
-
-E2E_TEST_FOCUS ?=
-E2E_TEST_SKIP ?= Dynamic.PV|should.succeed.in.performance.test
-E2E_TEST_GINKGO_PROCS ?= 5
-E2E_TEST_GINKGO_TIMEOUT ?= 30m
-E2E_TEST_GINKGO_FLAKE_ATTEMPTS ?= 2
-E2E_TEST_GINKGO_FLAGS ?= --procs ${E2E_TEST_GINKGO_PROCS} -v --flake-attempts ${E2E_TEST_GINKGO_FLAKE_ATTEMPTS} --timeout ${E2E_TEST_GINKGO_TIMEOUT}
-ifneq ("${E2E_TEST_FOCUS}", "")
-E2E_TEST_GINKGO_FLAGS+= --focus "${E2E_TEST_FOCUS}"
-endif
-ifneq ("${E2E_TEST_SKIP}", "")
-E2E_TEST_GINKGO_FLAGS+= --skip "${E2E_TEST_SKIP}"
-endif
-E2E_TEST_ARTIFACTS_PATH ?= ../../_artifacts
 
 DOCKER_BUILDX_ARGS ?= --push --builder multiarch-multiplatform-builder --build-arg STAGINGVERSION=${STAGINGVERSION}
 ifneq ("$(shell docker buildx build --help | grep 'provenance')", "")
@@ -130,6 +80,15 @@ endif
 	
 	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
 	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
+
+init-buildx:
+	# Ensure we use a builder that can leverage it (the default on linux will not)
+	-docker buildx rm multiarch-multiplatform-builder
+	docker buildx create --use --name=multiarch-multiplatform-builder
+	docker run --rm --privileged multiarch/qemu-user-static --reset --credential yes --persistent yes
+	# Register gcloud as a Docker credential helper.
+	# Required for "docker buildx build --push".
+	gcloud auth configure-docker --quiet
 
 build-image-and-push-multi-arch: init-buildx download-gcsfuse build-image-linux-amd64 build-image-linux-arm64
 	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
@@ -212,53 +171,8 @@ unit-test:
 sanity-test:
 	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
 
-e2e-test-ci: 
-	go build -mod=vendor -o ${BINDIR}/e2e-test-ci ./test/e2e
-	chmod +x ${BINDIR}/e2e-test-ci
-
-e2e-test: init-ginkgo
-ifeq (${E2E_TEST_CREATE_CLUSTER}, true)
-	gcloud container clusters create ${E2E_TEST_CLUSTER_NAME} ${E2E_TEST_CREATE_CLUSTER_ARGS}
-	gcloud container clusters get-credentials ${E2E_TEST_CLUSTER_NAME} --region ${E2E_TEST_CLUSTER_REGION}
-endif
-
-ifeq (${E2E_TEST_USE_MANAGED_DRIVER}, false)
-ifeq (${E2E_TEST_BUILD_DRIVER}, true)
-	make build-image-and-push-multi-arch REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
-endif
-
-	make uninstall OVERLAY=${OVERLAY} || true
-	make install OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
-endif
-
-	ginkgo run ${E2E_TEST_GINKGO_FLAGS} "./test/e2e/" -- -report-dir ${E2E_TEST_ARTIFACTS_PATH} 
-
-ifeq (${E2E_TEST_CLEANUP_CLUSTER}, true)
-	gcloud container clusters delete ${E2E_TEST_CLUSTER_NAME} --quiet --region ${E2E_TEST_CLUSTER_REGION}
-endif
+e2e-test:
+	./test/e2e/run-e2e-local.sh
 
 perf-test:
-	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=3h E2E_TEST_SKIP= E2E_TEST_FOCUS=.*should.succeed.in.performance.test.* E2E_TEST_BUCKET_LOCATION=us-central1 E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
-
-init-ginkgo:
-	export PATH=${PATH}:$(go env GOPATH)/bin
-	go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.4
-
-init-buildx:
-	# Ensure we use a builder that can leverage it (the default on linux will not)
-	-docker buildx rm multiarch-multiplatform-builder
-	docker buildx create --use --name=multiarch-multiplatform-builder
-	docker run --rm --privileged multiarch/qemu-user-static --reset --credential yes --persistent yes
-	# Register gcloud as a Docker credential helper.
-	# Required for "docker buildx build --push".
-	gcloud auth configure-docker --quiet
-
-build-gcs-fuse:
-	git fetch --all
-	git version
-	git branch -r
-	git remote -v
-	make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=${STAGINGVERSION} REGISTRY=${REGISTRY}
-
-install-driver:
-	make install OVERLAY=stable REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
+	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=3h E2E_TEST_SKIP= E2E_TEST_FOCUS=should.succeed.in.performance.test E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1

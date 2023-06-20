@@ -15,49 +15,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# NOTE: this script ONLY works on the GKE internal Prow test pipeline.
+
 set -o xtrace
 set -o nounset
 set -o errexit
 
-readonly PKGDIR=${GOPATH}/src/GoogleCloudPlatform/gcs-fuse-csi-driver
-readonly overlay_name="${GCS_FUSE_OVERLAY_NAME:-stable}"
+# TODO(songjiaxun): Change the Prow variable names to align with the local e2e test script.
+readonly PKGDIR="$( dirname -- "$0"; )/../.."
+readonly gke_cluster_region=${GCE_CLUSTER_REGION:-us-central1}
+readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
+readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
+readonly use_gke_managed_driver="${USE_GKE_MANAGED_DRIVER:-true}"
+readonly ginkgo_focus="${TEST_FOCUS:-}"
+readonly ginkgo_skip="${TEST_SKIP:-}"
 readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
-readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
 readonly node_machine_type=${MACHINE_TYPE:-n1-standard-2}
-readonly test_focus="${TEST_FOCUS:-}"
-readonly test_skip="${TEST_SKIP:-}"
-readonly gce_region=${GCE_CLUSTER_REGION:-us-central1}
-readonly use_gke_managed_driver=${USE_GKE_MANAGED_DRIVER:-false}
 
-# Make e2e-test will initialize ginkgo.
-make -C "${PKGDIR}" init-ginkgo 
+# Initialize ginkgo.
+export PATH=${PATH}:$(go env GOPATH)/bin
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.4
 
-make -C "${PKGDIR}" e2e-test-ci
+# Build e2e-test CLI
+go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
+chmod +x ${PKGDIR}/bin/e2e-test-ci
 
-# Note that for all tests:
-# - a regional cluster will be created (GCS does not support zonal buckets)
-# - run-in-prow true
-# - image-type is cos_containerd
-# - number-nodes is 3  
+# Prepare the test cmd
 base_cmd="${PKGDIR}/bin/e2e-test-ci \
+            --pkg-dir=${PKGDIR} \
             --run-in-prow=true \
-            --image-type=cos_containerd --number-nodes=3 \
-            --region=${gce_region} \
+            --gke-cluster-region=${gke_cluster_region} \
             --use-gke-autopilot=${use_gke_autopilot} \
+            --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \
+            --build-gcs-fuse-csi-driver=true \
+            --build-gcs-fuse-from-source=true \
+            --deploy-overlay-name=stable \
+            --use-gke-managed-driver=${use_gke_managed_driver} \
+            --ginkgo-focus=${ginkgo_focus} \
+            --ginkgo-skip=${ginkgo_skip} \
+            --ginkgo-procs=5 \
+            --ginkgo-timeout=30m \
+            --ginkgo-flake-attempts=2 \
+            --boskos-resource-type=${boskos_resource_type} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
             --node-machine-type=${node_machine_type} \
-            --test-focus=${test_focus} \
-            --test-skip=${test_skip} \
-            --boskos-resource-type=${boskos_resource_type}"
-
-# do-driver-build must be false when using GKE managed driver. Otherwise, do-driver-build must be true and deploy-overlay-name should be set.
-if [ "$use_gke_managed_driver" = true ]; then
-  base_cmd="${base_cmd} --do-driver-build=false --use-gke-managed-driver=true" 
-else
-  base_cmd="${base_cmd} --do-driver-build=true --deploy-overlay-name=${overlay_name}"
-fi
+            --image-type=cos_containerd \
+            --number-nodes=3"
 
 eval "$base_cmd"
