@@ -34,15 +34,15 @@ readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-30m}"
 readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"
 
 # Initialize ginkgo.
-export PATH=${PATH}:$(go env GOPATH)/${BINDIR}
+export PATH=${PATH}:$(go env GOPATH)/bin
 go install github.com/onsi/ginkgo/v2/ginkgo@v2.9.4
 
 # Build e2e-test CLI
-go build -mod=vendor -o ${PKGDIR}/${BINDIR}/e2e-test-ci ./test/e2e
-chmod +x ${PKGDIR}/${BINDIR}/e2e-test-ci
+go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
+chmod +x ${PKGDIR}/bin/e2e-test-ci
 
 # Prepare the test cmd
-base_cmd="${PKGDIR}/${BINDIR}/e2e-test-ci \
+base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --pkg-dir=${PKGDIR} \
             --run-in-prow=false \
             --gke-cluster-region=${gke_cluster_region} \
