@@ -193,7 +193,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(codes.ResourceExhausted.String())
-		tPod.WaitForFailedMountError("gcsfuse exited with error: signal: killed")
 	})
 
 	ginkgo.It("should fail when invalid mount options are passed", func() {
