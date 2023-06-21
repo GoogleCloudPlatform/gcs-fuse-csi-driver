@@ -18,6 +18,7 @@ limitations under the License.
 # Cloud Storage FUSE CSI Driver Development Guide
 
 ## Prerequisite
+
 The following software are required for local development.
 - [Go Programming Language](https://go.dev/doc/install)
 - [Docker](https://docs.docker.com/get-docker/)
@@ -39,7 +40,20 @@ make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true REGISTRY=<yo
 ```
 
 ## Test
+
 Refer to [Test](../test/README.md) documentation.
+
+## Update go modules
+
+Follow the following steps to update go modules:
+
+1. Open the [go.mod](../go.mod) file in Visual Studio Code.
+2. Click "Check for upgrades" above the first `require` block.
+3. Hover over the module with available upgrade. Click "Quick Fix" to apply the upgrade.
+4. If you upgraded any `k8s.io` modules, make sure the version is also updated in the `replace` block. You need to do this step because [lack of semantic versioning](https://github.com/kubernetes/kubernetes/issues/72638) prevents `go mod` from finding newer releases.
+5. Run `go mod tidy` to ensure that the listed dependencies are really still needed.
+6. Run `go mod vendor` to update vendor directory.
+7. Resolve any issues that may be introduced by the new modules.
 
 ## Troubleshooting
 Run the following queries on GCP Logs Explorer to check logs.
