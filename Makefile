@@ -81,6 +81,8 @@ endif
 	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
 	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
 
+	${BINDIR}/linux/$(shell dpkg --print-architecture)/gcsfuse --version
+
 init-buildx:
 	# Ensure we use a builder that can leverage it (the default on linux will not)
 	-docker buildx rm multiarch-multiplatform-builder
