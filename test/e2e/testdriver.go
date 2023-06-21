@@ -166,7 +166,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = strings.Join(l, ",")
-		case specs.SameBucketDifferentDirPrefix:
+		case specs.SubfolderInBucketPrefix:
 			if len(n.volumeStore) == 0 {
 				bucketName = n.createBucket(config.Framework.Namespace.Name)
 			} else {
@@ -189,7 +189,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		case specs.ImplicitDirsVolumePrefix:
 			createImplicitDir(specs.ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
-		case specs.SameBucketDifferentDirPrefix:
+		case specs.SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
 			createImplicitDir(dirPath, bucketName)
 			mountOptions += ",implicit-dirs,only-dir=" + dirPath

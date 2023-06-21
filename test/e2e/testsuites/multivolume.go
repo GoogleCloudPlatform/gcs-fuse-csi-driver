@@ -265,7 +265,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 			e2eskipper.Skipf("skip for volume type %v", storageframework.PreprovisionedPV)
 		}
 
-		init(2, specs.SameBucketDifferentDirPrefix)
+		init(2, specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
 		testOnePodTwoVols()
