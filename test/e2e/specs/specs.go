@@ -159,7 +159,7 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 }
 
 func (t *TestPod) WaitForRunning() {
-	err := e2epod.WaitForPodRunningInNamespace(t.client, t.pod)
+	err := e2epod.WaitForPodRunningInNamespaceSlow(t.client, t.pod.Name, t.pod.Namespace)
 	framework.ExpectNoError(err)
 
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(context.TODO(), t.pod.Name, metav1.GetOptions{})
