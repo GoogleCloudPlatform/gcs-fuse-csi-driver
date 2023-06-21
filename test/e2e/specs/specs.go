@@ -55,7 +55,7 @@ const (
 	InvalidMountOptionsVolumePrefix = "gcsfuse-csi-invalid-mount-options-volume"
 	ImplicitDirsVolumePrefix        = "gcsfuse-csi-implicit-dirs-volume"
 	ForceNewBucketPrefix            = "gcsfuse-csi-force-new-bucket"
-	SameBucketDifferentDirPrefix    = "gcsfuse-csi-same-bucket-different-dir"
+	SubfolderInBucketPrefix         = "gcsfuse-csi-subfolder-in-bucket"
 	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
 	ImplicitDirsPath                = "implicit-dir"
 	InvalidVolume                   = "<invalid-name>"
