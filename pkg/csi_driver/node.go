@@ -217,6 +217,24 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(code, "the sidecar container failed with error: %v", errMsgStr)
 	}
 
+	// Check if the sidecar container terminated
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == webhook.SidecarContainerName {
+			reason := ""
+			if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
+				reason = cs.LastTerminationState.Terminated.Reason
+			} else if cs.State.Terminated != nil {
+				reason = cs.State.Terminated.Reason
+			}
+
+			if reason == "OOMKilled" {
+				return nil, status.Errorf(codes.ResourceExhausted, "the sidecar container terminated due to OOMKilled")
+			} else if reason != "" {
+				return nil, status.Errorf(codes.Internal, "the sidecar container terminated due to %v", reason)
+			}
+		}
+	}
+
 	// TODO: Check if the socket listener timed out
 
 	// Check if the target path is already mounted
