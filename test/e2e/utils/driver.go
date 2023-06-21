@@ -23,6 +23,7 @@ import (
 )
 
 func installDriver(pkgDir, registry, overlay string) error {
+	//nolint:gosec
 	cmd := exec.Command("make", "-C", pkgDir, "install", fmt.Sprintf("OVERLAY=%s", overlay), fmt.Sprintf("REGISTRY=%s", registry))
 	if err := runCommand("Installing non-managed CSI driver", cmd); err != nil {
 		return fmt.Errorf("failed to run install non-managed CSI driver: %w", err)
@@ -32,6 +33,7 @@ func installDriver(pkgDir, registry, overlay string) error {
 }
 
 func deleteDriver(pkgDir, overlay string) error {
+	//nolint:gosec
 	cmd := exec.Command("make", "-C", pkgDir, "uninstall", fmt.Sprintf("OVERLAY=%s", overlay))
 	if err := runCommand("Uninstalling non-managed CSI driver", cmd); err != nil {
 		return fmt.Errorf("failed to run uninstall non-managed CSI driver: %w", err)
