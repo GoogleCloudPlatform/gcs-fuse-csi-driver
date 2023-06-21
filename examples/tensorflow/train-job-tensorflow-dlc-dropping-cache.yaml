@@ -1,0 +1,75 @@
+# Copyright 2018 The Kubernetes Authors.
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: train-job-tensorflow-dlc
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      namespace: gcs-csi-example
+      name: train-job-tensorflow-dlc
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "2"
+        gke-gcsfuse/memory-limit: 14Gi
+        gke-gcsfuse/ephemeral-storage-limit: 1Gi
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-tesla-a100
+      restartPolicy: Never
+      containers:
+      - name: tensorflow-test-dlc
+        image: gcr.io/deeplearning-platform-release/tf-gpu.2-10
+        securityContext: # for cache dropping in the benchmarking tests.
+          privileged: true
+        command:
+          - "/bin/sh"
+          - "-c"
+          - git clone https://github.com/GoogleCloudPlatform/gcsfuse.git /gcsfuse;
+            cp /gcsfuse/perfmetrics/scripts/ml_tests/tf/resnet/setup_scripts/setup_container.sh /setup_container.sh;
+            cp /gcsfuse/perfmetrics/scripts/ml_tests/tf/resnet/setup_scripts/resnet_runner.py /resnet_runner.py;
+            sed -i "7,20"'d' /setup_container.sh;
+            chmod +x /setup_container.sh;
+            cd / && /setup_container.sh;
+        resources:
+          limits:
+            cpu: "20"
+            memory: 134Gi
+            ephemeral-storage: 9Gi
+            nvidia.com/gpu: "2"
+          requests:
+            cpu: "20"
+            memory: 134Gi
+            ephemeral-storage: 9Gi
+            nvidia.com/gpu: "2"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+        - name: gcs-fuse-csi-ephemeral
+          mountPath: /myBucket
+      serviceAccountName: gcs-csi
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 24Gi
+      - name: gcs-fuse-csi-ephemeral
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: <bucket-name>
+            mountOptions: "implicit-dirs,enable-storage-client-library,debug_fuse,debug_gcs,max-conns-per-host=100"

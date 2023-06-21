@@ -91,7 +91,7 @@ If you are using a GKE Autopilot cluster, you do not need to do anything in this
 # when you are using a Standard cluster, add a new node pool with GPU:
 CLUSTER_NAME=cluster-name
 ZONE=node-pool-zone
-gcloud container node-pools create pool-gpu-pytorch \
+gcloud container node-pools create gpu-test-pool \
   --accelerator type=nvidia-tesla-a100,count=2 \
   --zone ${ZONE} --cluster ${CLUSTER_NAME} \
   --num-nodes 1 \
