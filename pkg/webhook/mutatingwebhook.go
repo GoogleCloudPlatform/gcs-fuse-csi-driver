@@ -42,14 +42,14 @@ const (
 type SidecarInjector struct {
 	Client  client.Client
 	Config  *Config
-	decoder *admission.Decoder
+	Decoder *admission.Decoder
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
 func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admission.Response {
 	pod := &corev1.Pod{}
 
-	if err := si.decoder.Decode(req, pod); err != nil {
+	if err := si.Decoder.Decode(req, pod); err != nil {
 		klog.Error("Could not decode request: name %q, namespace %q, error: ", req.Name, req.Namespace, err)
 
 		return admission.Errored(http.StatusBadRequest, err)
@@ -117,13 +117,4 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
-}
-
-// InjectDecoder injects the decoder.
-// SidecarInjector implements admission.DecoderInjector.
-// A decoder will be automatically injected.
-func (si *SidecarInjector) InjectDecoder(d *admission.Decoder) error {
-	si.decoder = d
-
-	return nil
 }

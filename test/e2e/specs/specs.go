@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onsi/gomega"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -125,10 +126,10 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 	}
 }
 
-func (t *TestPod) Create() {
+func (t *TestPod) Create(ctx context.Context) {
 	framework.Logf("Creating Pod %s", t.pod.Name)
 	var err error
-	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(context.TODO(), t.pod, metav1.CreateOptions{})
+	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 }
 
@@ -153,31 +154,31 @@ func (t *TestPod) VerifyExecInPodSucceedWithFullOutput(f *framework.Framework, c
 // VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code.
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
 	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
-	framework.ExpectError(err,
-		"%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s",
-		shExec, exitCode, stdout, stderr)
+	gomega.Expect(err).Should(gomega.HaveOccurred(),
+		fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
 }
 
-func (t *TestPod) WaitForRunning() {
-	err := e2epod.WaitForPodRunningInNamespaceSlow(t.client, t.pod.Name, t.pod.Namespace)
+func (t *TestPod) WaitForRunning(ctx context.Context) {
+	err := e2epod.WaitForPodRunningInNamespaceSlow(ctx, t.client, t.pod.Name, t.pod.Namespace)
 	framework.ExpectNoError(err)
 
-	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(context.TODO(), t.pod.Name, metav1.GetOptions{})
-	framework.ExpectNoError(err)
-}
-
-func (t *TestPod) WaitFoSuccess() {
-	err := e2epod.WaitForPodSuccessInNamespace(t.client, t.pod.Name, t.pod.Namespace)
+	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitForUnschedulable() {
-	err := e2epod.WaitForPodNameUnschedulableInNamespace(t.client, t.pod.Name, t.namespace.Name)
+func (t *TestPod) WaitFoSuccess(ctx context.Context) {
+	err := e2epod.WaitForPodSuccessInNamespace(ctx, t.client, t.pod.Name, t.pod.Namespace)
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitForFailedMountError(msg string) {
+func (t *TestPod) WaitForUnschedulable(ctx context.Context) {
+	err := e2epod.WaitForPodNameUnschedulableInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 	err := e2eevents.WaitTimeoutForEvent(
+		ctx,
 		t.client,
 		t.namespace.Name,
 		fields.Set{"reason": events.FailedMountVolume}.AsSelector().String(),
@@ -223,7 +224,7 @@ func (t *TestPod) GetNode() string {
 }
 
 func (t *TestPod) SetNodeAffinity(nodeName string, sameNode bool) {
-	framework.ExpectNotEqual(nodeName, "")
+	gomega.Expect(nodeName).ToNot(gomega.Equal(""))
 
 	ns := &e2epod.NodeSelection{}
 	if sameNode {
@@ -284,8 +285,8 @@ func (t *TestPod) SetResource(cpuLimit, memoryLimit string) {
 	}
 }
 
-func (t *TestPod) Cleanup() {
-	e2epod.DeletePodOrFail(t.client, t.namespace.Name, t.pod.Name)
+func (t *TestPod) Cleanup(ctx context.Context) {
+	e2epod.DeletePodOrFail(ctx, t.client, t.namespace.Name, t.pod.Name)
 }
 
 type TestSecret struct {
@@ -308,16 +309,16 @@ func NewTestSecret(c clientset.Interface, ns *v1.Namespace, name string, data ma
 	}
 }
 
-func (t *TestSecret) Create() {
+func (t *TestSecret) Create(ctx context.Context) {
 	framework.Logf("Creating Secret %s", t.secret.Name)
 	var err error
-	t.secret, err = t.client.CoreV1().Secrets(t.namespace.Name).Create(context.TODO(), t.secret, metav1.CreateOptions{})
+	t.secret, err = t.client.CoreV1().Secrets(t.namespace.Name).Create(ctx, t.secret, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 }
 
-func (t *TestSecret) Cleanup() {
+func (t *TestSecret) Cleanup(ctx context.Context) {
 	framework.Logf("Deleting Secret %s", t.secret.Name)
-	err := t.client.CoreV1().Secrets(t.namespace.Name).Delete(context.TODO(), t.secret.Name, metav1.DeleteOptions{})
+	err := t.client.CoreV1().Secrets(t.namespace.Name).Delete(ctx, t.secret.Name, metav1.DeleteOptions{})
 	framework.ExpectNoError(err)
 }
 
@@ -346,16 +347,16 @@ func NewTestKubernetesServiceAccount(c clientset.Interface, ns *v1.Namespace, na
 	return sa
 }
 
-func (t *TestKubernetesServiceAccount) Create() {
+func (t *TestKubernetesServiceAccount) Create(ctx context.Context) {
 	framework.Logf("Creating Kubernetes Service Account %s", t.serviceAccount.Name)
 	var err error
-	t.serviceAccount, err = t.client.CoreV1().ServiceAccounts(t.namespace.Name).Create(context.TODO(), t.serviceAccount, metav1.CreateOptions{})
+	t.serviceAccount, err = t.client.CoreV1().ServiceAccounts(t.namespace.Name).Create(ctx, t.serviceAccount, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 }
 
-func (t *TestKubernetesServiceAccount) Cleanup() {
+func (t *TestKubernetesServiceAccount) Cleanup(ctx context.Context) {
 	framework.Logf("Deleting Kubernetes Service Account %s", t.serviceAccount.Name)
-	err := t.client.CoreV1().ServiceAccounts(t.namespace.Name).Delete(context.TODO(), t.serviceAccount.Name, metav1.DeleteOptions{})
+	err := t.client.CoreV1().ServiceAccounts(t.namespace.Name).Delete(ctx, t.serviceAccount.Name, metav1.DeleteOptions{})
 	framework.ExpectNoError(err)
 }
 
@@ -372,9 +373,9 @@ func NewTestGCPServiceAccount(name, projectID string) *TestGCPServiceAccount {
 	}
 }
 
-func (t *TestGCPServiceAccount) Create() {
+func (t *TestGCPServiceAccount) Create(ctx context.Context) {
 	framework.Logf("Creating GCP IAM Service Account %s", t.serviceAccount.Name)
-	iamService, err := iam.NewService(context.TODO())
+	iamService, err := iam.NewService(ctx)
 	framework.ExpectNoError(err)
 
 	request := &iam.CreateServiceAccountRequest{
@@ -386,7 +387,7 @@ func (t *TestGCPServiceAccount) Create() {
 	t.serviceAccount, err = iamService.Projects.ServiceAccounts.Create("projects/"+t.serviceAccount.ProjectId, request).Do()
 	framework.ExpectNoError(err)
 
-	err = wait.PollImmediate(pollInterval, pollTimeout, func() (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(context.Context) (bool, error) {
 		if _, e := iamService.Projects.ServiceAccounts.Get(t.serviceAccount.Name).Do(); e != nil {
 			//nolint:nilerr
 			return false, nil
@@ -397,9 +398,9 @@ func (t *TestGCPServiceAccount) Create() {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ns *v1.Namespace) {
+func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ctx context.Context, ns *v1.Namespace) {
 	framework.Logf("Binding the GCP IAM Service Account %s with Role roles/iam.workloadIdentityUser", t.serviceAccount.Name)
-	iamService, err := iam.NewService(context.TODO())
+	iamService, err := iam.NewService(ctx)
 	framework.ExpectNoError(err)
 
 	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(t.serviceAccount.Name).Do()
@@ -426,9 +427,9 @@ func (t *TestGCPServiceAccount) GetEmail() string {
 	return ""
 }
 
-func (t *TestGCPServiceAccount) Cleanup() {
+func (t *TestGCPServiceAccount) Cleanup(ctx context.Context) {
 	framework.Logf("Deleting GCP IAM Service Account %s", t.serviceAccount.Name)
-	service, err := iam.NewService(context.TODO())
+	service, err := iam.NewService(ctx)
 	framework.ExpectNoError(err)
 	_, err = service.Projects.ServiceAccounts.Delete(t.serviceAccount.Name).Do()
 	framework.ExpectNoError(err)
@@ -450,12 +451,12 @@ func NewTestGCPProjectIAMPolicyBinding(projectID, member, role, condition string
 	}
 }
 
-func (t *TestGCPProjectIAMPolicyBinding) Create() {
+func (t *TestGCPProjectIAMPolicyBinding) Create(ctx context.Context) {
 	framework.Logf("Binding member %s with role %s, condition %q to project %s", t.member, t.role, t.condition, t.projectID)
-	crmService, err := cloudresourcemanager.NewService(context.TODO())
+	crmService, err := cloudresourcemanager.NewService(ctx)
 	framework.ExpectNoError(err)
 
-	err = wait.PollImmediate(pollInterval, pollTimeoutSlow, func() (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
 		if addBinding(crmService, t.projectID, t.member, t.role) != nil {
 			//nolint:nilerr
 			return false, nil
@@ -466,12 +467,12 @@ func (t *TestGCPProjectIAMPolicyBinding) Create() {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestGCPProjectIAMPolicyBinding) Cleanup() {
+func (t *TestGCPProjectIAMPolicyBinding) Cleanup(ctx context.Context) {
 	framework.Logf("Removing member %q from project %v", t.member, t.projectID)
-	crmService, err := cloudresourcemanager.NewService(context.TODO())
+	crmService, err := cloudresourcemanager.NewService(ctx)
 	framework.ExpectNoError(err)
 
-	err = wait.PollImmediate(pollInterval, pollTimeoutSlow, func() (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
 		if removeMember(crmService, t.projectID, t.member, t.role) != nil {
 			//nolint:nilerr
 			return false, nil
@@ -606,10 +607,10 @@ func NewTestDeployment(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *
 	}
 }
 
-func (t *TestDeployment) Create() {
+func (t *TestDeployment) Create(ctx context.Context) {
 	framework.Logf("Creating Deployment %s", t.deployment.Name)
 	var err error
-	t.deployment, err = t.client.AppsV1().Deployments(t.namespace.Name).Create(context.TODO(), t.deployment, metav1.CreateOptions{})
+	t.deployment, err = t.client.AppsV1().Deployments(t.namespace.Name).Create(ctx, t.deployment, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 }
 
@@ -619,19 +620,19 @@ func (t *TestDeployment) WaitForComplete() {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestDeployment) GetPod() *v1.Pod {
-	podList, err := e2edeployment.GetPodsForDeployment(t.client, t.deployment)
+func (t *TestDeployment) GetPod(ctx context.Context) *v1.Pod {
+	podList, err := e2edeployment.GetPodsForDeployment(ctx, t.client, t.deployment)
 	framework.ExpectNoError(err)
-	framework.ExpectEqual(len(podList.Items), 1)
+	gomega.Expect(podList.Items).To(gomega.HaveLen(1))
 
 	pod := podList.Items[0]
 
 	return &pod
 }
 
-func (t *TestDeployment) Cleanup() {
+func (t *TestDeployment) Cleanup(ctx context.Context) {
 	framework.Logf("Deleting Deployment %s", t.deployment.Name)
-	err := t.client.AppsV1().Deployments(t.namespace.Name).Delete(context.TODO(), t.deployment.Name, metav1.DeleteOptions{})
+	err := t.client.AppsV1().Deployments(t.namespace.Name).Delete(ctx, t.deployment.Name, metav1.DeleteOptions{})
 	framework.ExpectNoError(err)
 }
 
@@ -669,22 +670,22 @@ func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob
 	}
 }
 
-func (t *TestJob) Create() {
+func (t *TestJob) Create(ctx context.Context) {
 	framework.Logf("Creating Job %s", t.job.Name)
 	var err error
-	t.job, err = t.client.BatchV1().Jobs(t.namespace.Name).Create(context.TODO(), t.job, metav1.CreateOptions{})
+	t.job, err = t.client.BatchV1().Jobs(t.namespace.Name).Create(ctx, t.job, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
 }
 
-func (t *TestJob) WaitForJobPodsSucceeded() {
+func (t *TestJob) WaitForJobPodsSucceeded(ctx context.Context) {
 	framework.Logf("Waiting Job %s to have 1 succeeded pod", t.job.Name)
-	err := e2ejob.WaitForJobPodsSucceeded(t.client, t.namespace.Name, t.job.Name, 1)
+	err := e2ejob.WaitForJobPodsSucceeded(ctx, t.client, t.namespace.Name, t.job.Name, 1)
 	framework.ExpectNoError(err)
 }
 
-func (t *TestJob) Cleanup() {
+func (t *TestJob) Cleanup(ctx context.Context) {
 	framework.Logf("Deleting Job %s", t.job.Name)
 	d := metav1.DeletePropagationBackground
-	err := t.client.BatchV1().Jobs(t.namespace.Name).Delete(context.TODO(), t.job.Name, metav1.DeleteOptions{PropagationPolicy: &d})
+	err := t.client.BatchV1().Jobs(t.namespace.Name).Delete(ctx, t.job.Name, metav1.DeleteOptions{PropagationPolicy: &d})
 	framework.ExpectNoError(err)
 }

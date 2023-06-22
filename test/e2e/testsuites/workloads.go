@@ -18,6 +18,7 @@ limitations under the License.
 package testsuites
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
@@ -61,6 +62,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		volumeResource *storageframework.VolumeResource
 	}
 	var l local
+	ctx := context.Background()
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
@@ -69,16 +71,16 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 	init := func(configPrefix ...string) {
 		l = local{}
-		l.config = driver.PrepareTest(f)
+		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(driver, l.config, pattern, e2evolume.SizeRange{})
+		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
 	cleanup := func() {
 		var cleanUpErrs []error
-		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource())
+		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource(ctx))
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
@@ -95,15 +97,15 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tDeployment := specs.NewTestDeployment(f.ClientSet, f.Namespace, tPod)
 
 		ginkgo.By("Deploying the deployment")
-		tDeployment.Create()
-		defer tDeployment.Cleanup()
+		tDeployment.Create(ctx)
+		defer tDeployment.Cleanup(ctx)
 
 		ginkgo.By("Checking that the deployment is in ready status")
 		tDeployment.WaitForComplete()
-		tPod.SetPod(tDeployment.GetPod())
+		tPod.SetPod(tDeployment.GetPod(ctx))
 
 		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -124,10 +126,10 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tJob := specs.NewTestJob(f.ClientSet, f.Namespace, tPod)
 
 		ginkgo.By("Deploying the job")
-		tJob.Create()
-		defer tJob.Cleanup()
+		tJob.Create(ctx)
+		defer tJob.Cleanup(ctx)
 
 		ginkgo.By("Checking that the job is in succeeded status")
-		tJob.WaitForJobPodsSucceeded()
+		tJob.WaitForJobPodsSucceeded(ctx)
 	})
 }

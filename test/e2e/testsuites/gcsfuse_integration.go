@@ -18,6 +18,7 @@ limitations under the License.
 package testsuites
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -65,6 +66,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		volumeResource *storageframework.VolumeResource
 	}
 	var l local
+	ctx := context.Background()
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
@@ -73,16 +75,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 	init := func(configPrefix ...string) {
 		l = local{}
-		l.config = driver.PrepareTest(f)
+		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(driver, l.config, pattern, e2evolume.SizeRange{})
+		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
 	cleanup := func() {
 		var cleanUpErrs []error
-		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource())
+		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource(ctx))
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
@@ -95,7 +97,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
 		if testName == "explicit_dir" && strings.Contains(mo, "only-dir") {
-			mo = strings.Replace(mo, "implicit-dirs,", "", -1)
+			mo = strings.ReplaceAll(mo, "implicit-dirs,", "")
 		}
 		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
 
@@ -120,11 +122,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 
 		ginkgo.By("Deploying the test pod")
-		tPod.Create()
-		defer tPod.Cleanup()
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the test pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the test pod command exits with no error")
 		if readOnly {

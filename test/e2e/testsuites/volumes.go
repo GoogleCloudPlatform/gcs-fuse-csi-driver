@@ -18,6 +18,7 @@ limitations under the License.
 package testsuites
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
@@ -65,6 +66,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		volumeResource *storageframework.VolumeResource
 	}
 	var l local
+	ctx := context.Background()
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
@@ -73,16 +75,16 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 	init := func(configPrefix ...string) {
 		l = local{}
-		l.config = driver.PrepareTest(f)
+		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(driver, l.config, pattern, e2evolume.SizeRange{})
+		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
 	cleanup := func() {
 		var cleanUpErrs []error
-		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource())
+		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource(ctx))
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
@@ -96,28 +98,28 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
-		tPod1.Create()
+		tPod1.Create(ctx)
 
 		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitForRunning()
+		tPod1.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the first pod command exits with no error")
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
 		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup()
+		tPod1.Cleanup(ctx)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
-		tPod2.Create()
-		defer tPod2.Cleanup()
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
 
 		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning()
+		tPod2.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the second pod command exits with no error")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -134,16 +136,16 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the writer pod")
-		tPod.Create()
+		tPod.Create(ctx)
 
 		ginkgo.By("Checking that the writer pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Writing a file to the volume")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
 		ginkgo.By("Deleting the writer pod")
-		tPod.Cleanup()
+		tPod.Cleanup(ctx)
 
 		ginkgo.By("Configuring the reader pod")
 		tPod = specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -155,11 +157,11 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, true)
 
 		ginkgo.By("Deploying the reader pod")
-		tPod.Create()
-		defer tPod.Cleanup()
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the reader pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the reader pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath))
@@ -179,28 +181,28 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
-		tPod1.Create()
+		tPod1.Create(ctx)
 
 		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitForRunning()
+		tPod1.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the first pod command exits with no error")
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
 		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup()
+		tPod1.Cleanup(ctx)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
-		tPod2.Create()
-		defer tPod2.Cleanup()
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
 
 		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning()
+		tPod2.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the second pod command exits with no error")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -218,24 +220,24 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod1.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
 		ginkgo.By("Deploying the first pod")
-		tPod1.Create()
+		tPod1.Create(ctx)
 
 		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitFoSuccess()
+		tPod1.WaitFoSuccess(ctx)
 
 		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup()
+		tPod1.Cleanup(ctx)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
-		tPod2.Create()
-		defer tPod2.Cleanup()
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
 
 		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning()
+		tPod2.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the second pod command exits with no error")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -255,11 +257,11 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the pod")
-		tPod.Create()
-		defer tPod.Cleanup()
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
