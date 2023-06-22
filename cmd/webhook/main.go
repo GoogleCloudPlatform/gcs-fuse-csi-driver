@@ -22,11 +22,13 @@ import (
 	"net/http"
 
 	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 var (
@@ -60,11 +62,15 @@ func main() {
 	// Setup a Manager
 	klog.Info("Setting up manager.")
 	mgr, err := manager.New(config.GetConfigOrDie(), manager.Options{
-		Port:                   *port,
-		CertDir:                *certDir,
 		MetricsBindAddress:     "0",
 		HealthProbeBindAddress: *healthProbeBindAddress,
 		ReadinessEndpointName:  "/readyz",
+		WebhookServer: webhook.NewServer(webhook.Options{
+			Port:     *port,
+			CertDir:  *certDir,
+			CertName: *certName,
+			KeyName:  *keyName,
+		}),
 	})
 	if err != nil {
 		klog.Fatalf("Unable to set up overall controller manager: %v", err)
@@ -79,14 +85,13 @@ func main() {
 	// Setup Webhooks
 	klog.Info("Setting up webhook server.")
 	hookServer := mgr.GetWebhookServer()
-	hookServer.CertName = *certName
-	hookServer.KeyName = *keyName
 
 	klog.Info("Registering webhooks to the webhook server.")
 	hookServer.Register("/inject", &webhook.Admission{
 		Handler: &wh.SidecarInjector{
-			Client: mgr.GetClient(),
-			Config: c,
+			Client:  mgr.GetClient(),
+			Config:  c,
+			Decoder: admission.NewDecoder(runtime.NewScheme()),
 		},
 	})
 

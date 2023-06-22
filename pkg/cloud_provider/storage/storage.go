@@ -66,7 +66,7 @@ func NewGCSServiceManager() (ServiceManager, error) {
 }
 
 func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
-	if err := wait.PollImmediate(5*time.Second, 30*time.Second, func() (bool, error) {
+	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
 		if _, err := ts.Token(); err != nil {
 			klog.Errorf("error fetching initial token: %v", err)
 

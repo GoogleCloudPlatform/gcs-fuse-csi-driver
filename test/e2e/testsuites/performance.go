@@ -18,6 +18,7 @@ limitations under the License.
 package testsuites
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -88,6 +89,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 		thresholds     map[string]metrics
 	}
 	var l local
+	ctx := context.Background()
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
@@ -96,11 +98,11 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 
 	init := func(configPrefix ...string) {
 		l = local{}
-		l.config = driver.PrepareTest(f)
+		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(driver, l.config, pattern, e2evolume.SizeRange{})
+		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 
 		l.artifactsDir = "../../_artifacts"
 		if dir, ok := os.LookupEnv("ARTIFACTS"); ok {
@@ -180,7 +182,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 
 	cleanup := func() {
 		var cleanUpErrs []error
-		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource())
+		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource(ctx))
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
@@ -208,11 +210,11 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			})
 
 			ginkgo.By("Deploying the test pod")
-			tPod.Create()
-			defer tPod.Cleanup()
+			tPod.Create(ctx)
+			defer tPod.Cleanup(ctx)
 
 			ginkgo.By("Checking that the test pod is running")
-			tPod.WaitForRunning()
+			tPod.WaitForRunning(ctx)
 
 			ginkgo.By("Checking that the test pod command exits with no error")
 			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))

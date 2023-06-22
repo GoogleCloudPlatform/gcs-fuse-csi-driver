@@ -18,6 +18,7 @@ limitations under the License.
 package testsuites
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -62,6 +63,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		volumeResourceList []*storageframework.VolumeResource
 	}
 	var l local
+	ctx := context.Background()
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
@@ -70,21 +72,21 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 
 	init := func(volumeNumber int, configPrefix ...string) {
 		l = local{}
-		l.config = driver.PrepareTest(f)
+		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
 		for i := 0; i < volumeNumber; i++ {
-			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(driver, l.config, pattern, e2evolume.SizeRange{}))
+			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
 		}
 	}
 
 	cleanup := func() {
 		var cleanUpErrs []error
 		for _, vr := range l.volumeResourceList {
-			cleanUpErrs = append(cleanUpErrs, vr.CleanupResource())
+			cleanUpErrs = append(cleanUpErrs, vr.CleanupResource(ctx))
 		}
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
@@ -96,11 +98,11 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		tPod1.SetupVolume(l.volumeResourceList[0], "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
-		tPod1.Create()
-		defer tPod1.Cleanup()
+		tPod1.Create(ctx)
+		defer tPod1.Cleanup(ctx)
 
 		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitForRunning()
+		tPod1.WaitForRunning(ctx)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -112,11 +114,11 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		tPod2.SetNodeAffinity(tPod1.GetNode(), sameNode)
 
 		ginkgo.By("Deploying the second pod")
-		tPod2.Create()
-		defer tPod2.Cleanup()
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
 
 		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning()
+		tPod2.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the first pod command exits with no error")
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -139,11 +141,11 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		}
 
 		ginkgo.By("Deploying the pod")
-		tPod.Create()
-		defer tPod.Cleanup()
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		for i := range l.volumeResourceList {
@@ -289,11 +291,11 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		time.Sleep(time.Minute * 2)
 
 		ginkgo.By("Deploying the pod")
-		tPod.Create()
-		defer tPod.Cleanup()
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning()
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))

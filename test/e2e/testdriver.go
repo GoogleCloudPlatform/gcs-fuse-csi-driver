@@ -104,17 +104,17 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 	}
 }
 
-func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storageframework.PerTestConfig {
+func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.Framework) *storageframework.PerTestConfig {
 	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, "")
 	var testGcpSA *specs.TestGCPServiceAccount
 	if !n.skipGcpSaTest {
 		testGcpSA = specs.NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
-		testGcpSA.Create()
-		testGcpSA.AddIAMPolicyBinding(f.Namespace)
+		testGcpSA.Create(ctx)
+		testGcpSA.AddIAMPolicyBinding(ctx, f.Namespace)
 
 		testK8sSA = specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, testGcpSA.GetEmail())
 	}
-	testK8sSA.Create()
+	testK8sSA.Create(ctx)
 
 	config := &storageframework.PerTestConfig{
 		Driver:    n,
@@ -123,20 +123,20 @@ func (n *GCSFuseCSITestDriver) PrepareTest(f *e2eframework.Framework) *storagefr
 
 	ginkgo.DeferCleanup(func() {
 		for _, v := range n.volumeStore {
-			n.deleteBucket(v.bucketName)
+			n.deleteBucket(ctx, v.bucketName)
 		}
 		n.volumeStore = []*gcsVolume{}
 
-		testK8sSA.Cleanup()
+		testK8sSA.Cleanup(ctx)
 		if !n.skipGcpSaTest {
-			testGcpSA.Cleanup()
+			testGcpSA.Cleanup(ctx)
 		}
 	})
 
 	return config
 }
 
-func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConfig, volType storageframework.TestVolType) storageframework.TestVolume {
+func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storageframework.PerTestConfig, volType storageframework.TestVolType) storageframework.TestVolume {
 	switch volType {
 	case storageframework.PreprovisionedPV:
 		var bucketName string
@@ -148,12 +148,12 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 		case specs.InvalidVolumePrefix:
 			bucketName = specs.InvalidVolume
 		case specs.ForceNewBucketPrefix:
-			bucketName = n.createBucket(config.Framework.Namespace.Name)
+			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 		case specs.MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
 			l := []string{}
 			for i := 0; i < 2; i++ {
-				bucketName = n.createBucket(config.Framework.Namespace.Name)
+				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 				n.volumeStore = append(n.volumeStore, &gcsVolume{
 					bucketName:              bucketName,
 					serviceAccountNamespace: config.Framework.Namespace.Name,
@@ -168,13 +168,13 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 			config.Prefix = strings.Join(l, ",")
 		case specs.SubfolderInBucketPrefix:
 			if len(n.volumeStore) == 0 {
-				bucketName = n.createBucket(config.Framework.Namespace.Name)
+				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			} else {
 				bucketName = n.volumeStore[len(n.volumeStore)-1].bucketName
 			}
 		default:
 			if len(n.volumeStore) == 0 {
-				bucketName = n.createBucket(config.Framework.Namespace.Name)
+				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			} else {
 				return n.volumeStore[0]
 			}
@@ -215,7 +215,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(config *storageframework.PerTestConf
 	return nil
 }
 
-func (v *gcsVolume) DeleteVolume() {
+func (v *gcsVolume) DeleteVolume(_ context.Context) {
 	// Does nothing because the driver cleanup will delete all the buckets.
 }
 
@@ -234,7 +234,7 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 }
 
 func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig, _ int) (map[string]string, bool, bool) {
-	volume := n.CreateVolume(config, storageframework.PreprovisionedPV)
+	volume := n.CreateVolume(context.Background(), config, storageframework.PreprovisionedPV)
 	gv, _ := volume.(*gcsVolume)
 
 	return map[string]string{
@@ -247,25 +247,25 @@ func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfi
 	return n.driverInfo.Name
 }
 
-func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(config *storageframework.PerTestConfig, _ string) *storagev1.StorageClass {
+func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Context, config *storageframework.PerTestConfig, _ string) *storagev1.StorageClass {
 	// Set up the GCP Project IAM Policy
 	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), config.Framework.Namespace.Name, specs.K8sServiceAccountName)
 	if !n.skipGcpSaTest {
 		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(config.Framework.Namespace.Name), n.meta.GetProjectID())
 	}
 	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/storage.admin", "")
-	testGCPProjectIAMPolicyBinding.Create()
+	testGCPProjectIAMPolicyBinding.Create(ctx)
 
 	testSecret := specs.NewTestSecret(config.Framework.ClientSet, config.Framework.Namespace, specs.K8sSecretName, map[string]string{
 		"projectID":               n.meta.GetProjectID(),
 		"serviceAccountName":      specs.K8sServiceAccountName,
 		"serviceAccountNamespace": config.Framework.Namespace.Name,
 	})
-	testSecret.Create()
+	testSecret.Create(ctx)
 
 	ginkgo.DeferCleanup(func() {
-		testSecret.Cleanup()
-		testGCPProjectIAMPolicyBinding.Cleanup()
+		testSecret.Cleanup(ctx)
+		testGCPProjectIAMPolicyBinding.Cleanup(ctx)
 	})
 
 	parameters := map[string]string{
@@ -305,8 +305,7 @@ func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (stora
 }
 
 // createBucket creates a GCS bucket.
-func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) string {
-	ctx := context.Background()
+func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountNamespace string) string {
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
@@ -338,12 +337,11 @@ func (n *GCSFuseCSITestDriver) createBucket(serviceAccountNamespace string) stri
 }
 
 // deleteBucket deletes the GCS bucket.
-func (n *GCSFuseCSITestDriver) deleteBucket(bucketName string) {
+func (n *GCSFuseCSITestDriver) deleteBucket(ctx context.Context, bucketName string) {
 	if bucketName == specs.InvalidVolume {
 		return
 	}
 
-	ctx := context.Background()
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
