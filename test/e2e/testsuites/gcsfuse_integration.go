@@ -19,6 +19,7 @@ package testsuites
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
@@ -91,6 +92,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GoogleCloudCliImage)
 		tPod.SetResource("1", "1Gi")
+
+		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
+		if testName == "explicit_dir" && strings.Contains(mo, "only-dir") {
+			mo = strings.Replace(mo, "implicit-dirs,", "", -1)
+		}
+		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
+
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/volumes":                 "true",
@@ -100,6 +108,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		})
 
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		dirPath := ""
+		for _, o := range strings.Split(mo, ",") {
+			kv := strings.Split(o, "=")
+			if len(kv) == 2 && kv[0] == "only-dir" {
+				dirPath = kv[1]
+			}
+		}
+		if dirPath != "" {
+			bucketName += "/" + dirPath
+		}
 
 		ginkgo.By("Deploying the test pod")
 		tPod.Create()
@@ -216,22 +234,21 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest("readonly", false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs")
 	})
 
-	// TODO(tulsishah): troubleshoot the failing tests.
-	// ginkgo.It("should succeed in readonly test 3", func() {
-	// 	// passing implicit-dirs and only-dir flags
-	// 	init(specs.SubfolderInBucketPrefix)
-	// 	defer cleanup()
+	ginkgo.It("should succeed in readonly test 3", func() {
+		// passing implicit-dirs and only-dir flags
+		init(specs.SubfolderInBucketPrefix)
+		defer cleanup()
 
-	// 	gcsfuseIntegrationTest("readonly", true)
-	// })
+		gcsfuseIntegrationTest("readonly", true)
+	})
 
-	// ginkgo.It("should succeed in readonly test 4", func() {
-	// 	// passing implicit-dirs and only-dir flags
-	// 	init(specs.SubfolderInBucketPrefix)
-	// 	defer cleanup()
+	ginkgo.It("should succeed in readonly test 4", func() {
+		// passing implicit-dirs and only-dir flags
+		init(specs.SubfolderInBucketPrefix)
+		defer cleanup()
 
-	// 	gcsfuseIntegrationTest("readonly", false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666")
-	// })
+		gcsfuseIntegrationTest("readonly", false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666")
+	})
 
 	ginkgo.It("should succeed in explicit_dir test 1", func() {
 		init()
@@ -277,20 +294,19 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs", "enable-storage-client-library")
 	})
 
-	// TODO(tulsishah): troubleshoot the failing tests.
-	// ginkgo.It("should succeed in implicit_dir test 3", func() {
-	// 	// passing implicit-dirs and only-dir flags
-	// 	init(specs.SubfolderInBucketPrefix)
-	// 	defer cleanup()
+	ginkgo.It("should succeed in implicit_dir test 3", func() {
+		// passing implicit-dirs and only-dir flags
+		init(specs.SubfolderInBucketPrefix)
+		defer cleanup()
 
-	// 	gcsfuseIntegrationTest("implicit_dir", false)
-	// })
+		gcsfuseIntegrationTest("implicit_dir", false)
+	})
 
-	// ginkgo.It("should succeed in implicit_dir test 4", func() {
-	// 	// passing implicit-dirs and only-dir flags
-	// 	init(specs.SubfolderInBucketPrefix)
-	// 	defer cleanup()
+	ginkgo.It("should succeed in implicit_dir test 4", func() {
+		// passing implicit-dirs and only-dir flags
+		init(specs.SubfolderInBucketPrefix)
+		defer cleanup()
 
-	// 	gcsfuseIntegrationTest("implicit_dir", false, "enable-storage-client-library")
-	// })
+		gcsfuseIntegrationTest("implicit_dir", false, "enable-storage-client-library")
+	})
 }
