@@ -48,6 +48,8 @@ const (
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
 	VolumeContextKeyMountOptions        = "mountOptions"
+
+	UmountTimeout = time.Second * 5
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -287,7 +289,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = forceUnmounter.UnmountWithForce(targetPath, time.Second); err != nil {
+			if err = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
