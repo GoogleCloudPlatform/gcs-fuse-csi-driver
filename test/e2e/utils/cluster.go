@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
-	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -70,6 +69,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 		"--num-nodes", strconv.Itoa(testParams.NumNodes), "--image-type", testParams.NodeImageType,
 		"--machine-type", testParams.NodeMachineType,
 		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", testParams.ProjectID),
+		"--no-enable-autoupgrade",
 	}
 
 	if testParams.UseGKEManagedDriver {
@@ -78,13 +78,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 
 	if isVariableSet(testParams.GkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", testParams.GkeNodeVersion)
-	}
-
-	// TODO(songjiaxun): remove this after 1.27 is available in prod environment.
-	if strings.Contains(testParams.GkeClusterVersion, "1.27") {
-		cmdParams = append(cmdParams, "--release-channel", "rapid")
-	} else {
-		standardClusterFlags = append(standardClusterFlags, "--no-enable-autoupgrade")
 	}
 
 	// If using standard cluster, add required flags.
