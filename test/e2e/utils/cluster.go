@@ -87,6 +87,23 @@ func clusterUpGKE(testParams *TestParameters) error {
 		standardClusterFlags = append(standardClusterFlags, "--no-enable-autoupgrade")
 	}
 
+	// For supported regions/zones for ARM nodes, see https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke#arm-requirements-limitations
+	if strings.HasPrefix(testParams.NodeMachineType, "t2a-standard") {
+		var nodeLocations string
+		switch testParams.GkeClusterRegion {
+		case "us-central1":
+			nodeLocations = "us-central1-a,us-central1-b,us-central1-f"
+		case "europe-west4":
+			nodeLocations = "europe-west4-a,europe-west4-b"
+		case "asia-southeast1":
+			nodeLocations = "asia-southeast1-b,asia-southeast1-c"
+		default:
+			return fmt.Errorf("got invalid region %q for ARM node type %q", testParams.GkeClusterRegion, testParams.NodeMachineType)
+		}
+
+		standardClusterFlags = append(standardClusterFlags, "--node-locations", nodeLocations)
+	}
+
 	// If using standard cluster, add required flags.
 	if !testParams.UseGKEAutopilot {
 		cmdParams = append(cmdParams, standardClusterFlags...)
