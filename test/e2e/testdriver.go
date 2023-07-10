@@ -192,7 +192,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case specs.SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
 			createImplicitDir(dirPath, bucketName)
-			mountOptions += ",implicit-dirs,only-dir=" + dirPath
+			mountOptions += ",only-dir=" + dirPath
 		}
 
 		v := &gcsVolume{
