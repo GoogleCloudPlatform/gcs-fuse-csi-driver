@@ -54,7 +54,7 @@ var (
 	ginkgoFocus         = flag.String("ginkgo-focus", "", "pass to ginkgo run --focus flag")
 	ginkgoSkip          = flag.String("ginkgo-skip", "", "pass to ginkgo run --skip flag")
 	ginkgoProcs         = flag.String("ginkgo-procs", "5", "pass to ginkgo run --procs flag")
-	ginkgoTimeout       = flag.String("ginkgo-timeout", "1h", "pass to ginkgo run --timeout flag")
+	ginkgoTimeout       = flag.String("ginkgo-timeout", "2h", "pass to ginkgo run --timeout flag")
 	ginkgoFlakeAttempts = flag.String("ginkgo-flake-attempts", "2", "pass to ginkgo run --flake-attempts flag")
 	ginkgoSkipGcpSaTest = flag.Bool("ginkgo-skip-gcp-sa-test", true, "skip GCP SA test")
 )
