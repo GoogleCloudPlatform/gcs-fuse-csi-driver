@@ -147,8 +147,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v && cd %v/readonly && %v%v --testbucket=%v'", gcsfuseIntegrationTestsBasePath, exportGoPath, gcsfuseIntegrationTestsBasePath, commonTestCommand, mountPath, bucketName))
 			}
-		case "explicit_dir", "implicit_dir", "list_large_dir":
+		case "explicit_dir", "implicit_dir":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
+		case "list_large_dir":
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v' -timeout 20m", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
 		default:
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath))
 		}
@@ -336,19 +338,18 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest("explicit_dir", false, "enable-storage-client-library=false")
 	})
 
-	// TODO(songjiaxun): uncomment the list_large_dir test when the timeout error is fixed.
-	// ginkgo.It("should succeed in list_large_dir test 1", func() {
-	// 	init()
-	// 	defer cleanup()
+	ginkgo.It("should succeed in list_large_dir test 1", func() {
+		init()
+		defer cleanup()
 
-	// 	gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
-	// })
+		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
+	})
 
-	// ginkgo.It("should succeed in list_large_dir test 2", func() {
-	// 	// passing only-dir flags
-	// 	init(specs.SubfolderInBucketPrefix)
-	// 	defer cleanup()
+	ginkgo.It("should succeed in list_large_dir test 2", func() {
+		// passing only-dir flags
+		init(specs.SubfolderInBucketPrefix)
+		defer cleanup()
 
-	// 	gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
-	// })
+		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
+	})
 }
