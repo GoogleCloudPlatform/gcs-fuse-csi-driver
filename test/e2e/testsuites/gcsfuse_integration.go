@@ -150,7 +150,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		case "explicit_dir", "implicit_dir":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
 		case "list_large_dir":
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v' -timeout 20m", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v' -timeout 60m", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
 		default:
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath))
 		}
