@@ -56,9 +56,8 @@ func clusterUpGKE(testParams *TestParameters) error {
 		createCmd = "create-auto"
 	}
 
-	// TODO(songjiaxun): remove beta after GA.
 	cmdParams := []string{
-		"beta", "container", "clusters", createCmd, testParams.GkeClusterName,
+		"container", "clusters", createCmd, testParams.GkeClusterName,
 		"--region", testParams.GkeClusterRegion, "--quiet",
 	}
 
