@@ -17,35 +17,7 @@ limitations under the License.
 
 # Example Applications
 
-## Install the CSI driver
-
-See the documentation [Cloud Storage FUSE CSI Driver Installation](../docs/installation.md).
-
-## Set up access to GCS buckets
-
-See the documentation [Cloud Storage FUSE CSI Driver Usage](../docs/usage.md#set-up-access-to-gcs-buckets-via-gke-workload-identity).
-
-## Install Example Applications
-
-### Static Provisioning Example
-
-```bash
-# replace <bucket-name> with your pre-provisioned GCS bucket name
-GCS_BUCKET_NAME=your-bucket-name
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deployment.yaml
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deploymen-non-root.yaml
-
-# install PV/PVC and a Deployment
-kubectl apply -f ./examples/static/pv-pvc-deployment.yaml
-kubectl apply -f ./examples/static/pv-pvc-deploymen-non-root.yaml
-
-# clean up
-# the PV deletion will not delete your GCS bucket
-kubectl delete -f ./examples/static/pv-pvc-deployment.yaml
-kubectl delete -f ./examples/static/pv-pvc-deploymen-non-root.yaml
-```
-
-### Ephemeral Volume Example
+## CSI Ephemeral Volume Example
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -65,7 +37,25 @@ kubectl delete -f ./examples/ephemeral/deployment-non-root.yaml
 kubectl delete -f ./examples/ephemeral/deployment-two-vols.yaml
 ```
 
-### Batch Job Example
+## Static Provisioning Example
+
+```bash
+# replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deployment.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deploymen-non-root.yaml
+
+# install PV/PVC and a Deployment
+kubectl apply -f ./examples/static/pv-pvc-deployment.yaml
+kubectl apply -f ./examples/static/pv-pvc-deploymen-non-root.yaml
+
+# clean up
+# the PV deletion will not delete your GCS bucket
+kubectl delete -f ./examples/static/pv-pvc-deployment.yaml
+kubectl delete -f ./examples/static/pv-pvc-deploymen-non-root.yaml
+```
+
+## Batch Job Example
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -79,11 +69,11 @@ kubectl apply -f ./examples/batch-job/job.yaml
 kubectl delete -f ./examples/batch-job/job.yaml
 ```
 
-### PyTorch Application Example
+## PyTorch Application Example
 
 This example is inspired by the TensorFlow example in [Cloud Storage FUSE repo](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/perfmetrics/scripts/ml_tests/pytorch/dino/README-usage.md). The training jobs in this repo run exactly the same code from the Cloud Storage FUSE repo with GKE settings.
 
-#### Prerequisites
+### Prerequisites
 
 If you are using a GKE Autopilot cluster, you do not need to do anything in this step.
 
@@ -102,7 +92,7 @@ gcloud container node-pools create gpu-test-pool \
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded.yaml
 ```
 
-#### Prepare the training dataset
+### Prepare the training dataset
 
 Follow the following steps to download the dataset from Kaggle, then unzip and upload the dataset to a GCS bucket. You only need to do this step once.
 
@@ -123,7 +113,7 @@ kubectl apply -f ./examples/pytorch/data-loader-job.yaml
 kubectl delete -f ./examples/pytorch/data-loader-job.yaml
 ```
 
-#### PyTorch training job
+### PyTorch training job
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -137,7 +127,7 @@ kubectl apply -f ./examples/pytorch/train-job-pytorch.yaml
 kubectl delete -f ./examples/pytorch/train-job-pytorch.yaml
 ```
 
-### PyTorch training job in Deep Learning Container (DLC)
+## PyTorch training job in Deep Learning Container (DLC)
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -151,19 +141,19 @@ kubectl apply -f ./examples/pytorch/train-job-pytorch-dlc.yaml
 kubectl delete -f ./examples/pytorch/train-job-pytorch-dlc.yaml
 ```
 
-### TensorFlow Application Example
+## TensorFlow Application Example
 
 This example is inspired by the TensorFlow example in [Cloud Storage FUSE repo](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/perfmetrics/scripts/ml_tests/tf/resnet/README.md). The training jobs in this repo run exactly the same code from the Cloud Storage FUSE repo with GKE settings.
 
-#### Prerequisites
+### Prerequisites
 
 See [Prerequisites](#prerequisites) for PyTorch applications. The prerequisites are the same for Tensorflow applications.
 
-#### Prepare the training dataset
+### Prepare the training dataset
 
 Follow the training dataset [imagenet2012 documentation](https://www.tensorflow.org/datasets/catalog/imagenet2012) to download the dataset from [ImageNet](https://image-net.org/challenges/LSVRC/2012/2012-downloads.php#Images). You need to manually download the dataset to a local filesystem, unzip and upload the dataset to your bucket.
 
-#### TensorFlow training job in Deep Learning Container (DLC)
+### TensorFlow training job in Deep Learning Container (DLC)
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -177,7 +167,7 @@ kubectl apply -f ./examples/tensorflow/train-job-tensorflow-dlc.yaml
 kubectl delete -f ./examples/tensorflow/train-job-tensorflow-dlc.yaml
 ```
 
-### Jupyter Notebook Example
+## Jupyter Notebook Example
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name

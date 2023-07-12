@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Cloud Storage FUSE CSI Driver Installation
+# Cloud Storage FUSE CSI Driver Manual Installation
 
 > WARNING: This documentation describes how to manually install the driver to your GKE clusters. The manual installation should only be used for test purposes. To get official support from Google, users should use GKE to automatically deploy and manage the CSI driver as an add-on feature. See the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver).
 
@@ -38,28 +38,26 @@ limitations under the License.
   CLUSTER_PROJECT_ID=<cluster-project-id>
   CLUSTER_NAME=<cluster-name>
   gcloud container clusters create ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
-  gcloud container clusters get-credentials ${CLUSTER_NAME}
   ```
 - For an existing cluster, run the following commands to enable Workload Identity.
   ```bash
   CLUSTER_PROJECT_ID=<cluster-project-id>
   CLUSTER_NAME=<cluster-name>
   gcloud container clusters update ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog
-  gcloud container clusters get-credentials ${CLUSTER_NAME}
   ```
 - Run the following command to ensure the kubectl context is set up correctly.
   ```bash
-  kubectl config set-context ${CLUSTER_NAME} --cluster=${CLUSTER_NAME}
+  gcloud container clusters get-credentials ${CLUSTER_NAME}
 
   # check the current context
   kubectl config current-context
   ```
 
 ## Install
-- Run the following command to install the latest driver with version `v0.1.3`. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
+- Run the following command to install the latest driver with version `v0.1.4`. The driver will be installed under a new namespace `gcs-fuse-csi-driver`. The installation may take a few minutes.
   ```bash
   # Replace <cluster-project-id> with your cluster project ID.
-  make install STAGINGVERSION=v0.1.3 PROJECT=<cluster-project-id>
+  make install STAGINGVERSION=v0.1.4 PROJECT=<cluster-project-id>
   ```
 
 - If you would like to build your own images, follow the [Cloud Storage FUSE CSI Driver Development Guide](development.md) to build and push the images. Run the following command to install the driver.
