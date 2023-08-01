@@ -64,6 +64,7 @@ Status: General Availability
 ## Get Started
 - GKE documentation: [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver)
 - [Configure access to Cloud Storage buckets using GKE Workload Identity](./docs/authentication.md)
+- [Cloud Storage FUSE CSI Driver Enablement in Terraform](./docs/terraform.md)
 - [Cloud Storage FUSE CSI Driver Manual Installation](./docs/installation.md)
 - [Example Applications](./examples/README.md)
 - [Troubleshooting](./docs/troubleshooting.md)
