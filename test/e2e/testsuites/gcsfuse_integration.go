@@ -352,4 +352,18 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
 	})
+
+	ginkgo.It("should succeed in write_large_files test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("write_large_files", false, "implicit-dirs=true", "enable-storage-client-library=false")
+	})
+
+	ginkgo.It("should succeed in write_large_files test 2", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("write_large_files", false, "implicit-dirs=true", "enable-storage-client-library=true")
+	})
 }
