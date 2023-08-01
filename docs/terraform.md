@@ -17,7 +17,7 @@ limitations under the License.
 
 # Cloud Storage FUSE CSI Driver Enablement in Terraform
 
-If you are using Terraform to create GKE clusters, use [`gcs_fuse_csi_driver_config`](https://registry.terraform.io/providers/hashicorp/google/4.76.0/docs/resources/container_cluster#gcs_fuse_csi_driver_config) field in `addons_config` to enable the CSI driver. Meanwhile, make sure [GKE Workload Identity](https://registry.terraform.io/providers/hashicorp/google/4.76.0/docs/resources/container_cluster#workload_identity_config) and [GKE Metadata Server](https://registry.terraform.io/providers/hashicorp/google/4.76.0/docs/resources/container_cluster#nested_workload_metadata_config) are enabled.
+If you are using Terraform to create GKE clusters, use `gcs_fuse_csi_driver_config` field in `addons_config` to enable the CSI driver. Meanwhile, make sure GKE Workload Identity and GKE Metadata Server are enabled. See the [Terraform documentation](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/container_cluster) for details.
 
 The following example is a `.tf` file excerpt showing how to enable the CSI driver, GKE Workload Identity, and GKE Metadata Server:
 
