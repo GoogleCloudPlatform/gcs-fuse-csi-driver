@@ -68,6 +68,7 @@ Status: General Availability
 - [Cloud Storage FUSE CSI Driver Manual Installation](./docs/installation.md)
 - [Example Applications](./examples/README.md)
 - [Troubleshooting](./docs/troubleshooting.md)
+- [Known Issues](./docs/known-issues.md)
 
 ## Development and Contribution
 Refer to the [Cloud Storage FUSE CSI Driver Development Guide](./docs/development.md).
