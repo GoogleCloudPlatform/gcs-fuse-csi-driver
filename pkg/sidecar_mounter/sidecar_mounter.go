@@ -130,7 +130,9 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 		"log-format": "text",
 		"uid":        "0",
 		"gid":        "0",
-		"endpoint":   mc.StorageEndpoint,
+	}
+	if mc.StorageEndpoint != "" {
+		flagMap["endpoint"] = mc.StorageEndpoint
 	}
 
 	invalidArgs := []string{}
