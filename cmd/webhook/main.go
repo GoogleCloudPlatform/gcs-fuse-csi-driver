@@ -21,10 +21,12 @@ import (
 	"flag"
 	"net/http"
 
+	"github.com/go-logr/logr"
 	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -50,6 +52,10 @@ var (
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	// Thanks to the PR https://github.com/solo-io/gloo/pull/8549
+	// This line prevents controller-runtime from complaining about log.SetLogger never being called
+	log.SetLogger(logr.New(log.NullLogSink{}))
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", version, *sidecarImage)
 
