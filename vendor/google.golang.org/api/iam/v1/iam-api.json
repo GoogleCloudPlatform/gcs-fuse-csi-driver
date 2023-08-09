@@ -1379,6 +1379,138 @@
                 }
               },
               "resources": {
+                "namespaces": {
+                  "resources": {
+                    "managedIdentities": {
+                      "resources": {
+                        "operations": {
+                          "methods": {
+                            "get": {
+                              "description": "Gets the latest state of a long-running operation. Clients can use this method to poll the operation result at intervals as recommended by the API service.",
+                              "flatPath": "v1/projects/{projectsId}/locations/{locationsId}/workloadIdentityPools/{workloadIdentityPoolsId}/namespaces/{namespacesId}/managedIdentities/{managedIdentitiesId}/operations/{operationsId}",
+                              "httpMethod": "GET",
+                              "id": "iam.projects.locations.workloadIdentityPools.namespaces.managedIdentities.operations.get",
+                              "parameterOrder": [
+                                "name"
+                              ],
+                              "parameters": {
+                                "name": {
+                                  "description": "The name of the operation resource.",
+                                  "location": "path",
+                                  "pattern": "^projects/[^/]+/locations/[^/]+/workloadIdentityPools/[^/]+/namespaces/[^/]+/managedIdentities/[^/]+/operations/[^/]+$",
+                                  "required": true,
+                                  "type": "string"
+                                }
+                              },
+                              "path": "v1/{+name}",
+                              "response": {
+                                "$ref": "Operation"
+                              },
+                              "scopes": [
+                                "https://www.googleapis.com/auth/cloud-platform"
+                              ]
+                            }
+                          }
+                        },
+                        "workloadSources": {
+                          "resources": {
+                            "operations": {
+                              "methods": {
+                                "get": {
+                                  "description": "Gets the latest state of a long-running operation. Clients can use this method to poll the operation result at intervals as recommended by the API service.",
+                                  "flatPath": "v1/projects/{projectsId}/locations/{locationsId}/workloadIdentityPools/{workloadIdentityPoolsId}/namespaces/{namespacesId}/managedIdentities/{managedIdentitiesId}/workloadSources/{workloadSourcesId}/operations/{operationsId}",
+                                  "httpMethod": "GET",
+                                  "id": "iam.projects.locations.workloadIdentityPools.namespaces.managedIdentities.workloadSources.operations.get",
+                                  "parameterOrder": [
+                                    "name"
+                                  ],
+                                  "parameters": {
+                                    "name": {
+                                      "description": "The name of the operation resource.",
+                                      "location": "path",
+                                      "pattern": "^projects/[^/]+/locations/[^/]+/workloadIdentityPools/[^/]+/namespaces/[^/]+/managedIdentities/[^/]+/workloadSources/[^/]+/operations/[^/]+$",
+                                      "required": true,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "path": "v1/{+name}",
+                                  "response": {
+                                    "$ref": "Operation"
+                                  },
+                                  "scopes": [
+                                    "https://www.googleapis.com/auth/cloud-platform"
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "operations": {
+                      "methods": {
+                        "get": {
+                          "description": "Gets the latest state of a long-running operation. Clients can use this method to poll the operation result at intervals as recommended by the API service.",
+                          "flatPath": "v1/projects/{projectsId}/locations/{locationsId}/workloadIdentityPools/{workloadIdentityPoolsId}/namespaces/{namespacesId}/operations/{operationsId}",
+                          "httpMethod": "GET",
+                          "id": "iam.projects.locations.workloadIdentityPools.namespaces.operations.get",
+                          "parameterOrder": [
+                            "name"
+                          ],
+                          "parameters": {
+                            "name": {
+                              "description": "The name of the operation resource.",
+                              "location": "path",
+                              "pattern": "^projects/[^/]+/locations/[^/]+/workloadIdentityPools/[^/]+/namespaces/[^/]+/operations/[^/]+$",
+                              "required": true,
+                              "type": "string"
+                            }
+                          },
+                          "path": "v1/{+name}",
+                          "response": {
+                            "$ref": "Operation"
+                          },
+                          "scopes": [
+                            "https://www.googleapis.com/auth/cloud-platform"
+                          ]
+                        }
+                      }
+                    },
+                    "workloadSources": {
+                      "resources": {
+                        "operations": {
+                          "methods": {
+                            "get": {
+                              "description": "Gets the latest state of a long-running operation. Clients can use this method to poll the operation result at intervals as recommended by the API service.",
+                              "flatPath": "v1/projects/{projectsId}/locations/{locationsId}/workloadIdentityPools/{workloadIdentityPoolsId}/namespaces/{namespacesId}/workloadSources/{workloadSourcesId}/operations/{operationsId}",
+                              "httpMethod": "GET",
+                              "id": "iam.projects.locations.workloadIdentityPools.namespaces.workloadSources.operations.get",
+                              "parameterOrder": [
+                                "name"
+                              ],
+                              "parameters": {
+                                "name": {
+                                  "description": "The name of the operation resource.",
+                                  "location": "path",
+                                  "pattern": "^projects/[^/]+/locations/[^/]+/workloadIdentityPools/[^/]+/namespaces/[^/]+/workloadSources/[^/]+/operations/[^/]+$",
+                                  "required": true,
+                                  "type": "string"
+                                }
+                              },
+                              "path": "v1/{+name}",
+                              "response": {
+                                "$ref": "Operation"
+                              },
+                              "scopes": [
+                                "https://www.googleapis.com/auth/cloud-platform"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
                 "operations": {
                   "methods": {
                     "get": {
@@ -2751,7 +2883,7 @@
       }
     }
   },
-  "revision": "20230530",
+  "revision": "20230713",
   "rootUrl": "https://iam.googleapis.com/",
   "schemas": {
     "AdminAuditData": {
@@ -3050,6 +3182,10 @@
           "description": "Required. The client ID. Must match the audience claim of the JWT issued by the identity provider.",
           "type": "string"
         },
+        "clientSecret": {
+          "$ref": "GoogleIamAdminV1WorkforcePoolProviderOidcClientSecret",
+          "description": "The optional client secret. Required to enable Authorization Code flow for web sign-in."
+        },
         "issuerUri": {
           "description": "Required. The OIDC issuer URI. Must be a valid URI using the 'https' scheme.",
           "type": "string"
@@ -3061,30 +3197,68 @@
       },
       "type": "object"
     },
+    "GoogleIamAdminV1WorkforcePoolProviderOidcClientSecret": {
+      "description": "Representation of a client secret configured for the OIDC provider.",
+      "id": "GoogleIamAdminV1WorkforcePoolProviderOidcClientSecret",
+      "properties": {
+        "value": {
+          "$ref": "GoogleIamAdminV1WorkforcePoolProviderOidcClientSecretValue",
+          "description": "The value of the client secret."
+        }
+      },
+      "type": "object"
+    },
+    "GoogleIamAdminV1WorkforcePoolProviderOidcClientSecretValue": {
+      "description": "Representation of the value of the client secret.",
+      "id": "GoogleIamAdminV1WorkforcePoolProviderOidcClientSecretValue",
+      "properties": {
+        "plainText": {
+          "description": "Input only. The plain text of the client secret value. For security reasons, this field is only used for input and will never be populated in any response.",
+          "type": "string"
+        },
+        "thumbprint": {
+          "description": "Output only. A thumbprint to represent the current client secret value.",
+          "readOnly": true,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "GoogleIamAdminV1WorkforcePoolProviderOidcWebSsoConfig": {
       "description": "Configuration for web single sign-on for the OIDC provider.",
       "id": "GoogleIamAdminV1WorkforcePoolProviderOidcWebSsoConfig",
       "properties": {
+        "additionalScopes": {
+          "description": "Additional scopes to request for in the OIDC authentication request on top of scopes requested by default. By default, the `openid`, `profile` and `email` scopes that are supported by the identity provider are requested. Each additional scope may be at most 256 characters. A maximum of 10 additional scopes may be configured.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "assertionClaimsBehavior": {
           "description": "Required. The behavior for how OIDC Claims are included in the `assertion` object used for attribute mapping and attribute condition.",
           "enum": [
             "ASSERTION_CLAIMS_BEHAVIOR_UNSPECIFIED",
+            "MERGE_USER_INFO_OVER_ID_TOKEN_CLAIMS",
             "ONLY_ID_TOKEN_CLAIMS"
           ],
           "enumDescriptions": [
             "No assertion claims behavior specified.",
+            "Merge the UserInfo Endpoint Claims with ID Token Claims, preferring UserInfo Claim Values for the same Claim Name. This option is available only for the Authorization Code Flow.",
             "Only include ID Token Claims."
           ],
           "type": "string"
         },
         "responseType": {
-          "description": "Required. The Response Type to request for in the OIDC Authorization Request for web sign-in.",
+          "description": "Required. The Response Type to request for in the OIDC Authorization Request for web sign-in. The `CODE` Response Type is recommended to avoid the Implicit Flow, for security reasons.",
           "enum": [
             "RESPONSE_TYPE_UNSPECIFIED",
+            "CODE",
             "ID_TOKEN"
           ],
           "enumDescriptions": [
             "No Response Type specified.",
+            "The `response_type=code` selection uses the Authorization Code Flow for web sign-in. Requires a configured client secret.",
             "The `response_type=id_token` selection uses the Implicit Flow for web sign-in."
           ],
           "type": "string"
@@ -3501,6 +3675,7 @@
           "type": "string"
         },
         "onlyInPredefinedRoles": {
+          "deprecated": true,
           "type": "boolean"
         },
         "primaryPermission": {
@@ -3733,7 +3908,7 @@
           "type": "array"
         },
         "name": {
-          "description": "The name of the role. When Role is used in CreateRole, the role name must not be set. When Role is used in output and other input such as UpdateRole, the role name is the complete path, e.g., roles/logging.viewer for predefined roles and organizations/{ORGANIZATION_ID}/roles/logging.viewer for custom roles.",
+          "description": "The name of the role. When `Role` is used in `CreateRole`, the role name must not be set. When `Role` is used in output and other input such as `UpdateRole`, the role name is the complete path. For example, `roles/logging.viewer` for predefined roles, `organizations/{ORGANIZATION_ID}/roles/my-role` for organization-level custom roles, and `projects/{PROJECT_ID}/roles/my-role` for project-level custom roles.",
           "type": "string"
         },
         "stage": {
@@ -3775,7 +3950,7 @@
       "type": "object"
     },
     "ServiceAccount": {
-      "description": "An IAM service account. A service account is an account for an application or a virtual machine (VM) instance, not a person. You can use a service account to call Google APIs. To learn more, read the [overview of service accounts](https://cloud.google.com/iam/help/service-accounts/overview). When you create a service account, you specify the project ID that owns the service account, as well as a name that must be unique within the project. IAM uses these values to create an email address that identifies the service //",
+      "description": "An IAM service account. A service account is an account for an application or a virtual machine (VM) instance, not a person. You can use a service account to call Google APIs. To learn more, read the [overview of service accounts](https://cloud.google.com/iam/help/service-accounts/overview). When you create a service account, you specify the project ID that owns the service account, as well as a name that must be unique within the project. IAM uses these values to create an email address that identifies the service account. //",
       "id": "ServiceAccount",
       "properties": {
         "description": {
@@ -3797,6 +3972,7 @@
           "type": "string"
         },
         "etag": {
+          "deprecated": true,
           "description": "Deprecated. Do not use.",
           "format": "byte",
           "type": "string"
@@ -3935,6 +4111,7 @@
       "id": "SignBlobRequest",
       "properties": {
         "bytesToSign": {
+          "deprecated": true,
           "description": "Required. Deprecated. [Migrate to Service Account Credentials API](https://cloud.google.com/iam/help/credentials/migrate-api). The bytes to sign.",
           "format": "byte",
           "type": "string"
@@ -3947,10 +4124,12 @@
       "id": "SignBlobResponse",
       "properties": {
         "keyId": {
+          "deprecated": true,
           "description": "Deprecated. [Migrate to Service Account Credentials API](https://cloud.google.com/iam/help/credentials/migrate-api). The id of the key used to sign the blob.",
           "type": "string"
         },
         "signature": {
+          "deprecated": true,
           "description": "Deprecated. [Migrate to Service Account Credentials API](https://cloud.google.com/iam/help/credentials/migrate-api). The signed blob.",
           "format": "byte",
           "type": "string"
@@ -3963,6 +4142,7 @@
       "id": "SignJwtRequest",
       "properties": {
         "payload": {
+          "deprecated": true,
           "description": "Required. Deprecated. [Migrate to Service Account Credentials API](https://cloud.google.com/iam/help/credentials/migrate-api). The JWT payload to sign. Must be a serialized JSON object that contains a JWT Claims Set. For example: `{\"sub\": \"user@example.com\", \"iat\": 313435}` If the JWT Claims Set contains an expiration time (`exp`) claim, it must be an integer timestamp that is not in the past and no more than 12 hours in the future. If the JWT Claims Set does not contain an expiration time (`exp`) claim, this claim is added automatically, with a timestamp that is 1 hour in the future.",
           "type": "string"
         }
@@ -3974,10 +4154,12 @@
       "id": "SignJwtResponse",
       "properties": {
         "keyId": {
+          "deprecated": true,
           "description": "Deprecated. [Migrate to Service Account Credentials API](https://cloud.google.com/iam/help/credentials/migrate-api). The id of the key used to sign the JWT.",
           "type": "string"
         },
         "signedJwt": {
+          "deprecated": true,
           "description": "Deprecated. [Migrate to Service Account Credentials API](https://cloud.google.com/iam/help/credentials/migrate-api). The signed JWT.",
           "type": "string"
         }
@@ -4137,6 +4319,12 @@
           "description": "A user-specified display name of the pool in Google Cloud Console. Cannot exceed 32 characters.",
           "type": "string"
         },
+        "expireTime": {
+          "description": "Output only. Time after which the workforce pool will be permanently purged and cannot be recovered.",
+          "format": "google-datetime",
+          "readOnly": true,
+          "type": "string"
+        },
         "name": {
           "description": "Output only. The resource name of the pool. Format: `locations/{location}/workforcePools/{workforce_pool_id}`",
           "readOnly": true,
@@ -4194,6 +4382,12 @@
         },
         "displayName": {
           "description": "A user-specified display name for the provider. Cannot exceed 32 characters.",
+          "type": "string"
+        },
+        "expireTime": {
+          "description": "Output only. Time after which the workload pool provider will be permanently purged and cannot be recovered.",
+          "format": "google-datetime",
+          "readOnly": true,
           "type": "string"
         },
         "name": {
@@ -4292,6 +4486,12 @@
           "description": "A display name for the pool. Cannot exceed 32 characters.",
           "type": "string"
         },
+        "expireTime": {
+          "description": "Output only. Time after which the workload identity pool will be permanently purged and cannot be recovered.",
+          "format": "google-datetime",
+          "readOnly": true,
+          "type": "string"
+        },
         "name": {
           "description": "Output only. The resource name of the pool.",
           "readOnly": true,
@@ -4350,6 +4550,12 @@
         },
         "displayName": {
           "description": "A display name for the provider. Cannot exceed 32 characters.",
+          "type": "string"
+        },
+        "expireTime": {
+          "description": "Output only. Time after which the workload identity pool provider will be permanently purged and cannot be recovered.",
+          "format": "google-datetime",
+          "readOnly": true,
           "type": "string"
         },
         "name": {
