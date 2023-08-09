@@ -27,7 +27,7 @@ func NewFakeTokenManager() TokenManager {
 	return &fakeTokenManager{}
 }
 
-func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, _ string) oauth2.TokenSource {
+func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, _, _ string) oauth2.TokenSource {
 	return &FakeGCPTokenSource{k8sSAName: saName, k8sSANamespace: saNamespace}
 }
 

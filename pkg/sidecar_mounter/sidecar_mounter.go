@@ -46,12 +46,13 @@ func New(mounterPath string) *Mounter {
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor int       `json:"-"`
-	VolumeName     string    `json:"volumeName,omitempty"`
-	BucketName     string    `json:"bucketName,omitempty"`
-	TempDir        string    `json:"-"`
-	Options        []string  `json:"options,omitempty"`
-	ErrWriter      io.Writer `json:"-"`
+	FileDescriptor  int       `json:"-"`
+	VolumeName      string    `json:"volumeName,omitempty"`
+	BucketName      string    `json:"bucketName,omitempty"`
+	TempDir         string    `json:"-"`
+	Options         []string  `json:"options,omitempty"`
+	ErrWriter       io.Writer `json:"-"`
+	StorageEndpoint string
 }
 
 func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
@@ -104,6 +105,7 @@ var disallowedFlags = map[string]bool{
 	"token-url":            true,
 	"reuse-token-from-url": true,
 	"o":                    true,
+	"endpoint": 						true,
 }
 
 var boolFlags = map[string]bool{
@@ -128,12 +130,14 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 		"log-format": "text",
 		"uid":        "0",
 		"gid":        "0",
+		"endpoint": 	mc.StorageEndpoint,
 	}
 
 	invalidArgs := []string{}
 
 	for _, arg := range mc.Options {
 		argPair := strings.SplitN(arg, "=", 2)
+
 		if len(argPair) == 0 {
 			continue
 		}

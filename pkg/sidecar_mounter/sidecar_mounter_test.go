@@ -67,7 +67,14 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs"},
+				Options:    []string{
+					"uid=100",
+					"gid=200",
+					"debug_gcs",
+					"max-conns-per-host=10",
+					"implicit-dirs",
+					"endpoint=blah",
+				},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
@@ -80,6 +87,84 @@ func TestPrepareMountArgs(t *testing.T) {
 				"gid":                "200",
 				"debug_gcs":          "",
 				"max-conns-per-host": "10",
+			},
+		},
+		{
+			name: "endpoint not passed into gcsfuse if not passed into driver",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				TempDir:    "test-temp-dir",
+				Options:    []string{
+					"max-conns-per-host=10",
+					"implicit-dirs",
+				},
+			},
+			expectedArgs: map[string]string{
+				"app-name":           GCSFuseAppName,
+				"temp-dir":           "test-temp-dir",
+				"foreground":         "",
+				"log-file":           "/dev/fd/1",
+				"log-format":         "text",
+			},
+		},
+		{
+			name: "endpoint passed into gcsfuse if passed into driver",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				TempDir:    "test-temp-dir",
+				Options:    []string{
+					"max-conns-per-host=10",
+					"implicit-dirs",
+				},
+				StorageEndpoint: "https://storage.googleapis.com",
+			},
+			expectedArgs: map[string]string{
+				"app-name":           GCSFuseAppName,
+				"temp-dir":           "test-temp-dir",
+				"foreground":         "",
+				"log-file":           "/dev/fd/1",
+				"log-format":         "text",
+				"endpoint": 					"https://storage.googleapis.com",
+			},
+		},
+		{
+			name: "endpoint not passed into gcsfuse if not passed into driver + user misconfig",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				TempDir:    "test-temp-dir",
+				Options:    []string{
+					"max-conns-per-host=10",
+					"implicit-dirs",
+					"endpoint=blah",
+				},
+			},
+			expectedArgs: map[string]string{
+				"app-name":           GCSFuseAppName,
+				"temp-dir":           "test-temp-dir",
+				"foreground":         "",
+				"log-file":           "/dev/fd/1",
+				"log-format":         "text",
+			},
+		},
+		{
+			name: "endpoint passed into gcsfuse if not passed into driver + user misconfig",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				TempDir:    "test-temp-dir",
+				Options:    []string{
+					"max-conns-per-host=10",
+					"implicit-dirs",
+					"endpoint=blah",
+				},
+				StorageEndpoint: "https://storage.googleapis.com",
+			},
+			expectedArgs: map[string]string{
+				"app-name":           GCSFuseAppName,
+				"temp-dir":           "test-temp-dir",
+				"foreground":         "",
+				"log-file":           "/dev/fd/1",
+				"log-format":         "text",
+				"endpoint": 					"https://storage.googleapis.com",
 			},
 		},
 		{

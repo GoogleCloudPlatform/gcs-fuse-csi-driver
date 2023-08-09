@@ -51,8 +51,8 @@ type Service interface {
 }
 
 type ServiceManager interface {
-	SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error)
-	SetupServiceWithDefaultCredential(ctx context.Context) (Service, error)
+	SetupService(ctx context.Context, ts oauth2.TokenSource, storageEndpoint string) (Service, error)
+	SetupServiceWithDefaultCredential(ctx context.Context, storageEndpoint string) (Service, error)
 }
 
 type gcsService struct {
@@ -65,7 +65,7 @@ func NewGCSServiceManager() (ServiceManager, error) {
 	return &gcsServiceManager{}, nil
 }
 
-func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
+func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource, storageEndpoint string) (Service, error) {
 	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
 		if _, err := ts.Token(); err != nil {
 			klog.Errorf("error fetching initial token: %v", err)
@@ -77,9 +77,13 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 	}); err != nil {
 		return nil, err
 	}
-
 	client := oauth2.NewClient(ctx, ts)
-	storageClient, err := storage.NewClient(ctx, option.WithHTTPClient(client))
+	storageOpts := []option.ClientOption{option.WithHTTPClient(client)}
+	if storageEndpoint != "" {
+		storageOpts = append(storageOpts, option.WithEndpoint(storageEndpoint))
+	}
+
+	storageClient, err := storage.NewClient(ctx, storageOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +91,13 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 	return &gcsService{storageClient: storageClient}, nil
 }
 
-func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.Context) (Service, error) {
-	storageClient, err := storage.NewClient(ctx)
+func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.Context, storageEndpoint string) (Service, error) {
+	storageOpts := []option.ClientOption{}
+	if storageEndpoint != "" {
+		storageOpts = append(storageOpts, option.WithEndpoint(storageEndpoint))
+	}
+
+	storageClient, err := storage.NewClient(ctx, storageOpts...)
 	if err != nil {
 		return nil, err
 	}

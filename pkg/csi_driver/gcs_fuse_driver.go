@@ -43,6 +43,8 @@ type GCSDriverConfig struct {
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
 	SidecarImage          string
+	StorageEndpoint 			string
+	TsEndpoint 						string
 }
 
 type GCSDriver struct {

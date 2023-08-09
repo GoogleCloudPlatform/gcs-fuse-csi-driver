@@ -42,6 +42,7 @@ type GCPTokenSource struct {
 	k8sSANamespace string
 	k8sSAToken     string
 	k8sClients     clientset.Interface
+	endpoint 			 string
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.
@@ -108,7 +109,13 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, e
 // fetch GCP IdentityBindingToken using the Kubernetes Service Account token
 // by calling Security Token Service (STS) API.
 func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSAToken *oauth2.Token) (*oauth2.Token, error) {
-	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
+
+	stsOpts := []option.ClientOption{option.WithHTTPClient(&http.Client{})}
+	if ts.endpoint != "" {
+		stsOpts = append(stsOpts, option.WithEndpoint(ts.endpoint))
+	}
+
+	stsService, err := sts.NewService(ctx, stsOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}

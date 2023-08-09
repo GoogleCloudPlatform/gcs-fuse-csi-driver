@@ -296,7 +296,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 
 // prepareStorageService prepares the GCS Storage Service using the default GCP credentials.
 func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (storage.Service, error) {
-	storageService, err := n.storageServiceManager.SetupServiceWithDefaultCredential(ctx)
+	storageService, err := n.storageServiceManager.SetupServiceWithDefaultCredential(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
