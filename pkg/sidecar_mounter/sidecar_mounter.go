@@ -105,7 +105,7 @@ var disallowedFlags = map[string]bool{
 	"token-url":            true,
 	"reuse-token-from-url": true,
 	"o":                    true,
-	"endpoint": 						true,
+	"endpoint":             true,
 }
 
 var boolFlags = map[string]bool{
@@ -130,7 +130,7 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 		"log-format": "text",
 		"uid":        "0",
 		"gid":        "0",
-		"endpoint": 	mc.StorageEndpoint,
+		"endpoint":   mc.StorageEndpoint,
 	}
 
 	invalidArgs := []string{}

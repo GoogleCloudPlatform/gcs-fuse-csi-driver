@@ -42,7 +42,7 @@ type GCPTokenSource struct {
 	k8sSANamespace string
 	k8sSAToken     string
 	k8sClients     clientset.Interface
-	endpoint 			 string
+	endpoint       string
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.

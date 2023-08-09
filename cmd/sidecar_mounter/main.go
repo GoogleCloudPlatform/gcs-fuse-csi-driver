@@ -35,10 +35,10 @@ import (
 )
 
 var (
-	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
-	gracePeriod    = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
-	storageEndpoint  			= flag.String("storage-endpoint", "", "If set, used as the endpoint for the GCS API.")
+	gcsfusePath     = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath  = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
+	gracePeriod     = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
+	storageEndpoint = flag.String("storage-endpoint", "", "If set, used as the endpoint for the GCS API.")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -160,8 +160,8 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	dir := filepath.Dir(sp)
 	volumeName := filepath.Base(dir)
 	mc := sidecarmounter.MountConfig{
-		VolumeName: volumeName,
-		TempDir:    filepath.Join(dir, "temp-dir"),
+		VolumeName:      volumeName,
+		TempDir:         filepath.Join(dir, "temp-dir"),
 		StorageEndpoint: *storageEndpoint,
 	}
 

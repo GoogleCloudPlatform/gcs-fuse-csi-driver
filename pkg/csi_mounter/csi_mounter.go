@@ -40,7 +40,7 @@ import (
 // for the linux platform.
 type Mounter struct {
 	mount.MounterForceUnmounter
-	chdirMu sync.Mutex
+	chdirMu         sync.Mutex
 	storageEndpoint string
 }
 
@@ -129,8 +129,8 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 
 	// Prepare sidecar mounter MountConfig
 	mc := sidecarmounter.MountConfig{
-		BucketName: source,
-		Options:    sidecarMountOptions,
+		BucketName:      source,
+		Options:         sidecarMountOptions,
 		StorageEndpoint: m.storageEndpoint,
 	}
 	mcb, err := json.Marshal(mc)

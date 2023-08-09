@@ -32,16 +32,16 @@ import (
 )
 
 var (
-	endpoint        			= flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID          			= flag.String("nodeid", "", "node id")
-	runController    			= flag.Bool("controller", false, "run controller service")
-	runNode         			= flag.Bool("node", false, "run node service")
-	kubeconfigPath   			= flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	sidecarImage     			= flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
-	identityPool     			= flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
-	identityProvider 			= flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
-	storageEndpoint  			= flag.String("storage-endpoint", "", "If set, used as the endpoint for the GCS API.")
-	tokenServerEndpoint  	= flag.String("token-server-endpoint", "", "If set, used as the endpoint for the Token Server API.")
+	endpoint            = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID              = flag.String("nodeid", "", "node id")
+	runController       = flag.Bool("controller", false, "run controller service")
+	runNode             = flag.Bool("node", false, "run node service")
+	kubeconfigPath      = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	sidecarImage        = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
+	identityPool        = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider    = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	storageEndpoint     = flag.String("storage-endpoint", "", "If set, used as the endpoint for the GCS API.")
+	tokenServerEndpoint = flag.String("token-server-endpoint", "", "If set, used as the endpoint for the Token Server API.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -94,8 +94,8 @@ func main() {
 		Mounter:               mounter,
 		K8sClients:            clientset,
 		SidecarImage:          *sidecarImage,
-		StorageEndpoint: 			 *storageEndpoint,
-		TsEndpoint: 					 *tokenServerEndpoint,
+		StorageEndpoint:       *storageEndpoint,
+		TsEndpoint:            *tokenServerEndpoint,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

@@ -67,7 +67,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{
+				Options: []string{
 					"uid=100",
 					"gid=200",
 					"debug_gcs",
@@ -94,17 +94,17 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{
+				Options: []string{
 					"max-conns-per-host=10",
 					"implicit-dirs",
 				},
 			},
 			expectedArgs: map[string]string{
-				"app-name":           GCSFuseAppName,
-				"temp-dir":           "test-temp-dir",
-				"foreground":         "",
-				"log-file":           "/dev/fd/1",
-				"log-format":         "text",
+				"app-name":   GCSFuseAppName,
+				"temp-dir":   "test-temp-dir",
+				"foreground": "",
+				"log-file":   "/dev/fd/1",
+				"log-format": "text",
 			},
 		},
 		{
@@ -112,19 +112,19 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{
+				Options: []string{
 					"max-conns-per-host=10",
 					"implicit-dirs",
 				},
 				StorageEndpoint: "https://storage.googleapis.com",
 			},
 			expectedArgs: map[string]string{
-				"app-name":           GCSFuseAppName,
-				"temp-dir":           "test-temp-dir",
-				"foreground":         "",
-				"log-file":           "/dev/fd/1",
-				"log-format":         "text",
-				"endpoint": 					"https://storage.googleapis.com",
+				"app-name":   GCSFuseAppName,
+				"temp-dir":   "test-temp-dir",
+				"foreground": "",
+				"log-file":   "/dev/fd/1",
+				"log-format": "text",
+				"endpoint":   "https://storage.googleapis.com",
 			},
 		},
 		{
@@ -132,18 +132,18 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{
+				Options: []string{
 					"max-conns-per-host=10",
 					"implicit-dirs",
 					"endpoint=blah",
 				},
 			},
 			expectedArgs: map[string]string{
-				"app-name":           GCSFuseAppName,
-				"temp-dir":           "test-temp-dir",
-				"foreground":         "",
-				"log-file":           "/dev/fd/1",
-				"log-format":         "text",
+				"app-name":   GCSFuseAppName,
+				"temp-dir":   "test-temp-dir",
+				"foreground": "",
+				"log-file":   "/dev/fd/1",
+				"log-format": "text",
 			},
 		},
 		{
@@ -151,7 +151,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				TempDir:    "test-temp-dir",
-				Options:    []string{
+				Options: []string{
 					"max-conns-per-host=10",
 					"implicit-dirs",
 					"endpoint=blah",
@@ -159,12 +159,12 @@ func TestPrepareMountArgs(t *testing.T) {
 				StorageEndpoint: "https://storage.googleapis.com",
 			},
 			expectedArgs: map[string]string{
-				"app-name":           GCSFuseAppName,
-				"temp-dir":           "test-temp-dir",
-				"foreground":         "",
-				"log-file":           "/dev/fd/1",
-				"log-format":         "text",
-				"endpoint": 					"https://storage.googleapis.com",
+				"app-name":   GCSFuseAppName,
+				"temp-dir":   "test-temp-dir",
+				"foreground": "",
+				"log-file":   "/dev/fd/1",
+				"log-format": "text",
+				"endpoint":   "https://storage.googleapis.com",
 			},
 		},
 		{
