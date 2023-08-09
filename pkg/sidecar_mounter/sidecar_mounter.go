@@ -52,7 +52,7 @@ type MountConfig struct {
 	TempDir         string    `json:"-"`
 	Options         []string  `json:"options,omitempty"`
 	ErrWriter       io.Writer `json:"-"`
-	StorageEndpoint string
+	StorageEndpoint string    `json:"storageEndpoint,omitempty"`
 }
 
 func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
