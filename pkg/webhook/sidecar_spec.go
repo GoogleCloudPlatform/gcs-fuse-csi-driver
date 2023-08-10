@@ -35,6 +35,8 @@ const (
 )
 
 func GetSidecarContainerSpec(c *Config) v1.Container {
+	// The sidecar container follows Restricted Pod Security Standard,
+	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 	return v1.Container{
 		Name:            SidecarContainerName,
 		Image:           c.ContainerImage,
@@ -44,7 +46,7 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 			ReadOnlyRootFilesystem:   pointer.Bool(true),
 			Capabilities: &v1.Capabilities{
 				Drop: []v1.Capability{
-					v1.Capability("all"),
+					v1.Capability("ALL"),
 				},
 			},
 			SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
