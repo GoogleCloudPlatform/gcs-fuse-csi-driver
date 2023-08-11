@@ -216,6 +216,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			code = codes.ResourceExhausted
 		}
 
+		if strings.Contains(errMsgStr, "googleapi: Error 403") ||
+			strings.Contains(errMsgStr, "IAM returned 403 Forbidden: Permission") ||
+			strings.Contains(errMsgStr, "google: could not find default credentials") {
+			code = codes.PermissionDenied
+		}
+
 		return nil, status.Errorf(code, "the sidecar container failed with error: %v", errMsgStr)
 	}
 
