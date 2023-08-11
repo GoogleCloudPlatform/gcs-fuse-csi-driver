@@ -231,5 +231,5 @@ func IsNotExistErr(err error) bool {
 }
 
 func IsPermissionDeniedErr(err error) bool {
-	return strings.Contains(err.Error(), "does not have storage.objects.list access to the Google Cloud Storage bucket.")
+	return strings.Contains(err.Error(), "googleapi: Error 403")
 }
