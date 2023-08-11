@@ -113,10 +113,10 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to change ownership on socket: %w", err)
 	}
 
-	// Close the listener after 15 minutes
-	// TODO: properly handle the socket listener timed out
+	// Close the listener after 1 hour
+	// TODO: properly handle the socket listener timeout
 	go func(l net.Listener) {
-		time.Sleep(15 * time.Minute)
+		time.Sleep(time.Hour)
 		l.Close()
 	}(l)
 
