@@ -42,7 +42,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -93,7 +93,7 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 				},
 			},
 			Spec: v1.PodSpec{
-				TerminationGracePeriodSeconds: pointer.Int64(5),
+				TerminationGracePeriodSeconds: ptr.To(int64(5)),
 				NodeSelector:                  map[string]string{"kubernetes.io/os": "linux"},
 				ServiceAccountName:            K8sServiceAccountName,
 				Containers: []v1.Container{
@@ -117,7 +117,7 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 				},
 				RestartPolicy:                v1.RestartPolicyAlways,
 				Volumes:                      make([]v1.Volume, 0),
-				AutomountServiceAccountToken: pointer.Bool(false),
+				AutomountServiceAccountToken: ptr.To(false),
 				Tolerations: []v1.Toleration{
 					{Operator: v1.TolerationOpExists},
 				},
@@ -249,8 +249,8 @@ func (t *TestPod) SetServiceAccount(sa string) {
 
 func (t *TestPod) SetNonRootSecurityContext() {
 	t.pod.Spec.SecurityContext = &v1.PodSecurityContext{
-		RunAsUser: pointer.Int64(1001),
-		FSGroup:   pointer.Int64(3003),
+		RunAsUser: ptr.To(int64(1001)),
+		FSGroup:   ptr.To(int64(3003)),
 	}
 }
 
@@ -586,7 +586,7 @@ func NewTestDeployment(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *
 			GenerateName: "gcsfuse-volume-deployment-tester-",
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: pointer.Int32(1),
+			Replicas: ptr.To(int32(1)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app": "gcsfuse-volume-deployment-tester",
@@ -648,7 +648,7 @@ func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob
 			Name: "gcsfuse-volume-job-tester",
 		},
 		Spec: batchv1.JobSpec{
-			ManualSelector: pointer.Bool(true),
+			ManualSelector: ptr.To(true),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					e2ejob.JobSelectorKey: "gcsfuse-volume-job-tester",
@@ -658,7 +658,7 @@ func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob
 				ObjectMeta: tPod.pod.ObjectMeta,
 				Spec:       tPod.pod.Spec,
 			},
-			BackoffLimit: pointer.Int32(1),
+			BackoffLimit: ptr.To(int32(1)),
 		},
 	}
 	job.Spec.Template.ObjectMeta.Labels = job.Spec.Selector.MatchLabels
