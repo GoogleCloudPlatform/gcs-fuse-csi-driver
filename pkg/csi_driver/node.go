@@ -221,19 +221,27 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Check if the sidecar container terminated
 	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.Name == webhook.SidecarContainerName {
-			reason := ""
-			if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
-				reason = cs.LastTerminationState.Terminated.Reason
-			} else if cs.State.Terminated != nil {
-				reason = cs.State.Terminated.Reason
+		if cs.Name != webhook.SidecarContainerName {
+			continue
+		}
+
+		var reason string
+		var exitCode int32
+		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
+			reason = cs.LastTerminationState.Terminated.Reason
+			exitCode = cs.LastTerminationState.Terminated.ExitCode
+		} else if cs.State.Terminated != nil {
+			reason = cs.State.Terminated.Reason
+			exitCode = cs.State.Terminated.ExitCode
+		}
+
+		if exitCode != 0 {
+			code := codes.Internal
+			if reason == "OOMKilled" || exitCode == 137 {
+				code = codes.ResourceExhausted
 			}
 
-			if reason == "OOMKilled" {
-				return nil, status.Errorf(codes.ResourceExhausted, "the sidecar container terminated due to OOMKilled")
-			} else if reason != "" {
-				return nil, status.Errorf(codes.Internal, "the sidecar container terminated due to %v", reason)
-			}
+			return nil, status.Errorf(code, "the sidecar container terminated due to %v, exit code: %v", reason, exitCode)
 		}
 	}
 
