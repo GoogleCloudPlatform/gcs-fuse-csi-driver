@@ -17,6 +17,31 @@ limitations under the License.
 
 # Troubleshooting
 
+## Log queries
+
+Run the following queries on GCP Logs Explorer to check logs.
+
+- Sidecar container and gcsfuse logs:
+    
+    ```
+    resource.type="k8s_container"
+    resource.labels.container_name="gke-gcsfuse-sidecar"
+    ```
+
+- Cloud Storage FUSE CSI Driver logs:
+    
+    ```
+    resource.type="k8s_container"
+    resource.labels.container_name="gcs-fuse-csi-driver"
+    ```
+
+- Cloud Storage FUSE CSI Driver Webhook logs (only for manual installation users):
+    
+    ```
+    resource.type="k8s_container"
+    resource.labels.container_name="gcs-fuse-csi-driver-webhook"
+    ```
+
 ## I/O errors in your workloads
 
 - Error `Transport endpoint is not connected` in workload Pods.
