@@ -56,19 +56,5 @@ Follow the following steps to update go modules:
 7. Resolve any issues that may be introduced by the new modules.
 
 ## Troubleshooting
-Run the following queries on GCP Logs Explorer to check logs.
-- Sidecar container and gcsfuse logs:
-    ```
-    resource.type="k8s_container"
-    resource.labels.container_name="gke-gcsfuse-sidecar"
-    ```
-- Cloud Storage FUSE CSI Driver logs:
-    ```
-    resource.type="k8s_container"
-    resource.labels.container_name="gcs-fuse-csi-driver"
-    ```
-- Cloud Storage FUSE CSI Driver Webhook logs:
-    ```
-    resource.type="k8s_container"
-    resource.labels.container_name="gcs-fuse-csi-driver-webhook"
-    ```
+
+Refer to [Troubleshooting](./troubleshooting.md) documentation.
