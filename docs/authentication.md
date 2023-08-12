@@ -17,142 +17,105 @@ limitations under the License.
 
 # Configure access to Cloud Storage buckets using GKE Workload Identity
 
-In order to let the Google Cloud Storage FUSE CSI Driver authenticate with GCP APIs, you need to do the following steps to make your Cloud Storage buckets accessible by your GKE cluster. See [GKE Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for more information.
+## Configure access
 
-1. Create a GCP Service Account
+See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver#authentication)
 
-   ```bash
-    # Cloud Storage bucket project ID.
-    GCS_BUCKET_PROJECT_ID=<gcs-bucket-project-id>
-    # GCP service account name.
-    GCP_SA_NAME=<gcp-service-account-name>
-    # Create a GCP service account in the Cloud Storage bucket project.
-    gcloud iam service-accounts create ${GCP_SA_NAME} --project=${GCS_BUCKET_PROJECT_ID}
+## Validate the service account setup (optional)
+
+- Make sure the Workload Identity feature is enabled on your cluster:
+
+    ```bash
+    gcloud container clusters describe ${CLUSTER_NAME} | grep workloadPool
     ```
 
-2. Grant the Cloud Storage permissions to the GCP Service Account.
+    The output should be like:
 
-   The CSI driver requires the `storage.objects.list` permission to successfully mount Cloud Storage buckets. Select proper IAM role according to the doc [IAM roles for Cloud Storage](https://cloud.google.com/storage/docs/access-control/iam-roles) that are associated with proper permissions. Here are some recommendations for the IAM role selection:
-   
-   - For read-only workloads: `roles/storage.objectViewer`.
-   - For read-write workloads: `roles/storage.objectAdmin`.
+    ```
+    workloadPool: ${PROJECT_ID}.svc.id.goog
+    ```
+
+- Make sure the DaemonSet `gke-metadata-server` is running on your node pool:
+
+    ```bash
+    kubectl get daemonset gke-metadata-server -n kube-system
+    ```
+
+    The output should be like:
+
+    ```
+    NAME                  DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR                                                             AGE
+    gke-metadata-server   3         3         3       3            3           beta.kubernetes.io/os=linux,iam.gke.io/gke-metadata-server-enabled=true   17d
+    ```
+
+- Check whether the GCP Service Account was created:
     
     ```bash
-    # Specify a proper IAM role for Cloud Storage.
-    STORAGE_ROLE=<cloud-storage-role>
+    gcloud iam service-accounts describe ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
+    ```
     
-    # Run the following command to apply permissions to a specific bucket.
-    BUCKET_NAME=<gcs-bucket-name>
-    gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
-        --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
-        --role "${STORAGE_ROLE}"
+    The output should be like:
 
-    # Optionally, run the following command if you want to apply the permissions to all the Cloud Storage buckets in the project.
-    # Choose "[2] None" for the binding condition.
-    gcloud projects add-iam-policy-binding ${GCS_BUCKET_PROJECT_ID} \
-        --member "serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com" \
-        --role "${STORAGE_ROLE}"
+    ```
+    email: ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
+    name: projects/${GSA_PROJECT}/serviceAccounts/${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
+    projectId: ${GSA_PROJECT}
+    ...
+    ```
+    
+- Check whether the GCP Service Account has correct IAM policy bindings:
+
+    ```
+    gcloud iam service-accounts get-iam-policy ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
     ```
 
-3. Create a Kubernetes Service Account.
-    
-    ```bash
-    # Kubernetes namespace where your workload runs.
-    K8S_NAMESPACE=<k8s-namespace>
-    # Kubernetes service account name.
-    K8S_SA_NAME=<k8s-sa-name>
-    # Create a Kubernetes namespace and a service account.
-    kubectl create namespace ${K8S_NAMESPACE}
-    kubectl create serviceaccount ${K8S_SA_NAME} --namespace ${K8S_NAMESPACE}
+    The output should be like:
+
+    ```
+    bindings:
+    - members:
+        - serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${KSA_NAME}]
+        role: roles/iam.workloadIdentityUser
+    ...
     ```
 
-    > Note: The Kubernetes Service Account needs to be in the same namespace where your workload runs.
+- Check whether the Cloud Storage bucket has correct IAM policy bindings:
 
-4. Bind the the Kubernetes Service Account with the GCP Service Account.
-    
-    ```bash
-    # GKE cluster project ID.
-    CLUSTER_PROJECT_ID=<cluster-project-id>
-    
-    gcloud iam service-accounts add-iam-policy-binding ${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com \
-        --role roles/iam.workloadIdentityUser \
-        --member "serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[${K8S_NAMESPACE}/${K8S_SA_NAME}]"
-
-    kubectl annotate serviceaccount ${K8S_SA_NAME} \
-        --namespace ${K8S_NAMESPACE} \
-        iam.gke.io/gcp-service-account=${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
+    ```
+    gcloud storage buckets get-iam-policy gs://${BUCKET_NAME}
     ```
 
-5. Validate the service account setup (optional)
+    The output should be like:
 
-    - Check whether the GCP Service Account was created:
-        
-        ```bash
-        gcloud iam service-accounts describe ${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-        ```
-        
-        The output should be like:
+    ```
+    bindings:
+    - members:
+        - serviceAccount:${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
+        role: roles/storage.objectViewer
+    
+    OR
+    
+    bindings:
+    - members:
+        - serviceAccount:${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
+        role: roles/storage.objectAdmin
+    ...
+    ```
 
-        ```
-        email: ${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-        name: projects/${GCS_BUCKET_PROJECT_ID}/serviceAccounts/${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-        projectId: ${GCS_BUCKET_PROJECT_ID}
-        ...
-        ```
-       
-    - Check whether the GCP Service Account has correct IAM policy bindings:
+- Check whether the Kubernetes Service Account was configured correctly:
 
-        ```
-        gcloud iam service-accounts get-iam-policy ${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-        ```
+    ```
+    kubectl get serviceaccount ${KSA_NAME} --namespace ${NAMESPACE} -o yaml
+    ```
 
-        The output should be like:
+    The output should be like:
 
-        ```
-        bindings:
-        - members:
-            - serviceAccount:${CLUSTER_PROJECT_ID}.svc.id.goog[${K8S_NAMESPACE}/${K8S_SA_NAME}]
-            role: roles/iam.workloadIdentityUser
-        ...
-        ```
-
-    - Check whether the Cloud Storage bucket has correct IAM policy bindings:
-
-        ```
-        gcloud storage buckets get-iam-policy gs://${BUCKET_NAME}
-        ```
-
-        The output should be like:
-
-        ```
-        bindings:
-        - members:
-            - serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-            role: roles/storage.objectViewer
-       
-       OR
-       
-       bindings:
-       - members:
-            - serviceAccount:${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-            role: roles/storage.objectAdmin
-        ...
-        ```
-
-    - Check whether the Kubernetes Service Account was configured correctly:
-
-        ```
-        kubectl get serviceaccount ${K8S_SA_NAME} --namespace ${K8S_NAMESPACE} -o yaml
-        ```
-
-        The output should be like:
-
-        ```yaml
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-        annotations:
-            iam.gke.io/gcp-service-account: ${GCP_SA_NAME}@${GCS_BUCKET_PROJECT_ID}.iam.gserviceaccount.com
-        name: ${K8S_SA_NAME}
-        namespace: ${K8S_NAMESPACE}
-        ```
+    ```yaml
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+    annotations:
+        iam.gke.io/gcp-service-account: ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
+    name: ${KSA_NAME}
+    namespace: ${NAMESPACE}
+    ```

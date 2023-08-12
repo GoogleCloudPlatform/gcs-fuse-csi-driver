@@ -39,6 +39,10 @@ Run the following command to build and push the images.
 make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
 ```
 
+## Manual installation
+
+Refer to [Cloud Storage FUSE CSI Driver Manual Installation](./installation.md) documentation.
+
 ## Test
 
 Refer to [Test](../test/README.md) documentation.
