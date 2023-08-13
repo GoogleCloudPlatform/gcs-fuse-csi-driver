@@ -102,9 +102,12 @@ GCS_BUCKET_NAME=your-bucket-name
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/pytorch/data-loader-job.yaml
 
 # replace <kaggle-key> with your kaggle API key
-# Go to https://www.kaggle.com/docs/api to get your kaggle API key. The format is {"username":"xxx","key":"xxx"}.
+# Go to https://www.kaggle.com to create a kaggle account if necessary, then read the "Authentication" section [here](https://www.kaggle.com/docs/api) for how to get your Kaggle API key. The format is {"username":"xxx","key":"xxx"}.
 KAGGLE_KEY=your-kaggle-key
-sed -i "s/<kaggle-key>/$KAGGLE_KEY/g" ./examples/pytorch/data-loader-pod.yaml
+sed -i "s/<kaggle-key>/$KAGGLE_KEY/g" ./examples/pytorch/data-loader-job.yaml
+
+kubectl create serviceaccount gcs-csi --namespace default
+kubectl create namespace gcs-csi-example
 
 # prepare the data
 kubectl apply -f ./examples/pytorch/data-loader-job.yaml
