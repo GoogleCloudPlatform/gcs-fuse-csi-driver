@@ -196,6 +196,11 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
 	}
 
+	// TODO(songjiaxun) remove this logic after the next gcsfusee release.
+	if testParams.UseGKEManagedDriver {
+		skipTests = append(skipTests, "gzip")
+	}
+
 	skipString := strings.Join(skipTests, "|")
 
 	klog.Infof("Generated ginkgo skip string: %q", skipString)

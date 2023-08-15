@@ -33,8 +33,6 @@ import (
 
 const (
 	gcsfuseIntegrationTestsBasePath = "gcsfuse/tools/integration_tests"
-	exportGoPath                    = "export PATH=$PATH:/usr/local/go/bin"
-	commonTestCommand               = "GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory="
 )
 
 type gcsFuseCSIGCSFuseIntegrationTestSuite struct {
@@ -106,7 +104,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			"gke-gcsfuse/volumes":                 "true",
 			"gke-gcsfuse/cpu-limit":               "250m",
 			"gke-gcsfuse/memory-limit":            "256Mi",
-			"gke-gcsfuse/ephemeral-storage-limit": "1Gi",
+			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})
 
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
@@ -140,19 +138,19 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "wget https://go.dev/dl/go1.20.5.linux-$(dpkg --print-architecture).tar.gz -q && tar -C /usr/local -xzf go1.20.5.linux-$(dpkg --print-architecture).tar.gz")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "git clone https://github.com/GoogleCloudPlatform/gcsfuse.git")
 
+		baseTestCommand := fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
+		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 		switch testName {
-		case "readonly":
-			if readOnly {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/readonly && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, commonTestCommand, mountPath, bucketName))
+		case "explicit_dir", "implicit_dir", "readonly", "gzip":
+			if testName == "readonly" && !readOnly {
+				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
 			} else {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v && cd %v/readonly && %v%v --testbucket=%v'", gcsfuseIntegrationTestsBasePath, exportGoPath, gcsfuseIntegrationTestsBasePath, commonTestCommand, mountPath, bucketName))
+				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
 			}
-		case "explicit_dir", "implicit_dir":
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
 		case "list_large_dir":
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v' --testbucket='%v' -timeout 60m", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath, bucketName))
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 60m")
 		default:
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("%v && cd %v/%v && %v'%v'", exportGoPath, gcsfuseIntegrationTestsBasePath, testName, commonTestCommand, mountPath))
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 		}
 	}
 
@@ -365,5 +363,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest("write_large_files", false, "implicit-dirs=true", "enable-storage-client-library=true")
+	})
+
+	ginkgo.It("should succeed in gzip test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("gzip", false, "implicit-dirs=true")
 	})
 }
