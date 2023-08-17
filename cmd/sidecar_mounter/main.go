@@ -48,7 +48,7 @@ func main() {
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 	socketPathPattern := *volumeBasePath + "/*/socket"
-	socketPathes, err := filepath.Glob(socketPathPattern)
+	socketPaths, err := filepath.Glob(socketPathPattern)
 	if err != nil {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
@@ -56,7 +56,7 @@ func main() {
 	mounter := sidecarmounter.New(*gcsfusePath)
 	var wg sync.WaitGroup
 
-	for _, sp := range socketPathes {
+	for _, sp := range socketPaths {
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
@@ -182,7 +182,7 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	mc.FileDescriptor = fd
 
 	if err := json.Unmarshal(msg, &mc); err != nil {
-		return nil, fmt.Errorf("failed to unmarchal the mount config: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal the mount config: %w", err)
 	}
 
 	if mc.BucketName == "" {
