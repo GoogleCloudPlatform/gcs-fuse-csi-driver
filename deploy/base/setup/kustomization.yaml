@@ -19,4 +19,3 @@ namespace: gcs-fuse-csi-driver
 resources:
 - cluster_setup.yaml
 - csi_driver.yaml
-- storageclass.yaml
