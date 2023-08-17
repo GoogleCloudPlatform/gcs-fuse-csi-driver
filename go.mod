@@ -5,7 +5,7 @@ go 1.20
 require (
 	cloud.google.com/go/compute/metadata v0.2.3
 	cloud.google.com/go/iam v1.1.2
-	cloud.google.com/go/storage v1.31.0
+	cloud.google.com/go/storage v1.32.0
 	github.com/container-storage-interface/spec v1.8.0
 	github.com/go-logr/logr v1.2.4
 	github.com/google/uuid v1.3.0
@@ -15,7 +15,7 @@ require (
 	github.com/onsi/gomega v1.27.10
 	golang.org/x/net v0.14.0
 	golang.org/x/oauth2 v0.11.0
-	google.golang.org/api v0.136.0
+	google.golang.org/api v0.137.0
 	google.golang.org/grpc v1.57.0
 	k8s.io/api v0.27.4
 	k8s.io/apimachinery v0.27.4
@@ -61,7 +61,7 @@ require (
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
 	github.com/google/pprof v0.0.0-20210720184732-4bb14d4b1be1 // indirect
-	github.com/google/s2a-go v0.1.4 // indirect
+	github.com/google/s2a-go v0.1.5 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.2.5 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
