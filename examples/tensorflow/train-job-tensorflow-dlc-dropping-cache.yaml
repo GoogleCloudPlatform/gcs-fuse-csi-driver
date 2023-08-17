@@ -72,4 +72,4 @@ spec:
           driver: gcsfuse.csi.storage.gke.io
           volumeAttributes:
             bucketName: <bucket-name>
-            mountOptions: "implicit-dirs,enable-storage-client-library,debug_fuse,debug_gcs,max-conns-per-host=100"
+            mountOptions: "implicit-dirs,debug_fuse,debug_gcs,max-conns-per-host=100"
