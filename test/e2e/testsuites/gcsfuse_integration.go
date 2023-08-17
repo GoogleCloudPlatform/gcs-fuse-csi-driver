@@ -160,60 +160,30 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false", "enable-storage-client-library=false")
+		gcsfuseIntegrationTest("operations", false, "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in operations test 2", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false", "enable-storage-client-library=true")
+		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false")
 	})
 
 	ginkgo.It("should succeed in operations test 3", func() {
-		init()
+		// passing only-dir flags
+		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=true", "enable-storage-client-library=false")
+		gcsfuseIntegrationTest("operations", false, "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in operations test 4", func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=true", "enable-storage-client-library=true")
-	})
-
-	ginkgo.It("should succeed in operations test 5", func() {
 		// passing only-dir flags
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false", "enable-storage-client-library=false")
-	})
-
-	ginkgo.It("should succeed in operations test 6", func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false", "enable-storage-client-library=true")
-	})
-
-	ginkgo.It("should succeed in operations test 7", func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=true", "enable-storage-client-library=false")
-	})
-
-	ginkgo.It("should succeed in operations test 8", func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest("operations", false, "implicit-dirs=true", "enable-storage-client-library=true")
+		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false")
 	})
 
 	ginkgo.It("should succeed in readonly test 1", func() {
@@ -250,14 +220,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=false")
+		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in rename_dir_limit test 2", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=true")
+		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=false")
 	})
 
 	ginkgo.It("should succeed in rename_dir_limit test 3", func() {
@@ -265,7 +235,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
-		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=false")
+		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in rename_dir_limit test 4", func() {
@@ -273,67 +243,37 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
-		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=true")
+		gcsfuseIntegrationTest("rename_dir_limit", false, "rename-dir-limit=3", "implicit-dirs=false")
 	})
 
 	ginkgo.It("should succeed in implicit_dir test 1", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs=true", "enable-storage-client-library=false")
+		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in implicit_dir test 2", func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs=true", "enable-storage-client-library=true")
-	})
-
-	ginkgo.It("should succeed in implicit_dir test 3", func() {
 		// passing only-dir flags
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
-		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs=true", "enable-storage-client-library=false")
-	})
-
-	ginkgo.It("should succeed in implicit_dir test 4", func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs=true", "enable-storage-client-library=true")
+		gcsfuseIntegrationTest("implicit_dir", false, "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in explicit_dir test 1", func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("explicit_dir", false, "enable-storage-client-library=true")
+		gcsfuseIntegrationTest("explicit_dir", false, "implicit-dirs=false")
 	})
 
 	ginkgo.It("should succeed in explicit_dir test 2", func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest("explicit_dir", false, "enable-storage-client-library=false")
-	})
-
-	ginkgo.It("should succeed in explicit_dir test 3", func() {
 		// passing only-dir flags
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
 
-		gcsfuseIntegrationTest("explicit_dir", false, "enable-storage-client-library=true")
-	})
-
-	ginkgo.It("should succeed in explicit_dir test 4", func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest("explicit_dir", false, "enable-storage-client-library=false")
+		gcsfuseIntegrationTest("explicit_dir", false, "implicit-dirs=false")
 	})
 
 	ginkgo.It("should succeed in list_large_dir test 1", func() {
@@ -355,14 +295,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("write_large_files", false, "implicit-dirs=true", "enable-storage-client-library=false")
-	})
-
-	ginkgo.It("should succeed in write_large_files test 2", func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest("write_large_files", false, "implicit-dirs=true", "enable-storage-client-library=true")
+		gcsfuseIntegrationTest("write_large_files", false, "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in gzip test 1", func() {

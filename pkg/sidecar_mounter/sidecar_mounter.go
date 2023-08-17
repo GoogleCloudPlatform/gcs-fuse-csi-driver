@@ -117,7 +117,6 @@ var boolFlags = map[string]bool{
 	"debug_http":                    true,
 	"debug_invariants":              true,
 	"debug_mutex":                   true,
-	"enable-storage-client-library": true,
 }
 
 func (mc *MountConfig) PrepareMountArgs() map[string]string {
