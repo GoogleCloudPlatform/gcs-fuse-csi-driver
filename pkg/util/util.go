@@ -120,7 +120,7 @@ func ParseEndpoint(endpoint string, cleanupSocket bool) (string, string, error) 
 }
 
 func ParsePodIDVolumeFromTargetpath(targetPath string) (string, string, error) {
-	r := regexp.MustCompile("/var/lib/kubelet/pods/(.*)/volumes/kubernetes.io~csi/(.*)/mount")
+	r := regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
 	matched := r.FindStringSubmatch(targetPath)
 	if len(matched) < 3 {
 		return "", "", fmt.Errorf("targetPath %v does not contain Pod ID or volume information", targetPath)
@@ -137,7 +137,7 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 		return "", fmt.Errorf("failed to parse volume name from target path %q: %w", targetPath, err)
 	}
 
-	r := regexp.MustCompile("kubernetes.io~csi/(.*)/mount")
+	r := regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
 	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerVolumeName))
 
 	if createEmptyDir {
