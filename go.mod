@@ -8,14 +8,14 @@ require (
 	cloud.google.com/go/storage v1.32.0
 	github.com/container-storage-interface/spec v1.8.0
 	github.com/go-logr/logr v1.2.4
-	github.com/google/uuid v1.3.0
+	github.com/google/uuid v1.3.1
 	github.com/kubernetes-csi/csi-lib-utils v0.14.0
 	github.com/kubernetes-csi/csi-test/v5 v5.0.0
 	github.com/onsi/ginkgo/v2 v2.11.0
 	github.com/onsi/gomega v1.27.10
 	golang.org/x/net v0.14.0
 	golang.org/x/oauth2 v0.11.0
-	google.golang.org/api v0.137.0
+	google.golang.org/api v0.138.0
 	google.golang.org/grpc v1.57.0
 	k8s.io/api v0.27.4
 	k8s.io/apimachinery v0.27.4
