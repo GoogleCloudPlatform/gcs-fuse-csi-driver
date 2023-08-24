@@ -53,6 +53,7 @@ type MountConfig struct {
 	Options         []string  `json:"options,omitempty"`
 	ErrWriter       io.Writer `json:"-"`
 	StorageEndpoint string    `json:"storageEndpoint,omitempty"`
+	TSEndpoint   string    `json:"tokenEndpoint,omitempty"`
 }
 
 func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
@@ -133,6 +134,10 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 	}
 	if mc.StorageEndpoint != "" {
 		flagMap["endpoint"] = mc.StorageEndpoint
+	}
+
+	if mc.TSEndpoint != "" {
+		flagMap["token-url"] = mc.TSEndpoint
 	}
 
 	invalidArgs := []string{}
