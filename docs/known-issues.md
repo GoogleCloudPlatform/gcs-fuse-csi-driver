@@ -43,12 +43,13 @@ The sidecar container, or more precisely, the Cloud Storage FUSE process that se
 - [The sidecar container is at the spec.containers[0] position which may cause issues in some workloads](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/20)
 - [subPath does not work when Anthos Service Mesh is enabled](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/47)
 - ["Error: context deadline exceeded" when Anthos Service Mesh is enabled](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/46)
+- [The sidecar container does not work well with istio-proxy sidecar container](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/53)
 
 ### Solutions
 
 Unfortunately, there is no good short-term solution or workaround for the above issues due to the restrictions of the sidecar container mode design.
 
-The [sidecar containers KEP](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers) is implemented in this the PR [Add SidecarContainers feature](https://github.com/kubernetes/kubernetes/pull/116429).
+The [sidecar containers KEP](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers) is implemented in this PR [Add SidecarContainers feature](https://github.com/kubernetes/kubernetes/pull/116429).
 
 > The new feature gate "SidecarContainers" is now available. This feature introduces sidecar containers, a new type of init container that starts before other containers but remains running for the full duration of the pod's lifecycle and will not block pod termination.
 
