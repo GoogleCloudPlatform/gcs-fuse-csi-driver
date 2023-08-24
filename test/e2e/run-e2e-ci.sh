@@ -36,7 +36,7 @@ readonly node_machine_type=${MACHINE_TYPE:-n1-standard-2}
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.11.0
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.12.0
 
 # Build e2e-test CLI
 go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
