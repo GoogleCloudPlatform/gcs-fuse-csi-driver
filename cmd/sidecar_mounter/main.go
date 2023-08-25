@@ -35,9 +35,9 @@ import (
 )
 
 var (
-	gcsfusePath     = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath  = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
-	gracePeriod     = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
+	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
+	gracePeriod    = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -159,8 +159,8 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	dir := filepath.Dir(sp)
 	volumeName := filepath.Base(dir)
 	mc := sidecarmounter.MountConfig{
-		VolumeName:      volumeName,
-		TempDir:         filepath.Join(dir, "temp-dir"),
+		VolumeName: volumeName,
+		TempDir:    filepath.Join(dir, "temp-dir"),
 	}
 
 	klog.Infof("connecting to socket %q", sp)
