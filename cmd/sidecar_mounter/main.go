@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -187,6 +188,12 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 
 	if mc.BucketName == "" {
 		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
+	}
+
+	for _, opt := range mc.Options{
+		if strings.Contains(opt, "experimental-local-file-cache") {
+			mc.TempDir = "/cache/gcsfuse-tmp"
+		}
 	}
 
 	return &mc, nil
