@@ -109,8 +109,20 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, CPU limit %q, memory limit %q, ephemeral storage limit %q", pod.Name, pod.GenerateName, pod.Namespace, configCopy.CPULimit.String(), configCopy.MemoryLimit.String(), configCopy.EphemeralStorageLimit.String())
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
-	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy)}, pod.Spec.Containers...)
-	pod.Spec.Volumes = append([]corev1.Volume{GetSidecarContainerVolumeSpec()}, pod.Spec.Volumes...)
+	useExperimentalLocalFileCache := false
+	for _, v := range pod.Spec.Volumes{
+		if v.CSI == nil || v.CSI.VolumeAttributes == nil {
+			continue
+		}
+		if val, ok := v.CSI.VolumeAttributes["mountOptions"]; ok{
+			if strings.Contains(val, "experimental-local-file-cache"){
+				useExperimentalLocalFileCache = true
+			}
+		}
+	}
+	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy, useExperimentalLocalFileCache)}, pod.Spec.Containers...)
+
+	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(useExperimentalLocalFileCache), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
