@@ -124,9 +124,9 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 			}
 		}
 	}
-	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy, useExperimentalLocalFileCache)}, pod.Spec.Containers...)
 	// Add a volume for the experimental read cache if none already exists
 	addCacheVolume := useExperimentalLocalFileCache && !hasCacheVolume
+	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy, addCacheVolume)}, pod.Spec.Containers...)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(addCacheVolume), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
