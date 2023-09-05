@@ -31,6 +31,8 @@ import (
 	"time"
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
+	sidecarspec "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
 )
@@ -192,7 +194,8 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 
 	for _, opt := range mc.Options {
 		if strings.Contains(opt, "experimental-local-file-cache") {
-			mc.TempDir = "/cache/gcsfuse-tmp"
+
+			mc.TempDir = filepath.Join(sidecarspec.CacheVolumeMountPath, "gcsfuse-tmp")
 		}
 	}
 

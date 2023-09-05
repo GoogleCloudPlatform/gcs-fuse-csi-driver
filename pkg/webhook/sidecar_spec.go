@@ -28,13 +28,15 @@ const (
 	SidecarContainerName            = "gke-gcsfuse-sidecar"
 	SidecarContainerVolumeName      = "gke-gcsfuse-tmp"
 	SidecarContainerVolumeMountPath = "/gcsfuse-tmp"
+	CacheVolumeName                 = "cache-volume"
+	CacheVolumeMountPath            = "/cache"
 
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID = 65534
 	NobodyGID = 65534
 )
 
-func GetSidecarContainerSpec(c *Config, useExperimentalLocalFileCache bool) v1.Container {
+func GetSidecarContainerSpec(c *Config, addCacheVolume bool) v1.Container {
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 	toReturn := v1.Container{
@@ -75,16 +77,16 @@ func GetSidecarContainerSpec(c *Config, useExperimentalLocalFileCache bool) v1.C
 		},
 	}
 
-	if useExperimentalLocalFileCache {
+	if addCacheVolume {
 		toReturn.VolumeMounts = append(toReturn.VolumeMounts, v1.VolumeMount{
-			Name:      "scratch-volume",
-			MountPath: "/cache",
+			Name:      CacheVolumeName,
+			MountPath: CacheVolumeMountPath,
 		})
 	}
 	return toReturn
 }
 
-func GetSidecarContainerVolumeSpec(useExperimentalLocalFileCache bool) []v1.Volume {
+func GetSidecarContainerVolumeSpec(addCacheVolume bool) []v1.Volume {
 	toReturn := []v1.Volume{
 		{
 			Name: SidecarContainerVolumeName,
@@ -93,9 +95,9 @@ func GetSidecarContainerVolumeSpec(useExperimentalLocalFileCache bool) []v1.Volu
 			},
 		},
 	}
-	if useExperimentalLocalFileCache {
+	if addCacheVolume {
 		toReturn = append(toReturn, v1.Volume{
-			Name: "scratch-volume",
+			Name: CacheVolumeName,
 			VolumeSource: v1.VolumeSource{
 				HostPath: &v1.HostPathVolumeSource{
 					Path: "/mnt/stateful_partition/kube-ephemeral-ssd",
