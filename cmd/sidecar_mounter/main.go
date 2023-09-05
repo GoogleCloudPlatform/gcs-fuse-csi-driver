@@ -190,7 +190,7 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
 	}
 
-	for _, opt := range mc.Options{
+	for _, opt := range mc.Options {
 		if strings.Contains(opt, "experimental-local-file-cache") {
 			mc.TempDir = "/cache/gcsfuse-tmp"
 		}
