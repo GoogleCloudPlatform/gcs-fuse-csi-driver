@@ -110,12 +110,12 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, CPU limit %q, memory limit %q, ephemeral storage limit %q", pod.Name, pod.GenerateName, pod.Namespace, configCopy.CPULimit.String(), configCopy.MemoryLimit.String(), configCopy.EphemeralStorageLimit.String())
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
 	useExperimentalLocalFileCache := false
-	for _, v := range pod.Spec.Volumes{
+	for _, v := range pod.Spec.Volumes {
 		if v.CSI == nil || v.CSI.VolumeAttributes == nil {
 			continue
 		}
-		if val, ok := v.CSI.VolumeAttributes["mountOptions"]; ok{
-			if strings.Contains(val, "experimental-local-file-cache"){
+		if val, ok := v.CSI.VolumeAttributes["mountOptions"]; ok {
+			if strings.Contains(val, "experimental-local-file-cache") {
 				useExperimentalLocalFileCache = true
 			}
 		}

@@ -34,7 +34,6 @@ const (
 	NobodyGID = 65534
 )
 
-
 func GetSidecarContainerSpec(c *Config, useExperimentalLocalFileCache bool) v1.Container {
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
@@ -86,7 +85,7 @@ func GetSidecarContainerSpec(c *Config, useExperimentalLocalFileCache bool) v1.C
 }
 
 func GetSidecarContainerVolumeSpec(useExperimentalLocalFileCache bool) []v1.Volume {
-	toReturn := []v1.Volume {
+	toReturn := []v1.Volume{
 		{
 			Name: SidecarContainerVolumeName,
 			VolumeSource: v1.VolumeSource{
@@ -96,13 +95,13 @@ func GetSidecarContainerVolumeSpec(useExperimentalLocalFileCache bool) []v1.Volu
 	}
 	if useExperimentalLocalFileCache {
 		toReturn = append(toReturn, v1.Volume{
-				Name: "scratch-volume",
-				VolumeSource: v1.VolumeSource{
-					HostPath: &v1.HostPathVolumeSource{
-						Path: "/mnt/stateful_partition/kube-ephemeral-ssd",
-					},
+			Name: "scratch-volume",
+			VolumeSource: v1.VolumeSource{
+				HostPath: &v1.HostPathVolumeSource{
+					Path: "/mnt/stateful_partition/kube-ephemeral-ssd",
 				},
-			})
+			},
+		})
 	}
 	return toReturn
 }
