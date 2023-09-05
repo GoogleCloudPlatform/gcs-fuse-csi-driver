@@ -31,6 +31,7 @@ import (
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
 
@@ -156,12 +157,11 @@ func main() {
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
 func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
-	dir := filepath.Dir(sp)
-	volumeName := filepath.Base(dir)
+	volumeName := filepath.Base(filepath.Dir(sp))
 	mc := sidecarmounter.MountConfig{
 		VolumeName: volumeName,
-		TempDir:    filepath.Join(dir, "temp-dir"),
-		ConfigFile: filepath.Join(dir, "config.yaml"),
+		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
 	}
 
 	klog.Infof("connecting to socket %q", sp)

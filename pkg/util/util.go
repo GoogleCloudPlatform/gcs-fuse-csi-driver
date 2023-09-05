@@ -138,7 +138,7 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 	}
 
 	r := regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
-	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerVolumeName))
+	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerTmpVolumeName))
 
 	if createEmptyDir {
 		if err := os.MkdirAll(emptyDirBasePath, 0o750); err != nil {
