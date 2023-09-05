@@ -1,4 +1,4 @@
-<!-- 
+<!--
 Copyright 2018 The Kubernetes Authors.
 Copyright 2022 Google LLC
 
@@ -170,7 +170,7 @@ kubectl apply -f ./examples/tensorflow/train-job-tensorflow-dlc.yaml
 kubectl delete -f ./examples/tensorflow/train-job-tensorflow-dlc.yaml
 ```
 
-## Jupyter Notebook Example
+## Jupyter Notebook Example (no experimental read cache)
 
 ```bash
 # replace <bucket-name> with your pre-provisioned GCS bucket name
@@ -186,3 +186,30 @@ kubectl port-forward jupyter-notebook-server 8888:8888
 # clean up
 kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
 ```
+
+## Jupyter Notebook Example (no experimental read cache)
+
+# Prerequisite:
+
+Your node pool must have created an ephemeral local ssds as described in
+https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/local-ssd#node-pool
+
+```bash
+# 1. replace <bucket-name> with your pre-provisioned GCS bucket name
+GCS_BUCKET_NAME=your-bucket-name
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/jupyter/jupyter-experimental-readcache.yaml
+
+# 2. install a Jupyter Notebook server using experimental gcsfuse read cache
+kubectl apply -f ./examples/jupyter/jupyter-experimental-readcache.yaml
+
+# get service IPs
+kubectl get services -n example
+
+# copy EXTERNAL-IP of tensorflow-jupyter server
+# Open IP Address in a browser
+# input token "jupyter" (from yaml)
+
+# clean up
+kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
+```
+
