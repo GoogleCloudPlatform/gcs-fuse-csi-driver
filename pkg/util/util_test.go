@@ -318,7 +318,7 @@ func TestPrepareEmptyDir(t *testing.T) {
 		{
 			name:                     "should return emptyDir path correctly",
 			targetPath:               "/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~csi/test-volume/mount",
-			expectedEmptyDirBasePath: fmt.Sprintf("/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~empty-dir/%v/.volumes/test-volume", webhook.SidecarContainerVolumeName),
+			expectedEmptyDirBasePath: fmt.Sprintf("/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~empty-dir/%v/.volumes/test-volume", webhook.SidecarContainerTmpVolumeName),
 			expectedError:            false,
 		},
 		{

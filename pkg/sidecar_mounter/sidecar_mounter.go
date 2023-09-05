@@ -50,7 +50,7 @@ type MountConfig struct {
 	FileDescriptor int       `json:"-"`
 	VolumeName     string    `json:"volumeName,omitempty"`
 	BucketName     string    `json:"bucketName,omitempty"`
-	TempDir        string    `json:"-"`
+	CacheDir       string    `json:"-"`
 	ConfigFile     string    `json:"-"`
 	Options        []string  `json:"options,omitempty"`
 	ErrWriter      io.Writer `json:"-"`
@@ -59,8 +59,8 @@ type MountConfig struct {
 func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
-	if err := os.MkdirAll(mc.TempDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.TempDir, err)
+	if err := os.MkdirAll(mc.CacheDir+"/temp-dir", os.ModePerm); err != nil {
+		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.CacheDir+"/temp-dir", err)
 	}
 
 	flagMap, configFileFlagMap := mc.prepareMountArgs()
@@ -130,7 +130,7 @@ var boolFlags = map[string]bool{
 func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string) {
 	flagMap := map[string]string{
 		"app-name":    GCSFuseAppName,
-		"temp-dir":    mc.TempDir,
+		"temp-dir":    mc.CacheDir + "/temp-dir",
 		"config-file": mc.ConfigFile,
 		"foreground":  "",
 		"uid":         "0",

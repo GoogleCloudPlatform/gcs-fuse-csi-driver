@@ -25,9 +25,11 @@ import (
 )
 
 const (
-	SidecarContainerName            = "gke-gcsfuse-sidecar"
-	SidecarContainerVolumeName      = "gke-gcsfuse-tmp"
-	SidecarContainerVolumeMountPath = "/gcsfuse-tmp"
+	SidecarContainerName                 = "gke-gcsfuse-sidecar"
+	SidecarContainerTmpVolumeName        = "gke-gcsfuse-tmp"
+	SidecarContainerTmpVolumeMountPath   = "/gcsfuse-tmp"
+	SidecarContainerCacheVolumeName      = "gke-gcsfuse-cache"
+	SidecarContainerCacheVolumeMountPath = "/gcsfuse-cache"
 
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID = 65534
@@ -69,18 +71,30 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 		},
 		VolumeMounts: []v1.VolumeMount{
 			{
-				Name:      SidecarContainerVolumeName,
-				MountPath: SidecarContainerVolumeMountPath,
+				Name:      SidecarContainerTmpVolumeName,
+				MountPath: SidecarContainerTmpVolumeMountPath,
+			},
+			{
+				Name:      SidecarContainerCacheVolumeName,
+				MountPath: SidecarContainerCacheVolumeMountPath,
 			},
 		},
 	}
 }
 
-func GetSidecarContainerVolumeSpec() v1.Volume {
-	return v1.Volume{
-		Name: SidecarContainerVolumeName,
-		VolumeSource: v1.VolumeSource{
-			EmptyDir: &v1.EmptyDirVolumeSource{},
+func GetSidecarContainerVolumeSpec() []v1.Volume {
+	return []v1.Volume{
+		{
+			Name: SidecarContainerTmpVolumeName,
+			VolumeSource: v1.VolumeSource{
+				EmptyDir: &v1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: SidecarContainerCacheVolumeName,
+			VolumeSource: v1.VolumeSource{
+				EmptyDir: &v1.EmptyDirVolumeSource{},
+			},
 		},
 	}
 }
@@ -88,20 +102,30 @@ func GetSidecarContainerVolumeSpec() v1.Volume {
 // ValidatePodHasSidecarContainerInjected validates the following:
 // 1. One of the container name matches the sidecar container name.
 // 2. The image name matches.
-// 3. The container has a volume with the sidecar container volume name.
-// 4. The volume has the sidecar container volume mount path.
-// 5. The Pod has an emptyDir volume with the sidecar container volume name.
+// 3. The container uses the temp volume and cache volume.
+// 4. The temp volume and cache volume have correct volume mount paths.
+// 5. The Pod has the temp volume and cache volume. The temp volume has to be an emptyDir.
 func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 	containerInjected := false
-	volumeInjected := false
+	tempVolumeInjected := false
+	cacheVolumeInjected := false
 	expectedImageWithoutTag := strings.Split(image, ":")[0]
 	for _, c := range pod.Spec.Containers {
-		if c.Name == SidecarContainerName && strings.Split(c.Image, ":")[0] == expectedImageWithoutTag {
-			for _, v := range c.VolumeMounts {
-				if v.Name == SidecarContainerVolumeName && v.MountPath == SidecarContainerVolumeMountPath {
-					containerInjected = true
+		if c.Name == SidecarContainerName {
+			if strings.Split(c.Image, ":")[0] == expectedImageWithoutTag &&
+				c.SecurityContext != nil &&
+				*c.SecurityContext.RunAsUser == NobodyUID &&
+				*c.SecurityContext.RunAsGroup == NobodyGID {
+				containerInjected = true
+			}
 
-					break
+			for _, v := range c.VolumeMounts {
+				if v.Name == SidecarContainerTmpVolumeName && v.MountPath == SidecarContainerTmpVolumeMountPath {
+					tempVolumeInjected = true
+				}
+
+				if v.Name == SidecarContainerCacheVolumeName && v.MountPath == SidecarContainerCacheVolumeMountPath {
+					cacheVolumeInjected = true
 				}
 			}
 
@@ -109,13 +133,20 @@ func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 		}
 	}
 
-	for _, v := range pod.Spec.Volumes {
-		if v.Name == SidecarContainerVolumeName && v.VolumeSource.EmptyDir != nil {
-			volumeInjected = true
+	if !containerInjected || !tempVolumeInjected || !cacheVolumeInjected {
+		return false
+	}
 
-			break
+	tempVolumeInjected, cacheVolumeInjected = false, false
+
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == SidecarContainerTmpVolumeName && v.VolumeSource.EmptyDir != nil {
+			tempVolumeInjected = true
+		}
+		if v.Name == SidecarContainerCacheVolumeName {
+			cacheVolumeInjected = true
 		}
 	}
 
-	return containerInjected && volumeInjected
+	return containerInjected && tempVolumeInjected && cacheVolumeInjected
 }
