@@ -36,7 +36,7 @@ const (
 	NobodyGID = 65534
 )
 
-func GetSidecarContainerSpec(c *Config, addCacheVolume bool) v1.Container {
+func GetSidecarContainerSpec(c *Config) v1.Container {
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 	toReturn := v1.Container{
@@ -77,16 +77,10 @@ func GetSidecarContainerSpec(c *Config, addCacheVolume bool) v1.Container {
 		},
 	}
 
-	if addCacheVolume {
-		toReturn.VolumeMounts = append(toReturn.VolumeMounts, v1.VolumeMount{
-			Name:      CacheVolumeName,
-			MountPath: CacheVolumeMountPath,
-		})
-	}
 	return toReturn
 }
 
-func GetSidecarContainerVolumeSpec(addCacheVolume bool) []v1.Volume {
+func GetSidecarContainerVolumeSpec() []v1.Volume {
 	toReturn := []v1.Volume{
 		{
 			Name: SidecarContainerVolumeName,
@@ -94,16 +88,6 @@ func GetSidecarContainerVolumeSpec(addCacheVolume bool) []v1.Volume {
 				EmptyDir: &v1.EmptyDirVolumeSource{},
 			},
 		},
-	}
-	if addCacheVolume {
-		toReturn = append(toReturn, v1.Volume{
-			Name: CacheVolumeName,
-			VolumeSource: v1.VolumeSource{
-				HostPath: &v1.HostPathVolumeSource{
-					Path: "/mnt/stateful_partition/kube-ephemeral-ssd",
-				},
-			},
-		})
 	}
 	return toReturn
 }

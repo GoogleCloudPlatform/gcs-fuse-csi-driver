@@ -25,13 +25,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
-	sidecarspec "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
@@ -190,13 +188,6 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 
 	if mc.BucketName == "" {
 		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
-	}
-
-	for _, opt := range mc.Options {
-		if strings.Contains(opt, "experimental-local-file-cache") {
-
-			mc.TempDir = filepath.Join(sidecarspec.CacheVolumeMountPath, "gcsfuse-tmp")
-		}
 	}
 
 	return &mc, nil

@@ -108,26 +108,11 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, CPU limit %q, memory limit %q, ephemeral storage limit %q", pod.Name, pod.GenerateName, pod.Namespace, configCopy.CPULimit.String(), configCopy.MemoryLimit.String(), configCopy.EphemeralStorageLimit.String())
-	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
-	useExperimentalLocalFileCache := false
-	hasCacheVolume := false
-	for _, v := range pod.Spec.Volumes {
-		if v.Name == CacheVolumeName {
-			hasCacheVolume = false
-		}
-		if v.CSI == nil || v.CSI.VolumeAttributes == nil {
-			continue
-		}
-		if val, ok := v.CSI.VolumeAttributes["mountOptions"]; ok {
-			if strings.Contains(val, "experimental-local-file-cache") {
-				useExperimentalLocalFileCache = true
-			}
-		}
+	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy)}, pod.Spec.Containers...)
+	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), pod.Spec.Volumes...)
+	pod.Spec.NodeSelector = map[string]string{
+		"cloud.google.com/gke-ephemeral-storage-local-ssd": "true",
 	}
-	// Add a volume for the experimental read cache if none already exists
-	addCacheVolume := useExperimentalLocalFileCache && !hasCacheVolume
-	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy, addCacheVolume)}, pod.Spec.Containers...)
-	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(addCacheVolume), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
