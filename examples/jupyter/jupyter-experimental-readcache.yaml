@@ -1,0 +1,86 @@
+# Tensorflow/Jupyter StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tensorflow
+  namespace: example
+spec:
+  selector:
+    matchLabels:
+      pod: tensorflow-pod
+  serviceName: tensorflow
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: 500m
+        gke-gcsfuse/memory-limit: 10Gi
+        gke-gcsfuse/ephemeral-storage-limit: 30Gi
+      labels:
+        pod: tensorflow-pod
+    spec:
+      serviceAccountName: gcsfuse-ksa
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-tesla-t4
+        cloud.google.com/gke-ephemeral-storage-local-ssd: "true"
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: tensorflow-container
+        securityContext:
+          privileged: true
+        image: tensorflow/tensorflow:2.13.0-gpu-jupyter
+        volumeMounts:
+        - name: tensorflow-pvc
+          mountPath: /tf/saved
+        resources:
+            limits:
+              nvidia.com/gpu: "1"
+              ephemeral-storage: 30Gi
+              memory: 10Gi
+            requests:
+              nvidia.com/gpu: "1"
+              ephemeral-storage: 30Gi
+              memory: 10Gi
+        env:
+        - name: JUPYTER_TOKEN
+          value: "jupyter"
+      volumes:
+      - name: tensorflow-pvc
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: <bucket-name> # unique bucket name
+            # update your experimental cache file options according to flags
+            # from
+            # https://github.com/GoogleCloudPlatform/gcsfuse/blob/19ed094b6612789b09ad4a1df3a2314099c65129/flags.go#L233C1-L236
+            mountOptions: "experimental-local-file-cache,stat-cache-ttl=240m0s,type-cache-ttl=240m0s,stat-cache-capacity=5000000000"
+
+---
+# Headless service for the above StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: tensorflow
+  namespace: example
+spec:
+  ports:
+  - port: 8888
+  clusterIP: None
+  selector:
+    pod: tensorflow-pod
+---
+# External service
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  name: tensorflow-jupyter
+  namespace: example
+spec:
+  ports:
+  - protocol: "TCP"
+    port: 80
+    targetPort: 8888
+  selector:
+    pod: tensorflow-pod
+  type: LoadBalancer
