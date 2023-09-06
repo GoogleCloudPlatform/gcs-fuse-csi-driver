@@ -23,6 +23,7 @@ spec:
       serviceAccountName: gcsfuse-ksa
       nodeSelector:
         cloud.google.com/gke-accelerator: nvidia-tesla-t4
+        cloud.google.com/gke-ephemeral-storage-local-ssd: "true"
       terminationGracePeriodSeconds: 30
       containers:
       - name: tensorflow-container

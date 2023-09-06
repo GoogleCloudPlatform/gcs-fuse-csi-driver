@@ -111,9 +111,6 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
 	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy)}, pod.Spec.Containers...)
 	pod.Spec.Volumes = append([]corev1.Volume{GetSidecarContainerVolumeSpec()}, pod.Spec.Volumes...)
-	pod.Spec.NodeSelector = map[string]string{
-		"cloud.google.com/gke-ephemeral-storage-local-ssd": "true",
-	}
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
