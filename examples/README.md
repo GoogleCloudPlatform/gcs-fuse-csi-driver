@@ -189,10 +189,12 @@ kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
 
 ## Jupyter Notebook Example (no experimental read cache)
 
-# Prerequisite:
+#### Prerequisite
 
 Your node pool must have created an ephemeral local ssds as described in
 https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/local-ssd#node-pool
+
+#### Steps
 
 ```bash
 # 1. replace <bucket-name> with your pre-provisioned GCS bucket name

@@ -108,8 +108,9 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, CPU limit %q, memory limit %q, ephemeral storage limit %q", pod.Name, pod.GenerateName, pod.Namespace, configCopy.CPULimit.String(), configCopy.MemoryLimit.String(), configCopy.EphemeralStorageLimit.String())
+	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
 	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy)}, pod.Spec.Containers...)
-	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), pod.Spec.Volumes...)
+	pod.Spec.Volumes = append([]corev1.Volume{GetSidecarContainerVolumeSpec()}, pod.Spec.Volumes...)
 	pod.Spec.NodeSelector = map[string]string{
 		"cloud.google.com/gke-ephemeral-storage-local-ssd": "true",
 	}
