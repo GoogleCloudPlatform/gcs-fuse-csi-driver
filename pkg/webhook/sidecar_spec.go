@@ -28,8 +28,6 @@ const (
 	SidecarContainerName            = "gke-gcsfuse-sidecar"
 	SidecarContainerVolumeName      = "gke-gcsfuse-tmp"
 	SidecarContainerVolumeMountPath = "/gcsfuse-tmp"
-	CacheVolumeName                 = "cache-volume"
-	CacheVolumeMountPath            = "/cache"
 
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID = 65534
@@ -39,7 +37,7 @@ const (
 func GetSidecarContainerSpec(c *Config) v1.Container {
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
-	toReturn := v1.Container{
+	return v1.Container{
 		Name:            SidecarContainerName,
 		Image:           c.ContainerImage,
 		ImagePullPolicy: v1.PullPolicy(c.ImagePullPolicy),
@@ -76,20 +74,15 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 			},
 		},
 	}
-
-	return toReturn
 }
 
-func GetSidecarContainerVolumeSpec() []v1.Volume {
-	toReturn := []v1.Volume{
-		{
-			Name: SidecarContainerVolumeName,
-			VolumeSource: v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{},
-			},
+func GetSidecarContainerVolumeSpec() v1.Volume {
+	return v1.Volume{
+		Name: SidecarContainerVolumeName,
+		VolumeSource: v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
 		},
 	}
-	return toReturn
 }
 
 // ValidatePodHasSidecarContainerInjected validates the following:
