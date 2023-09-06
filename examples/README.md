@@ -187,12 +187,17 @@ kubectl port-forward jupyter-notebook-server 8888:8888
 kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
 ```
 
-## Jupyter Notebook Example (no experimental read cache)
+## Jupyter Notebook Example (with experimental read cache)
 
-#### Prerequisite
+#### Prerequisites
 
-Your node pool must have created an ephemeral local ssds as described in
+1. Your node pool must have created an ephemeral local ssds as described in
 https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/local-ssd#node-pool
+
+2. Your node pool must have a GPU accelerator. This example uses nvidia-tesla-t4,
+but you can use another one (just make sure to update the nodeSelector in the
+yaml below if so). See
+[an example here](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/tree/main/examples#prerequisites)
 
 #### Steps
 
@@ -204,14 +209,15 @@ sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/jupyter/jupyter-experimen
 # 2. install a Jupyter Notebook server using experimental gcsfuse read cache
 kubectl apply -f ./examples/jupyter/jupyter-experimental-readcache.yaml
 
-# get service IPs
+# 3. get service IPs
 kubectl get services -n example
 
-# copy EXTERNAL-IP of tensorflow-jupyter server
-# Open IP Address in a browser
-# input token "jupyter" (from yaml)
+# 4. Open jupyter
+#  a. copy EXTERNAL-IP of tensorflow-jupyter server
+#  b. open IP Address in a browser
+#  c. input token "jupyter" (from yaml)
 
-# clean up
+# 5. (optional) clean up
 kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
 ```
 
