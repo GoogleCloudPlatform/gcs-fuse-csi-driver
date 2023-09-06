@@ -30,7 +30,6 @@ import (
 	"time"
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
-
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
 )
