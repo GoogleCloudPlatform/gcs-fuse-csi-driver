@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Build webhook go binary
-FROM golang:1.20.7 as webhook-builder
+FROM golang:1.21.1 as webhook-builder
 
 ARG STAGINGVERSION
 
