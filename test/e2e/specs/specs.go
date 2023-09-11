@@ -20,6 +20,8 @@ package specs
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -188,13 +190,29 @@ func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 }
 
 func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {
+	t.setupVolume(volumeResource, name, readOnly, mountOptions...)
+	t.setupVolumeMount(name, mountPath, readOnly, "")
+}
+
+func (t *TestPod) SetupVolumeWithSubPath(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, subPath string, reuseMount bool, mountOptions ...string) {
+	if !reuseMount {
+		t.setupVolume(volumeResource, name, readOnly, mountOptions...)
+	}
+
+	t.setupVolumeMount(name, mountPath, readOnly, subPath)
+}
+
+func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPath string) {
 	volumeMount := v1.VolumeMount{
 		Name:      name,
 		MountPath: mountPath,
 		ReadOnly:  readOnly,
+		SubPath:   subPath,
 	}
 	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
+}
 
+func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
 	volume := v1.Volume{
 		Name: name,
 	}
@@ -688,4 +706,43 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 	d := metav1.DeletePropagationBackground
 	err := t.client.BatchV1().Jobs(t.namespace.Name).Delete(ctx, t.job.Name, metav1.DeleteOptions{PropagationPolicy: &d})
 	framework.ExpectNoError(err)
+}
+
+func CreateImplicitDirInBucket(dirPath, bucketName string) {
+	// Use bucketName as the name of a temp file since bucketName is unique.
+	f, err := os.Create(bucketName)
+	if err != nil {
+		framework.Failf("Failed to create an empty data file: %v", err)
+	}
+	f.Close()
+	defer func() {
+		err = os.Remove(bucketName)
+		if err != nil {
+			framework.Failf("Failed to delete the empty data file: %v", err)
+		}
+	}()
+
+	//nolint:gosec
+	if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
+		framework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
+	}
+}
+
+func CreateEmptyFileInBucket(fileName, bucketName string) {
+	f, err := os.Create(fileName)
+	if err != nil {
+		framework.Failf("Failed to create an empty data file: %v", err)
+	}
+	f.Close()
+	defer func() {
+		err = os.Remove(fileName)
+		if err != nil {
+			framework.Failf("Failed to delete the empty data file: %v", err)
+		}
+	}()
+
+	//nolint:gosec
+	if output, err := exec.Command("gsutil", "cp", fileName, fmt.Sprintf("gs://%v", bucketName)).CombinedOutput(); err != nil {
+		framework.Failf("Failed to create an empty file in GCS bucket: %v, output: %s", err, output)
+	}
 }

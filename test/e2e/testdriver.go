@@ -20,8 +20,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/google/uuid"
@@ -176,6 +174,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			if len(n.volumeStore) == 0 {
 				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			} else {
+				config.Prefix = n.volumeStore[0].bucketName
+
 				return n.volumeStore[0]
 			}
 		}
@@ -187,11 +187,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case specs.InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 		case specs.ImplicitDirsVolumePrefix:
-			createImplicitDir(specs.ImplicitDirsPath, bucketName)
+			specs.CreateImplicitDirInBucket(specs.ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
 		case specs.SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
-			createImplicitDir(dirPath, bucketName)
+			specs.CreateImplicitDirInBucket(dirPath, bucketName)
 			mountOptions += ",only-dir=" + dirPath
 		}
 
@@ -203,6 +203,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 
 		if !isMultipleBucketsPrefix {
 			n.volumeStore = append(n.volumeStore, v)
+		}
+
+		if config.Prefix == "" {
+			// Use config.Prefix to pass the bucket names back to the test suite.
+			config.Prefix = bucketName
 		}
 
 		return v
@@ -351,26 +356,6 @@ func (n *GCSFuseCSITestDriver) deleteBucket(ctx context.Context, bucketName stri
 	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 	if err != nil {
 		e2eframework.Failf("Failed to delete the GCS bucket: %v", err)
-	}
-}
-
-func createImplicitDir(dirPath, bucketName string) {
-	// Use bucketName as the name of a temp file since bucketName is unique.
-	f, err := os.Create(bucketName)
-	if err != nil {
-		e2eframework.Failf("Failed to create an empty data file: %v", err)
-	}
-	f.Close()
-	defer func() {
-		err = os.Remove(bucketName)
-		if err != nil {
-			e2eframework.Failf("Failed to delete the empty data file: %v", err)
-		}
-	}()
-
-	//nolint:gosec
-	if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
-		e2eframework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
 	}
 }
 
