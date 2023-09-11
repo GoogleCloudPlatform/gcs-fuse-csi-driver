@@ -21,7 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 
@@ -116,7 +116,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			framework.Failf("Failed to open the fio output file %q: %v", outputPath, err)
 		}
 
-		byteValue, err := ioutil.ReadAll(jsonFile)
+		byteValue, err := io.ReadAll(jsonFile)
 		if err != nil {
 			framework.Failf("Failed to read the fio output file %q: %v", outputPath, err)
 		}
@@ -150,7 +150,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			framework.Failf("Failed to open the threshold file %q: %v", thresholdFile, err)
 		}
 
-		byteValue, err := ioutil.ReadAll(jsonFile)
+		byteValue, err := io.ReadAll(jsonFile)
 		if err != nil {
 			framework.Failf("Failed to read the threshold file %q: %v", thresholdFile, err)
 		}
