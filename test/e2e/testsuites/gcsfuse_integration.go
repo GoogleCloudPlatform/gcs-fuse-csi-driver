@@ -92,6 +92,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GoogleCloudCliImage)
 		tPod.SetResource("1", "1Gi")
+		sidecarMemoryLimit := "256Mi"
+		if testName == "write_large_files" {
+			tPod.SetResource("1", "5Gi")
+			sidecarMemoryLimit = "512Mi"
+		}
 
 		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
 		if testName == "explicit_dir" && strings.Contains(mo, "only-dir") {
@@ -103,7 +108,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/volumes":                 "true",
 			"gke-gcsfuse/cpu-limit":               "250m",
-			"gke-gcsfuse/memory-limit":            "256Mi",
+			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})
 
@@ -141,7 +146,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		baseTestCommand := fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 		switch testName {
-		case "explicit_dir", "implicit_dir", "readonly", "gzip":
+		case "explicit_dir", "implicit_dir", "readonly", "gzip", "write_large_files":
 			if testName == "readonly" && !readOnly {
 				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
 			} else {
