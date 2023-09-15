@@ -79,8 +79,8 @@ func clusterUpGKE(testParams *TestParameters) error {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", testParams.GkeNodeVersion)
 	}
 
-	// TODO(songjiaxun): remove this after 1.27 is available in prod environment.
-	if strings.Contains(testParams.GkeClusterVersion, "1.27") {
+	// TODO: change the cluster version to the new version in the rapid channel.
+	if strings.Contains(testParams.GkeClusterVersion, "1.28") {
 		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	} else {
 		standardClusterFlags = append(standardClusterFlags, "--no-enable-autoupgrade")

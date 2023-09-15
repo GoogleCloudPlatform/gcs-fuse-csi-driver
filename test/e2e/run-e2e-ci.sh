@@ -21,7 +21,7 @@ set -o xtrace
 set -o nounset
 set -o errexit
 
-# TODO(songjiaxun): Change the Prow variable names to align with the local e2e test script.
+# Note: the environment variable names in Prow are different from the local e2e test script.
 readonly PKGDIR="$( dirname -- "$0"; )/../.."
 readonly gke_cluster_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
@@ -33,7 +33,7 @@ readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-proje
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
-readonly number-nodes=${NUMBER_NODES:-1}
+readonly number_nodes=${NUMBER_NODES:-1}
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
@@ -59,6 +59,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
             --node-machine-type=${node_machine_type} \
-            --number-nodes=${number-nodes}"
+            --number-nodes=${number_nodes}"
 
 eval "$base_cmd"
