@@ -32,7 +32,8 @@ readonly ginkgo_skip="${TEST_SKIP:-}"
 readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
-readonly node_machine_type=${MACHINE_TYPE:-n1-standard-2}
+readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
+readonly number-nodes=${NUMBER_NODES:-1}
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
@@ -57,6 +58,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --boskos-resource-type=${boskos_resource_type} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
-            --node-machine-type=${node_machine_type}"
+            --node-machine-type=${node_machine_type} \
+            --number-nodes=${number-nodes}"
 
 eval "$base_cmd"
