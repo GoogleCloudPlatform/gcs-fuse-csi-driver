@@ -95,7 +95,6 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 }
 
 var disallowedFlags = map[string]bool{
-	"app-name":             true,
 	"temp-dir":             true,
 	"foreground":           true,
 	"log-file":             true,
@@ -138,21 +137,34 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 			continue
 		}
 
-		if disallowedFlags[argPair[0]] {
+		flag := argPair[0]
+		if disallowedFlags[flag] {
 			invalidArgs = append(invalidArgs, arg)
 
 			continue
 		}
 
-		if boolFlags[argPair[0]] && len(argPair) > 1 {
-			argPair[0] = argPair[0] + "=" + argPair[1]
-			argPair = argPair[:1]
+		value := ""
+		if len(argPair) > 1 {
+			value = argPair[1]
 		}
 
-		flagMap[argPair[0]] = ""
-		if len(argPair) > 1 {
-			flagMap[argPair[0]] = argPair[1]
+		if boolFlags[flag] && value != "" {
+			flag = flag + "=" + value
+			if value == "true" || value == "false" {
+				value = ""
+			} else {
+				invalidArgs = append(invalidArgs, flag)
+
+				continue
+			}
 		}
+
+		if flag == "app-name" {
+			value = GCSFuseAppName + "-" + value
+		}
+
+		flagMap[flag] = value
 	}
 
 	if len(invalidArgs) > 0 {
