@@ -199,8 +199,8 @@ func NewTestConfig() TestConfig {
 		IdempotentCount:      10,
 		CheckPathCmdTimeout:  10 * time.Second,
 
-		DialOptions:           []grpc.DialOption{grpc.WithInsecure()},
-		ControllerDialOptions: []grpc.DialOption{grpc.WithInsecure()},
+		DialOptions:           []grpc.DialOption{grpc.WithInsecure(), grpc.WithAuthority("localhost")},
+		ControllerDialOptions: []grpc.DialOption{grpc.WithInsecure(), grpc.WithAuthority("localhost")},
 	}
 }
 
@@ -274,6 +274,10 @@ func (sc *TestContext) Setup() {
 			sc.ControllerConn = sc.Conn
 			sc.controllerConnAddress = sc.Config.Address
 		} else {
+			if sc.ControllerConn != nil {
+				sc.ControllerConn.Close()
+			}
+			By("connecting to CSI driver controller")
 			sc.ControllerConn, err = utils.Connect(sc.Config.ControllerAddress, sc.Config.ControllerDialOptions...)
 			Expect(err).NotTo(HaveOccurred())
 			sc.controllerConnAddress = sc.Config.ControllerAddress
@@ -320,7 +324,7 @@ func (sc *TestContext) Finalize() {
 	if sc.Conn != nil {
 		sc.Conn.Close()
 	}
-	if sc.ControllerConn != nil {
+	if sc.ControllerConn != nil && sc.ControllerConn != sc.Conn {
 		sc.ControllerConn.Close()
 	}
 }
