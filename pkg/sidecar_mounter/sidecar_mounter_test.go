@@ -34,7 +34,6 @@ var (
 	}
 
 	invalidArgs = []string{
-		"app-name",
 		"temp-dir",
 		"foreground",
 		"log-file",
@@ -110,6 +109,23 @@ func TestPrepareMountArgs(t *testing.T) {
 				Options:    invalidArgs,
 			},
 			expectedArgs: defaultFlagMap,
+		},
+		{
+			name: "should return valid args with custom app-name",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				TempDir:    "test-temp-dir",
+				Options:    []string{"app-name=Vertex"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":   GCSFuseAppName + "-Vertex",
+				"temp-dir":   "test-temp-dir",
+				"foreground": "",
+				"log-file":   "/dev/fd/1",
+				"log-format": "text",
+				"uid":        "0",
+				"gid":        "0",
+			},
 		},
 	}
 
