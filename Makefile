@@ -17,7 +17,7 @@ export REGISTRY ?= jiaxun
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
-BINDIR ?= bin
+BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
@@ -60,16 +60,39 @@ download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
 	
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
-	docker rm -f local_gcsfuse 2> /dev/null || true
+	rm -rf ${BINDIR}/gcsfuse
+	git clone -b master https://github.com/GoogleCloudPlatform/gcsfuse.git ${BINDIR}/gcsfuse -q
+	$(eval GCSFUSE_VERSION=999.$(shell git -C ${BINDIR}/gcsfuse rev-parse HEAD))
+
+	docker buildx build \
+		--load \
+		--file ${BINDIR}/gcsfuse/tools/package_gcsfuse_docker/Dockerfile \
+		--tag gcsfuse-release:${GCSFUSE_VERSION}-amd \
+		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
+		--build-arg BRANCH_NAME=master \
+		--build-arg ARCHITECTURE=amd64 \
+		--platform=linux/amd64 .
+	
+	docker run -it \
+	    --platform=linux/amd64 \
+		-v ${BINDIR}/linux/amd64:/release \
+		gcsfuse-release:${GCSFUSE_VERSION}-amd \
+		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
 	
 	docker buildx build \
-		--file ./cmd/sidecar_mounter/Dockerfile.gcsfuse \
-		--tag local/gcsfuse:latest \
-		--load .
-	docker create --name local_gcsfuse local/gcsfuse:latest
-	docker cp local_gcsfuse:/tmp/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
-	docker cp local_gcsfuse:/tmp/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
-	docker rm -f local_gcsfuse
+		--load \
+		--file ${BINDIR}/gcsfuse/tools/package_gcsfuse_docker/Dockerfile \
+		--tag gcsfuse-release:${GCSFUSE_VERSION}-arm \
+		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
+		--build-arg BRANCH_NAME=master \
+		--build-arg ARCHITECTURE=arm64 \
+		--platform=linux/arm64 .
+
+	docker run -it \
+	    --platform=linux/arm64 \
+		-v ${BINDIR}/linux/arm64:/release \
+		gcsfuse-release:${GCSFUSE_VERSION}-arm \
+		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
 else
 	gsutil cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
 	gsutil cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
