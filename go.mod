@@ -17,6 +17,7 @@ require (
 	golang.org/x/oauth2 v0.12.0
 	google.golang.org/api v0.141.0
 	google.golang.org/grpc v1.58.1
+	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.27.6
 	k8s.io/apimachinery v0.27.6
 	k8s.io/client-go v1.5.2
@@ -126,7 +127,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.27.2 // indirect
 	k8s.io/apiserver v0.27.6 // indirect
 	k8s.io/cloud-provider v0.0.0 // indirect
