@@ -155,12 +155,13 @@ func main() {
 // 3. GCS bucket name
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
 func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
-	// socket path pattern: /tmp/.volumes/<volume-name>/socket
+	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
 	dir := filepath.Dir(sp)
 	volumeName := filepath.Base(dir)
 	mc := sidecarmounter.MountConfig{
 		VolumeName: volumeName,
 		TempDir:    filepath.Join(dir, "temp-dir"),
+		ConfigFile: filepath.Join(dir, "config.yaml"),
 	}
 
 	klog.Infof("connecting to socket %q", sp)

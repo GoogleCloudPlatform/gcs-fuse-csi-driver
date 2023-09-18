@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
 
@@ -50,6 +51,7 @@ type MountConfig struct {
 	VolumeName     string    `json:"volumeName,omitempty"`
 	BucketName     string    `json:"bucketName,omitempty"`
 	TempDir        string    `json:"-"`
+	ConfigFile     string    `json:"-"`
 	Options        []string  `json:"options,omitempty"`
 	ErrWriter      io.Writer `json:"-"`
 }
@@ -61,7 +63,11 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.TempDir, err)
 	}
 
-	flagMap := mc.PrepareMountArgs()
+	flagMap, configFileFlagMap := mc.prepareMountArgs()
+	if err := mc.prepareConfigFile(configFileFlagMap); err != nil {
+		return nil, fmt.Errorf("failed to create config file %q: %w", mc.ConfigFile, err)
+	}
+
 	args := []string{"gcsfuse"}
 
 	for k, v := range flagMap {
@@ -96,6 +102,7 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 
 var disallowedFlags = map[string]bool{
 	"temp-dir":             true,
+	"config-file":          true,
 	"foreground":           true,
 	"log-file":             true,
 	"log-format":           true,
@@ -103,6 +110,8 @@ var disallowedFlags = map[string]bool{
 	"token-url":            true,
 	"reuse-token-from-url": true,
 	"o":                    true,
+	"logging:file-path":    true,
+	"logging:format":       true,
 }
 
 var boolFlags = map[string]bool{
@@ -118,20 +127,37 @@ var boolFlags = map[string]bool{
 	"debug_mutex":                   true,
 }
 
-func (mc *MountConfig) PrepareMountArgs() map[string]string {
+func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string) {
 	flagMap := map[string]string{
-		"app-name":   GCSFuseAppName,
-		"temp-dir":   mc.TempDir,
-		"foreground": "",
-		"log-file":   "/dev/fd/1", // redirect the output to cmd stdout
-		"log-format": "text",
-		"uid":        "0",
-		"gid":        "0",
+		"app-name":    GCSFuseAppName,
+		"temp-dir":    mc.TempDir,
+		"config-file": mc.ConfigFile,
+		"foreground":  "",
+		"uid":         "0",
+		"gid":         "0",
+	}
+
+	configFileFlagMap := map[string]string{
+		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
+		"logging:format":    "text",
 	}
 
 	invalidArgs := []string{}
 
 	for _, arg := range mc.Options {
+		if strings.Contains(arg, ":") {
+			i := strings.LastIndex(arg, ":")
+			f, v := arg[:i], arg[i+1:]
+
+			if disallowedFlags[f] {
+				invalidArgs = append(invalidArgs, arg)
+			} else {
+				configFileFlagMap[f] = v
+			}
+
+			continue
+		}
+
 		argPair := strings.SplitN(arg, "=", 2)
 		if len(argPair) == 0 {
 			continue
@@ -172,5 +198,44 @@ func (mc *MountConfig) PrepareMountArgs() map[string]string {
 			invalidArgs, mc.VolumeName)
 	}
 
-	return flagMap
+	return flagMap, configFileFlagMap
+}
+
+func (mc *MountConfig) prepareConfigFile(flagMap map[string]string) error {
+	configMap := map[string]interface{}{}
+
+	for f, v := range flagMap {
+		curLevel := configMap
+		tokens := strings.Split(f, ":")
+		for i, t := range tokens {
+			if i == len(tokens)-1 {
+				if _, ok := curLevel[t].(map[string]interface{}); ok {
+					return fmt.Errorf("invalid config file flag: %q", f)
+				}
+
+				curLevel[t] = v
+
+				break
+			}
+
+			if _, ok := curLevel[t]; !ok {
+				curLevel[t] = map[string]interface{}{}
+			}
+
+			if nextLevel, ok := curLevel[t].(map[string]interface{}); ok {
+				curLevel = nextLevel
+			} else {
+				return fmt.Errorf("invalid config file flag: %q", f)
+			}
+		}
+	}
+
+	yamlData, err := yaml.Marshal(&configMap)
+	if err != nil {
+		return err
+	}
+
+	klog.Infof("gcsfsue config file content:\n%v", string(yamlData))
+
+	return os.WriteFile(mc.ConfigFile, yamlData, 0o400)
 }
