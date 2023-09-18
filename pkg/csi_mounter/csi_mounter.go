@@ -40,13 +40,14 @@ import (
 // for the linux platform.
 type Mounter struct {
 	mount.MounterForceUnmounter
-	chdirMu sync.Mutex
+	chdirMu         sync.Mutex
+	storageEndpoint string
 }
 
 // New returns a mount.MounterForceUnmounter for the current system.
 // It provides options to override the default mounter behavior.
 // mounterPath allows using an alternative to `/bin/mount` for mounting.
-func New(mounterPath string) (mount.Interface, error) {
+func New(mounterPath, storageEndpoint string) (mount.Interface, error) {
 	m, ok := mount.New(mounterPath).(mount.MounterForceUnmounter)
 	if !ok {
 		return nil, fmt.Errorf("failed to cast mounter to MounterForceUnmounter")
@@ -55,6 +56,7 @@ func New(mounterPath string) (mount.Interface, error) {
 	return &Mounter{
 		m,
 		sync.Mutex{},
+		storageEndpoint,
 	}, nil
 }
 
@@ -127,8 +129,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 
 	// Prepare sidecar mounter MountConfig
 	mc := sidecarmounter.MountConfig{
-		BucketName: source,
-		Options:    sidecarMountOptions,
+		BucketName:      source,
+		Options:         sidecarMountOptions,
+		StorageEndpoint: m.storageEndpoint,
 	}
 	mcb, err := json.Marshal(mc)
 	if err != nil {

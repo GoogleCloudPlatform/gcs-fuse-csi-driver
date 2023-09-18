@@ -358,8 +358,8 @@ func joinMountOptions(userOptions []string, systemOptions []string) []string {
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], s.driver.config.TsEndpoint)
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts, s.driver.config.StorageEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
