@@ -106,7 +106,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/volumes":                 "true",
 			"gke-gcsfuse/cpu-limit":               "250m",
 			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",

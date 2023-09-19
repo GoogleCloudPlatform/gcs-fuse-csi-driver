@@ -165,7 +165,9 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
-		tPod.SetAnnotations(map[string]string{})
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/volumes": "false",
+		})
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
@@ -186,7 +188,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod.SetCommand("touch /mnt/test/test_file && while true; do echo $(date) >> /mnt/test/test_file; done")
 
 		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/volumes":      "true",
 			"gke-gcsfuse/memory-limit": "15Mi",
 		})
 
@@ -224,7 +225,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/volumes":      "true",
 			"gke-gcsfuse/memory-limit": "1000000000G",
 			"gke-gcsfuse/cpu-limit":    "1000000000",
 		})
