@@ -199,7 +199,6 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			mountPath := "/gcs"
 			tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false, "implicit-dirs", "max-conns-per-host=100", "client-protocol=http1")
 			tPod.SetAnnotations(map[string]string{
-				"gke-gcsfuse/volumes":                 "true",
 				"gke-gcsfuse/cpu-limit":               "10",
 				"gke-gcsfuse/memory-limit":            "2Gi",
 				"gke-gcsfuse/ephemeral-storage-limit": "5Gi",

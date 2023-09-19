@@ -258,7 +258,9 @@ func (t *TestPod) SetNodeSelector(nodeSelector map[string]string) {
 }
 
 func (t *TestPod) SetAnnotations(annotations map[string]string) {
-	t.pod.Annotations = annotations
+	for k, v := range annotations {
+		t.pod.Annotations[k] = v
+	}
 }
 
 func (t *TestPod) SetServiceAccount(sa string) {

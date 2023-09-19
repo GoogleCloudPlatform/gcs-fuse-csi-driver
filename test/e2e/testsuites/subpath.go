@@ -92,6 +92,9 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetAnnotations(map[string]string{
+			"gke-gcsfuse/memory-limit": "100Mi",
+		})
 		tPod1.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", false, "subpath1", false /* add the first volume */)
 		tPod1.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", false, "subpath2", true /* reuse the first volume */)
 
@@ -112,6 +115,9 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetAnnotations(map[string]string{
+			"gke-gcsfuse/memory-limit": "100Mi",
+		})
 		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
@@ -139,22 +145,25 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		specs.CreateImplicitDirInBucket("subpath2", bucketName)
 
 		ginkgo.By("Configuring the pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", false, "subpath1", false /* add the first volume */)
-		tPod1.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", false, "subpath2", true /* reuse the first volume */)
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/memory-limit": "100Mi",
+		})
+		tPod.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", false, "subpath1", false /* add the first volume */)
+		tPod.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", false, "subpath2", true /* reuse the first volume */)
 
 		ginkgo.By("Deploying the pod")
-		tPod1.Create(ctx)
-		defer tPod1.Cleanup(ctx)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod is running")
-		tPod1.WaitForRunning(ctx)
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the pod command exits with no error")
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath+"1"))
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath+"1", mountPath+"1"))
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath+"2"))
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath+"2", mountPath+"2"))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath+"1"))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath+"1", mountPath+"1"))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath+"2"))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath+"2", mountPath+"2"))
 	})
 
 	ginkgo.It("should support files as paths", func(ctx context.Context) {
