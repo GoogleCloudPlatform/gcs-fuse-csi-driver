@@ -60,20 +60,20 @@ download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
 	
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
-	rm -rf ${BINDIR}/gcsfuse
-	git clone -b master https://github.com/GoogleCloudPlatform/gcsfuse.git ${BINDIR}/gcsfuse -q
-	$(eval GCSFUSE_VERSION=999.$(shell git -C ${BINDIR}/gcsfuse rev-parse HEAD))
+	rm -f ${BINDIR}/Dockerfile.gcsfuse
+	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
+	$(eval GCSFUSE_VERSION=999.$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c 1-40))
 
 	docker buildx build \
 		--load \
-		--file ${BINDIR}/gcsfuse/tools/package_gcsfuse_docker/Dockerfile \
+		--file ${BINDIR}/Dockerfile.gcsfuse \
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
 		--build-arg BRANCH_NAME=master \
 		--build-arg ARCHITECTURE=amd64 \
 		--platform=linux/amd64 .
 	
-	docker run -it \
+	docker run \
 	    --platform=linux/amd64 \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
@@ -81,14 +81,14 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	
 	docker buildx build \
 		--load \
-		--file ${BINDIR}/gcsfuse/tools/package_gcsfuse_docker/Dockerfile \
+		--file ${BINDIR}/Dockerfile.gcsfuse \
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
 		--build-arg BRANCH_NAME=master \
 		--build-arg ARCHITECTURE=arm64 \
 		--platform=linux/arm64 .
 
-	docker run -it \
+	docker run \
 	    --platform=linux/arm64 \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
