@@ -35,7 +35,7 @@ readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.12.0
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.12.1
 
 # Build e2e-test CLI
 go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
