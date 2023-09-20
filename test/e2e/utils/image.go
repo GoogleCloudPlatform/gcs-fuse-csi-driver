@@ -23,9 +23,13 @@ import (
 	"strconv"
 )
 
-func buildAndPushImage(pkgDir, registry string, buildGcsFuseFromSource bool) error {
+func buildAndPushImage(pkgDir, registry string, buildGcsFuseFromSource, buildArm bool) error {
 	//nolint:gosec
-	cmd := exec.Command("make", "-C", pkgDir, "build-image-and-push-multi-arch", fmt.Sprintf("REGISTRY=%s", registry), "BUILD_GCSFUSE_FROM_SOURCE="+strconv.FormatBool(buildGcsFuseFromSource))
+	cmd := exec.Command("make", "-C", pkgDir,
+		"build-image-and-push-multi-arch",
+		"REGISTRY="+registry,
+		"BUILD_GCSFUSE_FROM_SOURCE="+strconv.FormatBool(buildGcsFuseFromSource),
+		"BUILD_ARM="+strconv.FormatBool(buildArm))
 	if err := runCommand("Pushing image to REGISTRY "+registry, cmd); err != nil {
 		return fmt.Errorf("failed to run push image: %w", err)
 	}

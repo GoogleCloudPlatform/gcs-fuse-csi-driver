@@ -56,6 +56,7 @@ type TestParameters struct {
 	ImageRegistry          string
 	BuildGcsFuseCsiDriver  bool
 	BuildGcsFuseFromSource bool
+	BuildArm               bool
 	DeployOverlayName      string
 	UseGKEManagedDriver    bool
 
@@ -123,7 +124,7 @@ func Handle(testParams *TestParameters) error {
 	if !testParams.UseGKEManagedDriver {
 		if testParams.BuildGcsFuseCsiDriver {
 			klog.Infof("Building GCS FUSE CSI Driver")
-			if err := buildAndPushImage(testParams.PkgDir, testParams.ImageRegistry, testParams.BuildGcsFuseFromSource); err != nil {
+			if err := buildAndPushImage(testParams.PkgDir, testParams.ImageRegistry, testParams.BuildGcsFuseFromSource, testParams.BuildArm); err != nil {
 				return fmt.Errorf("failed pushing GCS FUSE CSI Driver images: %w", err)
 			}
 
