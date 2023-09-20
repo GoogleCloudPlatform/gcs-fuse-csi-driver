@@ -290,17 +290,20 @@ func (t *TestPod) SetImage(image string) {
 	t.pod.Spec.Containers[0].Image = image
 }
 
-func (t *TestPod) SetResource(cpuLimit, memoryLimit string) {
+func (t *TestPod) SetResource(cpuLimit, memoryLimit, storageLimit string) {
 	cpu, _ := resource.ParseQuantity(cpuLimit)
 	mem, _ := resource.ParseQuantity(memoryLimit)
+	eph, _ := resource.ParseQuantity(storageLimit)
 	t.pod.Spec.Containers[0].Resources = v1.ResourceRequirements{
 		Limits: v1.ResourceList{
-			v1.ResourceCPU:    cpu,
-			v1.ResourceMemory: mem,
+			v1.ResourceCPU:              cpu,
+			v1.ResourceMemory:           mem,
+			v1.ResourceEphemeralStorage: eph,
 		},
 		Requests: v1.ResourceList{
-			v1.ResourceCPU:    cpu,
-			v1.ResourceMemory: mem,
+			v1.ResourceCPU:              cpu,
+			v1.ResourceMemory:           mem,
+			v1.ResourceEphemeralStorage: eph,
 		},
 	}
 }

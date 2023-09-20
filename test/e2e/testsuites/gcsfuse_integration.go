@@ -91,10 +91,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		ginkgo.By("Configuring the test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GoogleCloudCliImage)
-		tPod.SetResource("1", "1Gi")
+		tPod.SetResource("1", "1Gi", "1Gi")
 		sidecarMemoryLimit := "256Mi"
-		if testName == "write_large_files" {
-			tPod.SetResource("1", "5Gi")
+		if testName == "write_large_files" || testName == "read_large_files" {
+			tPod.SetResource("1", "5Gi", "5Gi")
 			sidecarMemoryLimit = "512Mi"
 		}
 
@@ -145,12 +145,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		baseTestCommand := fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 		switch testName {
-		case "explicit_dir", "implicit_dir", "readonly", "gzip", "write_large_files":
-			if testName == "readonly" && !readOnly {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
-			} else {
+		case "readonly":
+			if readOnly {
 				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
+			} else {
+				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
 			}
+		case "explicit_dir", "implicit_dir", "gzip", "write_large_files", "local_file":
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
 		case "list_large_dir":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 60m")
 		default:
@@ -287,12 +289,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
 	})
 
-	ginkgo.It("should succeed in list_large_dir test 2", func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
+	ginkgo.It("should succeed in read_large_files test 1", func() {
+		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
+		gcsfuseIntegrationTest("read_large_files", false, "implicit-dirs=true")
 	})
 
 	ginkgo.It("should succeed in write_large_files test 1", func() {
@@ -307,5 +308,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest("gzip", false, "implicit-dirs=true")
+	})
+
+	ginkgo.It("should succeed in local_file test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("local_file", false, "implicit-dirs=true", "rename-dir-limit=3")
 	})
 }

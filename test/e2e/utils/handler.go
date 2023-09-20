@@ -198,7 +198,7 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	// TODO(songjiaxun) remove this logic after the next gcsfusee release.
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "gzip", "implicit_dir")
+		skipTests = append(skipTests, "gzip", "implicit_dir", "local_file")
 	}
 
 	skipString := strings.Join(skipTests, "|")
