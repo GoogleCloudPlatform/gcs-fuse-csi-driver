@@ -195,7 +195,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			ginkgo.By("Configuring the test pod")
 			tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 			tPod.SetImage(specs.UbuntuImage)
-			tPod.SetResource("2", "5Gi")
+			tPod.SetResource("2", "5Gi", "5Gi")
 			mountPath := "/gcs"
 			tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false, "implicit-dirs", "max-conns-per-host=100", "client-protocol=http1")
 			tPod.SetAnnotations(map[string]string{
