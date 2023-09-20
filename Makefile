@@ -17,6 +17,7 @@ export REGISTRY ?= jiaxun
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
+export BUILD_ARM ?= false
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
@@ -78,7 +79,8 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
-	
+
+ifeq (${BUILD_ARM}, true)
 	docker buildx build \
 		--load \
 		--file ${BINDIR}/Dockerfile.gcsfuse \
@@ -93,16 +95,20 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
+endif
+
 else
 	gsutil cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
 	gsutil cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
 endif
 
 	chmod +x ${BINDIR}/linux/amd64/gcsfuse
-	chmod +x ${BINDIR}/linux/arm64/gcsfuse
-	
 	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
+
+ifeq (${BUILD_ARM}, true)
+	chmod +x ${BINDIR}/linux/arm64/gcsfuse
 	chmod 0555 ${BINDIR}/linux/arm64/gcsfuse
+endif
 
 	${BINDIR}/linux/$(shell dpkg --print-architecture)/gcsfuse --version
 
@@ -115,14 +121,20 @@ init-buildx:
 	# Required for "docker buildx build --push".
 	gcloud auth configure-docker --quiet
 
-build-image-and-push-multi-arch: init-buildx download-gcsfuse build-image-linux-amd64 build-image-linux-arm64
+build-image-and-push-multi-arch: init-buildx download-gcsfuse build-image-linux-amd64
+ifeq (${BUILD_ARM}, true)
+	make build-image-linux-arm64
 	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
-
 	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
+else
+	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64
+	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64
+endif
 
 	docker manifest create ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
+
+	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
+	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
 build-image-linux-amd64:

@@ -47,6 +47,7 @@ var (
 	imageRegistry          = flag.String("image-registry", "", "name of image to stage to")
 	buildGcsFuseCsiDriver  = flag.Bool("build-gcs-fuse-csi-driver", false, "whether or not to build GCS FUSE CSI Driver images")
 	buildGcsFuseFromSource = flag.Bool("build-gcs-fuse-from-source", false, "whether or not to build GCS FUSE from source code")
+	buildArm               = flag.Bool("build-arm", false, "whether or not to build the image for Arm nodes")
 	deployOverlayName      = flag.String("deploy-overlay-name", "stable", "which kustomize overlay to deploy the driver with")
 	useGKEManagedDriver    = flag.Bool("use-gke-managed-driver", false, "use GKE managed GCS FUSE CSI driver for the tests")
 
@@ -93,6 +94,7 @@ func main() {
 		DeployOverlayName:      *deployOverlayName,
 		BuildGcsFuseCsiDriver:  *buildGcsFuseCsiDriver,
 		BuildGcsFuseFromSource: *buildGcsFuseFromSource,
+		BuildArm:               *buildArm,
 		GinkgoFocus:            *ginkgoFocus,
 		GinkgoSkip:             *ginkgoSkip,
 		GinkgoProcs:            *ginkgoProcs,
