@@ -91,7 +91,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		ginkgo.By("Configuring the test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GoogleCloudCliImage)
-		tPod.SetResource("1", "1Gi", "1Gi")
+		tPod.SetResource("1", "1Gi", "5Gi")
 		sidecarMemoryLimit := "256Mi"
 		if testName == "write_large_files" || testName == "read_large_files" {
 			tPod.SetResource("1", "5Gi", "5Gi")
