@@ -95,7 +95,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		sidecarMemoryLimit := "256Mi"
 		if testName == "write_large_files" || testName == "read_large_files" {
 			tPod.SetResource("1", "5Gi", "5Gi")
-			sidecarMemoryLimit = "512Mi"
+			sidecarMemoryLimit = "1Gi"
 		}
 
 		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
@@ -151,10 +151,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
 			}
-		case "explicit_dir", "implicit_dir", "gzip", "write_large_files", "local_file":
+		case "explicit_dir", "implicit_dir", "gzip", "local_file":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
-		case "list_large_dir":
+		case "list_large_dir", "write_large_files":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 60m")
+		case "read_large_files":
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand+" -timeout 60m")
 		default:
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 		}
