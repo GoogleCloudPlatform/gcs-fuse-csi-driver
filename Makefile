@@ -75,7 +75,6 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 		--platform=linux/amd64 .
 	
 	docker run \
-	    --platform=linux/amd64 \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
@@ -91,7 +90,6 @@ ifeq (${BUILD_ARM}, true)
 		--platform=linux/arm64 .
 
 	docker run \
-	    --platform=linux/arm64 \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
