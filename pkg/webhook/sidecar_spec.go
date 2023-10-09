@@ -20,6 +20,7 @@ package webhook
 import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/util/parsers"
 	"k8s.io/utils/ptr"
 )
 
@@ -107,11 +108,24 @@ func GetSidecarContainerVolumeSpec() []v1.Volume {
 func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 	containerInjected := false
 	tempVolumeInjected := false
-	cacheVolumeInjected := false
-	expectedImageWithoutTag := strings.Split(image, ":")[0]
+
+	expectedImageRepo, _, _, err := parsers.ParseImageName(image)
+	if err != nil {
+		klog.Errorf("Could not parse expected image : name %q, error: %v", image, err)
+
+		return false
+	}
+
 	for _, c := range pod.Spec.Containers {
 		if c.Name == SidecarContainerName {
-			if strings.Split(c.Image, ":")[0] == expectedImageWithoutTag &&
+			inputImageRepo, _, _, err := parsers.ParseImageName(c.Image)
+			if err != nil {
+				klog.Errorf("Could not parse input image : name %q, error: %v", image, err)
+
+				return false
+			}
+
+			if inputImageRepo == expectedImageRepo &&
 				c.SecurityContext != nil &&
 				*c.SecurityContext.RunAsUser == NobodyUID &&
 				*c.SecurityContext.RunAsGroup == NobodyGID {
