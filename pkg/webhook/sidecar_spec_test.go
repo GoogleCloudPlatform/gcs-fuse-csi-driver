@@ -34,36 +34,12 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 		expectedInjected bool
 	}{
 		{
-			name:      "should pass the validation with an emptyDir cache volume",
+			name:      "should pass the validation with the standard sidecar container",
 			imageName: FakeConfig().ContainerImage,
 			pod: &v1.Pod{
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
 					Volumes:    GetSidecarContainerVolumeSpec(),
-				},
-			},
-			expectedInjected: true,
-		},
-		{
-			name:      "should pass the validation with a PVC cache volume",
-			imageName: FakeConfig().ContainerImage,
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes: []v1.Volume{
-						{
-							Name: SidecarContainerTmpVolumeName,
-							VolumeSource: v1.VolumeSource{
-								EmptyDir: &v1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: SidecarContainerCacheVolumeName,
-							VolumeSource: v1.VolumeSource{
-								PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{},
-							},
-						},
-					},
 				},
 			},
 			expectedInjected: true,
@@ -201,66 +177,6 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 			expectedInjected: false,
 		},
 		{
-			name:      "should fail the validation when the cache volume name is wrong",
-			imageName: FakeConfig().ContainerImage,
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{
-						{
-							Name:  SidecarContainerName,
-							Image: FakeConfig().ContainerImage,
-							SecurityContext: &v1.SecurityContext{
-								RunAsUser:  ptr.To(int64(NobodyUID)),
-								RunAsGroup: ptr.To(int64(NobodyGID)),
-							},
-							VolumeMounts: []v1.VolumeMount{
-								{
-									Name:      SidecarContainerTmpVolumeName,
-									MountPath: SidecarContainerTmpVolumeMountPath,
-								},
-								{
-									Name:      "wrong-cache-volume-name",
-									MountPath: SidecarContainerCacheVolumeMountPath,
-								},
-							},
-						},
-					},
-					Volumes: GetSidecarContainerVolumeSpec(),
-				},
-			},
-			expectedInjected: false,
-		},
-		{
-			name:      "should fail the validation when the cache volume name is wrong",
-			imageName: FakeConfig().ContainerImage,
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{
-						{
-							Name:  SidecarContainerName,
-							Image: FakeConfig().ContainerImage,
-							SecurityContext: &v1.SecurityContext{
-								RunAsUser:  ptr.To(int64(NobodyUID)),
-								RunAsGroup: ptr.To(int64(NobodyGID)),
-							},
-							VolumeMounts: []v1.VolumeMount{
-								{
-									Name:      SidecarContainerTmpVolumeName,
-									MountPath: SidecarContainerTmpVolumeMountPath,
-								},
-								{
-									Name:      SidecarContainerCacheVolumeName,
-									MountPath: "wrong-cache-volume-mount-path",
-								},
-							},
-						},
-					},
-					Volumes: GetSidecarContainerVolumeSpec(),
-				},
-			},
-			expectedInjected: false,
-		},
-		{
 			name:      "should fail the validation when the temp volume is missing",
 			imageName: FakeConfig().ContainerImage,
 			pod: &v1.Pod{
@@ -291,24 +207,6 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 						},
 						{
 							Name: SidecarContainerCacheVolumeName,
-							VolumeSource: v1.VolumeSource{
-								EmptyDir: &v1.EmptyDirVolumeSource{},
-							},
-						},
-					},
-				},
-			},
-			expectedInjected: false,
-		},
-		{
-			name:      "should fail the validation when the cache volume is missing",
-			imageName: FakeConfig().ContainerImage,
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes: []v1.Volume{
-						{
-							Name: SidecarContainerTmpVolumeName,
 							VolumeSource: v1.VolumeSource{
 								EmptyDir: &v1.EmptyDirVolumeSource{},
 							},
