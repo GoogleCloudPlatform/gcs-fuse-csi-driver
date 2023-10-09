@@ -18,9 +18,8 @@ limitations under the License.
 package webhook
 
 import (
-	"strings"
-
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
 
@@ -101,10 +100,10 @@ func GetSidecarContainerVolumeSpec() []v1.Volume {
 
 // ValidatePodHasSidecarContainerInjected validates the following:
 // 1. One of the container name matches the sidecar container name.
-// 2. The image name matches.
-// 3. The container uses the temp volume and cache volume.
-// 4. The temp volume and cache volume have correct volume mount paths.
-// 5. The Pod has the temp volume and cache volume. The temp volume has to be an emptyDir.
+// 2. The image repo matches.
+// 3. The container uses the temp volume.
+// 4. The temp volume have correct volume mount paths.
+// 5. The Pod has the temp volume. The temp volume has to be an emptyDir.
 func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 	containerInjected := false
 	tempVolumeInjected := false
@@ -123,30 +122,23 @@ func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 				if v.Name == SidecarContainerTmpVolumeName && v.MountPath == SidecarContainerTmpVolumeMountPath {
 					tempVolumeInjected = true
 				}
-
-				if v.Name == SidecarContainerCacheVolumeName && v.MountPath == SidecarContainerCacheVolumeMountPath {
-					cacheVolumeInjected = true
-				}
 			}
 
 			break
 		}
 	}
 
-	if !containerInjected || !tempVolumeInjected || !cacheVolumeInjected {
+	if !containerInjected || !tempVolumeInjected {
 		return false
 	}
 
-	tempVolumeInjected, cacheVolumeInjected = false, false
+	tempVolumeInjected = false
 
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == SidecarContainerTmpVolumeName && v.VolumeSource.EmptyDir != nil {
 			tempVolumeInjected = true
 		}
-		if v.Name == SidecarContainerCacheVolumeName {
-			cacheVolumeInjected = true
-		}
 	}
 
-	return containerInjected && tempVolumeInjected && cacheVolumeInjected
+	return containerInjected && tempVolumeInjected
 }
