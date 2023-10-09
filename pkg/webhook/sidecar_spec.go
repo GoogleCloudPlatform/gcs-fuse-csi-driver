@@ -19,6 +19,7 @@ package webhook
 
 import (
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/util/parsers"
 	"k8s.io/utils/ptr"
@@ -37,9 +38,23 @@ const (
 )
 
 func GetSidecarContainerSpec(c *Config) v1.Container {
+	resourceList := v1.ResourceList{}
+
+	if c.CPULimit != resource.MustParse("0") {
+		resourceList[v1.ResourceCPU] = c.CPULimit
+	}
+
+	if c.MemoryLimit != resource.MustParse("0") {
+		resourceList[v1.ResourceMemory] = c.MemoryLimit
+	}
+
+	if c.EphemeralStorageLimit != resource.MustParse("0") {
+		resourceList[v1.ResourceEphemeralStorage] = c.EphemeralStorageLimit
+	}
+
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
-	return v1.Container{
+	container := v1.Container{
 		Name:            SidecarContainerName,
 		Image:           c.ContainerImage,
 		ImagePullPolicy: v1.PullPolicy(c.ImagePullPolicy),
@@ -58,16 +73,8 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 		},
 		Args: []string{"--v=5"},
 		Resources: v1.ResourceRequirements{
-			Limits: v1.ResourceList{
-				v1.ResourceCPU:              c.CPULimit,
-				v1.ResourceMemory:           c.MemoryLimit,
-				v1.ResourceEphemeralStorage: c.EphemeralStorageLimit,
-			},
-			Requests: v1.ResourceList{
-				v1.ResourceCPU:              c.CPULimit,
-				v1.ResourceMemory:           c.MemoryLimit,
-				v1.ResourceEphemeralStorage: c.EphemeralStorageLimit,
-			},
+			Limits:   resourceList,
+			Requests: resourceList,
 		},
 		VolumeMounts: []v1.VolumeMount{
 			{
@@ -80,6 +87,8 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 			},
 		},
 	}
+
+	return container
 }
 
 func GetSidecarContainerVolumeSpec() []v1.Volume {
