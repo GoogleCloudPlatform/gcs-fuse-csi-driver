@@ -102,6 +102,28 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 			expectedInjected: false,
 		},
 		{
+			name:      "should fail the validation when the sidecar container image sha256 is invalid",
+			imageName: "fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:invalid",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Volumes:    GetSidecarContainerVolumeSpec(),
+				},
+			},
+			expectedInjected: false,
+		},
+		{
+			name:      "should fail the validation when the sidecar container image tag is invalid",
+			imageName: "fake-repo/fake-sidecar-image:v999.999.999-gke.0:invalid@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Volumes:    GetSidecarContainerVolumeSpec(),
+				},
+			},
+			expectedInjected: false,
+		},
+		{
 			name:      "should fail the validation when the sidecar container is missing",
 			imageName: FakeConfig().ContainerImage,
 			pod: &v1.Pod{

@@ -56,7 +56,7 @@ func LoadConfig(containerImage, imagePullPolicy, cpuLimit, memoryLimit, ephemera
 }
 
 func FakeConfig() *Config {
-	c, _ := LoadConfig("fake-sidecar-image", "Always", "100m", "30Mi", "5Gi")
+	c, _ := LoadConfig("fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847", "Always", "100m", "30Mi", "5Gi")
 
 	return c
 }

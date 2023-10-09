@@ -25,6 +25,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	mount "k8s.io/mount-utils"
 )
 
@@ -40,7 +41,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               fm,
 		K8sClients:            &clientset.FakeClientset{},
-		SidecarImage:          "fake-sidecar-image",
+		SidecarImage:          webhook.FakeConfig().ContainerImage,
 	}
 	driver, err := NewGCSDriver(config)
 	if err != nil {
