@@ -53,10 +53,10 @@ var _ Censorer = &ReloadingCensorer{}
 // change the overall size of the input.
 // Censoring will attempt to be intelligent about how content is removed from
 // the input - when the ReloadingCensorer is given secrets to censor, we:
-//  - handle the case where whitespace is needed to be trimmed
-//  - censor not only the plaintext representation of the secret but also
-//    the base64-encoded representation of it, as it's common for k8s
-//    Secrets to contain information in this way
+//   - handle the case where whitespace is needed to be trimmed
+//   - censor not only the plaintext representation of the secret but also
+//     the base64-encoded representation of it, as it's common for k8s
+//     Secrets to contain information in this way
 func (c *ReloadingCensorer) Censor(input *[]byte) {
 	c.RLock()
 	// we know our replacer will never have to allocate, as our replacements
@@ -101,6 +101,14 @@ func (c *ReloadingCensorer) Refresh(secrets ...string) {
 		if secret == "" {
 			continue
 		}
+		if strings.EqualFold(secret, "true") || strings.EqualFold(secret, "false") {
+			// true and false appear in secrets when there is configuration that gets changed at the same time actual secrets.
+			// this happens when storing credentials to servers where capabilities are different.
+			// while every other type could reasonably be secret (through secret floats would be weird), it's difficult
+			// to justify secret booleans, since all values are known and replacing them carries a high price.
+			continue
+		}
+
 		addReplacement(secret)
 		for _, item := range toEncode {
 			encoded := base64.StdEncoding.EncodeToString([]byte(item))
