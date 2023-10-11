@@ -194,6 +194,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest("operations", false, "implicit-dirs=false")
 	})
 
+	ginkgo.It("should succeed in operations test 5", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("operations", false, "write:create-empty-file:true")
+	})
+
 	ginkgo.It("should succeed in readonly test 1", func() {
 		init()
 		defer cleanup()

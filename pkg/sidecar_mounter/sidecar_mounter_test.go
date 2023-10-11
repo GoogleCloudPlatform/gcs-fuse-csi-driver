@@ -79,7 +79,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BucketName: "test-bucket",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error"},
+				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
@@ -96,7 +96,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:file-path":       "/dev/fd/1",
 				"logging:format":          "text",
 				"logging:severity":        "error",
-				"write:create-empty-file": "false",
+				"write:create-empty-file": "true",
 			},
 		},
 		{
@@ -184,7 +184,7 @@ func TestPrepareConfigFile(t *testing.T) {
 				"logging:file-path":       "/dev/fd/1",
 				"logging:format":          "text",
 				"logging:severity":        "error",
-				"write:create-empty-file": "false",
+				"write:create-empty-file": "true",
 			},
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{
@@ -193,7 +193,7 @@ func TestPrepareConfigFile(t *testing.T) {
 					"severity":  "error",
 				},
 				"write": map[string]interface{}{
-					"create-empty-file": "false",
+					"create-empty-file": true,
 				},
 			},
 		},
