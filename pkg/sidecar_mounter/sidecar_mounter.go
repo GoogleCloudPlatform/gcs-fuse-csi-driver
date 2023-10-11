@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -213,7 +214,11 @@ func (mc *MountConfig) prepareConfigFile(flagMap map[string]string) error {
 					return fmt.Errorf("invalid config file flag: %q", f)
 				}
 
-				curLevel[t] = v
+				if boolVal, err := strconv.ParseBool(v); err == nil {
+					curLevel[t] = boolVal
+				} else {
+					curLevel[t] = v
+				}
 
 				break
 			}
