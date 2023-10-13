@@ -68,7 +68,6 @@ func main() {
 	// Setup a Manager
 	klog.Info("Setting up manager.")
 	mgr, err := manager.New(config.GetConfigOrDie(), manager.Options{
-		MetricsBindAddress:     "0",
 		HealthProbeBindAddress: *healthProbeBindAddress,
 		ReadinessEndpointName:  "/readyz",
 		WebhookServer: webhook.NewServer(webhook.Options{
