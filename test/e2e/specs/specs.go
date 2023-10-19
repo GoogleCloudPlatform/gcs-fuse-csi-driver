@@ -38,7 +38,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
 	e2ejob "k8s.io/kubernetes/test/e2e/framework/job"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -66,9 +65,10 @@ const (
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	UbuntuImage         = "ubuntu:20.04"
 
-	pollInterval    = 1 * time.Second
-	pollTimeout     = 1 * time.Minute
-	pollTimeoutSlow = 10 * time.Minute
+	pollInterval     = 1 * time.Second
+	pollTimeout      = 1 * time.Minute
+	pollIntervalSlow = 10 * time.Second
+	pollTimeoutSlow  = 10 * time.Minute
 )
 
 type TestPod struct {
@@ -113,6 +113,14 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 							Requests: v1.ResourceList{
 								v1.ResourceCPU:    cpu,
 								v1.ResourceMemory: mem,
+							},
+						},
+						Env: []v1.EnvVar{
+							{
+								Name: "POD_NAME",
+								ValueFrom: &v1.EnvVarSource{
+									FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.name"},
+								},
 							},
 						},
 					},
@@ -609,7 +617,7 @@ func NewTestDeployment(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *
 			GenerateName: "gcsfuse-volume-deployment-tester-",
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(int32(1)),
+			Replicas: ptr.To(int32(3)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app": "gcsfuse-volume-deployment-tester",
@@ -637,25 +645,96 @@ func (t *TestDeployment) Create(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestDeployment) WaitForComplete() {
-	framework.Logf("Waiting Deployment %s to complete", t.deployment.Name)
-	err := e2edeployment.WaitForDeploymentComplete(t.client, t.deployment)
-	framework.ExpectNoError(err)
-}
-
-func (t *TestDeployment) GetPod(ctx context.Context) *v1.Pod {
-	podList, err := e2edeployment.GetPodsForDeployment(ctx, t.client, t.deployment)
-	framework.ExpectNoError(err)
-	gomega.Expect(podList.Items).To(gomega.HaveLen(1))
-
-	pod := podList.Items[0]
-
-	return &pod
+func (t *TestDeployment) WaitForRunningAndReady(ctx context.Context) {
+	framework.Logf("Waiting Deployment %s to running and ready", t.deployment.Name)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, v1.PodRunning)
 }
 
 func (t *TestDeployment) Cleanup(ctx context.Context) {
 	framework.Logf("Deleting Deployment %s", t.deployment.Name)
 	err := t.client.AppsV1().Deployments(t.namespace.Name).Delete(ctx, t.deployment.Name, metav1.DeleteOptions{})
+	framework.ExpectNoError(err)
+}
+
+type TestStatefulSet struct {
+	client      clientset.Interface
+	statefulSet *appsv1.StatefulSet
+	namespace   *v1.Namespace
+}
+
+func NewTestStatefulSet(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestStatefulSet {
+	tPod.pod.Spec.RestartPolicy = v1.RestartPolicyAlways
+	statefulSet := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "gcsfuse-volume-statefulset-tester-",
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: ptr.To(int32(3)),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "gcsfuse-volume-statefulset-tester",
+				},
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: tPod.pod.ObjectMeta,
+				Spec:       tPod.pod.Spec,
+			},
+		},
+	}
+	statefulSet.Spec.Template.ObjectMeta.Labels = statefulSet.Spec.Selector.MatchLabels
+
+	return &TestStatefulSet{
+		client:      c,
+		namespace:   ns,
+		statefulSet: statefulSet,
+	}
+}
+
+func (t *TestStatefulSet) Create(ctx context.Context) {
+	framework.Logf("Creating StatefulSet %s", t.statefulSet.Name)
+	var err error
+	t.statefulSet, err = t.client.AppsV1().StatefulSets(t.namespace.Name).Create(ctx, t.statefulSet, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
+}
+
+func (t *TestStatefulSet) WaitForRunningAndReady(ctx context.Context) {
+	framework.Logf("Waiting StatefulSet %s to running and ready", t.statefulSet.Name)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.statefulSet.Spec.Selector, *t.statefulSet.Spec.Replicas, v1.PodRunning)
+}
+
+func (t *TestStatefulSet) Cleanup(ctx context.Context) {
+	framework.Logf("Deleting StatefulSet %s", t.statefulSet.Name)
+	err := t.client.AppsV1().StatefulSets(t.namespace.Name).Delete(ctx, t.statefulSet.Name, metav1.DeleteOptions{})
+	framework.ExpectNoError(err)
+}
+
+// WaitForWorkloadReady waits for the pods in the workload to reach the expected status.
+func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace string, selector *metav1.LabelSelector, replica int32, expectedPodStatus v1.PodPhase) {
+	err := wait.PollUntilContextTimeout(ctx, pollIntervalSlow, pollTimeoutSlow, true,
+		func(ctx context.Context) (bool, error) {
+			replicaSetSelector, err := metav1.LabelSelectorAsSelector(selector)
+			framework.ExpectNoError(err)
+
+			podList, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: replicaSetSelector.String()})
+			framework.ExpectNoError(err)
+
+			if int32(len(podList.Items)) < replica {
+				framework.Logf("Found %d workload pods, waiting for %d", len(podList.Items), replica)
+
+				return false, nil
+			}
+
+			for _, p := range podList.Items {
+				if p.Status.Phase != expectedPodStatus {
+					framework.Logf("Waiting for pod %v to enter %v, currently %v", p.Name, expectedPodStatus, p.Status.Phase)
+
+					return false, nil
+				}
+			}
+
+			return true, nil
+		})
+
 	framework.ExpectNoError(err)
 }
 
