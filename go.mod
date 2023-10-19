@@ -31,7 +31,7 @@ require (
 )
 
 require (
-	cloud.google.com/go v0.110.8 // indirect
+	cloud.google.com/go v0.110.9 // indirect
 	cloud.google.com/go/compute v1.23.1 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
@@ -138,8 +138,8 @@ require (
 	k8s.io/kms v0.28.3 // indirect
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
-	k8s.io/kubelet v0.0.0 // indirect
-	k8s.io/test-infra v0.0.0-20231013200537-b59a10c3681a // indirect
+	k8s.io/kubelet v0.28.3 // indirect
+	k8s.io/test-infra v0.0.0-20231019203358-2c3322df6483 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.3.0 // indirect

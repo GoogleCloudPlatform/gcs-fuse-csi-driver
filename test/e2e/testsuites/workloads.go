@@ -92,6 +92,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetCommand(fmt.Sprintf("mount | grep %v | grep rw, && echo 'hello world' > %v/${POD_NAME} && grep 'hello world' %v/${POD_NAME} && tail -f /dev/null", mountPath, mountPath, mountPath))
 
 		ginkgo.By("Configuring the deployment")
 		tDeployment := specs.NewTestDeployment(f.ClientSet, f.Namespace, tPod)
@@ -101,15 +102,27 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		defer tDeployment.Cleanup(ctx)
 
 		ginkgo.By("Checking that the deployment is in ready status")
-		tDeployment.WaitForComplete()
-		tPod.SetPod(tDeployment.GetPod(ctx))
+		tDeployment.WaitForRunningAndReady(ctx)
+	})
 
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
+	ginkgo.It("should store data in StatefulSet", func() {
+		init()
+		defer cleanup()
 
-		ginkgo.By("Checking that the pod command exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetCommand(fmt.Sprintf("mount | grep %v | grep rw, && echo 'hello world' > %v/${POD_NAME} && grep 'hello world' %v/${POD_NAME} && tail -f /dev/null", mountPath, mountPath, mountPath))
+
+		ginkgo.By("Configuring the StatefulSet")
+		tStatefulSet := specs.NewTestStatefulSet(f.ClientSet, f.Namespace, tPod)
+
+		ginkgo.By("Deploying the StatefulSet")
+		tStatefulSet.Create(ctx)
+		defer tStatefulSet.Cleanup(ctx)
+
+		ginkgo.By("Checking that the StatefulSet is in ready status")
+		tStatefulSet.WaitForRunningAndReady(ctx)
 	})
 
 	ginkgo.It("should store data in Job", func() {

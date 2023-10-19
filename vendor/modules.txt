@@ -1,4 +1,4 @@
-# cloud.google.com/go v0.110.8
+# cloud.google.com/go v0.110.9
 ## explicit; go 1.19
 cloud.google.com/go/internal
 cloud.google.com/go/internal/optional
@@ -1360,7 +1360,7 @@ k8s.io/kube-openapi/pkg/validation/strfmt/bson
 ## explicit; go 1.20
 k8s.io/kubectl/pkg/scale
 k8s.io/kubectl/pkg/util/podutils
-# k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.28.3
+# k8s.io/kubelet v0.28.3 => k8s.io/kubelet v0.28.3
 ## explicit; go 1.20
 k8s.io/kubelet/pkg/apis
 # k8s.io/kubernetes v1.28.3
@@ -1405,7 +1405,6 @@ k8s.io/kubernetes/pkg/volume/util/subpath
 k8s.io/kubernetes/pkg/volume/util/types
 k8s.io/kubernetes/pkg/volume/util/volumepathhandler
 k8s.io/kubernetes/test/e2e/framework
-k8s.io/kubernetes/test/e2e/framework/deployment
 k8s.io/kubernetes/test/e2e/framework/events
 k8s.io/kubernetes/test/e2e/framework/internal/junit
 k8s.io/kubernetes/test/e2e/framework/job
@@ -1433,7 +1432,7 @@ k8s.io/mount-utils
 ## explicit; go 1.20
 k8s.io/pod-security-admission/api
 k8s.io/pod-security-admission/policy
-# k8s.io/test-infra v0.0.0-20231013200537-b59a10c3681a
+# k8s.io/test-infra v0.0.0-20231019203358-2c3322df6483
 ## explicit; go 1.21
 k8s.io/test-infra/prow/config/secret
 k8s.io/test-infra/prow/logrusutil
