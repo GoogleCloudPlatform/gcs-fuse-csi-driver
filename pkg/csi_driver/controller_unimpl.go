@@ -59,3 +59,7 @@ func (s *controllerServer) GetCapacity(_ context.Context, _ *csi.GetCapacityRequ
 func (s *controllerServer) ControllerGetVolume(_ context.Context, _ *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "ControllerGetVolume unsupported")
 }
+
+func (s *controllerServer) ControllerModifyVolume(_ context.Context, _ *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "ControllerModifyVolume unsupported")
+}
