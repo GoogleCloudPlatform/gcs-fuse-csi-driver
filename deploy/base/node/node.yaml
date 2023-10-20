@@ -81,7 +81,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
-                - all
+                - ALL
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar
           imagePullPolicy: IfNotPresent
           args:
