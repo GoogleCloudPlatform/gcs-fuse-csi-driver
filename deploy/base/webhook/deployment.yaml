@@ -41,7 +41,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
-                - all
+                - ALL
           image: gke.gcr.io/gcs-fuse-csi-driver-webhook
           imagePullPolicy: IfNotPresent
           args:
