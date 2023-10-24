@@ -12,7 +12,7 @@ require (
 	github.com/kubernetes-csi/csi-lib-utils v0.15.0
 	github.com/kubernetes-csi/csi-test/v5 v5.1.0
 	github.com/onsi/ginkgo/v2 v2.13.0
-	github.com/onsi/gomega v1.28.0
+	github.com/onsi/gomega v1.28.1
 	golang.org/x/net v0.17.0
 	golang.org/x/oauth2 v0.13.0
 	google.golang.org/api v0.148.0
@@ -51,7 +51,7 @@ require (
 	github.com/evanphx/json-patch v5.7.0+incompatible // indirect
 	github.com/evanphx/json-patch/v5 v5.7.0 // indirect
 	github.com/felixge/httpsnoop v1.0.3 // indirect
-	github.com/fsnotify/fsnotify v1.6.0 // indirect
+	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.20.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
@@ -64,9 +64,9 @@ require (
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
-	github.com/google/pprof v0.0.0-20230926050212-f7f687d19a98 // indirect
+	github.com/google/pprof v0.0.0-20231023181126-ff6d637d2a7b // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.1 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.18.0 // indirect
@@ -139,7 +139,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.28.3 // indirect
-	k8s.io/test-infra v0.0.0-20231019203358-2c3322df6483 // indirect
+	k8s.io/test-infra v0.0.0-20231024165234-20ec754a70f0 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.3.0 // indirect
