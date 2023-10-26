@@ -77,11 +77,12 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	configCopy := &Config{
-		ContainerImage:        si.Config.ContainerImage,
-		ImagePullPolicy:       si.Config.ImagePullPolicy,
-		CPULimit:              si.Config.CPULimit.DeepCopy(),
-		MemoryLimit:           si.Config.MemoryLimit.DeepCopy(),
-		EphemeralStorageLimit: si.Config.EphemeralStorageLimit.DeepCopy(),
+		ContainerImage:                si.Config.ContainerImage,
+		ImagePullPolicy:               si.Config.ImagePullPolicy,
+		CPULimit:                      si.Config.CPULimit.DeepCopy(),
+		MemoryLimit:                   si.Config.MemoryLimit.DeepCopy(),
+		EphemeralStorageLimit:         si.Config.EphemeralStorageLimit.DeepCopy(),
+		TerminationGracePeriodSeconds: int(*pod.Spec.TerminationGracePeriodSeconds),
 	}
 	if v, ok := pod.Annotations[annotationGcsfuseSidecarCPULimitKey]; ok {
 		if q, err := resource.ParseQuantity(v); err == nil {

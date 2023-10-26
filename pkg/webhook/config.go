@@ -24,11 +24,12 @@ import (
 )
 
 type Config struct {
-	ContainerImage        string
-	ImagePullPolicy       string
-	CPULimit              resource.Quantity
-	MemoryLimit           resource.Quantity
-	EphemeralStorageLimit resource.Quantity
+	ContainerImage                string
+	ImagePullPolicy               string
+	CPULimit                      resource.Quantity
+	MemoryLimit                   resource.Quantity
+	EphemeralStorageLimit         resource.Quantity
+	TerminationGracePeriodSeconds int
 }
 
 func LoadConfig(containerImage, imagePullPolicy, cpuLimit, memoryLimit, ephemeralStorageLimit string) (*Config, error) {
@@ -45,11 +46,12 @@ func LoadConfig(containerImage, imagePullPolicy, cpuLimit, memoryLimit, ephemera
 		return nil, fmt.Errorf("failed to parse ephemeral storage limit %q: %w", cpuLimit, err)
 	}
 	cfg := &Config{
-		ContainerImage:        containerImage,
-		ImagePullPolicy:       imagePullPolicy,
-		CPULimit:              c,
-		MemoryLimit:           m,
-		EphemeralStorageLimit: e,
+		ContainerImage:                containerImage,
+		ImagePullPolicy:               imagePullPolicy,
+		CPULimit:                      c,
+		MemoryLimit:                   m,
+		EphemeralStorageLimit:         e,
+		TerminationGracePeriodSeconds: 30,
 	}
 
 	return cfg, nil

@@ -18,6 +18,8 @@ limitations under the License.
 package webhook
 
 import (
+	"fmt"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
@@ -71,7 +73,10 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 			RunAsUser:      ptr.To(int64(NobodyUID)),
 			RunAsGroup:     ptr.To(int64(NobodyGID)),
 		},
-		Args: []string{"--v=5"},
+		Args: []string{
+			"--v=5",
+			fmt.Sprintf("--grace-period=%v", c.TerminationGracePeriodSeconds),
+		},
 		Resources: v1.ResourceRequirements{
 			Limits:   resourceList,
 			Requests: resourceList,
