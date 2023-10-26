@@ -189,7 +189,7 @@ github.com/google/s2a-go/internal/v2/remotesigner
 github.com/google/s2a-go/internal/v2/tlsconfigstore
 github.com/google/s2a-go/retry
 github.com/google/s2a-go/stream
-# github.com/google/uuid v1.3.1
+# github.com/google/uuid v1.4.0
 ## explicit
 github.com/google/uuid
 # github.com/googleapis/enterprise-certificate-proxy v0.3.2
@@ -285,7 +285,7 @@ github.com/onsi/ginkgo/v2/internal/parallel_support
 github.com/onsi/ginkgo/v2/internal/testingtproxy
 github.com/onsi/ginkgo/v2/reporters
 github.com/onsi/ginkgo/v2/types
-# github.com/onsi/gomega v1.28.1
+# github.com/onsi/gomega v1.29.0
 ## explicit; go 1.18
 github.com/onsi/gomega
 github.com/onsi/gomega/format
@@ -1432,7 +1432,7 @@ k8s.io/mount-utils
 ## explicit; go 1.20
 k8s.io/pod-security-admission/api
 k8s.io/pod-security-admission/policy
-# k8s.io/test-infra v0.0.0-20231024165234-20ec754a70f0
+# k8s.io/test-infra v0.0.0-20231026221853-d507878e43cb
 ## explicit; go 1.21
 k8s.io/test-infra/prow/config/secret
 k8s.io/test-infra/prow/logrusutil
@@ -1508,9 +1508,10 @@ sigs.k8s.io/structured-merge-diff/v4/merge
 sigs.k8s.io/structured-merge-diff/v4/schema
 sigs.k8s.io/structured-merge-diff/v4/typed
 sigs.k8s.io/structured-merge-diff/v4/value
-# sigs.k8s.io/yaml v1.3.0
+# sigs.k8s.io/yaml v1.4.0
 ## explicit; go 1.12
 sigs.k8s.io/yaml
+sigs.k8s.io/yaml/goyaml.v2
 # k8s.io/api => k8s.io/api v0.28.3
 # k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.28.3
 # k8s.io/apimachinery => k8s.io/apimachinery v0.28.3
