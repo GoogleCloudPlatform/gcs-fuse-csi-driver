@@ -94,7 +94,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetResource("1", "1Gi", "5Gi")
 		sidecarMemoryLimit := "256Mi"
 		if testName == "write_large_files" || testName == "read_large_files" {
-			tPod.SetResource("1", "5Gi", "5Gi")
+			tPod.SetResource("1", "6Gi", "5Gi")
 			sidecarMemoryLimit = "1Gi"
 		}
 
