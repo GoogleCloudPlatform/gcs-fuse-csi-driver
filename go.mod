@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/iam v1.1.3
 	cloud.google.com/go/storage v1.33.0
 	github.com/container-storage-interface/spec v1.9.0
-	github.com/go-logr/logr v1.2.4
+	github.com/go-logr/logr v1.3.0
 	github.com/google/uuid v1.4.0
 	github.com/kubernetes-csi/csi-lib-utils v0.15.0
 	github.com/kubernetes-csi/csi-test/v5 v5.1.0
