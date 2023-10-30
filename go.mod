@@ -32,7 +32,7 @@ require (
 
 require (
 	cloud.google.com/go v0.110.9 // indirect
-	cloud.google.com/go/compute v1.23.1 // indirect
+	cloud.google.com/go/compute v1.23.2 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
