@@ -87,7 +87,9 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	// Setup RPC servers
 	driver.ids = newIdentityServer(driver)
 	if config.RunNode {
-		nscap := []csi.NodeServiceCapability_RPC_Type{}
+		nscap := []csi.NodeServiceCapability_RPC_Type{
+			csi.NodeServiceCapability_RPC_VOLUME_MOUNT_GROUP,
+		}
 		driver.ns = newNodeServer(driver, config.Mounter)
 		driver.addNodeServiceCapabilities(nscap)
 	}

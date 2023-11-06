@@ -33,7 +33,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -93,6 +92,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
 	}
 	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
+		// Delegate fsGroup to CSI Driver
+		// Set gid, file-mode, and dir-mode for gcsfuse.
+		// Allow users to overwrite these flags.
+		if capMount.VolumeMountGroup != "" {
+			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"gid=" + capMount.VolumeMountGroup, "file-mode=664", "dir-mode=775"})
+		}
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
 	if mountOptions, ok := vc[VolumeContextKeyMountOptions]; ok {
@@ -337,23 +342,6 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	}
 
 	return false, nil
-}
-
-// joinMountOptions joins mount options eliminating duplicates.
-func joinMountOptions(userOptions []string, systemOptions []string) []string {
-	allMountOptions := sets.NewString()
-
-	for _, mountOption := range userOptions {
-		if len(mountOption) > 0 {
-			allMountOptions.Insert(mountOption)
-		}
-	}
-
-	for _, mountOption := range systemOptions {
-		allMountOptions.Insert(mountOption)
-	}
-
-	return allMountOptions.List()
 }
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.

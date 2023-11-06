@@ -183,7 +183,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		mountOptions := "debug_gcs,debug_fuse,debug_fs"
 		switch config.Prefix {
 		case specs.NonRootVolumePrefix:
-			mountOptions += ",uid=1001,gid=3003"
+			mountOptions += ",uid=1001"
 		case specs.InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 		case specs.ImplicitDirsVolumePrefix:
@@ -283,7 +283,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
 	switch config.Prefix {
 	case specs.NonRootVolumePrefix:
-		mountOptions = append(mountOptions, "uid=1001", "gid=3003")
+		mountOptions = append(mountOptions, "uid=1001")
 	case specs.InvalidMountOptionsVolumePrefix:
 		mountOptions = append(mountOptions, "invalid-option")
 	}
