@@ -50,7 +50,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	pod := &corev1.Pod{}
 
 	if err := si.Decoder.Decode(req, pod); err != nil {
-		klog.Error("Could not decode request: name %q, namespace %q, error: ", req.Name, req.Namespace, err)
+		klog.Errorf("Could not decode request: name %q, namespace %q, error: %v", req.Name, req.Namespace, err)
 
 		return admission.Errored(http.StatusBadRequest, err)
 	}
