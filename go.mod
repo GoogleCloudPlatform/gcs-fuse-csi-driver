@@ -5,7 +5,7 @@ go 1.21
 require (
 	cloud.google.com/go/compute/metadata v0.2.3
 	cloud.google.com/go/iam v1.1.4
-	cloud.google.com/go/storage v1.33.0
+	cloud.google.com/go/storage v1.34.1
 	github.com/container-storage-interface/spec v1.9.0
 	github.com/go-logr/logr v1.3.0
 	github.com/google/uuid v1.4.0
@@ -15,7 +15,7 @@ require (
 	github.com/onsi/gomega v1.29.0
 	golang.org/x/net v0.17.0
 	golang.org/x/oauth2 v0.13.0
-	google.golang.org/api v0.148.0
+	google.golang.org/api v0.149.0
 	google.golang.org/grpc v1.59.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.28.3
