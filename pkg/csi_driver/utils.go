@@ -19,11 +19,13 @@ package driver
 
 import (
 	"fmt"
+	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 )
 
@@ -93,4 +95,47 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 	}
 
 	return resp, err
+}
+
+// joinMountOptions joins mount options eliminating duplicates.
+func joinMountOptions(existingOptions []string, newOptions []string) []string {
+	overwritableOptions := map[string]string{
+		"gid":       "",
+		"file-mode": "",
+		"dir-mode":  "",
+	}
+
+	allMountOptions := sets.NewString()
+
+	process := func(mountOption string) {
+		if len(mountOption) > 0 {
+			optionPair := strings.SplitN(mountOption, "=", 2)
+
+			if len(optionPair) == 2 {
+				if _, ok := overwritableOptions[optionPair[0]]; ok {
+					overwritableOptions[optionPair[0]] = optionPair[1]
+
+					return
+				}
+			}
+
+			allMountOptions.Insert(mountOption)
+		}
+	}
+
+	for _, mountOption := range existingOptions {
+		process(mountOption)
+	}
+
+	for _, mountOption := range newOptions {
+		process(mountOption)
+	}
+
+	for k, v := range overwritableOptions {
+		if v != "" {
+			allMountOptions.Insert(k + "=" + v)
+		}
+	}
+
+	return allMountOptions.List()
 }

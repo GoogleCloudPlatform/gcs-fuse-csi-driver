@@ -275,11 +275,20 @@ func (t *TestPod) SetServiceAccount(sa string) {
 	t.pod.Spec.ServiceAccountName = sa
 }
 
-func (t *TestPod) SetNonRootSecurityContext() {
-	t.pod.Spec.SecurityContext = &v1.PodSecurityContext{
-		RunAsUser: ptr.To(int64(1001)),
-		FSGroup:   ptr.To(int64(3003)),
+func (t *TestPod) SetNonRootSecurityContext(uid, gid, fsgroup int) {
+	psc := &v1.PodSecurityContext{}
+	if uid != 0 {
+		psc.RunAsNonRoot = ptr.To(true)
+		psc.RunAsUser = ptr.To(int64(uid))
 	}
+	if gid != 0 {
+		psc.RunAsGroup = ptr.To(int64(gid))
+	}
+	if fsgroup != 0 {
+		psc.FSGroup = ptr.To(int64(fsgroup))
+	}
+
+	t.pod.Spec.SecurityContext = psc
 }
 
 func (t *TestPod) SetCommand(cmd string) {
