@@ -197,9 +197,9 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
 	}
 
-	// TODO(songjiaxun) remove this logic after the next gcsfusee release.
+	// TODO(songjiaxun) remove this logic after the next CSI driver release.
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "gzip", "implicit_dir", "local_file", "operations.test.5")
+		skipTests = append(skipTests, "fsgroup")
 	}
 
 	skipString := strings.Join(skipTests, "|")
