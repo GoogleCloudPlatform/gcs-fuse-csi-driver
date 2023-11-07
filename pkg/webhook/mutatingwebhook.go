@@ -59,12 +59,12 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Allowed(fmt.Sprintf("No injection required for operation %v.", req.Operation))
 	}
 
-	if v, ok := pod.Annotations[AnnotationGcsfuseVolumeEnableKey]; !ok || strings.ToLower(v) != "true" {
+	enableGcsfuseVolumes, ok := pod.Annotations[AnnotationGcsfuseVolumeEnableKey]
+	if !ok {
 		return admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey))
 	}
 
-	enableGcsfuseVolumes, ok := pod.Annotations[AnnotationGcsfuseVolumeEnableKey]
-	if !ok || strings.ToLower(enableGcsfuseVolumes) == "false" {
+	if strings.ToLower(enableGcsfuseVolumes) == "false" {
 		return admission.Allowed("No injection required.")
 	}
 
