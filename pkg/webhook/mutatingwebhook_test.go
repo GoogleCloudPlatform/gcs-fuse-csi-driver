@@ -38,15 +38,15 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name             string
-		inputPod         *corev1.Pod
-		operation        v1.Operation
-		expectedResponse admission.Response
+		name         string
+		inputPod     *corev1.Pod
+		operation    v1.Operation
+		wantResponse admission.Response
 	}{
 		{
-			name:             "Empty request test.",
-			inputPod:         nil,
-			expectedResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("there is no content to decode")),
+			name:         "Empty request test.",
+			inputPod:     nil,
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("there is no content to decode")),
 		},
 		{
 			name:      "Different operation test.",
@@ -57,7 +57,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
-			expectedResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", v1.Update)),
+			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", v1.Update)),
 		},
 		{
 			name:      "Annotation key not found test",
@@ -68,7 +68,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
-			expectedResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey)),
+			wantResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey)),
 		},
 		{
 			name:      "Sidecar already injected test.",
@@ -84,18 +84,18 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 					},
 				},
 			},
-			expectedResponse: admission.Allowed("The sidecar container was injected, no injection required."),
+			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
 		},
 		{
-			name:             "Injection successful test.",
-			operation:        v1.Create,
-			inputPod:         InputPodTest5(),
-			expectedResponse: ResponseTest5(t, InputPodTest5()),
+			name:         "Injection successful on empty containers and volumes test.",
+			operation:    v1.Create,
+			inputPod:     validInputPod(),
+			wantResponse: wantResponse(t),
 		},
 	}
 
 	for n, tc := range testCases {
-		t.Logf("test case %v: %s", n, tc.name)
+		t.Logf("test case %v: %s", n+1, tc.name)
 		si := SidecarInjector{
 			Client:  nil,
 			Config:  FakeConfig(),
@@ -108,51 +108,52 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		}
 		if tc.inputPod != nil {
 			request.Object = runtime.RawExtension{
-				Raw: RawPayload(t, tc.inputPod),
+				Raw: serialize(t, tc.inputPod),
 			}
 		}
 
-		response := si.Handle(context.Background(), *request)
+		gotResponse := si.Handle(context.Background(), *request)
 
-		if err := compareResponses(t, tc.expectedResponse, response); err != nil {
-			t.Errorf("\nGot injection result: %v, but expected: %v.", response, tc.expectedResponse)
+		if err := compareResponses(t, tc.wantResponse, gotResponse); err != nil {
+			t.Errorf("\nGot injection result: %v, but want: %v.", gotResponse, tc.wantResponse)
 		}
 	}
 }
 
-func RawPayload(t *testing.T, pod *corev1.Pod) []byte {
+func serialize(t *testing.T, obj any) []byte {
 	t.Helper()
-	raw, err := json.Marshal(pod)
+	b, err := json.Marshal(obj)
 	if err != nil {
-		t.Errorf("Error running json encoding for pod.")
+		t.Errorf("Error serializing object %o.", obj)
 
 		return nil
 	}
 
-	return raw
+	return b
 }
 
-func compareResponses(t *testing.T, expectedResponse, response admission.Response) error {
-	if diff := cmp.Diff(response.String(), expectedResponse.String()); diff != "" {
-		return fmt.Errorf("request args differ (-got, +expected)\n%s", diff)
+func compareResponses(t *testing.T, wantResponse, gotResponse admission.Response) error {
+	if diff := cmp.Diff(gotResponse.String(), wantResponse.String()); diff != "" {
+		return fmt.Errorf("request args differ (-got, +want)\n%s", diff)
 	}
-	if len(expectedResponse.Patches) != len(response.Patches) {
-		return fmt.Errorf("expecting %d patches, got %d patches", len(response.Patches), len(response.Patches))
+	if len(wantResponse.Patches) != len(gotResponse.Patches) {
+		return fmt.Errorf("expecting %d patches, got %d patches", len(gotResponse.Patches), len(gotResponse.Patches))
 	}
-	var expectedPaths, gotPaths []string
-	for i := 0; i < len(expectedResponse.Patches); i++ {
-		expectedPaths = append(expectedPaths, expectedResponse.Patches[i].Path)
-		gotPaths = append(gotPaths, response.Patches[i].Path)
+	var wantPaths, gotPaths []string
+	for i := 0; i < len(wantResponse.Patches); i++ {
+		wantPaths = append(wantPaths, wantResponse.Patches[i].Path)
+		gotPaths = append(gotPaths, gotResponse.Patches[i].Path)
 	}
-	sort.Strings(expectedPaths)
+	sort.Strings(wantPaths)
 	sort.Strings(gotPaths)
-	if diff := cmp.Diff(expectedPaths, gotPaths); diff != "" {
-		return fmt.Errorf("unexpected pod args (-got, +expected)\n%s", diff)
+	if diff := cmp.Diff(wantPaths, gotPaths); diff != "" {
+		return fmt.Errorf("unexpected pod args (-got, +want)\n%s", diff)
 	}
+
 	return nil
 }
 
-func InputPodTest5() *corev1.Pod {
+func validInputPod() *corev1.Pod {
 	return &corev1.Pod{
 		Spec: corev1.PodSpec{
 			TerminationGracePeriodSeconds: ptr.To[int64](60),
@@ -165,29 +166,11 @@ func InputPodTest5() *corev1.Pod {
 	}
 }
 
-func ExpectedPodTest5() *corev1.Pod {
-	return &corev1.Pod{
-		Spec: corev1.PodSpec{
-			Containers:                    []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-			Volumes:                       GetSidecarContainerVolumeSpec(),
-			TerminationGracePeriodSeconds: ptr.To[int64](60),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				"gke-gcsfuse/volumes": "true",
-			},
-		},
-	}
-}
-
-func ResponseTest5(t *testing.T, inputPod *corev1.Pod) admission.Response {
+func wantResponse(t *testing.T) admission.Response {
 	t.Helper()
-	newPod, err := json.Marshal(ExpectedPodTest5())
-	if err != nil {
-		t.Errorf("Error running json encoding for test 5.")
+	newPod := validInputPod()
+	newPod.Spec.Containers = []corev1.Container{GetSidecarContainerSpec(FakeConfig())}
+	newPod.Spec.Volumes = GetSidecarContainerVolumeSpec()
 
-		return admission.Response{}
-	}
-
-	return admission.PatchResponseFromRaw(RawPayload(t, inputPod), newPod)
+	return admission.PatchResponseFromRaw(serialize(t, validInputPod()), serialize(t, newPod))
 }
