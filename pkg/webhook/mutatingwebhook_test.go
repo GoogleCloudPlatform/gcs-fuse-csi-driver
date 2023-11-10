@@ -22,8 +22,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,7 +114,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 
 		response := si.Handle(context.Background(), *request)
 
-		if response.String() != tc.expectedResponse.String() {
+		if err := compareResponses(t, tc.expectedResponse, response); err != nil {
 			t.Errorf("\nGot injection result: %v, but expected: %v.", response, tc.expectedResponse)
 		}
 	}
@@ -128,6 +130,26 @@ func RawPayload(t *testing.T, pod *corev1.Pod) []byte {
 	}
 
 	return raw
+}
+
+func compareResponses(t *testing.T, expectedResponse, response admission.Response) error {
+	if diff := cmp.Diff(response.String(), expectedResponse.String()); diff != "" {
+		return fmt.Errorf("request args differ (-got, +expected)\n%s", diff)
+	}
+	if len(expectedResponse.Patches) != len(response.Patches) {
+		return fmt.Errorf("expecting %d patches, got %d patches", len(response.Patches), len(response.Patches))
+	}
+	var expectedPaths, gotPaths []string
+	for i := 0; i < len(expectedResponse.Patches); i++ {
+		expectedPaths = append(expectedPaths, expectedResponse.Patches[i].Path)
+		gotPaths = append(gotPaths, response.Patches[i].Path)
+	}
+	sort.Strings(expectedPaths)
+	sort.Strings(gotPaths)
+	if diff := cmp.Diff(expectedPaths, gotPaths); diff != "" {
+		return fmt.Errorf("unexpected pod args (-got, +expected)\n%s", diff)
+	}
+	return nil
 }
 
 func InputPodTest5() *corev1.Pod {
