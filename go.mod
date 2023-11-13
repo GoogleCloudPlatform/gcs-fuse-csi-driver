@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/storage v1.34.1
 	github.com/container-storage-interface/spec v1.9.0
 	github.com/go-logr/logr v1.3.0
+	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.4.0
 	github.com/kubernetes-csi/csi-lib-utils v0.15.0
 	github.com/kubernetes-csi/csi-test/v5 v5.1.0
@@ -62,7 +63,6 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/cel-go v0.16.1 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
-	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
 	github.com/google/pprof v0.0.0-20231101202521-4ca4178f5c7a // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
