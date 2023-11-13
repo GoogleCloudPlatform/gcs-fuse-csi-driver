@@ -22,10 +22,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	v1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,7 +87,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
 		},
 		{
-			name:         "Injection successful on empty containers and volumes test.",
+			name:         "Injection successful test.",
 			operation:    v1.Create,
 			inputPod:     validInputPod(),
 			wantResponse: wantResponse(t),
@@ -114,8 +114,9 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 
 		gotResponse := si.Handle(context.Background(), *request)
 
-		if err := compareResponses(t, tc.wantResponse, gotResponse); err != nil {
+		if err := compareResponses(tc.wantResponse, gotResponse); err != nil {
 			t.Errorf("\nGot injection result: %v, but want: %v.", gotResponse, tc.wantResponse)
+			t.Error("Details: ", err)
 		}
 	}
 }
@@ -132,22 +133,24 @@ func serialize(t *testing.T, obj any) []byte {
 	return b
 }
 
-func compareResponses(t *testing.T, wantResponse, gotResponse admission.Response) error {
+func compareResponses(wantResponse, gotResponse admission.Response) error {
 	if diff := cmp.Diff(gotResponse.String(), wantResponse.String()); diff != "" {
 		return fmt.Errorf("request args differ (-got, +want)\n%s", diff)
 	}
 	if len(wantResponse.Patches) != len(gotResponse.Patches) {
-		return fmt.Errorf("expecting %d patches, got %d patches", len(gotResponse.Patches), len(gotResponse.Patches))
+		return fmt.Errorf("expecting %d patches, got %d patches", len(wantResponse.Patches), len(gotResponse.Patches))
 	}
 	var wantPaths, gotPaths []string
 	for i := 0; i < len(wantResponse.Patches); i++ {
 		wantPaths = append(wantPaths, wantResponse.Patches[i].Path)
 		gotPaths = append(gotPaths, gotResponse.Patches[i].Path)
 	}
-	sort.Strings(wantPaths)
-	sort.Strings(gotPaths)
-	if diff := cmp.Diff(wantPaths, gotPaths); diff != "" {
-		return fmt.Errorf("unexpected pod args (-got, +want)\n%s", diff)
+
+	if len(wantPaths) > 0 && len(gotPaths) > 0 {
+		less := func(a, b string) bool { return a > b }
+		if diff := cmp.Diff(wantPaths, gotPaths, cmpopts.SortSlices(less)); diff != "" {
+			return fmt.Errorf("unexpected pod args (-got, +want)\n%s", diff)
+		}
 	}
 
 	return nil
@@ -156,6 +159,22 @@ func compareResponses(t *testing.T, wantResponse, gotResponse admission.Response
 func validInputPod() *corev1.Pod {
 	return &corev1.Pod{
 		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "FakeContainer1",
+				},
+				{
+					Name: "FakeContainer2",
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "FakeVolume1",
+				},
+				{
+					Name: "FakeVolume2",
+				},
+			},
 			TerminationGracePeriodSeconds: ptr.To[int64](60),
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -169,8 +188,8 @@ func validInputPod() *corev1.Pod {
 func wantResponse(t *testing.T) admission.Response {
 	t.Helper()
 	newPod := validInputPod()
-	newPod.Spec.Containers = []corev1.Container{GetSidecarContainerSpec(FakeConfig())}
-	newPod.Spec.Volumes = GetSidecarContainerVolumeSpec()
+	newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(FakeConfig())}, newPod.Spec.Containers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, validInputPod()), serialize(t, newPod))
 }
