@@ -5,7 +5,7 @@ go 1.21
 require (
 	cloud.google.com/go/compute/metadata v0.2.3
 	cloud.google.com/go/iam v1.1.5
-	cloud.google.com/go/storage v1.34.1
+	cloud.google.com/go/storage v1.35.1
 	github.com/container-storage-interface/spec v1.9.0
 	github.com/go-logr/logr v1.3.0
 	github.com/google/uuid v1.4.0
