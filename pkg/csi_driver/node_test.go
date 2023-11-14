@@ -21,10 +21,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
@@ -99,7 +100,7 @@ func TestNodePublishVolume(t *testing.T) {
 				TargetPath:       testTargetPath,
 				VolumeCapability: testVolumeCapability,
 			},
-			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse"},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{}},
 		},
 		{
 			name:   "valid request already mounted",
@@ -273,24 +274,8 @@ func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mou
 		t.Errorf("test %q failed: got type %q, expected %q", name, a.Type, e.Type)
 	}
 
-	// TODO: why does DeepEqual not work???
-	aLen := len(a.Opts)
-	eLen := len(e.Opts)
-	if aLen != eLen {
-		t.Errorf("test %q failed: got opts length %v, expected %v", name, aLen, eLen)
-	} else {
-		sort.Slice(a.Opts, func(i, j int) bool {
-			return a.Opts[i] > a.Opts[j]
-		})
-		sort.Slice(e.Opts, func(i, j int) bool {
-			return e.Opts[i] > e.Opts[j]
-		})
-		for i := range a.Opts {
-			aOpt := a.Opts[i]
-			eOpt := e.Opts[i]
-			if aOpt != eOpt {
-				t.Errorf("test %q failed: got opt %q, expected %q", name, aOpt, eOpt)
-			}
-		}
+	less := func(a, b string) bool { return a > b }
+	if diff := cmp.Diff(a.Opts, e.Opts, cmpopts.SortSlices(less)); diff != "" {
+		t.Errorf("unexpected options args (-got, +want)\n%s", diff)
 	}
 }

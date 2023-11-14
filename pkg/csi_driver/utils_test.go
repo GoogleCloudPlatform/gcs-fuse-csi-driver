@@ -18,9 +18,10 @@ limitations under the License.
 package driver
 
 import (
-	"reflect"
-	"sort"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestJoinMountOptions(t *testing.T) {
@@ -51,10 +52,9 @@ func TestJoinMountOptions(t *testing.T) {
 			t.Logf("test case: %s", tc.name)
 			output := joinMountOptions(tc.existingOptions, tc.newOptions)
 
-			sort.Strings(output)
-			sort.Strings(tc.expectedOptions)
-			if !reflect.DeepEqual(output, tc.expectedOptions) {
-				t.Errorf("Got options %v, but expected %v", output, tc.expectedOptions)
+			less := func(a, b string) bool { return a > b }
+			if diff := cmp.Diff(output, tc.expectedOptions, cmpopts.SortSlices(less)); diff != "" {
+				t.Errorf("unexpected options args (-got, +want)\n%s", diff)
 			}
 		}
 	})
