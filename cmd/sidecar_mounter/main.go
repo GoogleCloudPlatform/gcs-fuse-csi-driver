@@ -37,7 +37,7 @@ import (
 
 var (
 	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath = flag.String("volume-base-path", "/gcsfuse-tmp/.volumes", "volume base path")
+	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
 	gracePeriod    = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
 	// This is set at compile time.
 	version = "unknown"
@@ -160,7 +160,7 @@ func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
 	volumeName := filepath.Base(filepath.Dir(sp))
 	mc := sidecarmounter.MountConfig{
 		VolumeName: volumeName,
-		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
 		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
 	}
 

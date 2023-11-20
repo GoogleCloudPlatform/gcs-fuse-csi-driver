@@ -28,7 +28,7 @@ import (
 var (
 	defaultFlagMap = map[string]string{
 		"app-name":    GCSFuseAppName,
-		"temp-dir":    "test-cache-dir/temp-dir",
+		"temp-dir":    "test-buffer-dir/temp-dir",
 		"config-file": "test-config-file",
 		"foreground":  "",
 		"uid":         "0",
@@ -67,7 +67,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			name: "should return valid args correctly",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
-				CacheDir:   "test-cache-dir",
+				BufferDir:  "test-buffer-dir",
 				ConfigFile: "test-config-file",
 			},
 			expectedArgs:          defaultFlagMap,
@@ -77,14 +77,14 @@ func TestPrepareMountArgs(t *testing.T) {
 			name: "should return valid args with options correctly",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
-				CacheDir:   "test-cache-dir",
+				BufferDir:  "test-buffer-dir",
 				ConfigFile: "test-config-file",
 				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
 				"app-name":           GCSFuseAppName,
-				"temp-dir":           "test-cache-dir/temp-dir",
+				"temp-dir":           "test-buffer-dir/temp-dir",
 				"config-file":        "test-config-file",
 				"foreground":         "",
 				"uid":                "100",
@@ -103,14 +103,14 @@ func TestPrepareMountArgs(t *testing.T) {
 			name: "should return valid args with bool options correctly",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
-				CacheDir:   "test-cache-dir",
+				BufferDir:  "test-buffer-dir",
 				ConfigFile: "test-config-file",
 				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs=true"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs=true": "",
 				"app-name":           GCSFuseAppName,
-				"temp-dir":           "test-cache-dir/temp-dir",
+				"temp-dir":           "test-buffer-dir/temp-dir",
 				"config-file":        "test-config-file",
 				"foreground":         "",
 				"uid":                "100",
@@ -124,7 +124,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			name: "should return valid args with error correctly",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
-				CacheDir:   "test-cache-dir",
+				BufferDir:  "test-buffer-dir",
 				ConfigFile: "test-config-file",
 				Options:    invalidArgs,
 			},
@@ -135,13 +135,13 @@ func TestPrepareMountArgs(t *testing.T) {
 			name: "should return valid args with custom app-name",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
-				CacheDir:   "test-cache-dir",
+				BufferDir:  "test-buffer-dir",
 				ConfigFile: "test-config-file",
 				Options:    []string{"app-name=Vertex"},
 			},
 			expectedArgs: map[string]string{
 				"app-name":    GCSFuseAppName + "-Vertex",
-				"temp-dir":    "test-cache-dir/temp-dir",
+				"temp-dir":    "test-buffer-dir/temp-dir",
 				"config-file": "test-config-file",
 				"foreground":  "",
 				"uid":         "0",
