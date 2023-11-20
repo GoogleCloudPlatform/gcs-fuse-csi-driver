@@ -79,8 +79,8 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 								{
-									Name:      SidecarContainerCacheVolumeName,
-									MountPath: SidecarContainerCacheVolumeMountPath,
+									Name:      SidecarContainerBufferVolumeName,
+									MountPath: SidecarContainerBufferVolumeMountPath,
 								},
 							},
 						},
@@ -157,8 +157,8 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 								{
-									Name:      SidecarContainerCacheVolumeName,
-									MountPath: SidecarContainerCacheVolumeMountPath,
+									Name:      SidecarContainerBufferVolumeName,
+									MountPath: SidecarContainerBufferVolumeMountPath,
 								},
 							},
 						},
@@ -187,8 +187,8 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 									MountPath: "wrong-tmp-volume-mount-path",
 								},
 								{
-									Name:      SidecarContainerCacheVolumeName,
-									MountPath: SidecarContainerCacheVolumeMountPath,
+									Name:      SidecarContainerBufferVolumeName,
+									MountPath: SidecarContainerBufferVolumeMountPath,
 								},
 							},
 						},
@@ -206,7 +206,7 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 					Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
 					Volumes: []v1.Volume{
 						{
-							Name: SidecarContainerCacheVolumeName,
+							Name: SidecarContainerBufferVolumeName,
 							VolumeSource: v1.VolumeSource{
 								EmptyDir: &v1.EmptyDirVolumeSource{},
 							},
@@ -228,7 +228,7 @@ func TestValidatePodHasSidecarContainerInjected(t *testing.T) {
 							VolumeSource: v1.VolumeSource{},
 						},
 						{
-							Name: SidecarContainerCacheVolumeName,
+							Name: SidecarContainerBufferVolumeName,
 							VolumeSource: v1.VolumeSource{
 								EmptyDir: &v1.EmptyDirVolumeSource{},
 							},
