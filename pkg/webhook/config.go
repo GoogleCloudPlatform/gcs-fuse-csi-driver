@@ -39,11 +39,11 @@ func LoadConfig(containerImage, imagePullPolicy, cpuLimit, memoryLimit, ephemera
 	}
 	m, err := resource.ParseQuantity(memoryLimit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse memory limit %q: %w", cpuLimit, err)
+		return nil, fmt.Errorf("failed to parse memory limit %q: %w", memoryLimit, err)
 	}
 	e, err := resource.ParseQuantity(ephemeralStorageLimit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse ephemeral storage limit %q: %w", cpuLimit, err)
+		return nil, fmt.Errorf("failed to parse ephemeral storage limit %q: %w", ephemeralStorageLimit, err)
 	}
 	cfg := &Config{
 		ContainerImage:                containerImage,
