@@ -622,8 +622,8 @@ k8s.io/utils v0.0.0-20231121161247-cf03d44ff3cf/go.mod h1:OLgZIPagt7ERELqWJFomSt
 rsc.io/binaryregexp v0.2.0/go.mod h1:qTv7/COck+e2FymRvadv62gMdZztPaShugOCi3I+8D8=
 rsc.io/quote/v3 v3.1.0/go.mod h1:yEA65RcK8LyAZtP9Kv3t0HmxON59tX3rD+tICJqUlj0=
 rsc.io/sampler v1.3.0/go.mod h1:T1hPZKmBbMNahiBKFy5HrXp6adAjACjK9JXDnKaTXpA=
-sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.1 h1:suc8HHvU5zDtc5N+CiGu1YG/ipwvkv7vPB9OUMUVjW8=
-sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.1/go.mod h1:o6mPitrlgUex6ZK5mp4VerN54SOVNzSWELwWnr8wep0=
+sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.2 h1:vAt+mVqNki7yUgcuQijC3hLoeOv/RiTt8eARcxaxiDg=
+sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.2/go.mod h1:z7+wmGM2dfIiLRfrC6jb5kV2Mq/sK1ZP303cxzkV5Y4=
 sigs.k8s.io/boskos v0.0.0-20231114232203-490321190b7d h1:0afb5kASGDSztGWON6pWKFaeuRp+1R8JxLk/kNAcdpQ=
 sigs.k8s.io/boskos v0.0.0-20231114232203-490321190b7d/go.mod h1:lEhFwnJmLFLZHNlKcjs7Olvf+f9BQpibsXG9QGg7CBY=
 sigs.k8s.io/controller-runtime v0.16.3 h1:2TuvuokmfXvDUamSx1SuAOO3eTyye+47mJCigwG62c4=

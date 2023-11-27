@@ -140,7 +140,7 @@ require (
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.28.4 // indirect
 	k8s.io/test-infra v0.0.0-20231122013545-b95bf25b4fce // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.1 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.2 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
