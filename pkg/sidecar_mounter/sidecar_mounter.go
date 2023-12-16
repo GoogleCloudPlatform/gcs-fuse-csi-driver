@@ -102,17 +102,20 @@ func (m *Mounter) GetCmds() []*exec.Cmd {
 }
 
 var disallowedFlags = map[string]bool{
-	"temp-dir":             true,
-	"config-file":          true,
-	"foreground":           true,
-	"log-file":             true,
-	"log-format":           true,
-	"key-file":             true,
-	"token-url":            true,
-	"reuse-token-from-url": true,
-	"o":                    true,
-	"logging:file-path":    true,
-	"logging:format":       true,
+	"temp-dir":                             true,
+	"config-file":                          true,
+	"foreground":                           true,
+	"log-file":                             true,
+	"log-format":                           true,
+	"key-file":                             true,
+	"token-url":                            true,
+	"reuse-token-from-url":                 true,
+	"o":                                    true,
+	"logging:file-path":                    true,
+	"logging:format":                       true,
+	"logging:log-rotate:max-file-size-mb":  true,
+	"logging:log-rotate:backup-file-count": true,
+	"logging:log-rotate:compress":          true,
 }
 
 var boolFlags = map[string]bool{
