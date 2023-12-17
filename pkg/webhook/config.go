@@ -18,47 +18,35 @@ limitations under the License.
 package webhook
 
 import (
-	"fmt"
-
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 type Config struct {
-	ContainerImage                string
-	ImagePullPolicy               string
-	CPULimit                      resource.Quantity
-	MemoryLimit                   resource.Quantity
-	EphemeralStorageLimit         resource.Quantity
-	TerminationGracePeriodSeconds int
+	ContainerImage                string            `json:"-"`
+	ImagePullPolicy               string            `json:"-"`
+	CPURequest                    resource.Quantity `json:"gke-gcsfuse/cpu-request,omitempty"`
+	CPULimit                      resource.Quantity `json:"gke-gcsfuse/cpu-limit,omitempty"`
+	MemoryRequest                 resource.Quantity `json:"gke-gcsfuse/memory-request,omitempty"`
+	MemoryLimit                   resource.Quantity `json:"gke-gcsfuse/memory-limit,omitempty"`
+	EphemeralStorageRequest       resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
+	EphemeralStorageLimit         resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
+	TerminationGracePeriodSeconds int               `json:"-"`
 }
 
-func LoadConfig(containerImage, imagePullPolicy, cpuLimit, memoryLimit, ephemeralStorageLimit string) (*Config, error) {
-	c, err := resource.ParseQuantity(cpuLimit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CPU limit %q: %w", cpuLimit, err)
-	}
-	m, err := resource.ParseQuantity(memoryLimit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse memory limit %q: %w", memoryLimit, err)
-	}
-	e, err := resource.ParseQuantity(ephemeralStorageLimit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ephemeral storage limit %q: %w", ephemeralStorageLimit, err)
-	}
-	cfg := &Config{
+func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
+	return &Config{
 		ContainerImage:                containerImage,
 		ImagePullPolicy:               imagePullPolicy,
-		CPULimit:                      c,
-		MemoryLimit:                   m,
-		EphemeralStorageLimit:         e,
+		CPURequest:                    resource.MustParse(cpuRequest),
+		CPULimit:                      resource.MustParse(cpuLimit),
+		MemoryRequest:                 resource.MustParse(memoryRequest),
+		MemoryLimit:                   resource.MustParse(memoryLimit),
+		EphemeralStorageRequest:       resource.MustParse(ephemeralStorageRequest),
+		EphemeralStorageLimit:         resource.MustParse(ephemeralStorageLimit),
 		TerminationGracePeriodSeconds: 30,
 	}
-
-	return cfg, nil
 }
 
 func FakeConfig() *Config {
-	c, _ := LoadConfig("fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847", "Always", "100m", "30Mi", "5Gi")
-
-	return c
+	return LoadConfig("fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847", "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
 }

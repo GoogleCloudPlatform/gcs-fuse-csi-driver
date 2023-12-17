@@ -40,19 +40,7 @@ const (
 )
 
 func GetSidecarContainerSpec(c *Config) v1.Container {
-	resourceList := v1.ResourceList{}
-
-	if c.CPULimit != resource.MustParse("0") {
-		resourceList[v1.ResourceCPU] = c.CPULimit
-	}
-
-	if c.MemoryLimit != resource.MustParse("0") {
-		resourceList[v1.ResourceMemory] = c.MemoryLimit
-	}
-
-	if c.EphemeralStorageLimit != resource.MustParse("0") {
-		resourceList[v1.ResourceEphemeralStorage] = c.EphemeralStorageLimit
-	}
+	limits, requests := prepareResourceList(c)
 
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
@@ -78,8 +66,8 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 			fmt.Sprintf("--grace-period=%v", c.TerminationGracePeriodSeconds),
 		},
 		Resources: v1.ResourceRequirements{
-			Limits:   resourceList,
-			Requests: resourceList,
+			Limits:   limits,
+			Requests: requests,
 		},
 		VolumeMounts: []v1.VolumeMount{
 			{
@@ -169,4 +157,24 @@ func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
 	}
 
 	return containerInjected && tempVolumeInjected
+}
+
+func prepareResourceList(c *Config) (v1.ResourceList, v1.ResourceList) {
+	limitsResourceList := v1.ResourceList{}
+	requestsResourceList := v1.ResourceList{}
+
+	checkZeroQuantity := func(rl map[v1.ResourceName]resource.Quantity, rn v1.ResourceName, q resource.Quantity) {
+		if !q.IsZero() {
+			rl[rn] = q
+		}
+	}
+
+	checkZeroQuantity(limitsResourceList, v1.ResourceCPU, c.CPULimit)
+	checkZeroQuantity(limitsResourceList, v1.ResourceMemory, c.MemoryLimit)
+	checkZeroQuantity(limitsResourceList, v1.ResourceEphemeralStorage, c.EphemeralStorageLimit)
+	checkZeroQuantity(requestsResourceList, v1.ResourceCPU, c.CPURequest)
+	checkZeroQuantity(requestsResourceList, v1.ResourceMemory, c.MemoryRequest)
+	checkZeroQuantity(requestsResourceList, v1.ResourceEphemeralStorage, c.EphemeralStorageRequest)
+
+	return limitsResourceList, requestsResourceList
 }
