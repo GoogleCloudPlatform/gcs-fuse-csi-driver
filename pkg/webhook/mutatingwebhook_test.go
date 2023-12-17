@@ -28,11 +28,234 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	v1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
+
+func TestPrepareConfig(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                          string
+		annotations                   map[string]string
+		terminationGracePeriodSeconds int
+		wantConfig                    *Config
+		expectErr                     bool
+	}{
+		{
+			name: "use default values if no annotation is found",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey: "true",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      FakeConfig().CPULimit,
+				CPURequest:                    FakeConfig().CPURequest,
+				MemoryLimit:                   FakeConfig().MemoryLimit,
+				MemoryRequest:                 FakeConfig().MemoryRequest,
+				EphemeralStorageLimit:         FakeConfig().EphemeralStorageLimit,
+				EphemeralStorageRequest:       FakeConfig().EphemeralStorageRequest,
+			},
+			expectErr: false,
+		},
+		{
+			name: "only limits are specified",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                  "true",
+				annotationGcsfuseSidecarCPULimitKey:               "500m",
+				annotationGcsfuseSidecarMemoryLimitKey:            "1Gi",
+				annotationGcsfuseSidecarEphermeralStorageLimitKey: "50Gi",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.MustParse("500m"),
+				CPURequest:                    resource.MustParse("500m"),
+				MemoryLimit:                   resource.MustParse("1Gi"),
+				MemoryRequest:                 resource.MustParse("1Gi"),
+				EphemeralStorageLimit:         resource.MustParse("50Gi"),
+				EphemeralStorageRequest:       resource.MustParse("50Gi"),
+			},
+			expectErr: false,
+		},
+		{
+			name: "only requests are specified",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                    "true",
+				annotationGcsfuseSidecarCPURequestKey:               "500m",
+				annotationGcsfuseSidecarMemoryRequestKey:            "1Gi",
+				annotationGcsfuseSidecarEphermeralStorageRequestKey: "50Gi",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.MustParse("500m"),
+				CPURequest:                    resource.MustParse("500m"),
+				MemoryLimit:                   resource.MustParse("1Gi"),
+				MemoryRequest:                 resource.MustParse("1Gi"),
+				EphemeralStorageLimit:         resource.MustParse("50Gi"),
+				EphemeralStorageRequest:       resource.MustParse("50Gi"),
+			},
+			expectErr: false,
+		},
+		{
+			name: "limits are set to '0'",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                  "true",
+				annotationGcsfuseSidecarCPULimitKey:               "0",
+				annotationGcsfuseSidecarMemoryLimitKey:            "0",
+				annotationGcsfuseSidecarEphermeralStorageLimitKey: "0",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.Quantity{},
+				CPURequest:                    resource.Quantity{},
+				MemoryLimit:                   resource.Quantity{},
+				MemoryRequest:                 resource.Quantity{},
+				EphemeralStorageLimit:         resource.Quantity{},
+				EphemeralStorageRequest:       resource.Quantity{},
+			},
+			expectErr: false,
+		},
+		{
+			name: "requests are set to '0'",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                    "true",
+				annotationGcsfuseSidecarCPURequestKey:               "0",
+				annotationGcsfuseSidecarMemoryRequestKey:            "0",
+				annotationGcsfuseSidecarEphermeralStorageRequestKey: "0",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.Quantity{},
+				CPURequest:                    resource.Quantity{},
+				MemoryLimit:                   resource.Quantity{},
+				MemoryRequest:                 resource.Quantity{},
+				EphemeralStorageLimit:         resource.Quantity{},
+				EphemeralStorageRequest:       resource.Quantity{},
+			},
+			expectErr: false,
+		},
+		{
+			name: "requests and limits are explicitly set",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                    "true",
+				annotationGcsfuseSidecarCPULimitKey:                 "500m",
+				annotationGcsfuseSidecarMemoryLimitKey:              "1Gi",
+				annotationGcsfuseSidecarEphermeralStorageLimitKey:   "50Gi",
+				annotationGcsfuseSidecarCPURequestKey:               "100m",
+				annotationGcsfuseSidecarMemoryRequestKey:            "500Mi",
+				annotationGcsfuseSidecarEphermeralStorageRequestKey: "10Gi",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.MustParse("500m"),
+				CPURequest:                    resource.MustParse("100m"),
+				MemoryLimit:                   resource.MustParse("1Gi"),
+				MemoryRequest:                 resource.MustParse("500Mi"),
+				EphemeralStorageLimit:         resource.MustParse("50Gi"),
+				EphemeralStorageRequest:       resource.MustParse("10Gi"),
+			},
+			expectErr: false,
+		},
+		{
+			name: "requests and limits are explicitly set with '0' limits",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                    "true",
+				annotationGcsfuseSidecarCPULimitKey:                 "0",
+				annotationGcsfuseSidecarMemoryLimitKey:              "0",
+				annotationGcsfuseSidecarEphermeralStorageLimitKey:   "0",
+				annotationGcsfuseSidecarCPURequestKey:               "100m",
+				annotationGcsfuseSidecarMemoryRequestKey:            "500Mi",
+				annotationGcsfuseSidecarEphermeralStorageRequestKey: "10Gi",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.Quantity{},
+				CPURequest:                    resource.MustParse("100m"),
+				MemoryLimit:                   resource.Quantity{},
+				MemoryRequest:                 resource.MustParse("500Mi"),
+				EphemeralStorageLimit:         resource.Quantity{},
+				EphemeralStorageRequest:       resource.MustParse("10Gi"),
+			},
+			expectErr: false,
+		},
+		{
+			name: "requests and limits are explicitly set with '0' requests",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:                    "true",
+				annotationGcsfuseSidecarCPULimitKey:                 "500m",
+				annotationGcsfuseSidecarMemoryLimitKey:              "1Gi",
+				annotationGcsfuseSidecarEphermeralStorageLimitKey:   "50Gi",
+				annotationGcsfuseSidecarCPURequestKey:               "0",
+				annotationGcsfuseSidecarMemoryRequestKey:            "0",
+				annotationGcsfuseSidecarEphermeralStorageRequestKey: "0",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig: &Config{
+				ContainerImage:                FakeConfig().ContainerImage,
+				TerminationGracePeriodSeconds: 10,
+				ImagePullPolicy:               FakeConfig().ImagePullPolicy,
+				CPULimit:                      resource.MustParse("500m"),
+				CPURequest:                    resource.Quantity{},
+				MemoryLimit:                   resource.MustParse("1Gi"),
+				MemoryRequest:                 resource.Quantity{},
+				EphemeralStorageLimit:         resource.MustParse("50Gi"),
+				EphemeralStorageRequest:       resource.Quantity{},
+			},
+			expectErr: false,
+		},
+		{
+			name: "invalid resource Quantity should throw error",
+			annotations: map[string]string{
+				AnnotationGcsfuseVolumeEnableKey:    "true",
+				annotationGcsfuseSidecarCPULimitKey: "invalid",
+			},
+			terminationGracePeriodSeconds: 10,
+			wantConfig:                    nil,
+			expectErr:                     true,
+		},
+	}
+
+	for n, tc := range testCases {
+		t.Logf("test case %v: %s", n+1, tc.name)
+		si := SidecarInjector{
+			Client:  nil,
+			Config:  FakeConfig(),
+			Decoder: admission.NewDecoder(runtime.NewScheme()),
+		}
+		gotConfig, gotErr := si.prepareConfig(tc.annotations, tc.terminationGracePeriodSeconds)
+		if tc.expectErr != (gotErr != nil) {
+			t.Errorf("Expect error: %v, but got error: %v", tc.expectErr, gotErr)
+		}
+
+		if diff := cmp.Diff(gotConfig, tc.wantConfig); diff != "" {
+			t.Errorf("config differ (-got, +want)\n%s", diff)
+		}
+	}
+}
 
 func TestValidateMutatingWebhookResponse(t *testing.T) {
 	t.Parallel()
@@ -47,6 +270,24 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			name:         "Empty request test.",
 			inputPod:     nil,
 			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("there is no content to decode")),
+		},
+		{
+			name:      "Invalid resource request test.",
+			operation: v1.Create,
+			inputPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers:                    []corev1.Container{},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						AnnotationGcsfuseVolumeEnableKey:    "true",
+						annotationGcsfuseSidecarCPULimitKey: "invalid",
+					},
+				},
+			},
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$'")),
 		},
 		{
 			name:      "Different operation test.",
@@ -80,7 +321,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"gke-gcsfuse/volumes": "true",
+						AnnotationGcsfuseVolumeEnableKey: "true",
 					},
 				},
 			},
@@ -148,7 +389,7 @@ func compareResponses(wantResponse, gotResponse admission.Response) error {
 
 	if len(wantPaths) > 0 && len(gotPaths) > 0 {
 		less := func(a, b string) bool { return a > b }
-		if diff := cmp.Diff(wantPaths, gotPaths, cmpopts.SortSlices(less)); diff != "" {
+		if diff := cmp.Diff(gotPaths, wantPaths, cmpopts.SortSlices(less)); diff != "" {
 			return fmt.Errorf("unexpected pod args (-got, +want)\n%s", diff)
 		}
 	}
@@ -179,7 +420,7 @@ func validInputPod() *corev1.Pod {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				"gke-gcsfuse/volumes": "true",
+				AnnotationGcsfuseVolumeEnableKey: "true",
 			},
 		},
 	}

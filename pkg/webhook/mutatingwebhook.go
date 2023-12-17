@@ -33,14 +33,18 @@ import (
 )
 
 const (
-	AnnotationGcsfuseVolumeEnableKey                  = "gke-gcsfuse/volumes"
-	annotationGcsfuseSidecarCPULimitKey               = "gke-gcsfuse/cpu-limit"
-	annotationGcsfuseSidecarMemoryLimitKey            = "gke-gcsfuse/memory-limit"
-	annotationGcsfuseSidecarEphermeralStorageLimitKey = "gke-gcsfuse/ephemeral-storage-limit"
+	AnnotationGcsfuseVolumeEnableKey                    = "gke-gcsfuse/volumes"
+	annotationGcsfuseSidecarCPULimitKey                 = "gke-gcsfuse/cpu-limit"
+	annotationGcsfuseSidecarMemoryLimitKey              = "gke-gcsfuse/memory-limit"
+	annotationGcsfuseSidecarEphermeralStorageLimitKey   = "gke-gcsfuse/ephemeral-storage-limit"
+	annotationGcsfuseSidecarCPURequestKey               = "gke-gcsfuse/cpu-request"
+	annotationGcsfuseSidecarMemoryRequestKey            = "gke-gcsfuse/memory-request"
+	annotationGcsfuseSidecarEphermeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
 )
 
 type SidecarInjector struct {
-	Client  client.Client
+	Client client.Client
+	// default sidecar container config values, can be overwritten by the pod annotations
 	Config  *Config
 	Decoder *admission.Decoder
 }
@@ -64,11 +68,12 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey))
 	}
 
-	if strings.ToLower(enableGcsfuseVolumes) == "false" {
-		return admission.Allowed("No injection required.")
-	}
-
-	if strings.ToLower(enableGcsfuseVolumes) != "true" {
+	switch strings.ToLower(enableGcsfuseVolumes) {
+	case "false":
+		return admission.Allowed(fmt.Sprintf("found annotation '%v: false' for Pod: Name %q, GenerateName %q, Namespace %q, no injection required.", AnnotationGcsfuseVolumeEnableKey, pod.Name, pod.GenerateName, pod.Namespace))
+	case "true":
+		klog.Infof("found annotation '%v: true' for Pod: Name %q, GenerateName %q, Namespace %q, start to inject the sidecar container.", AnnotationGcsfuseVolumeEnableKey, pod.Name, pod.GenerateName, pod.Namespace)
+	default:
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", AnnotationGcsfuseVolumeEnableKey))
 	}
 
@@ -76,41 +81,14 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
 
-	configCopy := &Config{
-		ContainerImage:                si.Config.ContainerImage,
-		ImagePullPolicy:               si.Config.ImagePullPolicy,
-		CPULimit:                      si.Config.CPULimit.DeepCopy(),
-		MemoryLimit:                   si.Config.MemoryLimit.DeepCopy(),
-		EphemeralStorageLimit:         si.Config.EphemeralStorageLimit.DeepCopy(),
-		TerminationGracePeriodSeconds: int(*pod.Spec.TerminationGracePeriodSeconds),
-	}
-	if v, ok := pod.Annotations[annotationGcsfuseSidecarCPULimitKey]; ok {
-		if q, err := resource.ParseQuantity(v); err == nil {
-			configCopy.CPULimit = q
-		} else {
-			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %w", v, annotationGcsfuseSidecarCPULimitKey, err))
-		}
+	config, err := si.prepareConfig(pod.Annotations, int(*pod.Spec.TerminationGracePeriodSeconds))
+	if err != nil {
+		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	if v, ok := pod.Annotations[annotationGcsfuseSidecarMemoryLimitKey]; ok {
-		if q, err := resource.ParseQuantity(v); err == nil {
-			configCopy.MemoryLimit = q
-		} else {
-			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %w", v, annotationGcsfuseSidecarMemoryLimitKey, err))
-		}
-	}
-
-	if v, ok := pod.Annotations[annotationGcsfuseSidecarEphermeralStorageLimitKey]; ok {
-		if q, err := resource.ParseQuantity(v); err == nil {
-			configCopy.EphemeralStorageLimit = q
-		} else {
-			return admission.Errored(http.StatusBadRequest, fmt.Errorf("bad value %q for %q: %w", v, annotationGcsfuseSidecarEphermeralStorageLimitKey, err))
-		}
-	}
-
-	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, CPU limit %q, memory limit %q, ephemeral storage limit %q", pod.Name, pod.GenerateName, pod.Namespace, configCopy.CPULimit.String(), configCopy.MemoryLimit.String(), configCopy.EphemeralStorageLimit.String())
+	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, config %v", pod.Name, pod.GenerateName, pod.Namespace, config)
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
-	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(configCopy)}, pod.Spec.Containers...)
+	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, pod.Spec.Containers...)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
@@ -118,4 +96,44 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
+}
+
+func (si *SidecarInjector) prepareConfig(annotations map[string]string, terminationGracePeriodSeconds int) (*Config, error) {
+	config := &Config{
+		ContainerImage:                si.Config.ContainerImage,
+		ImagePullPolicy:               si.Config.ImagePullPolicy,
+		TerminationGracePeriodSeconds: terminationGracePeriodSeconds,
+	}
+
+	jsonData, err := json.Marshal(annotations)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal pod annotations: %w", err)
+	}
+
+	if err := json.Unmarshal(jsonData, config); err != nil {
+		return nil, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: %w", err)
+	}
+
+	// if both of the request and limit are unset, assign the default values.
+	// if one of the request or limit is set and another is unset, enforce them to be set as the same.
+	populateResource := func(rq, lq *resource.Quantity, drq, dlq resource.Quantity) {
+		if rq.Format == "" && lq.Format == "" {
+			*rq = drq
+			*lq = dlq
+		}
+
+		if lq.Format == "" {
+			*lq = *rq
+		}
+
+		if rq.Format == "" {
+			*rq = *lq
+		}
+	}
+
+	populateResource(&config.CPURequest, &config.CPULimit, si.Config.CPURequest, si.Config.CPULimit)
+	populateResource(&config.MemoryRequest, &config.MemoryLimit, si.Config.MemoryRequest, si.Config.MemoryLimit)
+	populateResource(&config.EphemeralStorageRequest, &config.EphemeralStorageLimit, si.Config.EphemeralStorageRequest, si.Config.EphemeralStorageLimit)
+
+	return config, nil
 }

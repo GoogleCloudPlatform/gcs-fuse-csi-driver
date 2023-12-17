@@ -34,16 +34,19 @@ import (
 )
 
 var (
-	port                   = flag.Int("port", 443, "The port that the webhook server serves at.")
-	healthProbeBindAddress = flag.String("health-probe-bind-address", ":8080", "The TCP address that the controller should bind to for serving health probes.")
-	certDir                = flag.String("cert-dir", "/etc/tls-certs", "The directory that contains the server key and certificate.")
-	certName               = flag.String("cert-name", "cert.pem", "The server certificate name.")
-	keyName                = flag.String("key-name", "key.pem", "The server key name.")
-	imagePullPolicy        = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
-	cpuLimit               = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
-	memoryLimit            = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
-	ephemeralStorageLimit  = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
-	sidecarImage           = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
+	port                    = flag.Int("port", 443, "The port that the webhook server serves at.")
+	healthProbeBindAddress  = flag.String("health-probe-bind-address", ":8080", "The TCP address that the controller should bind to for serving health probes.")
+	certDir                 = flag.String("cert-dir", "/etc/tls-certs", "The directory that contains the server key and certificate.")
+	certName                = flag.String("cert-name", "cert.pem", "The server certificate name.")
+	keyName                 = flag.String("key-name", "key.pem", "The server key name.")
+	imagePullPolicy         = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
+	cpuRequest              = flag.String("sidecar-cpu-request", "250m", "The default CPU request for gcsfuse sidecar container.")
+	cpuLimit                = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
+	memoryRequest           = flag.String("sidecar-memory-request", "256Mi", "The default memory request for gcsfuse sidecar container.")
+	memoryLimit             = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
+	ephemeralStorageRequest = flag.String("sidecar-ephemeral-storage-request", "10Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
+	ephemeralStorageLimit   = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
+	sidecarImage            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -60,10 +63,7 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", version, *sidecarImage)
 
 	// Load webhook config
-	c, err := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuLimit, *memoryLimit, *ephemeralStorageLimit)
-	if err != nil {
-		klog.Fatalf("Unable to load webhook config: %v", err)
-	}
+	c := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
 
 	// Setup a Manager
 	klog.Info("Setting up manager.")
