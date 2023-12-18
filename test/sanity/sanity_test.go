@@ -25,7 +25,6 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	sanity "github.com/kubernetes-csi/csi-test/v5/pkg/sanity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -70,7 +69,6 @@ func TestSanity(t *testing.T) {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
 		K8sClients:            &clientset.FakeClientset{},
-		SidecarImage:          webhook.FakeConfig().ContainerImage,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(driverConfig)

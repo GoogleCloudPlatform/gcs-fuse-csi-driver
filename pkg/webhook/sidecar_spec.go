@@ -22,8 +22,6 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/util/parsers"
 	"k8s.io/utils/ptr"
 )
 
@@ -103,32 +101,23 @@ func GetSidecarContainerVolumeSpec() []v1.Volume {
 
 // ValidatePodHasSidecarContainerInjected validates the following:
 // 1. One of the container name matches the sidecar container name.
-// 2. The image repo matches.
+// 2. The container uses NobodyUID and NobodyGID.
 // 3. The container uses the temp volume.
 // 4. The temp volume have correct volume mount paths.
 // 5. The Pod has the temp volume. The temp volume has to be an emptyDir.
-func ValidatePodHasSidecarContainerInjected(image string, pod *v1.Pod) bool {
+func ValidatePodHasSidecarContainerInjected(pod *v1.Pod, shouldInjectedByWebhook bool) bool {
 	containerInjected := false
 	tempVolumeInjected := false
 
-	expectedImageRepo, _, _, err := parsers.ParseImageName(image)
-	if err != nil {
-		klog.Errorf("Could not parse expected image : name %q, error: %v", image, err)
-
-		return false
-	}
-
-	for _, c := range pod.Spec.Containers {
+	for i, c := range pod.Spec.Containers {
 		if c.Name == SidecarContainerName {
-			inputImageRepo, _, _, err := parsers.ParseImageName(c.Image)
-			if err != nil {
-				klog.Errorf("Could not parse input image : name %q, error: %v", image, err)
-
-				return false
+			// if the sidecar container is injected by the webhook,
+			// the sidecar container needs to be at 0 index.
+			if shouldInjectedByWebhook && i != 0 {
+				break
 			}
 
-			if inputImageRepo == expectedImageRepo &&
-				c.SecurityContext != nil &&
+			if c.SecurityContext != nil &&
 				*c.SecurityContext.RunAsUser == NobodyUID &&
 				*c.SecurityContext.RunAsGroup == NobodyGID {
 				containerInjected = true

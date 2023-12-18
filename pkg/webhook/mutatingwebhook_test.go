@@ -301,7 +301,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", v1.Update)),
 		},
 		{
-			name:      "Annotation key not found test",
+			name:      "Annotation key not found test.",
 			operation: v1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
@@ -330,8 +330,14 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		{
 			name:         "Injection successful test.",
 			operation:    v1.Create,
-			inputPod:     validInputPod(),
-			wantResponse: wantResponse(t),
+			inputPod:     validInputPod(false),
+			wantResponse: wantResponse(false, t),
+		},
+		{
+			name:         "Injection with custom sidecar container image successful test.",
+			operation:    v1.Create,
+			inputPod:     validInputPod(true),
+			wantResponse: wantResponse(true, t),
 		},
 	}
 
@@ -397,8 +403,8 @@ func compareResponses(wantResponse, gotResponse admission.Response) error {
 	return nil
 }
 
-func validInputPod() *corev1.Pod {
-	return &corev1.Pod{
+func validInputPod(customImage bool) *corev1.Pod {
+	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
@@ -424,13 +430,27 @@ func validInputPod() *corev1.Pod {
 			},
 		},
 	}
+
+	if customImage {
+		pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
+			Name:  SidecarContainerName,
+			Image: "private-repo/fake-sidecar-image:v999.999.999",
+		})
+	}
+
+	return pod
 }
 
-func wantResponse(t *testing.T) admission.Response {
+func wantResponse(customImage bool, t *testing.T) admission.Response {
 	t.Helper()
-	newPod := validInputPod()
-	newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(FakeConfig())}, newPod.Spec.Containers...)
+	newPod := validInputPod(customImage)
+	config := FakeConfig()
+	if customImage {
+		config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image
+		newPod.Spec.Containers = newPod.Spec.Containers[:len(newPod.Spec.Containers)-1]
+	}
+	newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), newPod.Spec.Volumes...)
 
-	return admission.PatchResponseFromRaw(serialize(t, validInputPod()), serialize(t, newPod))
+	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
 }

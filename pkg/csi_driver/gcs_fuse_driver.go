@@ -42,7 +42,6 @@ type GCSDriverConfig struct {
 	TokenManager          auth.TokenManager
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
-	SidecarImage          string
 }
 
 type GCSDriver struct {
