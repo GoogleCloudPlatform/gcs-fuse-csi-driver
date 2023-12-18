@@ -23,7 +23,7 @@ require (
 	k8s.io/apimachinery v0.28.4
 	k8s.io/client-go v1.5.2
 	k8s.io/klog/v2 v2.110.1
-	k8s.io/kubernetes v1.28.4
+	k8s.io/kubernetes v1.29.0
 	k8s.io/mount-utils v0.28.4
 	k8s.io/pod-security-admission v0.28.4
 	k8s.io/utils v0.0.0-20231127182322-b307cd553661
@@ -47,7 +47,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/distribution/reference v0.5.0 // indirect
-	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/evanphx/json-patch v5.7.0+incompatible // indirect
 	github.com/evanphx/json-patch/v5 v5.7.0 // indirect
@@ -61,7 +60,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
-	github.com/google/cel-go v0.16.1 // indirect
+	github.com/google/cel-go v0.17.7 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
 	github.com/google/pprof v0.0.0-20231205033806-a5a03c77bf08 // indirect
@@ -136,11 +135,11 @@ require (
 	k8s.io/component-helpers v0.28.4 // indirect
 	k8s.io/controller-manager v0.28.4 // indirect
 	k8s.io/kms v0.28.4 // indirect
-	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
+	k8s.io/kube-openapi v0.0.0-20231010175941-2dd684a91f00 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.28.4 // indirect
 	k8s.io/test-infra v0.0.0-20231206205955-f5c8e5872b32 // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.2 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
