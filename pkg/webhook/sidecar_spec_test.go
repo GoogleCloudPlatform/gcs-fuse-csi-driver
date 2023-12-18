@@ -243,7 +243,9 @@ var commonTestCases = []testCase{
 func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 	t.Parallel()
 
-	testCases := append(commonTestCases,
+	testCases := []testCase{}
+	testCases = append(testCases, commonTestCases...)
+	testCases = append(testCases,
 		testCase{
 			name: "should fail the validation when the sidecar container is not at position 0",
 			pod: &v1.Pod{
@@ -275,7 +277,9 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 func TestValidatePodHasSidecarContainerInjectedForManualInjection(t *testing.T) {
 	t.Parallel()
 
-	testCases := append(commonTestCases,
+	testCases := []testCase{}
+	testCases = append(testCases, commonTestCases...)
+	testCases = append(testCases,
 		testCase{
 			name: "should pass the validation when the sidecar container is not at position 0",
 			pod: &v1.Pod{

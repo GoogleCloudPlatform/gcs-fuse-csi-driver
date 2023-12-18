@@ -108,7 +108,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 }
 
 // use the default config values,
-// overwritten by the user input from pod annotations
+// overwritten by the user input from pod annotations.
 func (si *SidecarInjector) prepareConfig(annotations map[string]string, terminationGracePeriodSeconds int) (*Config, error) {
 	config := &Config{
 		ContainerImage:                si.Config.ContainerImage,
@@ -162,7 +162,7 @@ func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
 			index = i
 
 			if _, _, _, err := parsers.ParseImageName(image); err != nil {
-				return "", fmt.Errorf("could not parse input image: %q, error: %v", image, err)
+				return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
 			}
 		}
 	}

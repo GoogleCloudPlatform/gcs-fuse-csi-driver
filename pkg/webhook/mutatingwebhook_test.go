@@ -331,13 +331,13 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			name:         "Injection successful test.",
 			operation:    v1.Create,
 			inputPod:     validInputPod(false),
-			wantResponse: wantResponse(false, t),
+			wantResponse: wantResponse(t, false),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
 			operation:    v1.Create,
 			inputPod:     validInputPod(true),
-			wantResponse: wantResponse(true, t),
+			wantResponse: wantResponse(t, true),
 		},
 	}
 
@@ -441,7 +441,7 @@ func validInputPod(customImage bool) *corev1.Pod {
 	return pod
 }
 
-func wantResponse(customImage bool, t *testing.T) admission.Response {
+func wantResponse(t *testing.T, customImage bool) admission.Response {
 	t.Helper()
 	newPod := validInputPod(customImage)
 	config := FakeConfig()

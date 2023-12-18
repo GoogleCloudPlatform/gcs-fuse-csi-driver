@@ -22,13 +22,19 @@ import (
 )
 
 type Config struct {
-	ContainerImage                string            `json:"-"`
-	ImagePullPolicy               string            `json:"-"`
-	CPURequest                    resource.Quantity `json:"gke-gcsfuse/cpu-request,omitempty"`
-	CPULimit                      resource.Quantity `json:"gke-gcsfuse/cpu-limit,omitempty"`
-	MemoryRequest                 resource.Quantity `json:"gke-gcsfuse/memory-request,omitempty"`
-	MemoryLimit                   resource.Quantity `json:"gke-gcsfuse/memory-limit,omitempty"`
-	EphemeralStorageRequest       resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
+	ContainerImage  string `json:"-"`
+	ImagePullPolicy string `json:"-"`
+	//nolint:tagliatelle
+	CPURequest resource.Quantity `json:"gke-gcsfuse/cpu-request,omitempty"`
+	//nolint:tagliatelle
+	CPULimit resource.Quantity `json:"gke-gcsfuse/cpu-limit,omitempty"`
+	//nolint:tagliatelle
+	MemoryRequest resource.Quantity `json:"gke-gcsfuse/memory-request,omitempty"`
+	//nolint:tagliatelle
+	MemoryLimit resource.Quantity `json:"gke-gcsfuse/memory-limit,omitempty"`
+	//nolint:tagliatelle
+	EphemeralStorageRequest resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
+	//nolint:tagliatelle
 	EphemeralStorageLimit         resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
 	TerminationGracePeriodSeconds int               `json:"-"`
 }
