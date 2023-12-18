@@ -37,7 +37,6 @@ var (
 	runController    = flag.Bool("controller", false, "run controller service")
 	runNode          = flag.Bool("node", false, "run node service")
 	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	sidecarImage     = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 
@@ -91,7 +90,6 @@ func main() {
 		TokenManager:          tm,
 		Mounter:               mounter,
 		K8sClients:            clientset,
-		SidecarImage:          *sidecarImage,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)
@@ -99,7 +97,7 @@ func main() {
 		klog.Fatalf("Failed to initialize Google Cloud Storage FUSE CSI Driver: %v", err)
 	}
 
-	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v, sidecar container image %v", version, *sidecarImage)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v", version)
 	gcfsDriver.Run(*endpoint)
 
 	os.Exit(0)

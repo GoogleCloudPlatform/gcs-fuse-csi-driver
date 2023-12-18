@@ -199,7 +199,7 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	// TODO(songjiaxun) remove this logic after the next CSI driver release.
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "fsgroup")
+		skipTests = append(skipTests, "fsgroup", "custom.sidecar.container.image")
 	}
 
 	skipString := strings.Join(skipTests, "|")

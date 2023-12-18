@@ -51,7 +51,6 @@ spec:
             - --endpoint=unix:/csi/csi.sock
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
-            - --sidecar-image=$(SIDECAR_IMAGE)
           resources:
             limits:
               cpu: 200m
@@ -64,11 +63,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: SIDECAR_IMAGE
-              valueFrom:
-                configMapKeyRef:
-                  name: gcsfusecsi-image-config
-                  key: sidecar-image
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet/pods

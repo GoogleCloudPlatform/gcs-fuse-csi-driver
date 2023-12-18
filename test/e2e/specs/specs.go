@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
@@ -64,6 +65,8 @@ const (
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	UbuntuImage         = "ubuntu:20.04"
+
+	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:9143d9d3b8fc5eb1f907cb9a895c8442d860e51892dd52e74a84119eae120d84"
 
 	pollInterval     = 1 * time.Second
 	pollTimeout      = 1 * time.Minute
@@ -323,6 +326,19 @@ func (t *TestPod) SetResource(cpuLimit, memoryLimit, storageLimit string) {
 			v1.ResourceEphemeralStorage: eph,
 		},
 	}
+}
+
+func (t *TestPod) SetCustomSidecarContainerImage() {
+	t.pod.Spec.Containers = append(t.pod.Spec.Containers, v1.Container{
+		Name:  webhook.SidecarContainerName,
+		Image: LastPublishedSidecarContainerImage,
+	})
+}
+
+func (t *TestPod) VerifyCustomSidecarContainerImage() {
+	gomega.Expect(len(t.pod.Spec.Containers)).To(gomega.Equal(2))
+	gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.Equal(webhook.SidecarContainerName))
+	gomega.Expect(t.pod.Spec.Containers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
 }
 
 func (t *TestPod) Cleanup(ctx context.Context) {

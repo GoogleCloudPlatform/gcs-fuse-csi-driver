@@ -152,12 +152,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
 	}
-	if !webhook.ValidatePodHasSidecarContainerInjected(s.driver.config.SidecarImage, pod) {
-		if pod.Annotations[webhook.AnnotationGcsfuseVolumeEnableKey] != "true" {
-			return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
+
+	shouldInjectedByWebhook := strings.ToLower(pod.Annotations[webhook.AnnotationGcsfuseVolumeEnableKey]) == "true"
+	sidecarInjected := webhook.ValidatePodHasSidecarContainerInjected(pod, shouldInjectedByWebhook)
+	if !sidecarInjected {
+		if shouldInjectedByWebhook {
+			return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
 		}
 
-		return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
+		return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
 	}
 
 	// Check if the Pod is owned by a Job

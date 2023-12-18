@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/util/parsers"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -77,7 +78,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", AnnotationGcsfuseVolumeEnableKey))
 	}
 
-	if ValidatePodHasSidecarContainerInjected(si.Config.ContainerImage, pod) {
+	if ValidatePodHasSidecarContainerInjected(pod, true) {
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
 
@@ -86,7 +87,15 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, config %v", pod.Name, pod.GenerateName, pod.Namespace, config)
+	if image, err := parseSidecarContainerImage(pod); err == nil {
+		if image != "" {
+			config.ContainerImage = image
+		}
+	} else {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, config %+v", pod.Name, pod.GenerateName, pod.Namespace, config)
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
 	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, pod.Spec.Containers...)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), pod.Spec.Volumes...)
@@ -98,6 +107,8 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
 }
 
+// use the default config values,
+// overwritten by the user input from pod annotations
 func (si *SidecarInjector) prepareConfig(annotations map[string]string, terminationGracePeriodSeconds int) (*Config, error) {
 	config := &Config{
 		ContainerImage:                si.Config.ContainerImage,
@@ -136,4 +147,30 @@ func (si *SidecarInjector) prepareConfig(annotations map[string]string, terminat
 	populateResource(&config.EphemeralStorageRequest, &config.EphemeralStorageLimit, si.Config.EphemeralStorageRequest, si.Config.EphemeralStorageLimit)
 
 	return config, nil
+}
+
+// iterates the container list,
+// if a container is named "gke-gcsfuse-sidecar",
+// extract the container image and check if the image is valid,
+// then removes this container from the container list.
+func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
+	var image string
+	var index int
+	for i, c := range pod.Spec.Containers {
+		if c.Name == SidecarContainerName {
+			image = c.Image
+			index = i
+
+			if _, _, _, err := parsers.ParseImageName(image); err != nil {
+				return "", fmt.Errorf("could not parse input image: %q, error: %v", image, err)
+			}
+		}
+	}
+
+	if image != "" {
+		copy(pod.Spec.Containers[index:], pod.Spec.Containers[index+1:])
+		pod.Spec.Containers = pod.Spec.Containers[:len(pod.Spec.Containers)-1]
+	}
+
+	return image, nil
 }
