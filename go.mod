@@ -17,7 +17,7 @@ require (
 	golang.org/x/net v0.19.0
 	golang.org/x/oauth2 v0.15.0
 	google.golang.org/api v0.154.0
-	google.golang.org/grpc v1.60.0
+	google.golang.org/grpc v1.60.1
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.28.4
 	k8s.io/apimachinery v0.28.4
@@ -112,7 +112,7 @@ require (
 	go.uber.org/zap v1.26.0 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
-	golang.org/x/exp v0.0.0-20231214170342-aacd6d4b4611 // indirect
+	golang.org/x/exp v0.0.0-20231219180239-dc181d75b848 // indirect
 	golang.org/x/sync v0.5.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect
 	golang.org/x/term v0.15.0 // indirect
@@ -139,7 +139,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.28.4 // indirect
-	k8s.io/test-infra v0.0.0-20231218014938-3050ad85e0f4 // indirect
+	k8s.io/test-infra v0.0.0-20231219192616-217586608afa // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
