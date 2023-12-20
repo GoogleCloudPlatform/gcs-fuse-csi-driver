@@ -77,3 +77,6 @@ func (service *fakeService) SetIAMPolicy(_ context.Context, _ *ServiceBucket, _,
 func (service *fakeService) CheckBucketExists(_ context.Context, _ *ServiceBucket) (bool, error) {
 	return true, nil
 }
+
+func (service *fakeService) Close() {
+}

@@ -132,6 +132,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 		}
+		defer storageService.Close()
 
 		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
 			code := codes.Internal

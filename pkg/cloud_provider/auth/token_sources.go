@@ -148,6 +148,7 @@ func (ts *GCPTokenSource) fetchGCPSAToken(ctx context.Context, identityBindingTo
 	if err != nil {
 		return nil, fmt.Errorf("create credentials client error: %w", err)
 	}
+	defer gcpSAClient.Close()
 
 	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ctx, ts.k8sSANamespace, ts.k8sSAName)
 	if err != nil {

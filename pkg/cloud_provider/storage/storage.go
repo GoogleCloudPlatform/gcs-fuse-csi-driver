@@ -48,6 +48,7 @@ type Service interface {
 	DeleteBucket(ctx context.Context, b *ServiceBucket) error
 	SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error)
+	Close()
 }
 
 type ServiceManager interface {
@@ -194,6 +195,10 @@ func (service *gcsService) SetIAMPolicy(ctx context.Context, obj *ServiceBucket,
 	}
 
 	return nil
+}
+
+func (service *gcsService) Close() {
+	service.storageClient.Close()
 }
 
 func cloudBucketToServiceBucket(attrs *storage.BucketAttrs) (*ServiceBucket, error) {
