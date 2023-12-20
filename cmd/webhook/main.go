@@ -44,8 +44,8 @@ var (
 	cpuLimit                = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
 	memoryRequest           = flag.String("sidecar-memory-request", "256Mi", "The default memory request for gcsfuse sidecar container.")
 	memoryLimit             = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
-	ephemeralStorageRequest = flag.String("sidecar-ephemeral-storage-request", "10Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
-	ephemeralStorageLimit   = flag.String("sidecar-ephemeral-storage-limit", "10Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
+	ephemeralStorageRequest = flag.String("sidecar-ephemeral-storage-request", "5Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
+	ephemeralStorageLimit   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImage            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 
 	// These are set at compile time.

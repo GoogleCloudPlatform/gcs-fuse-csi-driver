@@ -46,8 +46,11 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --sidecar-cpu-limit=250m
+            - --sidecar-cpu-request=250m
             - --sidecar-memory-limit=256Mi
+            - --sidecar-memory-request=256Mi
             - --sidecar-ephemeral-storage-limit=5Gi
+            - --sidecar-ephemeral-storage-request=5Gi
             - --sidecar-image=$(SIDECAR_IMAGE)
             - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
             - --cert-dir=/etc/tls-certs
