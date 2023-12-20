@@ -32,6 +32,11 @@ const (
 	Mb = 1024 * 1024
 )
 
+var (
+	targetPathRegexp       = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
+	emptyReplacementRegexp = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
+)
+
 // ConvertLabelsStringToMap converts the labels from string to map
 // example: "key1=value1,key2=value2" gets converted into {"key1": "value1", "key2": "value2"}
 func ConvertLabelsStringToMap(labels string) (map[string]string, error) {
@@ -120,8 +125,7 @@ func ParseEndpoint(endpoint string, cleanupSocket bool) (string, string, error) 
 }
 
 func ParsePodIDVolumeFromTargetpath(targetPath string) (string, string, error) {
-	r := regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
-	matched := r.FindStringSubmatch(targetPath)
+	matched := targetPathRegexp.FindStringSubmatch(targetPath)
 	if len(matched) < 3 {
 		return "", "", fmt.Errorf("targetPath %v does not contain Pod ID or volume information", targetPath)
 	}
@@ -137,8 +141,7 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 		return "", fmt.Errorf("failed to parse volume name from target path %q: %w", targetPath, err)
 	}
 
-	r := regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
-	emptyDirBasePath := r.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerTmpVolumeName))
+	emptyDirBasePath := emptyReplacementRegexp.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerTmpVolumeName))
 
 	if createEmptyDir {
 		if err := os.MkdirAll(emptyDirBasePath, 0o750); err != nil {
