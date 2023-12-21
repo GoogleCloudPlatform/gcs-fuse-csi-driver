@@ -65,21 +65,11 @@ func New(kubeconfigPath string) (Interface, error) {
 }
 
 func (c *Clientset) GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error) {
-	pod, err := c.k8sClients.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	return pod, nil
+	return c.k8sClients.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *Clientset) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
-	ds, err := c.k8sClients.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	return ds, nil
+	return c.k8sClients.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
