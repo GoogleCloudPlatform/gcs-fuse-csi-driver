@@ -35,21 +35,19 @@ type Config struct {
 	//nolint:tagliatelle
 	EphemeralStorageRequest resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
 	//nolint:tagliatelle
-	EphemeralStorageLimit         resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
-	TerminationGracePeriodSeconds int               `json:"-"`
+	EphemeralStorageLimit resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
 }
 
 func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
 	return &Config{
-		ContainerImage:                containerImage,
-		ImagePullPolicy:               imagePullPolicy,
-		CPURequest:                    resource.MustParse(cpuRequest),
-		CPULimit:                      resource.MustParse(cpuLimit),
-		MemoryRequest:                 resource.MustParse(memoryRequest),
-		MemoryLimit:                   resource.MustParse(memoryLimit),
-		EphemeralStorageRequest:       resource.MustParse(ephemeralStorageRequest),
-		EphemeralStorageLimit:         resource.MustParse(ephemeralStorageLimit),
-		TerminationGracePeriodSeconds: 30,
+		ContainerImage:          containerImage,
+		ImagePullPolicy:         imagePullPolicy,
+		CPURequest:              resource.MustParse(cpuRequest),
+		CPULimit:                resource.MustParse(cpuLimit),
+		MemoryRequest:           resource.MustParse(memoryRequest),
+		MemoryLimit:             resource.MustParse(memoryLimit),
+		EphemeralStorageRequest: resource.MustParse(ephemeralStorageRequest),
+		EphemeralStorageLimit:   resource.MustParse(ephemeralStorageLimit),
 	}
 }
 
