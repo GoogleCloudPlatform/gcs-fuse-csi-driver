@@ -82,7 +82,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
 
-	config, err := si.prepareConfig(pod.Annotations, int(*pod.Spec.TerminationGracePeriodSeconds))
+	config, err := si.prepareConfig(pod.Annotations)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
@@ -109,11 +109,10 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 // use the default config values,
 // overwritten by the user input from pod annotations.
-func (si *SidecarInjector) prepareConfig(annotations map[string]string, terminationGracePeriodSeconds int) (*Config, error) {
+func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
 	config := &Config{
-		ContainerImage:                si.Config.ContainerImage,
-		ImagePullPolicy:               si.Config.ImagePullPolicy,
-		TerminationGracePeriodSeconds: terminationGracePeriodSeconds,
+		ContainerImage:  si.Config.ContainerImage,
+		ImagePullPolicy: si.Config.ImagePullPolicy,
 	}
 
 	jsonData, err := json.Marshal(annotations)

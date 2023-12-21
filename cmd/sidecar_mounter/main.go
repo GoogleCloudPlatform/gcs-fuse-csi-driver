@@ -38,7 +38,7 @@ import (
 var (
 	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
 	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	gracePeriod    = flag.Int("grace-period", 30, "grace period for gcsfuse termination")
+	_              = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -125,8 +125,7 @@ func main() {
 		for {
 			<-ticker.C
 			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
-				klog.Infof("all the other containers terminated in the Pod, exiting the sidecar container. Sleep %v seconds before terminating gcsfuse processes.", *gracePeriod)
-				time.Sleep(time.Duration(*gracePeriod) * time.Second)
+				klog.Info("all the other containers terminated in the Pod, exiting the sidecar container.")
 
 				for _, cmd := range mounter.GetCmds() {
 					klog.V(4).Infof("killing gcsfue process: %v", cmd)
