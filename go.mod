@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/iam v1.1.5
 	cloud.google.com/go/storage v1.36.0
 	github.com/container-storage-interface/spec v1.9.0
-	github.com/go-logr/logr v1.3.0
+	github.com/go-logr/logr v1.4.1
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.5.0
 	github.com/kubernetes-csi/csi-lib-utils v0.16.0
@@ -54,7 +54,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-openapi/jsonpointer v0.20.1 // indirect
+	github.com/go-openapi/jsonpointer v0.20.2 // indirect
 	github.com/go-openapi/jsonreference v0.20.3 // indirect
 	github.com/go-openapi/swag v0.22.5 // indirect
 	github.com/go-task/slim-sprig v2.20.0+incompatible // indirect
@@ -139,7 +139,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.28.4 // indirect
-	k8s.io/test-infra v0.0.0-20231219192616-217586608afa // indirect
+	k8s.io/test-infra v0.0.0-20231221183456-fef14ce6379c // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.28.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
