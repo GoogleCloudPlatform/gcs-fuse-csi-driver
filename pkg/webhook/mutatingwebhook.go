@@ -95,7 +95,8 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, config %+v", pod.Name, pod.GenerateName, pod.Namespace, config)
+	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, sidecar image %q, CPU request %q, CPU limit %q, memory request %q, memory limit %q, ephemeral storage request %q, ephemeral storage limit %q",
+		pod.Name, pod.GenerateName, pod.Namespace, config.ContainerImage, &config.CPURequest, &config.CPULimit, &config.MemoryRequest, &config.MemoryLimit, &config.EphemeralStorageRequest, &config.EphemeralStorageLimit)
 	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
 	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, pod.Spec.Containers...)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), pod.Spec.Volumes...)
