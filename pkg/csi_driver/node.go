@@ -154,8 +154,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
 	}
 
+	// Since the webhook mutating ordering is not definitive,
+	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
 	shouldInjectedByWebhook := strings.ToLower(pod.Annotations[webhook.AnnotationGcsfuseVolumeEnableKey]) == "true"
-	sidecarInjected := webhook.ValidatePodHasSidecarContainerInjected(pod, shouldInjectedByWebhook)
+	sidecarInjected := webhook.ValidatePodHasSidecarContainerInjected(pod, false)
 	if !sidecarInjected {
 		if shouldInjectedByWebhook {
 			return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
