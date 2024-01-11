@@ -139,7 +139,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "apt-get update && apt-get install wget git -y")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "wget https://go.dev/dl/go1.21.4.linux-$(dpkg --print-architecture).tar.gz -q && tar -C /usr/local -xzf go1.21.4.linux-$(dpkg --print-architecture).tar.gz")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "wget https://go.dev/dl/go1.21.5.linux-$(dpkg --print-architecture).tar.gz -q && tar -C /usr/local -xzf go1.21.5.linux-$(dpkg --print-architecture).tar.gz")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "git clone https://github.com/GoogleCloudPlatform/gcsfuse.git")
 
 		baseTestCommand := fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
