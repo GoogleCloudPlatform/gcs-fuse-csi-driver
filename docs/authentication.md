@@ -35,6 +35,8 @@ See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage 
     workloadPool: ${PROJECT_ID}.svc.id.goog
     ```
 
+    If not, [have Workload Identity enabled](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable).
+
 - Make sure the DaemonSet `gke-metadata-server` is running on your node pool:
 
     ```bash
@@ -47,6 +49,8 @@ See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage 
     NAME                  DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR                                                             AGE
     gke-metadata-server   3         3         3       3            3           beta.kubernetes.io/os=linux,iam.gke.io/gke-metadata-server-enabled=true   17d
     ```
+
+    If not, [have GKE metadata server enabled on your node pool](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#migrate_applications_to).
 
 - Check whether the GCP Service Account was created:
     
