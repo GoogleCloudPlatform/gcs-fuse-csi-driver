@@ -29,6 +29,8 @@ const (
 	SidecarContainerTmpVolumeMountPath    = "/gcsfuse-tmp"
 	SidecarContainerBufferVolumeName      = "gke-gcsfuse-buffer"
 	SidecarContainerBufferVolumeMountPath = "/gcsfuse-buffer"
+	SidecarContainerCacheVolumeName       = "gke-gcsfuse-cache"
+	SidecarContainerCacheVolumeMountPath  = "/gcsfuse-cache"
 
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID = 65534
@@ -73,6 +75,10 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 				Name:      SidecarContainerBufferVolumeName,
 				MountPath: SidecarContainerBufferVolumeMountPath,
 			},
+			{
+				Name:      SidecarContainerCacheVolumeName,
+				MountPath: SidecarContainerCacheVolumeMountPath,
+			},
 		},
 	}
 
@@ -89,6 +95,12 @@ func GetSidecarContainerVolumeSpec() []v1.Volume {
 		},
 		{
 			Name: SidecarContainerBufferVolumeName,
+			VolumeSource: v1.VolumeSource{
+				EmptyDir: &v1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: SidecarContainerCacheVolumeName,
 			VolumeSource: v1.VolumeSource{
 				EmptyDir: &v1.EmptyDirVolumeSource{},
 			},
