@@ -215,6 +215,10 @@ func (t *TestPod) SetupVolumeWithSubPath(volumeResource *storageframework.Volume
 }
 
 func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPath string) {
+	if name == webhook.SidecarContainerBufferVolumeName || name == webhook.SidecarContainerCacheVolumeName {
+		return
+	}
+
 	volumeMount := v1.VolumeMount{
 		Name:      name,
 		MountPath: mountPath,
@@ -344,6 +348,48 @@ func (t *TestPod) VerifyCustomSidecarContainerImage() {
 
 func (t *TestPod) Cleanup(ctx context.Context) {
 	e2epod.DeletePodOrFail(ctx, t.client, t.namespace.Name, t.pod.Name)
+}
+
+type TestPVC struct {
+	client    clientset.Interface
+	PVC       *v1.PersistentVolumeClaim
+	namespace *v1.Namespace
+}
+
+func NewTestPVC(c clientset.Interface, ns *v1.Namespace, pvcName, StorageClassName, capacity string, accessMode v1.PersistentVolumeAccessMode) *TestPVC {
+	return &TestPVC{
+		client:    c,
+		namespace: ns,
+		PVC: &v1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: pvcName,
+			},
+			Spec: v1.PersistentVolumeClaimSpec{
+				AccessModes: []v1.PersistentVolumeAccessMode{
+					accessMode,
+				},
+				Resources: v1.ResourceRequirements{
+					Requests: v1.ResourceList{
+						"storage": resource.MustParse(capacity),
+					},
+				},
+				StorageClassName: &StorageClassName,
+			},
+		},
+	}
+}
+
+func (t *TestPVC) Create(ctx context.Context) {
+	framework.Logf("Creating PVC %s", t.PVC.Name)
+	var err error
+	t.PVC, err = t.client.CoreV1().PersistentVolumeClaims(t.namespace.Name).Create(ctx, t.PVC, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
+}
+
+func (t *TestPVC) Cleanup(ctx context.Context) {
+	framework.Logf("Deleting PVC %s", t.PVC.Name)
+	err := t.client.CoreV1().PersistentVolumeClaims(t.namespace.Name).Delete(ctx, t.PVC.Name, metav1.DeleteOptions{})
+	framework.ExpectNoError(err)
 }
 
 type TestSecret struct {

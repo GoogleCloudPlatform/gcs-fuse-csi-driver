@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
@@ -324,6 +325,33 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Checking that the sidecar container is using the custom image")
 		tPod.VerifyCustomSidecarContainerImage()
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+	})
+
+	ginkgo.It("should store data using custom buffer volume", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-buffer", "standard-rwo", "5Gi", v1.ReadWriteOnce)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: tPVC.PVC}, webhook.SidecarContainerBufferVolumeName, "", false)
+		tPod.SetNonRootSecurityContext(0, 0, 1000)
+
+		ginkgo.By("Creating the PVC")
+		tPVC.Create(ctx)
+		defer tPVC.Cleanup(ctx)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))

@@ -85,27 +85,47 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 	return container
 }
 
-func GetSidecarContainerVolumeSpec() []v1.Volume {
-	return []v1.Volume{
+func GetSidecarContainerVolumeSpec(existingVolumes []v1.Volume) []v1.Volume {
+	var bufferVolumeExisted, cacheVolumeExisted bool
+
+	for _, v := range existingVolumes {
+		switch v.Name {
+		case SidecarContainerBufferVolumeName:
+			bufferVolumeExisted = true
+		case SidecarContainerCacheVolumeName:
+			cacheVolumeExisted = true
+		}
+
+	}
+
+	volumes := []v1.Volume{
 		{
 			Name: SidecarContainerTmpVolumeName,
 			VolumeSource: v1.VolumeSource{
 				EmptyDir: &v1.EmptyDirVolumeSource{},
 			},
 		},
-		{
+	}
+
+	if !bufferVolumeExisted {
+		volumes = append(volumes, v1.Volume{
 			Name: SidecarContainerBufferVolumeName,
 			VolumeSource: v1.VolumeSource{
 				EmptyDir: &v1.EmptyDirVolumeSource{},
 			},
-		},
-		{
+		})
+	}
+
+	if !cacheVolumeExisted {
+		volumes = append(volumes, v1.Volume{
 			Name: SidecarContainerCacheVolumeName,
 			VolumeSource: v1.VolumeSource{
 				EmptyDir: &v1.EmptyDirVolumeSource{},
 			},
-		},
+		})
 	}
+
+	return volumes
 }
 
 // ValidatePodHasSidecarContainerInjected validates the following:

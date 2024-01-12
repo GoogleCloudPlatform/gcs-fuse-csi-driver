@@ -277,7 +277,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec(),
+					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", v1.Update)),
@@ -288,7 +288,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec(),
+					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			wantResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey)),
@@ -299,7 +299,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec(),
+					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
@@ -432,7 +432,7 @@ func wantResponse(t *testing.T, customImage bool) admission.Response {
 		newPod.Spec.Containers = newPod.Spec.Containers[:len(newPod.Spec.Containers)-1]
 	}
 	newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
-	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(), newPod.Spec.Volumes...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
 }
