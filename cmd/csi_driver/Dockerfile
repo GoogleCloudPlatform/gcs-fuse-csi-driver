@@ -23,7 +23,7 @@ ADD . .
 RUN make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM gke.gcr.io/debian-base:bullseye-v1.4.3-gke.5 as debian
+FROM gke.gcr.io/debian-base:bullseye-v1.4.3-gke.10 as debian
 # Install necessary dependencies
 RUN clean-install mount bash
 
