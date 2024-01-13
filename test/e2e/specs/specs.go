@@ -356,7 +356,7 @@ type TestPVC struct {
 	namespace *v1.Namespace
 }
 
-func NewTestPVC(c clientset.Interface, ns *v1.Namespace, pvcName, StorageClassName, capacity string, accessMode v1.PersistentVolumeAccessMode) *TestPVC {
+func NewTestPVC(c clientset.Interface, ns *v1.Namespace, pvcName, storageClassName, capacity string, accessMode v1.PersistentVolumeAccessMode) *TestPVC {
 	return &TestPVC{
 		client:    c,
 		namespace: ns,
@@ -373,7 +373,7 @@ func NewTestPVC(c clientset.Interface, ns *v1.Namespace, pvcName, StorageClassNa
 						"storage": resource.MustParse(capacity),
 					},
 				},
-				StorageClassName: &StorageClassName,
+				StorageClassName: &storageClassName,
 			},
 		},
 	}
