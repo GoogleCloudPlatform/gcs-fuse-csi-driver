@@ -95,7 +95,6 @@ func GetSidecarContainerVolumeSpec(existingVolumes []v1.Volume) []v1.Volume {
 		case SidecarContainerCacheVolumeName:
 			cacheVolumeExisted = true
 		}
-
 	}
 
 	volumes := []v1.Volume{
