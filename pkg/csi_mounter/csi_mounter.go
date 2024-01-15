@@ -67,20 +67,23 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to prepare emptyDir path: %w", err)
 	}
 
-	klog.V(4).Info("opening the device /dev/fuse")
+	podID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(target)
+	logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podID, volumeName, source)
+
+	klog.V(4).Infof("%v opening the device /dev/fuse", logPrefix)
 	fd, err := syscall.Open("/dev/fuse", syscall.O_RDWR, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to open the device /dev/fuse: %w", err)
 	}
 	csiMountOptions = append(csiMountOptions, fmt.Sprintf("fd=%v", fd))
 
-	klog.V(4).Info("mounting the fuse filesystem")
+	klog.V(4).Infof("%v mounting the fuse filesystem", logPrefix)
 	err = m.MountSensitiveWithoutSystemdWithMountFlags(source, target, fstype, csiMountOptions, nil, []string{"--internal-only"})
 	if err != nil {
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
-	klog.V(4).Info("passing the descriptor")
+	klog.V(4).Infof("%v passing the descriptor", logPrefix)
 	// Need to change the current working directory to the temp volume base path,
 	// because the socket absolute path is longer than 104 characters,
 	// which will cause "bind: invalid argument" errors.
@@ -93,7 +96,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to change directory to %q: %w", emptyDirBasePath, err)
 	}
 
-	klog.V(4).Info("creating a listener for the socket")
+	klog.V(4).Infof("%v creating a listener for the socket", logPrefix)
 	l, err := net.Listen("unix", "./socket")
 	if err != nil {
 		return fmt.Errorf("failed to create the listener for the socket: %w", err)
@@ -136,12 +139,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 
 	// Asynchronously waiting for the sidecar container to connect to the listener
-	go func(l net.Listener, bucketName, target string, msg []byte, fd int) {
+	go func(l net.Listener, logPrefix string, msg []byte, fd int) {
 		defer syscall.Close(fd)
 		defer l.Close()
-
-		podID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(target)
-		logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podID, volumeName, bucketName)
 
 		klog.V(4).Infof("%v start to accept connections to the listener.", logPrefix)
 		a, err := l.Accept()
@@ -158,7 +158,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		}
 
 		klog.V(4).Infof("%v exiting the goroutine.", logPrefix)
-	}(l, source, target, mcb, fd)
+	}(l, logPrefix, mcb, fd)
 
 	return nil
 }

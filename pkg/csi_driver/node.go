@@ -198,7 +198,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Put an exit file to notify the sidecar container to exit
 	if (isOwnedByJob || podRestartPolicyIsNever) && sidecarShouldExit {
-		klog.V(4).Info("all the other containers terminated in the Pod, put the exit file.")
+		klog.V(4).Infof("[Pod %v/%v, UID %v] all the other containers terminated in the Pod, put the exit file.", pod.Namespace, pod.Name, pod.UID)
 		exitFilePath := filepath.Dir(emptyDirBasePath) + "/exit"
 		f, err := os.Create(exitFilePath)
 		if err != nil {
