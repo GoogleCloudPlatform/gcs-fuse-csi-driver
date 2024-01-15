@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Build sidecar-mounter go binary
-FROM golang:1.21.5 as sidecar-mounter-builder
+FROM golang:1.21.6 as sidecar-mounter-builder
 
 ARG STAGINGVERSION
 
