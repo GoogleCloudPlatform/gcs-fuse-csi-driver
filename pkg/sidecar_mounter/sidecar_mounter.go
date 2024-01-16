@@ -29,7 +29,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const GCSFuseAppName = "gke-gcs-fuse-csi"
+const (
+	GCSFuseAppName = "gke-gcs-fuse-csi"
+	TempDir        = "/temp-dir"
+)
 
 // Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
@@ -60,8 +63,8 @@ type MountConfig struct {
 func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
-	if err := os.MkdirAll(mc.BufferDir+"/temp-dir", os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+"/temp-dir", err)
+	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
+		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+TempDir, err)
 	}
 
 	flagMap, configFileFlagMap := mc.prepareMountArgs()
@@ -134,7 +137,7 @@ var boolFlags = map[string]bool{
 func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string) {
 	flagMap := map[string]string{
 		"app-name":    GCSFuseAppName,
-		"temp-dir":    mc.BufferDir + "/temp-dir",
+		"temp-dir":    mc.BufferDir + TempDir,
 		"config-file": mc.ConfigFile,
 		"foreground":  "",
 		"uid":         "0",

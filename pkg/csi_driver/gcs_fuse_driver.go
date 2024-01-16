@@ -109,7 +109,7 @@ func (driver *GCSDriver) addVolumeCapabilityAccessModes(vc []csi.VolumeCapabilit
 	for _, c := range vc {
 		klog.Infof("Enabling volume access mode: %v", c.String())
 		mode := NewVolumeCapabilityAccessMode(c)
-		driver.vcap[mode.Mode] = mode
+		driver.vcap[mode.GetMode()] = mode
 	}
 }
 
@@ -137,8 +137,8 @@ func (driver *GCSDriver) validateVolumeCapability(c *csi.VolumeCapability) error
 	if accessMode == nil {
 		return fmt.Errorf("volume capability access mode not set")
 	}
-	if driver.vcap[accessMode.Mode] == nil {
-		return fmt.Errorf("driver does not support access mode: %v", accessMode.Mode.String())
+	if driver.vcap[accessMode.GetMode()] == nil {
+		return fmt.Errorf("driver does not support access mode: %v", accessMode.GetMode().String())
 	}
 
 	// Validate access type
@@ -178,7 +178,7 @@ func (driver *GCSDriver) ValidateControllerServiceRequest(c csi.ControllerServic
 	}
 
 	for _, cap := range driver.cscap {
-		if c == cap.GetRpc().Type {
+		if c == cap.GetRpc().GetType() {
 			return nil
 		}
 	}

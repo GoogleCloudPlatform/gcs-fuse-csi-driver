@@ -48,12 +48,12 @@ func TestGetPluginInfo(t *testing.T) {
 		t.Fatalf("GetPluginInfo resp is nil")
 	}
 
-	if resp.Name != testDriver {
-		t.Errorf("got driver name %v", resp.Name)
+	if resp.GetName() != testDriver {
+		t.Errorf("got driver name %v", resp.GetName())
 	}
 
-	if resp.VendorVersion != testVersion {
-		t.Errorf("got driver version %v", resp.Name)
+	if resp.GetVendorVersion() != testVersion {
+		t.Errorf("got driver version %v", resp.GetName())
 	}
 }
 
@@ -70,15 +70,15 @@ func TestGetPluginCapabilities(t *testing.T) {
 		t.Fatalf("GetPluginCapabilities resp is nil")
 	}
 
-	if len(resp.Capabilities) != 1 {
-		t.Fatalf("returned %v capabilities", len(resp.Capabilities))
+	if len(resp.GetCapabilities()) != 1 {
+		t.Fatalf("returned %v capabilities", len(resp.GetCapabilities()))
 	}
 
-	if resp.Capabilities[0].Type == nil {
+	if resp.GetCapabilities()[0].GetType() == nil {
 		t.Fatalf("returned nil capability type")
 	}
 
-	service := resp.Capabilities[0].GetService()
+	service := resp.GetCapabilities()[0].GetService()
 	if service == nil {
 		t.Fatalf("returned nil capability service")
 	}
