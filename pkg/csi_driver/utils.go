@@ -68,7 +68,7 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 		strippedReq = pbSanitizer.StripSecrets(req).String()
 	case NodePublishVolumeCSIFullMethod:
 		if nodePublishReq, ok := req.(*csi.NodePublishVolumeRequest); ok {
-			if token, ok := nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken]; ok {
+			if token, ok := nodePublishReq.GetVolumeContext()[VolumeContextKeyServiceAccountToken]; ok {
 				nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = "***stripped***"
 				strippedReq = fmt.Sprintf("%+v", nodePublishReq)
 				nodePublishReq.VolumeContext[VolumeContextKeyServiceAccountToken] = token

@@ -95,8 +95,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		// Delegate fsGroup to CSI Driver
 		// Set gid, file-mode, and dir-mode for gcsfuse.
 		// Allow users to overwrite these flags.
-		if capMount.VolumeMountGroup != "" {
-			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"gid=" + capMount.VolumeMountGroup, "file-mode=664", "dir-mode=775"})
+		if capMount.GetVolumeMountGroup() != "" {
+			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"gid=" + capMount.GetVolumeMountGroup(), "file-mode=664", "dir-mode=775"})
 		}
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
