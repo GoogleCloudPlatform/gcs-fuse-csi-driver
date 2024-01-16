@@ -368,7 +368,7 @@ func NewTestPVC(c clientset.Interface, ns *v1.Namespace, pvcName, storageClassNa
 				AccessModes: []v1.PersistentVolumeAccessMode{
 					accessMode,
 				},
-				Resources: v1.ResourceRequirements{
+				Resources: v1.VolumeResourceRequirements{
 					Requests: v1.ResourceList{
 						"storage": resource.MustParse(capacity),
 					},

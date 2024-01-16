@@ -19,6 +19,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 
 	testDriver := InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest)
 
-	ginkgo.Context(storageframework.GetDriverNameWithFeatureTags(testDriver), func() {
+	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
 	})
 })
