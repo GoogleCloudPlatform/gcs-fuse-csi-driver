@@ -181,6 +181,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Check if all the containers besides the sidecar container exited
 	sidecarShouldExit := true
 	if isOwnedByJob || podRestartPolicyIsNever {
+		if pod.Status.ContainerStatuses == nil || len(pod.Status.ContainerStatuses) == 0 {
+			sidecarShouldExit = false
+		}
+
 		for _, cs := range pod.Status.ContainerStatuses {
 			if cs.Name != webhook.SidecarContainerName && cs.State.Terminated == nil {
 				sidecarShouldExit = false
