@@ -64,10 +64,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "only limits are specified",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                  "true",
-				annotationGcsfuseSidecarCPULimitKey:               "500m",
-				annotationGcsfuseSidecarMemoryLimitKey:            "1Gi",
-				annotationGcsfuseSidecarEphermeralStorageLimitKey: "50Gi",
+				AnnotationGcsfuseVolumeEnableKey:                 "true",
+				annotationGcsfuseSidecarCPULimitKey:              "500m",
+				annotationGcsfuseSidecarMemoryLimitKey:           "1Gi",
+				annotationGcsfuseSidecarEphemeralStorageLimitKey: "50Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -84,10 +84,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "only requests are specified",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                    "true",
-				annotationGcsfuseSidecarCPURequestKey:               "500m",
-				annotationGcsfuseSidecarMemoryRequestKey:            "1Gi",
-				annotationGcsfuseSidecarEphermeralStorageRequestKey: "50Gi",
+				AnnotationGcsfuseVolumeEnableKey:                   "true",
+				annotationGcsfuseSidecarCPURequestKey:              "500m",
+				annotationGcsfuseSidecarMemoryRequestKey:           "1Gi",
+				annotationGcsfuseSidecarEphemeralStorageRequestKey: "50Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -104,10 +104,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "limits are set to '0'",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                  "true",
-				annotationGcsfuseSidecarCPULimitKey:               "0",
-				annotationGcsfuseSidecarMemoryLimitKey:            "0",
-				annotationGcsfuseSidecarEphermeralStorageLimitKey: "0",
+				AnnotationGcsfuseVolumeEnableKey:                 "true",
+				annotationGcsfuseSidecarCPULimitKey:              "0",
+				annotationGcsfuseSidecarMemoryLimitKey:           "0",
+				annotationGcsfuseSidecarEphemeralStorageLimitKey: "0",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -124,10 +124,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests are set to '0'",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                    "true",
-				annotationGcsfuseSidecarCPURequestKey:               "0",
-				annotationGcsfuseSidecarMemoryRequestKey:            "0",
-				annotationGcsfuseSidecarEphermeralStorageRequestKey: "0",
+				AnnotationGcsfuseVolumeEnableKey:                   "true",
+				annotationGcsfuseSidecarCPURequestKey:              "0",
+				annotationGcsfuseSidecarMemoryRequestKey:           "0",
+				annotationGcsfuseSidecarEphemeralStorageRequestKey: "0",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -144,13 +144,13 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests and limits are explicitly set",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                    "true",
-				annotationGcsfuseSidecarCPULimitKey:                 "500m",
-				annotationGcsfuseSidecarMemoryLimitKey:              "1Gi",
-				annotationGcsfuseSidecarEphermeralStorageLimitKey:   "50Gi",
-				annotationGcsfuseSidecarCPURequestKey:               "100m",
-				annotationGcsfuseSidecarMemoryRequestKey:            "500Mi",
-				annotationGcsfuseSidecarEphermeralStorageRequestKey: "10Gi",
+				AnnotationGcsfuseVolumeEnableKey:                   "true",
+				annotationGcsfuseSidecarCPULimitKey:                "500m",
+				annotationGcsfuseSidecarMemoryLimitKey:             "1Gi",
+				annotationGcsfuseSidecarEphemeralStorageLimitKey:   "50Gi",
+				annotationGcsfuseSidecarCPURequestKey:              "100m",
+				annotationGcsfuseSidecarMemoryRequestKey:           "500Mi",
+				annotationGcsfuseSidecarEphemeralStorageRequestKey: "10Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -167,13 +167,13 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests and limits are explicitly set with '0' limits",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                    "true",
-				annotationGcsfuseSidecarCPULimitKey:                 "0",
-				annotationGcsfuseSidecarMemoryLimitKey:              "0",
-				annotationGcsfuseSidecarEphermeralStorageLimitKey:   "0",
-				annotationGcsfuseSidecarCPURequestKey:               "100m",
-				annotationGcsfuseSidecarMemoryRequestKey:            "500Mi",
-				annotationGcsfuseSidecarEphermeralStorageRequestKey: "10Gi",
+				AnnotationGcsfuseVolumeEnableKey:                   "true",
+				annotationGcsfuseSidecarCPULimitKey:                "0",
+				annotationGcsfuseSidecarMemoryLimitKey:             "0",
+				annotationGcsfuseSidecarEphemeralStorageLimitKey:   "0",
+				annotationGcsfuseSidecarCPURequestKey:              "100m",
+				annotationGcsfuseSidecarMemoryRequestKey:           "500Mi",
+				annotationGcsfuseSidecarEphemeralStorageRequestKey: "10Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -190,13 +190,13 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests and limits are explicitly set with '0' requests",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                    "true",
-				annotationGcsfuseSidecarCPULimitKey:                 "500m",
-				annotationGcsfuseSidecarMemoryLimitKey:              "1Gi",
-				annotationGcsfuseSidecarEphermeralStorageLimitKey:   "50Gi",
-				annotationGcsfuseSidecarCPURequestKey:               "0",
-				annotationGcsfuseSidecarMemoryRequestKey:            "0",
-				annotationGcsfuseSidecarEphermeralStorageRequestKey: "0",
+				AnnotationGcsfuseVolumeEnableKey:                   "true",
+				annotationGcsfuseSidecarCPULimitKey:                "500m",
+				annotationGcsfuseSidecarMemoryLimitKey:             "1Gi",
+				annotationGcsfuseSidecarEphemeralStorageLimitKey:   "50Gi",
+				annotationGcsfuseSidecarCPURequestKey:              "0",
+				annotationGcsfuseSidecarMemoryRequestKey:           "0",
+				annotationGcsfuseSidecarEphemeralStorageRequestKey: "0",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,

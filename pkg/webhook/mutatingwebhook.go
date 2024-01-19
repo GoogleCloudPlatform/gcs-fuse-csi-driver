@@ -34,13 +34,13 @@ import (
 )
 
 const (
-	AnnotationGcsfuseVolumeEnableKey                    = "gke-gcsfuse/volumes"
-	annotationGcsfuseSidecarCPULimitKey                 = "gke-gcsfuse/cpu-limit"
-	annotationGcsfuseSidecarMemoryLimitKey              = "gke-gcsfuse/memory-limit"
-	annotationGcsfuseSidecarEphermeralStorageLimitKey   = "gke-gcsfuse/ephemeral-storage-limit"
-	annotationGcsfuseSidecarCPURequestKey               = "gke-gcsfuse/cpu-request"
-	annotationGcsfuseSidecarMemoryRequestKey            = "gke-gcsfuse/memory-request"
-	annotationGcsfuseSidecarEphermeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
+	AnnotationGcsfuseVolumeEnableKey                   = "gke-gcsfuse/volumes"
+	annotationGcsfuseSidecarCPULimitKey                = "gke-gcsfuse/cpu-limit"
+	annotationGcsfuseSidecarMemoryLimitKey             = "gke-gcsfuse/memory-limit"
+	annotationGcsfuseSidecarEphemeralStorageLimitKey   = "gke-gcsfuse/ephemeral-storage-limit"
+	annotationGcsfuseSidecarCPURequestKey              = "gke-gcsfuse/cpu-request"
+	annotationGcsfuseSidecarMemoryRequestKey           = "gke-gcsfuse/memory-request"
+	annotationGcsfuseSidecarEphemeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
 )
 
 type SidecarInjector struct {
