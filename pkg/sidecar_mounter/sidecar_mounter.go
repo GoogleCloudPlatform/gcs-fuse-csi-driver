@@ -62,6 +62,7 @@ type MountConfig struct {
 	VolumeName     string    `json:"volumeName,omitempty"`
 	BucketName     string    `json:"bucketName,omitempty"`
 	BufferDir      string    `json:"-"`
+	CacheDir       string    `json:"-"`
 	ConfigFile     string    `json:"-"`
 	Options        []string  `json:"options,omitempty"`
 	ErrWriter      io.Writer `json:"-"`
@@ -126,8 +127,10 @@ var disallowedFlags = map[string]bool{
 	"logging:log-rotate:max-file-size-mb":  true,
 	"logging:log-rotate:backup-file-count": true,
 	"logging:log-rotate:compress":          true,
+	"cache-location":                       true,
 }
 
+// TODO: move experimental-local-file-cache flag to disallowedFlags when the file cache feature is ready.
 var boolFlags = map[string]bool{
 	"implicit-dirs":                 true,
 	"experimental-local-file-cache": true,
@@ -152,6 +155,7 @@ func NewMountConfig(sp string) (*MountConfig, error) {
 	mc := MountConfig{
 		VolumeName: volumeName,
 		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
 		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
 	}
 
@@ -197,6 +201,7 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 	configFileFlagMap := map[string]string{
 		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
 		"logging:format":    "text",
+		"cache-location":    mc.CacheDir,
 	}
 
 	invalidArgs := []string{}
@@ -272,6 +277,8 @@ func (mc *MountConfig) prepareConfigFile(flagMap map[string]string) error {
 
 				if boolVal, err := strconv.ParseBool(v); err == nil {
 					curLevel[t] = boolVal
+				} else if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
+					curLevel[t] = intVal
 				} else {
 					curLevel[t] = v
 				}
