@@ -38,6 +38,7 @@ var (
 	defaultConfigFileFlagMap = map[string]string{
 		"logging:file-path": "/dev/fd/1",
 		"logging:format":    "text",
+		"cache-location":    "test-cache-dir",
 	}
 
 	invalidArgs = []string{
@@ -71,6 +72,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 			},
 			expectedArgs:          defaultFlagMap,
@@ -81,6 +83,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
 			},
@@ -100,6 +103,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:format":          "text",
 				"logging:severity":        "error",
 				"write:create-empty-file": "true",
+				"cache-location":          "test-cache-dir",
 			},
 		},
 		{
@@ -107,6 +111,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs=true"},
 			},
@@ -128,6 +133,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 				Options:    invalidArgs,
 			},
@@ -139,6 +145,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 				Options:    []string{"app-name=Vertex"},
 			},
@@ -184,10 +191,13 @@ func TestPrepareConfigFile(t *testing.T) {
 				ConfigFile: "./test-config-file.yaml",
 			},
 			configMapArgs: map[string]string{
-				"logging:file-path":       "/dev/fd/1",
-				"logging:format":          "text",
-				"logging:severity":        "error",
-				"write:create-empty-file": "true",
+				"logging:file-path":                    "/dev/fd/1",
+				"logging:format":                       "text",
+				"logging:severity":                     "error",
+				"write:create-empty-file":              "true",
+				"file-cache:max-size-in-mb":            "10000",
+				"file-cache:cache-file-for-range-read": "true",
+				"cache-location":                       "/gcsfuse-cache/.volumes/volume-name",
 			},
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{
@@ -198,6 +208,11 @@ func TestPrepareConfigFile(t *testing.T) {
 				"write": map[string]interface{}{
 					"create-empty-file": true,
 				},
+				"file-cache": map[string]interface{}{
+					"max-size-in-mb":            10000,
+					"cache-file-for-range-read": true,
+				},
+				"cache-location": "/gcsfuse-cache/.volumes/volume-name",
 			},
 		},
 		{
