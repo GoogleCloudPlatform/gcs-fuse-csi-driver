@@ -1,0 +1,5 @@
+apiVersion: v2
+name: data-loader
+description: A Helm chart for DLIO data loading to GCS buckets
+type: application
+version: 0.1.0
