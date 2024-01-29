@@ -17,7 +17,7 @@ cloud.google.com/go/iam/apiv1/iampb
 cloud.google.com/go/iam/credentials/apiv1
 cloud.google.com/go/iam/credentials/apiv1/credentialspb
 cloud.google.com/go/iam/internal
-# cloud.google.com/go/storage v1.36.0
+# cloud.google.com/go/storage v1.37.0
 ## explicit; go 1.19
 cloud.google.com/go/storage
 cloud.google.com/go/storage/internal
@@ -32,9 +32,9 @@ github.com/Masterminds/semver
 # github.com/NYTimes/gziphandler v1.1.1
 ## explicit; go 1.11
 github.com/NYTimes/gziphandler
-# github.com/antlr/antlr4/runtime/Go/antlr/v4 v4.0.0-20230305170008-8188dc5388df
-## explicit; go 1.18
-github.com/antlr/antlr4/runtime/Go/antlr/v4
+# github.com/antlr4-go/antlr/v4 v4.13.0
+## explicit; go 1.20
+github.com/antlr4-go/antlr/v4
 # github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 ## explicit; go 1.13
 github.com/asaskevich/govalidator
@@ -70,10 +70,10 @@ github.com/distribution/reference
 ## explicit; go 1.13
 github.com/emicklei/go-restful/v3
 github.com/emicklei/go-restful/v3/log
-# github.com/evanphx/json-patch v5.8.1+incompatible
+# github.com/evanphx/json-patch v5.9.0+incompatible
 ## explicit
 github.com/evanphx/json-patch
-# github.com/evanphx/json-patch/v5 v5.8.1
+# github.com/evanphx/json-patch/v5 v5.9.0
 ## explicit; go 1.18
 github.com/evanphx/json-patch/v5
 github.com/evanphx/json-patch/v5/internal/json
@@ -97,7 +97,7 @@ github.com/go-openapi/jsonpointer
 ## explicit; go 1.19
 github.com/go-openapi/jsonreference
 github.com/go-openapi/jsonreference/internal
-# github.com/go-openapi/swag v0.22.8
+# github.com/go-openapi/swag v0.22.9
 ## explicit; go 1.19
 github.com/go-openapi/swag
 # github.com/go-task/slim-sprig v2.20.0+incompatible
@@ -123,7 +123,7 @@ github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
 github.com/golang/protobuf/ptypes/wrappers
-# github.com/google/cel-go v0.17.7
+# github.com/google/cel-go v0.19.0
 ## explicit; go 1.18
 github.com/google/cel-go/cel
 github.com/google/cel-go/checker
@@ -192,7 +192,7 @@ github.com/google/s2a-go/internal/v2/remotesigner
 github.com/google/s2a-go/internal/v2/tlsconfigstore
 github.com/google/s2a-go/retry
 github.com/google/s2a-go/stream
-# github.com/google/uuid v1.5.0
+# github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
 # github.com/googleapis/enterprise-certificate-proxy v0.3.2
@@ -566,12 +566,10 @@ golang.org/x/time/rate
 # golang.org/x/tools v0.17.0
 ## explicit; go 1.18
 golang.org/x/tools/go/ast/inspector
-# golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028
-## explicit; go 1.18
 # gomodules.xyz/jsonpatch/v2 v2.4.0
 ## explicit; go 1.20
 gomodules.xyz/jsonpatch/v2
-# google.golang.org/api v0.157.0
+# google.golang.org/api v0.159.0
 ## explicit; go 1.19
 google.golang.org/api/cloudresourcemanager/v1
 google.golang.org/api/googleapi
@@ -620,7 +618,7 @@ google.golang.org/genproto/googleapis/api/httpbody
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v1.60.1
+# google.golang.org/grpc v1.61.0
 ## explicit; go 1.19
 google.golang.org/grpc
 google.golang.org/grpc/attributes

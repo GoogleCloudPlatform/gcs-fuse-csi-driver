@@ -5,19 +5,19 @@ go 1.21
 require (
 	cloud.google.com/go/compute/metadata v0.2.3
 	cloud.google.com/go/iam v1.1.5
-	cloud.google.com/go/storage v1.36.0
+	cloud.google.com/go/storage v1.37.0
 	github.com/container-storage-interface/spec v1.9.0
 	github.com/go-logr/logr v1.4.1
 	github.com/google/go-cmp v0.6.0
-	github.com/google/uuid v1.5.0
+	github.com/google/uuid v1.6.0
 	github.com/kubernetes-csi/csi-lib-utils v0.17.0
 	github.com/kubernetes-csi/csi-test/v5 v5.2.0
 	github.com/onsi/ginkgo/v2 v2.15.0
 	github.com/onsi/gomega v1.31.1
 	golang.org/x/net v0.20.0
 	golang.org/x/oauth2 v0.16.0
-	google.golang.org/api v0.157.0
-	google.golang.org/grpc v1.60.1
+	google.golang.org/api v0.159.0
+	google.golang.org/grpc v1.61.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.29.1
 	k8s.io/apimachinery v0.29.1
@@ -37,7 +37,7 @@ require (
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
-	github.com/antlr/antlr4/runtime/Go/antlr/v4 v4.0.0-20230305170008-8188dc5388df // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
@@ -48,19 +48,19 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/distribution/reference v0.5.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.2 // indirect
-	github.com/evanphx/json-patch v5.8.1+incompatible // indirect
-	github.com/evanphx/json-patch/v5 v5.8.1 // indirect
+	github.com/evanphx/json-patch v5.9.0+incompatible // indirect
+	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.20.2 // indirect
 	github.com/go-openapi/jsonreference v0.20.4 // indirect
-	github.com/go-openapi/swag v0.22.8 // indirect
+	github.com/go-openapi/swag v0.22.9 // indirect
 	github.com/go-task/slim-sprig v2.20.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
-	github.com/google/cel-go v0.17.7 // indirect
+	github.com/google/cel-go v0.19.0 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
 	github.com/google/pprof v0.0.0-20240117000934-35fc243c5815 // indirect
@@ -119,7 +119,6 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.17.0 // indirect
-	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20240123012728-ef4313101c80 // indirect
