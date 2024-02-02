@@ -20,6 +20,8 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
@@ -105,6 +107,55 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tDeployment.WaitForRunningAndReady(ctx)
 	})
 
+	ginkgo.It("[fast termination] should store data in Deployment while scaling down", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetGracePeriod(600)
+		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		cmd := []string{
+			fmt.Sprintf("handle_term() { echo 'Caught SIGTERM signal!'; echo 'hello world' > %v/data && grep 'hello world' %v/data; sleep 5; exit 0; };", mountPath, mountPath),
+			"trap handle_term SIGTERM;",
+			"echo 'I am sleeping!';",
+			"sleep infinity & wait $!;",
+		}
+		tPod1.SetCommand(strings.Join(cmd, " "))
+
+		ginkgo.By("Configuring the deployment")
+		tDeployment := specs.NewTestDeployment(f.ClientSet, f.Namespace, tPod1)
+		tDeployment.SetReplicas(1)
+
+		ginkgo.By("Deploying the deployment")
+		tDeployment.Create(ctx)
+		defer tDeployment.Cleanup(ctx)
+
+		ginkgo.By("Checking that the deployment is in ready status")
+		tDeployment.WaitForRunningAndReady(ctx)
+
+		ginkgo.By("Scaling down the deployment to 0")
+		tDeployment.Scale(ctx, 0)
+
+		ginkgo.By("Checking that the deployment is in ready status")
+		tDeployment.WaitForRunningAndReadyWithTimeout(ctx, time.Second*20)
+
+		ginkgo.By("Configuring the second pod")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+
+		ginkgo.By("Deploying the second pod")
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+
+		ginkgo.By("Checking that the second pod is running")
+		tPod2.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the second pod command exits with no error")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+	})
+
 	ginkgo.It("should store data in StatefulSet", func() {
 		init()
 		defer cleanup()
@@ -125,7 +176,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tStatefulSet.WaitForRunningAndReady(ctx)
 	})
 
-	ginkgo.It("should store data in Job", func() {
+	ginkgo.It("[fast termination] should store data in Job with RestartPolicy Never", func() {
 		init()
 		defer cleanup()
 
@@ -144,5 +195,58 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 		ginkgo.By("Checking that the job is in succeeded status")
 		tJob.WaitForJobPodsSucceeded(ctx)
+	})
+
+	ginkgo.It("[fast termination] should store data in Job with RestartPolicy OnFailure eventually succeed", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		cmd := []string{
+			"sleep 10;",
+			fmt.Sprintf("if [ -f %v/testfile ]; then echo 'Completed Successfully!'; exit 0; fi;", mountPath),
+			fmt.Sprintf("touch %v/testfile;", mountPath),
+			"echo 'Job Failed!';",
+			"exit 1;",
+		}
+		tPod.SetCommand(strings.Join(cmd, " "))
+
+		ginkgo.By("Configuring the job")
+		tJob := specs.NewTestJob(f.ClientSet, f.Namespace, tPod)
+
+		ginkgo.By("Deploying the job")
+		tJob.Create(ctx)
+		defer tJob.Cleanup(ctx)
+
+		ginkgo.By("Checking that the job is in succeeded status")
+		tJob.WaitForJobPodsSucceeded(ctx)
+	})
+
+	ginkgo.It("[fast termination] should store data in Job with RestartPolicy OnFailure eventually fail", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		cmd := []string{
+			"sleep 10;",
+			"exit 1;",
+		}
+		tPod.SetCommand(strings.Join(cmd, " "))
+
+		ginkgo.By("Configuring the job")
+		tJob := specs.NewTestJob(f.ClientSet, f.Namespace, tPod)
+
+		ginkgo.By("Deploying the job")
+		tJob.Create(ctx)
+		defer tJob.Cleanup(ctx)
+
+		ginkgo.By("Checking that the job is in failed status")
+		tJob.WaitForJobFailed()
 	})
 }

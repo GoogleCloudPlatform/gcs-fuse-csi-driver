@@ -200,6 +200,11 @@ func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context, timeout time.Duration) {
+	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, timeout)
+	framework.ExpectNoError(err)
+}
+
 func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {
 	t.setupVolume(volumeResource, name, readOnly, mountOptions...)
 	t.setupVolumeMount(name, mountPath, readOnly, "")
@@ -300,6 +305,10 @@ func (t *TestPod) SetNonRootSecurityContext(uid, gid, fsgroup int) {
 
 func (t *TestPod) SetCommand(cmd string) {
 	t.pod.Spec.Containers[0].Args = []string{"-c", cmd}
+}
+
+func (t *TestPod) SetGracePeriod(s int) {
+	t.pod.Spec.TerminationGracePeriodSeconds = ptr.To(int64(s))
 }
 
 func (t *TestPod) SetPod(pod *v1.Pod) {
@@ -716,9 +725,27 @@ func (t *TestDeployment) Create(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestDeployment) SetReplicas(replica int) {
+	t.deployment.Spec.Replicas = ptr.To(int32(replica))
+}
+
 func (t *TestDeployment) WaitForRunningAndReady(ctx context.Context) {
 	framework.Logf("Waiting Deployment %s to running and ready", t.deployment.Name)
-	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, v1.PodRunning)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, v1.PodRunning, pollTimeoutSlow)
+}
+
+func (t *TestDeployment) WaitForRunningAndReadyWithTimeout(ctx context.Context, timeout time.Duration) {
+	framework.Logf("Waiting Deployment %s to running and ready", t.deployment.Name)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, v1.PodRunning, timeout)
+}
+
+func (t *TestDeployment) Scale(ctx context.Context, replica int) {
+	framework.Logf("Scaling Deployment %s from %s to %s", t.deployment.Name, &t.deployment.Spec.Replicas, replica)
+	scale, err := t.client.AppsV1().Deployments(t.namespace.Name).GetScale(ctx, t.deployment.Name, metav1.GetOptions{})
+	framework.ExpectNoError(err)
+	scale.Spec.Replicas = int32(replica)
+	_, err = t.client.AppsV1().Deployments(t.namespace.Name).UpdateScale(ctx, t.deployment.Name, scale, metav1.UpdateOptions{})
+	framework.ExpectNoError(err)
 }
 
 func (t *TestDeployment) Cleanup(ctx context.Context) {
@@ -770,7 +797,7 @@ func (t *TestStatefulSet) Create(ctx context.Context) {
 
 func (t *TestStatefulSet) WaitForRunningAndReady(ctx context.Context) {
 	framework.Logf("Waiting StatefulSet %s to running and ready", t.statefulSet.Name)
-	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.statefulSet.Spec.Selector, *t.statefulSet.Spec.Replicas, v1.PodRunning)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.statefulSet.Spec.Selector, *t.statefulSet.Spec.Replicas, v1.PodRunning, pollTimeoutSlow)
 }
 
 func (t *TestStatefulSet) Cleanup(ctx context.Context) {
@@ -780,8 +807,8 @@ func (t *TestStatefulSet) Cleanup(ctx context.Context) {
 }
 
 // WaitForWorkloadReady waits for the pods in the workload to reach the expected status.
-func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace string, selector *metav1.LabelSelector, replica int32, expectedPodStatus v1.PodPhase) {
-	err := wait.PollUntilContextTimeout(ctx, pollIntervalSlow, pollTimeoutSlow, true,
+func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace string, selector *metav1.LabelSelector, replica int32, expectedPodStatus v1.PodPhase, timeout time.Duration) {
+	err := wait.PollUntilContextTimeout(ctx, pollIntervalSlow, timeout, true,
 		func(ctx context.Context) (bool, error) {
 			replicaSetSelector, err := metav1.LabelSelectorAsSelector(selector)
 			framework.ExpectNoError(err)
@@ -789,7 +816,7 @@ func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace 
 			podList, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: replicaSetSelector.String()})
 			framework.ExpectNoError(err)
 
-			if int32(len(podList.Items)) < replica {
+			if int32(len(podList.Items)) != replica {
 				framework.Logf("Found %d workload pods, waiting for %d", len(podList.Items), replica)
 
 				return false, nil
@@ -831,7 +858,7 @@ func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob
 				ObjectMeta: tPod.pod.ObjectMeta,
 				Spec:       tPod.pod.Spec,
 			},
-			BackoffLimit: ptr.To(int32(1)),
+			BackoffLimit: ptr.To(int32(2)),
 		},
 	}
 	job.Spec.Template.ObjectMeta.Labels = job.Spec.Selector.MatchLabels
@@ -853,6 +880,12 @@ func (t *TestJob) Create(ctx context.Context) {
 func (t *TestJob) WaitForJobPodsSucceeded(ctx context.Context) {
 	framework.Logf("Waiting Job %s to have 1 succeeded pod", t.job.Name)
 	err := e2ejob.WaitForJobPodsSucceeded(ctx, t.client, t.namespace.Name, t.job.Name, 1)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestJob) WaitForJobFailed() {
+	framework.Logf("Waiting Job %s to fail", t.job.Name)
+	err := e2ejob.WaitForJobFailed(t.client, t.namespace.Name, t.job.Name)
 	framework.ExpectNoError(err)
 }
 

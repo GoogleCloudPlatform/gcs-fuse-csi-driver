@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -104,7 +105,12 @@ func main() {
 			syscall.Close(mc.FileDescriptor)
 			if err = cmd.Wait(); err != nil {
 				errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
-				klog.Errorf(errMsg)
+				if strings.Contains(errMsg, "signal: terminated") {
+					klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
+				} else {
+					klog.Errorf(errMsg)
+				}
+
 				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
 					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 				}
@@ -128,10 +134,10 @@ func main() {
 				klog.Info("all the other containers terminated in the Pod, exiting the sidecar container.")
 
 				for _, cmd := range mounter.GetCmds() {
-					klog.V(4).Infof("killing gcsfue process: %v", cmd)
-					err := cmd.Process.Kill()
+					klog.V(4).Infof("sending SIGTERM to gcsfuse process: %v", cmd)
+					err := cmd.Process.Signal(syscall.SIGTERM)
 					if err != nil {
-						klog.Errorf("failed to kill process %v with error: %v", cmd, err)
+						klog.Errorf("failed to terminate process %v with error: %v", cmd, err)
 					}
 				}
 

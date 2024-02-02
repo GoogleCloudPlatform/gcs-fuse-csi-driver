@@ -69,6 +69,8 @@ spec:
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
+            - name: cri-socket
+              mountPath: /run/containerd/containerd.sock
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -110,6 +112,10 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
             type: DirectoryOrCreate
+        - name: cri-socket
+          hostPath:
+            path: /run/containerd/containerd.sock
+            type: Socket
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.
