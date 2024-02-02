@@ -20,7 +20,9 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
+	"github.com/containerd/containerd"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
@@ -32,13 +34,14 @@ import (
 )
 
 var (
-	endpoint         = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID           = flag.String("nodeid", "", "node id")
-	runController    = flag.Bool("controller", false, "run controller service")
-	runNode          = flag.Bool("node", false, "run node service")
-	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
-	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	containerRuntimeEndpoint = flag.String("container-runtime-endpoint", "/run/containerd/containerd.sock", "container runtime endpoint")
+	endpoint                 = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID                   = flag.String("nodeid", "", "node id")
+	runController            = flag.Bool("controller", false, "run controller service")
+	runNode                  = flag.Bool("node", false, "run node service")
+	kubeconfigPath           = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	identityPool             = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider         = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -47,6 +50,11 @@ var (
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	containerdClient, err := containerd.New(*containerRuntimeEndpoint)
+	if err != nil {
+		klog.Fatal("Failed to create containerd client")
+	}
 
 	clientset, err := clientset.New(*kubeconfigPath)
 	if err != nil {
@@ -74,10 +82,16 @@ func main() {
 		if err != nil {
 			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
 		}
-	}
 
-	if err != nil {
-		klog.Fatalf("Failed to initialize cloud provider: %v", err)
+		// Monitor all the gcsfuse volumes,
+		// send an exit notification to the sidecar container when gcsfuse is no longer needed.
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			for {
+				<-ticker.C
+				driver.CheckVolumesAndPutExitFile(containerdClient, clientset, mounter)
+			}
+		}()
 	}
 
 	config := &driver.GCSDriverConfig{

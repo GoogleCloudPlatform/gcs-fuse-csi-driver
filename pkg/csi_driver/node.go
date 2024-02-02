@@ -20,7 +20,6 @@ package driver
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,7 +31,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -49,6 +47,8 @@ const (
 	VolumeContextKeyMountOptions        = "mountOptions"
 
 	UmountTimeout = time.Second * 5
+
+	FuseMountType = "fuse"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -166,53 +166,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
 	}
 
-	// Check if the Pod is owned by a Job
-	isOwnedByJob := false
-	for _, o := range pod.ObjectMeta.OwnerReferences {
-		if o.Kind == "Job" {
-			isOwnedByJob = true
-
-			break
-		}
-	}
-
-	podRestartPolicyIsNever := pod.Spec.RestartPolicy == v1.RestartPolicyNever
-
-	// Check if all the containers besides the sidecar container exited
-	sidecarShouldExit := true
-	if isOwnedByJob || podRestartPolicyIsNever {
-		if pod.Status.ContainerStatuses == nil || len(pod.Status.ContainerStatuses) == 0 {
-			sidecarShouldExit = false
-		}
-
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != webhook.SidecarContainerName && cs.State.Terminated == nil {
-				sidecarShouldExit = false
-
-				break
-			}
-		}
-	}
-
 	// Prepare the emptyDir path for the mounter to pass the file descriptor
 	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to prepare emptyDir path: %v", err)
-	}
-
-	// Put an exit file to notify the sidecar container to exit
-	if (isOwnedByJob || podRestartPolicyIsNever) && sidecarShouldExit {
-		klog.V(4).Infof("[Pod %v/%v, UID %v] all the other containers terminated in the Pod, put the exit file.", pod.Namespace, pod.Name, pod.UID)
-		exitFilePath := filepath.Dir(emptyDirBasePath) + "/exit"
-		f, err := os.Create(exitFilePath)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to put the exit file: %v", err)
-		}
-		f.Close()
-		err = os.Chown(exitFilePath, webhook.NobodyUID, webhook.NobodyGID)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to change ownership on the exit file: %v", err)
-		}
 	}
 
 	// Check if there is any error from the sidecar container
@@ -229,6 +186,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 		if strings.Contains(errMsgStr, "signal: killed") {
 			code = codes.ResourceExhausted
+		}
+
+		if strings.Contains(errMsgStr, "signal: terminated") {
+			klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the sidecar container has terminated.", bucketName, targetPath)
+
+			return &csi.NodePublishVolumeResponse{}, nil
 		}
 
 		if strings.Contains(errMsgStr, "googleapi: Error 403") ||
@@ -286,7 +249,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Start to mount
-	if err = s.mounter.Mount(bucketName, targetPath, "fuse", fuseMountOptions); err != nil {
+	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
 	}
 
@@ -333,6 +296,9 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* bind mount */); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", targetPath, err)
 	}
+
+	podID, _, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
+	s.k8sClients.CleanupPodUID(podID)
 
 	klog.V(4).Infof("NodeUnpublishVolume succeeded on target path %q", targetPath)
 
