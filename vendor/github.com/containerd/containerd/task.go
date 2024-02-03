@@ -38,12 +38,11 @@ import (
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/protobuf"
-	google_protobuf "github.com/containerd/containerd/protobuf/types"
 	"github.com/containerd/containerd/rootfs"
 	"github.com/containerd/containerd/runtime/linux/runctypes"
 	"github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/containerd/typeurl/v2"
+	"github.com/containerd/typeurl"
+	google_protobuf "github.com/gogo/protobuf/types"
 	digest "github.com/opencontainers/go-digest"
 	is "github.com/opencontainers/image-spec/specs-go"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -140,11 +139,6 @@ type TaskInfo struct {
 	RootFS []mount.Mount
 	// Options hold runtime specific settings for task creation
 	Options interface{}
-	// RuntimePath is an absolute path that can be used to overwrite path
-	// to a shim runtime binary.
-	RuntimePath string
-
-	// runtime is the runtime name for the container, and cannot be changed.
 	runtime string
 }
 
@@ -270,7 +264,7 @@ func (t *task) Status(ctx context.Context) (Status, error) {
 	return Status{
 		Status:     ProcessStatus(strings.ToLower(r.Process.Status.String())),
 		ExitStatus: r.Process.ExitStatus,
-		ExitTime:   protobuf.FromTimestamp(r.Process.ExitedAt),
+		ExitTime:   r.Process.ExitedAt,
 	}, nil
 }
 
@@ -290,7 +284,7 @@ func (t *task) Wait(ctx context.Context) (<-chan ExitStatus, error) {
 		}
 		c <- ExitStatus{
 			code:     r.ExitStatus,
-			exitedAt: protobuf.FromTimestamp(r.ExitedAt),
+			exitedAt: r.ExitedAt,
 		}
 	}()
 	return c, nil
@@ -326,16 +320,7 @@ func (t *task) Delete(ctx context.Context, opts ...ProcessDeleteOpts) (*ExitStat
 		return nil, fmt.Errorf("task must be stopped before deletion: %s: %w", status.Status, errdefs.ErrFailedPrecondition)
 	}
 	if t.io != nil {
-		// io.Wait locks for restored tasks on Windows unless we call
-		// io.Close first (https://github.com/containerd/containerd/issues/5621)
-		// in other cases, preserve the contract and let IO finish before closing
-		if t.client.runtime == fmt.Sprintf("%s.%s", plugin.RuntimePlugin, "windows") {
-			t.io.Close()
-		}
-		// io.Cancel is used to cancel the io goroutine while it is in
-		// fifo-opening state. It does not stop the pipes since these
-		// should be closed on the shim's side, otherwise we might lose
-		// data from the container!
+		t.io.Close()
 		t.io.Cancel()
 		t.io.Wait()
 	}
@@ -349,7 +334,7 @@ func (t *task) Delete(ctx context.Context, opts ...ProcessDeleteOpts) (*ExitStat
 	if t.io != nil {
 		t.io.Close()
 	}
-	return &ExitStatus{code: r.ExitStatus, exitedAt: protobuf.FromTimestamp(r.ExitedAt)}, nil
+	return &ExitStatus{code: r.ExitStatus, exitedAt: r.ExitedAt}, nil
 }
 
 func (t *task) Exec(ctx context.Context, id string, spec *specs.Process, ioCreate cio.Creator) (_ Process, err error) {
@@ -366,7 +351,7 @@ func (t *task) Exec(ctx context.Context, id string, spec *specs.Process, ioCreat
 			i.Close()
 		}
 	}()
-	any, err := protobuf.MarshalAnyToProto(spec)
+	any, err := typeurl.MarshalAny(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -464,9 +449,9 @@ func (t *task) Checkpoint(ctx context.Context, opts ...CheckpointTaskOpts) (Imag
 	if i.Name == "" {
 		i.Name = fmt.Sprintf(checkpointNameFormat, t.id, time.Now().Format(checkpointDateFormat))
 	}
-	request.ParentCheckpoint = i.ParentCheckpoint.String()
+	request.ParentCheckpoint = i.ParentCheckpoint
 	if i.Options != nil {
-		any, err := protobuf.MarshalAnyToProto(i.Options)
+		any, err := typeurl.MarshalAny(i.Options)
 		if err != nil {
 			return nil, err
 		}
@@ -555,7 +540,7 @@ func (t *task) Update(ctx context.Context, opts ...UpdateTaskOpts) error {
 		if err != nil {
 			return err
 		}
-		request.Resources = protobuf.FromAny(any)
+		request.Resources = any
 	}
 	if i.Annotations != nil {
 		request.Annotations = i.Annotations
@@ -623,8 +608,8 @@ func (t *task) checkpointTask(ctx context.Context, index *v1.Index, request *tas
 	for _, d := range response.Descriptors {
 		index.Manifests = append(index.Manifests, v1.Descriptor{
 			MediaType: d.MediaType,
-			Size:      d.Size,
-			Digest:    digest.Digest(d.Digest),
+			Size:      d.Size_,
+			Digest:    d.Digest,
 			Platform: &v1.Platform{
 				OS:           goruntime.GOOS,
 				Architecture: goruntime.GOARCH,

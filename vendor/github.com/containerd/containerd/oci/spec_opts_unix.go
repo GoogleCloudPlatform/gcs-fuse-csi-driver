@@ -1,4 +1,5 @@
 //go:build !linux && !windows
+// +build !linux,!windows
 
 /*
    Copyright The containerd Authors.
@@ -50,6 +51,9 @@ func WithDevices(devicePath, containerPath, permissions string) SpecOpts {
 	}
 }
 
-func escapeAndCombineArgs(args []string) string {
-	panic("not supported")
+// WithCPUCFS sets the container's Completely fair scheduling (CFS) quota and period
+func WithCPUCFS(quota int64, period uint64) SpecOpts {
+	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
+		return nil
+	}
 }

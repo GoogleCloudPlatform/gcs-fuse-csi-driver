@@ -22,7 +22,6 @@ import (
 	leasesapi "github.com/containerd/containerd/api/services/leases/v1"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/protobuf"
 )
 
 type proxyManager struct {
@@ -54,7 +53,7 @@ func (pm *proxyManager) Create(ctx context.Context, opts ...leases.Opt) (leases.
 
 	return leases.Lease{
 		ID:        resp.Lease.ID,
-		CreatedAt: protobuf.FromTimestamp(resp.Lease.CreatedAt),
+		CreatedAt: resp.Lease.CreatedAt,
 		Labels:    resp.Lease.Labels,
 	}, nil
 }
@@ -85,7 +84,7 @@ func (pm *proxyManager) List(ctx context.Context, filters ...string) ([]leases.L
 	for i := range resp.Leases {
 		l[i] = leases.Lease{
 			ID:        resp.Leases[i].ID,
-			CreatedAt: protobuf.FromTimestamp(resp.Leases[i].CreatedAt),
+			CreatedAt: resp.Leases[i].CreatedAt,
 			Labels:    resp.Leases[i].Labels,
 		}
 	}
@@ -96,7 +95,7 @@ func (pm *proxyManager) List(ctx context.Context, filters ...string) ([]leases.L
 func (pm *proxyManager) AddResource(ctx context.Context, lease leases.Lease, r leases.Resource) error {
 	_, err := pm.client.AddResource(ctx, &leasesapi.AddResourceRequest{
 		ID: lease.ID,
-		Resource: &leasesapi.Resource{
+		Resource: leasesapi.Resource{
 			ID:   r.ID,
 			Type: r.Type,
 		},
@@ -107,7 +106,7 @@ func (pm *proxyManager) AddResource(ctx context.Context, lease leases.Lease, r l
 func (pm *proxyManager) DeleteResource(ctx context.Context, lease leases.Lease, r leases.Resource) error {
 	_, err := pm.client.DeleteResource(ctx, &leasesapi.DeleteResourceRequest{
 		ID: lease.ID,
-		Resource: &leasesapi.Resource{
+		Resource: leasesapi.Resource{
 			ID:   r.ID,
 			Type: r.Type,
 		},

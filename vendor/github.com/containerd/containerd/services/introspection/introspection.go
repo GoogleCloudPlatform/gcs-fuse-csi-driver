@@ -22,10 +22,10 @@ import (
 	api "github.com/containerd/containerd/api/services/introspection/v1"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
-	ptypes "github.com/containerd/containerd/protobuf/types"
+	ptypes "github.com/gogo/protobuf/types"
 )
 
-// Service defines the introspection service interface
+// Service defines the instrospection service interface
 type Service interface {
 	Plugins(context.Context, []string) (*api.PluginsResponse, error)
 	Server(context.Context, *ptypes.Empty) (*api.ServerResponse, error)

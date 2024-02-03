@@ -18,59 +18,33 @@ package introspection
 
 import (
 	context "context"
-	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
-
-	"github.com/google/uuid"
-	"google.golang.org/genproto/googleapis/rpc/code"
-	rpc "google.golang.org/genproto/googleapis/rpc/status"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/status"
 
 	api "github.com/containerd/containerd/api/services/introspection/v1"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/filters"
 	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/protobuf"
-	ptypes "github.com/containerd/containerd/protobuf/types"
 	"github.com/containerd/containerd/services"
-	"github.com/containerd/containerd/services/warning"
+	"github.com/gogo/googleapis/google/rpc"
+	ptypes "github.com/gogo/protobuf/types"
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
 	plugin.Register(&plugin.Registration{
 		Type:     plugin.ServicePlugin,
 		ID:       services.IntrospectionService,
-		Requires: []plugin.Type{plugin.WarningPlugin},
+		Requires: []plugin.Type{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			sps, err := ic.GetByType(plugin.WarningPlugin)
-			if err != nil {
-				return nil, err
-			}
-			p, ok := sps[plugin.DeprecationsPlugin]
-			if !ok {
-				return nil, errors.New("warning service not found")
-			}
-
-			i, err := p.Instance()
-			if err != nil {
-				return nil, err
-			}
-
-			warningClient, ok := i.(warning.Service)
-			if !ok {
-				return nil, errors.New("could not create a local client for warning service")
-			}
-
 			// this service fetches all plugins through the plugin set of the plugin context
 			return &Local{
-				plugins:       ic.Plugins(),
-				root:          ic.Root,
-				warningClient: warningClient,
+				plugins: ic.Plugins(),
+				root:    ic.Root,
 			}, nil
 		},
 	})
@@ -78,11 +52,10 @@ func init() {
 
 // Local is a local implementation of the introspection service
 type Local struct {
-	mu            sync.Mutex
-	root          string
-	plugins       *plugin.Set
-	pluginCache   []*api.Plugin
-	warningClient warning.Service
+	mu          sync.Mutex
+	root        string
+	plugins     *plugin.Set
+	pluginCache []api.Plugin
 }
 
 var _ = (api.IntrospectionClient)(&Local{})
@@ -101,13 +74,14 @@ func (l *Local) Plugins(ctx context.Context, req *api.PluginsRequest, _ ...grpc.
 		return nil, errdefs.ToGRPCf(errdefs.ErrInvalidArgument, err.Error())
 	}
 
-	var plugins []*api.Plugin
+	var plugins []api.Plugin
 	allPlugins := l.getPlugins()
 	for _, p := range allPlugins {
-		p := p
-		if filter.Match(adaptPlugin(p)) {
-			plugins = append(plugins, p)
+		if !filter.Match(adaptPlugin(p)) {
+			continue
 		}
+
+		plugins = append(plugins, p)
 	}
 
 	return &api.PluginsResponse{
@@ -115,7 +89,7 @@ func (l *Local) Plugins(ctx context.Context, req *api.PluginsRequest, _ ...grpc.
 	}, nil
 }
 
-func (l *Local) getPlugins() []*api.Plugin {
+func (l *Local) getPlugins() []api.Plugin {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	plugins := l.plugins.GetAll()
@@ -131,19 +105,8 @@ func (l *Local) Server(ctx context.Context, _ *ptypes.Empty, _ ...grpc.CallOptio
 	if err != nil {
 		return nil, errdefs.ToGRPC(err)
 	}
-	pid := os.Getpid()
-	var pidns uint64
-	if runtime.GOOS == "linux" {
-		pidns, err = statPIDNS(pid)
-		if err != nil {
-			return nil, errdefs.ToGRPC(err)
-		}
-	}
 	return &api.ServerResponse{
-		UUID:         u,
-		Pid:          uint64(pid),
-		Pidns:        pidns,
-		Deprecations: l.getWarnings(ctx),
+		UUID: u,
 	}, nil
 }
 
@@ -185,12 +148,8 @@ func (l *Local) uuidPath() string {
 	return filepath.Join(l.root, "uuid")
 }
 
-func (l *Local) getWarnings(ctx context.Context) []*api.DeprecationWarning {
-	return warningsPB(ctx, l.warningClient.Warnings())
-}
-
 func adaptPlugin(o interface{}) filters.Adaptor {
-	obj := o.(*api.Plugin)
+	obj := o.(api.Plugin)
 	return filters.AdapterFunc(func(fieldpath []string) (string, bool) {
 		if len(fieldpath) == 0 {
 			return "", false
@@ -216,12 +175,12 @@ func adaptPlugin(o interface{}) filters.Adaptor {
 	})
 }
 
-func pluginsToPB(plugins []*plugin.Plugin) []*api.Plugin {
-	var pluginsPB []*api.Plugin
+func pluginsToPB(plugins []*plugin.Plugin) []api.Plugin {
+	var pluginsPB []api.Plugin
 	for _, p := range plugins {
-		var platforms []*types.Platform
+		var platforms []types.Platform
 		for _, p := range p.Meta.Platforms {
-			platforms = append(platforms, &types.Platform{
+			platforms = append(platforms, types.Platform{
 				OS:           p.OS,
 				Architecture: p.Architecture,
 				Variant:      p.Variant,
@@ -251,13 +210,13 @@ func pluginsToPB(plugins []*plugin.Plugin) []*api.Plugin {
 				}
 			} else {
 				initErr = &rpc.Status{
-					Code:    int32(code.Code_UNKNOWN),
+					Code:    int32(rpc.UNKNOWN),
 					Message: err.Error(),
 				}
 			}
 		}
 
-		pluginsPB = append(pluginsPB, &api.Plugin{
+		pluginsPB = append(pluginsPB, api.Plugin{
 			Type:         p.Registration.Type.String(),
 			ID:           p.Registration.ID,
 			Requires:     requires,
@@ -269,17 +228,4 @@ func pluginsToPB(plugins []*plugin.Plugin) []*api.Plugin {
 	}
 
 	return pluginsPB
-}
-
-func warningsPB(ctx context.Context, warnings []warning.Warning) []*api.DeprecationWarning {
-	var pb []*api.DeprecationWarning
-
-	for _, w := range warnings {
-		pb = append(pb, &api.DeprecationWarning{
-			ID:             string(w.ID),
-			Message:        w.Message,
-			LastOccurrence: protobuf.ToTimestamp(w.LastOccurrence),
-		})
-	}
-	return pb
 }

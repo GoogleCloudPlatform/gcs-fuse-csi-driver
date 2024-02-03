@@ -35,8 +35,8 @@ import (
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/continuity/fs"
-	"github.com/moby/sys/user"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/opencontainers/runc/libcontainer/user"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -76,16 +76,13 @@ func setLinux(s *Spec) {
 	}
 }
 
+// nolint
 func setResources(s *Spec) {
 	if s.Linux != nil {
 		if s.Linux.Resources == nil {
 			s.Linux.Resources = &specs.LinuxResources{}
 		}
 	}
-}
-
-//nolint:nolintlint,unused // not used on all platforms
-func setResourcesWindows(s *Spec) {
 	if s.Windows != nil {
 		if s.Windows.Resources == nil {
 			s.Windows.Resources = &specs.WindowsResources{}
@@ -93,7 +90,7 @@ func setResourcesWindows(s *Spec) {
 	}
 }
 
-//nolint:nolintlint,unused // not used on all platforms
+// nolint
 func setCPU(s *Spec) {
 	setResources(s)
 	if s.Linux != nil {
@@ -101,11 +98,6 @@ func setCPU(s *Spec) {
 			s.Linux.Resources.CPU = &specs.LinuxCPU{}
 		}
 	}
-}
-
-//nolint:nolintlint,unused // not used on all platforms
-func setCPUWindows(s *Spec) {
-	setResourcesWindows(s)
 	if s.Windows != nil {
 		if s.Windows.Resources.CPU == nil {
 			s.Windows.Resources.CPU = &specs.WindowsCPUResources{}
@@ -185,29 +177,36 @@ func WithEnv(environmentVariables []string) SpecOpts {
 	}
 }
 
+// WithDefaultPathEnv sets the $PATH environment variable to the
+// default PATH defined in this package.
+func WithDefaultPathEnv(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
+	s.Process.Env = replaceOrAppendEnvValues(s.Process.Env, defaultUnixEnv)
+	return nil
+}
+
 // replaceOrAppendEnvValues returns the defaults with the overrides either
 // replaced by env key or appended to the list
 func replaceOrAppendEnvValues(defaults, overrides []string) []string {
 	cache := make(map[string]int, len(defaults))
 	results := make([]string, 0, len(defaults))
 	for i, e := range defaults {
-		k, _, _ := strings.Cut(e, "=")
+		parts := strings.SplitN(e, "=", 2)
 		results = append(results, e)
-		cache[k] = i
+		cache[parts[0]] = i
 	}
 
 	for _, value := range overrides {
 		// Values w/o = means they want this env to be removed/unset.
-		k, _, ok := strings.Cut(value, "=")
-		if !ok {
-			if i, exists := cache[k]; exists {
+		if !strings.Contains(value, "=") {
+			if i, exists := cache[value]; exists {
 				results[i] = "" // Used to indicate it should be removed
 			}
 			continue
 		}
 
 		// Just do a normal set/update
-		if i, exists := cache[k]; exists {
+		parts := strings.SplitN(value, "=", 2)
+		if i, exists := cache[parts[0]]; exists {
 			results[i] = value
 		} else {
 			results = append(results, value)
@@ -230,7 +229,6 @@ func WithProcessArgs(args ...string) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
 		setProcess(s)
 		s.Process.Args = args
-		s.Process.CommandLine = ""
 		return nil
 	}
 }
@@ -274,14 +272,6 @@ func WithTTYSize(width, height int) SpecOpts {
 func WithHostname(name string) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
 		s.Hostname = name
-		return nil
-	}
-}
-
-// WithDomainname sets the container's NIS domain name
-func WithDomainname(name string) SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		s.Domainname = name
 		return nil
 	}
 }
@@ -368,19 +358,17 @@ func WithImageConfigArgs(image Image, args []string) SpecOpts {
 			return err
 		}
 		var (
-			imageConfigBytes []byte
-			ociimage         v1.Image
-			config           v1.ImageConfig
+			ociimage v1.Image
+			config   v1.ImageConfig
 		)
 		switch ic.MediaType {
 		case v1.MediaTypeImageConfig, images.MediaTypeDockerSchema2Config:
-			var err error
-			imageConfigBytes, err = content.ReadBlob(ctx, image.ContentStore(), ic)
+			p, err := content.ReadBlob(ctx, image.ContentStore(), ic)
 			if err != nil {
 				return err
 			}
 
-			if err := json.Unmarshal(imageConfigBytes, &ociimage); err != nil {
+			if err := json.Unmarshal(p, &ociimage); err != nil {
 				return err
 			}
 			config = ociimage.Config
@@ -388,7 +376,6 @@ func WithImageConfigArgs(image Image, args []string) SpecOpts {
 			return fmt.Errorf("unknown image config media type %s", ic.MediaType)
 		}
 
-		appendOSMounts(s, ociimage.OS)
 		setProcess(s)
 		if s.Linux != nil {
 			defaults := config.Env
@@ -418,55 +405,11 @@ func WithImageConfigArgs(image Image, args []string) SpecOpts {
 			return WithAdditionalGIDs("root")(ctx, client, c, s)
 		} else if s.Windows != nil {
 			s.Process.Env = replaceOrAppendEnvValues(config.Env, s.Process.Env)
-
-			// To support Docker ArgsEscaped on Windows we need to combine the
-			// image Entrypoint & (Cmd Or User Args) while taking into account
-			// if Docker has already escaped them in the image config. When
-			// Docker sets `ArgsEscaped==true` in the config it has pre-escaped
-			// either Entrypoint or Cmd or both. Cmd should always be treated as
-			// arguments appended to Entrypoint unless:
-			//
-			// 1. Entrypoint does not exist, in which case Cmd[0] is the
-			// executable.
-			//
-			// 2. The user overrides the Cmd with User Args when activating the
-			// container in which case those args should be appended to the
-			// Entrypoint if it exists.
-			//
-			// To effectively do this we need to know if the arguments came from
-			// the user or if the arguments came from the image config when
-			// ArgsEscaped==true. In this case we only want to escape the
-			// additional user args when forming the complete CommandLine. This
-			// is safe in both cases of Entrypoint or Cmd being set because
-			// Docker will always escape them to an array of length one. Thus in
-			// both cases it is the "executable" portion of the command.
-			//
-			// In the case ArgsEscaped==false, Entrypoint or Cmd will contain
-			// any number of entries that are all unescaped and can simply be
-			// combined (potentially overwriting Cmd with User Args if present)
-			// and forwarded the container start as an Args array.
 			cmd := config.Cmd
-			cmdFromImage := true
 			if len(args) > 0 {
 				cmd = args
-				cmdFromImage = false
 			}
-
-			cmd = append(config.Entrypoint, cmd...)
-			if len(cmd) == 0 {
-				return errors.New("no arguments specified")
-			}
-
-			if config.ArgsEscaped && (len(config.Entrypoint) > 0 || cmdFromImage) {
-				s.Process.Args = nil
-				s.Process.CommandLine = cmd[0]
-				if len(cmd) > 1 {
-					s.Process.CommandLine += " " + escapeAndCombineArgs(cmd[1:])
-				}
-			} else {
-				s.Process.Args = cmd
-				s.Process.CommandLine = ""
-			}
+			s.Process.Args = append(config.Entrypoint, cmd...)
 
 			s.Process.Cwd = config.WorkingDir
 			s.Process.User = specs.User{
@@ -600,9 +543,7 @@ func WithUser(userstr string) SpecOpts {
 		// The `Username` field on the runtime spec is marked by Platform as only for Windows, and in this case it
 		// *is* being set on a Windows host at least, but will be used as a temporary holding spot until the guest
 		// can use the string to perform these same operations to grab the uid:gid inside.
-		//
-		// Mounts are not supported on Darwin, so using the same workaround.
-		if (s.Windows != nil && s.Linux != nil) || runtime.GOOS == "darwin" {
+		if s.Windows != nil && s.Linux != nil {
 			s.Process.User.Username = userstr
 			return nil
 		}
@@ -676,11 +617,8 @@ func WithUser(userstr string) SpecOpts {
 				return err
 			}
 
-			// Use a read-only mount when trying to get user/group information
-			// from the container's rootfs. Since the option does read operation
-			// only, we append ReadOnly mount option to prevent the Linux kernel
-			// from syncing whole filesystem in umount syscall.
-			return mount.WithReadonlyTempMount(ctx, mounts, f)
+			mounts = tryReadonlyMounts(mounts)
+			return mount.WithTempMount(ctx, mounts, f)
 		default:
 			return fmt.Errorf("invalid USER value %s", userstr)
 		}
@@ -740,11 +678,8 @@ func WithUserID(uid uint32) SpecOpts {
 			return err
 		}
 
-		// Use a read-only mount when trying to get user/group information
-		// from the container's rootfs. Since the option does read operation
-		// only, we append ReadOnly mount option to prevent the Linux kernel
-		// from syncing whole filesystem in umount syscall.
-		return mount.WithReadonlyTempMount(ctx, mounts, setUser)
+		mounts = tryReadonlyMounts(mounts)
+		return mount.WithTempMount(ctx, mounts, setUser)
 	}
 }
 
@@ -788,11 +723,8 @@ func WithUsername(username string) SpecOpts {
 				return err
 			}
 
-			// Use a read-only mount when trying to get user/group information
-			// from the container's rootfs. Since the option does read operation
-			// only, we append ReadOnly mount option to prevent the Linux kernel
-			// from syncing whole filesystem in umount syscall.
-			return mount.WithReadonlyTempMount(ctx, mounts, setUser)
+			mounts = tryReadonlyMounts(mounts)
+			return mount.WithTempMount(ctx, mounts, setUser)
 		} else if s.Windows != nil {
 			s.Process.User.Username = username
 		} else {
@@ -870,11 +802,8 @@ func WithAdditionalGIDs(userstr string) SpecOpts {
 			return err
 		}
 
-		// Use a read-only mount when trying to get user/group information
-		// from the container's rootfs. Since the option does read operation
-		// only, we append ReadOnly mount option to prevent the Linux kernel
-		// from syncing whole filesystem in umount syscall.
-		return mount.WithReadonlyTempMount(ctx, mounts, setAdditionalGids)
+		mounts = tryReadonlyMounts(mounts)
+		return mount.WithTempMount(ctx, mounts, setAdditionalGids)
 	}
 }
 
@@ -893,9 +822,9 @@ func WithAppendAdditionalGroups(groups ...string) SpecOpts {
 			if err != nil {
 				return err
 			}
-			ugroups, groupErr := user.ParseGroupFile(gpath)
-			if groupErr != nil && !os.IsNotExist(groupErr) {
-				return groupErr
+			ugroups, err := user.ParseGroupFile(gpath)
+			if err != nil {
+				return err
 			}
 			groupMap := make(map[string]user.Group)
 			for _, group := range ugroups {
@@ -909,9 +838,6 @@ func WithAppendAdditionalGroups(groups ...string) SpecOpts {
 				} else {
 					g, ok := groupMap[group]
 					if !ok {
-						if groupErr != nil {
-							return fmt.Errorf("unable to find group %s: %w", group, groupErr)
-						}
 						return fmt.Errorf("unable to find group %s", group)
 					}
 					gids = append(gids, uint32(g.Gid))
@@ -938,11 +864,8 @@ func WithAppendAdditionalGroups(groups ...string) SpecOpts {
 			return err
 		}
 
-		// Use a read-only mount when trying to get user/group information
-		// from the container's rootfs. Since the option does read operation
-		// only, we append ReadOnly mount option to prevent the Linux kernel
-		// from syncing whole filesystem in umount syscall.
-		return mount.WithReadonlyTempMount(ctx, mounts, setAdditionalGids)
+		mounts = tryReadonlyMounts(mounts)
+		return mount.WithTempMount(ctx, mounts, setAdditionalGids)
 	}
 }
 
@@ -1350,27 +1273,11 @@ func WithLinuxDevices(devices []specs.LinuxDevice) SpecOpts {
 	}
 }
 
-func WithLinuxDeviceFollowSymlinks(path, permissions string) SpecOpts {
-	return withLinuxDevice(path, permissions, true)
-}
-
 // WithLinuxDevice adds the device specified by path to the spec
 func WithLinuxDevice(path, permissions string) SpecOpts {
-	return withLinuxDevice(path, permissions, false)
-}
-
-func withLinuxDevice(path, permissions string, followSymlinks bool) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
 		setLinux(s)
 		setResources(s)
-
-		if followSymlinks {
-			resolvedPath, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return err
-			}
-			path = resolvedPath
-		}
 
 		dev, err := DeviceFromPath(path)
 		if err != nil {
@@ -1437,183 +1344,20 @@ func WithDevShmSize(kb int64) SpecOpts {
 	}
 }
 
-// WithWindowsDevice adds a device exposed to a Windows (WCOW or LCOW) Container
-func WithWindowsDevice(idType, id string) SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		if idType == "" {
-			return errors.New("missing idType")
-		}
-		if s.Windows == nil {
-			s.Windows = &specs.Windows{}
-		}
-		s.Windows.Devices = append(s.Windows.Devices, specs.WindowsDevice{IDType: idType, ID: id})
-		return nil
+// tryReadonlyMounts is used by the options which are trying to get user/group
+// information from container's rootfs. Since the option does read operation
+// only, this helper will append ReadOnly mount option to prevent linux kernel
+// from syncing whole filesystem in umount syscall.
+//
+// TODO(fuweid):
+//
+// Currently, it only works for overlayfs. I think we can apply it to other
+// kinds of filesystem. Maybe we can return `ro` option by `snapshotter.Mount`
+// API, when the caller passes that experimental annotation
+// `containerd.io/snapshot/readonly.mount` something like that.
+func tryReadonlyMounts(mounts []mount.Mount) []mount.Mount {
+	if len(mounts) == 1 && mounts[0].Type == "overlay" {
+		mounts[0].Options = append(mounts[0].Options, "ro")
 	}
-}
-
-// WithMemorySwap sets the container's swap in bytes
-func WithMemorySwap(swap int64) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setResources(s)
-		if s.Linux.Resources.Memory == nil {
-			s.Linux.Resources.Memory = &specs.LinuxMemory{}
-		}
-		s.Linux.Resources.Memory.Swap = &swap
-		return nil
-	}
-}
-
-// WithPidsLimit sets the container's pid limit or maximum
-func WithPidsLimit(limit int64) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setResources(s)
-		if s.Linux.Resources.Pids == nil {
-			s.Linux.Resources.Pids = &specs.LinuxPids{}
-		}
-		s.Linux.Resources.Pids.Limit = limit
-		return nil
-	}
-}
-
-// WithBlockIO sets the container's blkio parameters
-func WithBlockIO(blockio *specs.LinuxBlockIO) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setResources(s)
-		s.Linux.Resources.BlockIO = blockio
-		return nil
-	}
-}
-
-// WithCPUShares sets the container's cpu shares
-func WithCPUShares(shares uint64) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setCPU(s)
-		s.Linux.Resources.CPU.Shares = &shares
-		return nil
-	}
-}
-
-// WithCPUs sets the container's cpus/cores for use by the container
-func WithCPUs(cpus string) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setCPU(s)
-		s.Linux.Resources.CPU.Cpus = cpus
-		return nil
-	}
-}
-
-// WithCPUsMems sets the container's cpu mems for use by the container
-func WithCPUsMems(mems string) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setCPU(s)
-		s.Linux.Resources.CPU.Mems = mems
-		return nil
-	}
-}
-
-// WithCPUCFS sets the container's Completely fair scheduling (CFS) quota and period
-func WithCPUCFS(quota int64, period uint64) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setCPU(s)
-		s.Linux.Resources.CPU.Quota = &quota
-		s.Linux.Resources.CPU.Period = &period
-		return nil
-	}
-}
-
-// WithCPURT sets the container's realtime scheduling (RT) runtime and period.
-func WithCPURT(runtime int64, period uint64) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		setCPU(s)
-		s.Linux.Resources.CPU.RealtimeRuntime = &runtime
-		s.Linux.Resources.CPU.RealtimePeriod = &period
-		return nil
-	}
-}
-
-// WithoutRunMount removes the `/run` inside the spec
-func WithoutRunMount(ctx context.Context, client Client, c *containers.Container, s *Spec) error {
-	return WithoutMounts("/run")(ctx, client, c, s)
-}
-
-// WithRdt sets the container's RDT parameters
-func WithRdt(closID, l3CacheSchema, memBwSchema string) SpecOpts {
-	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
-		s.Linux.IntelRdt = &specs.LinuxIntelRdt{
-			ClosID:        closID,
-			L3CacheSchema: l3CacheSchema,
-			MemBwSchema:   memBwSchema,
-		}
-		return nil
-	}
-}
-
-// WithWindowsCPUCount sets the `Windows.Resources.CPU.Count` section to the
-// `count` specified.
-func WithWindowsCPUCount(count uint64) SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		setCPUWindows(s)
-		s.Windows.Resources.CPU.Count = &count
-		return nil
-	}
-}
-
-// WithWindowsCPUShares sets the `Windows.Resources.CPU.Shares` section to the
-// `shares` specified.
-func WithWindowsCPUShares(shares uint16) SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		setCPUWindows(s)
-		s.Windows.Resources.CPU.Shares = &shares
-		return nil
-	}
-}
-
-// WithWindowsCPUMaximum sets the `Windows.Resources.CPU.Maximum` section to the
-// `max` specified.
-func WithWindowsCPUMaximum(max uint16) SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		setCPUWindows(s)
-		s.Windows.Resources.CPU.Maximum = &max
-		return nil
-	}
-}
-
-// WithWindowsIgnoreFlushesDuringBoot sets `Windows.IgnoreFlushesDuringBoot`.
-func WithWindowsIgnoreFlushesDuringBoot() SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		if s.Windows == nil {
-			s.Windows = &specs.Windows{}
-		}
-		s.Windows.IgnoreFlushesDuringBoot = true
-		return nil
-	}
-}
-
-// WithWindowNetworksAllowUnqualifiedDNSQuery sets `Windows.Network.AllowUnqualifiedDNSQuery`.
-func WithWindowNetworksAllowUnqualifiedDNSQuery() SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		if s.Windows == nil {
-			s.Windows = &specs.Windows{}
-		}
-		if s.Windows.Network == nil {
-			s.Windows.Network = &specs.WindowsNetwork{}
-		}
-
-		s.Windows.Network.AllowUnqualifiedDNSQuery = true
-		return nil
-	}
-}
-
-// WithWindowsNetworkNamespace sets the network namespace for a Windows container.
-func WithWindowsNetworkNamespace(ns string) SpecOpts {
-	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-		if s.Windows == nil {
-			s.Windows = &specs.Windows{}
-		}
-		if s.Windows.Network == nil {
-			s.Windows.Network = &specs.WindowsNetwork{}
-		}
-		s.Windows.Network.NetworkNamespace = ns
-		return nil
-	}
+	return mounts
 }

@@ -28,11 +28,9 @@ import (
 	"github.com/containerd/containerd/diff"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/protobuf"
-	"github.com/containerd/containerd/protobuf/proto"
 	"github.com/containerd/containerd/rootfs"
 	"github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/opencontainers/go-digest"
+	"github.com/containerd/typeurl"
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -58,7 +56,7 @@ func WithCheckpointImage(ctx context.Context, client *Client, c *containers.Cont
 
 // WithCheckpointTask includes the running task
 func WithCheckpointTask(ctx context.Context, client *Client, c *containers.Container, index *imagespec.Index, copts *options.CheckpointOptions) error {
-	any, err := protobuf.MarshalAnyToProto(copts)
+	any, err := typeurl.MarshalAny(copts)
 	if err != nil {
 		return nil
 	}
@@ -73,14 +71,14 @@ func WithCheckpointTask(ctx context.Context, client *Client, c *containers.Conta
 		platformSpec := platforms.DefaultSpec()
 		index.Manifests = append(index.Manifests, imagespec.Descriptor{
 			MediaType:   d.MediaType,
-			Size:        d.Size,
-			Digest:      digest.Digest(d.Digest),
+			Size:        d.Size_,
+			Digest:      d.Digest,
 			Platform:    &platformSpec,
 			Annotations: d.Annotations,
 		})
 	}
 	// save copts
-	data, err := proto.Marshal(any)
+	data, err := any.Marshal()
 	if err != nil {
 		return err
 	}
@@ -99,9 +97,8 @@ func WithCheckpointTask(ctx context.Context, client *Client, c *containers.Conta
 
 // WithCheckpointRuntime includes the container runtime info
 func WithCheckpointRuntime(ctx context.Context, client *Client, c *containers.Container, index *imagespec.Index, copts *options.CheckpointOptions) error {
-	if c.Runtime.Options != nil && c.Runtime.Options.GetValue() != nil {
-		any := protobuf.FromAny(c.Runtime.Options)
-		data, err := proto.Marshal(any)
+	if c.Runtime.Options != nil {
+		data, err := c.Runtime.Options.Marshal()
 		if err != nil {
 			return err
 		}

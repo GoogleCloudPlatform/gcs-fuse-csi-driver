@@ -75,7 +75,6 @@ WHALE = "🇩"
 ONI = "👹"
 
 RELEASE=containerd-$(VERSION:v%=%)-${GOOS}-${GOARCH}
-STATICRELEASE=containerd-static-$(VERSION:v%=%)-${GOOS}-${GOARCH}
 CRIRELEASE=cri-containerd-$(VERSION:v%=%)-${GOOS}-${GOARCH}
 CRICNIRELEASE=cri-containerd-cni-$(VERSION:v%=%)-${GOOS}-${GOARCH}
 
@@ -89,7 +88,6 @@ ifdef BUILDTAGS
     GO_BUILDTAGS = ${BUILDTAGS}
 endif
 GO_BUILDTAGS ?=
-GO_BUILDTAGS += urfave_cli_no_docs
 GO_BUILDTAGS += ${DEBUG_TAGS}
 ifneq ($(STATIC),)
 	GO_BUILDTAGS += osusergo netgo static_build
@@ -124,7 +122,7 @@ ifdef SKIPTESTS
 endif
 
 #Replaces ":" (*nix), ";" (windows) with newline for easy parsing
-GOPATHS=$(shell go env GOPATH | tr ":" "\n" | tr ";" "\n")
+GOPATHS=$(shell echo ${GOPATH} | tr ":" "\n" | tr ";" "\n")
 
 TESTFLAGS_RACE=
 GO_BUILD_FLAGS=
@@ -149,7 +147,7 @@ GOTEST ?= $(GO) test
 OUTPUTDIR = $(join $(ROOTDIR), _output)
 CRIDIR=$(OUTPUTDIR)/cri
 
-.PHONY: clean all AUTHORS build binaries test integration generate protos check-protos coverage ci check help install uninstall vendor release static-release mandir install-man genman install-cri-deps cri-release cri-cni-release cri-integration install-deps bin/cri-integration.test
+.PHONY: clean all AUTHORS build binaries test integration generate protos checkprotos coverage ci check help install uninstall vendor release mandir install-man genman install-cri-deps cri-release cri-cni-release cri-integration install-deps bin/cri-integration.test
 .DEFAULT: default
 
 # Forcibly set the default goal to all, in case an include above brought in a rule definition.
@@ -161,7 +159,7 @@ check: proto-fmt ## run all linters
 	@echo "$(WHALE) $@"
 	GOGC=75 golangci-lint run
 
-ci: check binaries check-protos coverage coverage-integration ## to be used by the CI
+ci: check binaries checkprotos coverage coverage-integration ## to be used by the CI
 
 AUTHORS: .mailmap .git/HEAD
 	git log --format='%aN <%aE>' | sort -fu > $@
@@ -170,7 +168,7 @@ generate: protos
 	@echo "$(WHALE) $@"
 	@PATH="${ROOTDIR}/bin:${PATH}" $(GO) generate -x ${PACKAGES}
 
-protos: bin/protoc-gen-go-fieldpath
+protos: bin/protoc-gen-gogoctrd ## generate protobuf
 	@echo "$(WHALE) $@"
 	@find . -path ./vendor -prune -false -o -name '*.pb.go' | xargs rm
 	$(eval TMPDIR := $(shell mktemp -d))
@@ -179,7 +177,6 @@ protos: bin/protoc-gen-go-fieldpath
 	@(PATH="${ROOTDIR}/bin:${PATH}" protobuild --quiet ${NON_API_PACKAGES})
 	@mv ${TMPDIR}/vendor ${ROOTDIR}
 	@rm -rf ${TMPDIR}
-	go-fix-acronym -w -a '(Id|Io|Uuid|Os)$$' $(shell find api/ runtime/ -name '*.pb.go')
 
 check-protos: protos ## check if protobufs needs to be generated again
 	@echo "$(WHALE) $@"
@@ -197,6 +194,8 @@ proto-fmt: ## check format of proto files
 	@echo "$(WHALE) $@"
 	@test -z "$$(find . -path ./vendor -prune -o -path ./protobuf/google/rpc -prune -o -name '*.proto' -type f -exec grep -Hn -e "^ " {} \; | tee /dev/stderr)" || \
 		(echo "$(ONI) please indent proto files with tabs only" && false)
+	@test -z "$$(find . -path ./vendor -prune -o -name '*.proto' -type f -exec grep -Hn "Meta meta = " {} \; | grep -v '(gogoproto.nullable) = false' | tee /dev/stderr)" || \
+		(echo "$(ONI) meta fields in proto files must have option (gogoproto.nullable) = false" && false)
 
 build: ## build the go packages
 	@echo "$(WHALE) $@"
@@ -219,9 +218,9 @@ bin/cri-integration.test:
 	@echo "$(WHALE) $@"
 	@$(GO) test -c ./integration -o bin/cri-integration.test
 
-cri-integration: binaries bin/cri-integration.test ## run cri integration tests (example: FOCUS=TestContainerListStats make cri-integration)
+cri-integration: binaries bin/cri-integration.test ## run cri integration tests
 	@echo "$(WHALE) $@"
-	@bash ./script/test/cri-integration.sh
+	@bash -x ./script/test/cri-integration.sh
 	@rm -rf bin/cri-integration.test
 
 # build runc shimv2 with failpoint control, only used by integration test
@@ -234,11 +233,6 @@ bin/cni-bridge-fp: integration/failpoint/cmd/cni-bridge-fp FORCE
 	@echo "$(WHALE) $@"
 	@$(GO) build ${GO_BUILD_FLAGS} -o $@ ./integration/failpoint/cmd/cni-bridge-fp
 
-# build runc-fp as runc wrapper to support failpoint, only used by integration test
-bin/runc-fp: integration/failpoint/cmd/runc-fp FORCE
-	@echo "$(WHALE) $@"
-	@$(GO) build ${GO_BUILD_FLAGS} -o $@ ./integration/failpoint/cmd/runc-fp
-
 benchmark: ## run benchmarks tests
 	@echo "$(WHALE) $@"
 	@$(GO) test ${TESTFLAGS} -bench . -run Benchmark -test.root
@@ -247,17 +241,12 @@ FORCE:
 
 define BUILD_BINARY
 @echo "$(WHALE) $@"
-$(GO) build ${DEBUG_GO_GCFLAGS} ${GO_GCFLAGS} ${GO_BUILD_FLAGS} -o $@ ${GO_LDFLAGS} ${GO_TAGS}  ./$<
+@$(GO) build ${DEBUG_GO_GCFLAGS} ${GO_GCFLAGS} ${GO_BUILD_FLAGS} -o $@ ${GO_LDFLAGS} ${GO_TAGS}  ./$<
 endef
 
 # Build a binary from a cmd.
 bin/%: cmd/% FORCE
 	$(call BUILD_BINARY)
-
-# gen-manpages must not have the urfave_cli_no_docs build-tag set
-bin/gen-manpages: cmd/gen-manpages FORCE
-	@echo "$(WHALE) $@"
-	$(GO) build ${DEBUG_GO_GCFLAGS} ${GO_GCFLAGS} ${GO_BUILD_FLAGS} -o $@ ${GO_LDFLAGS} $(subst urfave_cli_no_docs,,${GO_TAGS})  ./cmd/gen-manpages
 
 bin/containerd-shim: cmd/containerd-shim FORCE # set !cgo and omit pie for a static shim build: https://github.com/golang/go/issues/17789#issuecomment-258542220
 	@echo "$(WHALE) $@"
@@ -283,13 +272,13 @@ mandir:
 # Kept for backwards compatibility
 genman: man/containerd.8 man/ctr.8
 
-man/containerd.8: bin/gen-manpages FORCE
+man/containerd.8: FORCE
 	@echo "$(WHALE) $@"
-	$< $(@F) $(@D)
+	$(GO) run -mod=readonly ${GO_TAGS} cmd/gen-manpages/main.go $(@F) $(@D)
 
-man/ctr.8: bin/gen-manpages FORCE
+man/ctr.8: FORCE
 	@echo "$(WHALE) $@"
-	$< $(@F) $(@D)
+	$(GO) run -mod=readonly ${GO_TAGS} cmd/gen-manpages/main.go $(@F) $(@D)
 
 man/%: docs/man/%.md FORCE
 	@echo "$(WHALE) $@"
@@ -305,39 +294,17 @@ install-man: man
 	$(foreach manpage,$(addprefix man/,$(MANPAGES)), $(call installmanpage,$(manpage),$(subst .,,$(suffix $(manpage))),$(notdir $(manpage))))
 
 
-define pack_release
-	@rm -rf releases/$(1) releases/$(1).tar.gz
-	@$(INSTALL) -d releases/$(1)/bin
-	@$(INSTALL) $(BINARIES) releases/$(1)/bin
-	@tar -czf releases/$(1).tar.gz -C releases/$(1) bin
-	@rm -rf releases/$(1)
-endef
-
-
 releases/$(RELEASE).tar.gz: $(BINARIES)
 	@echo "$(WHALE) $@"
-	$(call pack_release,$(RELEASE))
+	@rm -rf releases/$(RELEASE) releases/$(RELEASE).tar.gz
+	@$(INSTALL) -d releases/$(RELEASE)/bin
+	@$(INSTALL) $(BINARIES) releases/$(RELEASE)/bin
+	@tar -czf releases/$(RELEASE).tar.gz -C releases/$(RELEASE) bin
+	@rm -rf releases/$(RELEASE)
 
 release: releases/$(RELEASE).tar.gz
 	@echo "$(WHALE) $@"
 	@cd releases && sha256sum $(RELEASE).tar.gz >$(RELEASE).tar.gz.sha256sum
-
-releases/$(STATICRELEASE).tar.gz:
-ifeq ($(GOOS),linux)
-	@make STATIC=1 $(BINARIES)
-	@echo "$(WHALE) $@"
-	$(call pack_release,$(STATICRELEASE))
-else
-	@echo "Skipping $(STATICRELEASE) for $(GOOS)"
-endif
-
-static-release: releases/$(STATICRELEASE).tar.gz
-ifeq ($(GOOS),linux)
-	@echo "$(WHALE) $@"
-	@cd releases && sha256sum $(STATICRELEASE).tar.gz >$(STATICRELEASE).tar.gz.sha256sum
-else
-	@echo "Skipping releasing $(STATICRELEASE) for $(GOOS)"
-endif
 
 # install of cri deps into release output directory
 ifeq ($(GOOS),windows)
@@ -365,26 +332,22 @@ install-cri-deps: $(BINARIES)
 	@$(INSTALL) $(BINARIES) $(CRIDIR)/bin
 endif
 
-$(CRIDIR)/cri-containerd.DEPRECATED.txt:
-	@mkdir -p $(CRIDIR)
-	@$(INSTALL) -m 644 releases/cri-containerd.DEPRECATED.txt $@
-
 ifeq ($(GOOS),windows)
-releases/$(CRIRELEASE).tar.gz: install-cri-deps $(CRIDIR)/cri-containerd.DEPRECATED.txt
+releases/$(CRIRELEASE).tar.gz: install-cri-deps
 	@echo "$(WHALE) $@"
 	@cd $(CRIDIR) && tar -czf ../../releases/$(CRIRELEASE).tar.gz *
 
-releases/$(CRICNIRELEASE).tar.gz: install-cri-deps $(CRIDIR)/cri-containerd.DEPRECATED.txt
+releases/$(CRICNIRELEASE).tar.gz: install-cri-deps
 	@echo "$(WHALE) $@"
 	@cd $(CRIDIR) && tar -czf ../../releases/$(CRICNIRELEASE).tar.gz *
 else
-releases/$(CRIRELEASE).tar.gz: install-cri-deps $(CRIDIR)/cri-containerd.DEPRECATED.txt
+releases/$(CRIRELEASE).tar.gz: install-cri-deps
 	@echo "$(WHALE) $@"
-	@tar -czf releases/$(CRIRELEASE).tar.gz -C $(CRIDIR) cri-containerd.DEPRECATED.txt etc/crictl.yaml etc/systemd usr opt/containerd
+	@tar -czf releases/$(CRIRELEASE).tar.gz -C $(CRIDIR) etc/crictl.yaml etc/systemd usr opt/containerd
 
-releases/$(CRICNIRELEASE).tar.gz: install-cri-deps $(CRIDIR)/cri-containerd.DEPRECATED.txt
+releases/$(CRICNIRELEASE).tar.gz: install-cri-deps
 	@echo "$(WHALE) $@"
-	@tar -czf releases/$(CRICNIRELEASE).tar.gz -C $(CRIDIR) cri-containerd.DEPRECATED.txt etc usr opt
+	@tar -czf releases/$(CRICNIRELEASE).tar.gz -C $(CRIDIR) etc usr opt
 endif
 
 cri-release: releases/$(CRIRELEASE).tar.gz

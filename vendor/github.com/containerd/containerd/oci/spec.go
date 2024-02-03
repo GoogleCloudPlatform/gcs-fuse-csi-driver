@@ -18,16 +18,14 @@ package oci
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"runtime"
 
-	"github.com/opencontainers/runtime-spec/specs-go"
-
-	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/platforms"
+
+	"github.com/containerd/containerd/containers"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 const (
@@ -44,22 +42,6 @@ var (
 // Spec is a type alias to the OCI runtime spec to allow third part SpecOpts
 // to be created without the "issues" with go vendoring and package imports
 type Spec = specs.Spec
-
-const ConfigFilename = "config.json"
-
-// ReadSpec deserializes JSON into an OCI runtime Spec from a given path.
-func ReadSpec(path string) (*Spec, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var s Spec
-	if err := json.NewDecoder(f).Decode(&s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
 
 // GenerateSpec will generate a default spec from the provided image
 // for use as a containerd container
@@ -84,19 +66,15 @@ func generateDefaultSpecWithPlatform(ctx context.Context, platform, id string, s
 		return err
 	}
 
-	switch plat.OS {
-	case "windows":
+	if plat.OS == "windows" {
 		err = populateDefaultWindowsSpec(ctx, s, id)
-	case "darwin":
-		err = populateDefaultDarwinSpec(s)
-	default:
+	} else {
 		err = populateDefaultUnixSpec(ctx, s, id)
 		if err == nil && runtime.GOOS == "windows" {
 			// To run LCOW we have a Linux and Windows section. Add an empty one now.
 			s.Windows = &specs.Windows{}
 		}
 	}
-
 	return err
 }
 
@@ -193,7 +171,6 @@ func populateDefaultUnixSpec(ctx context.Context, s *Spec, id string) error {
 				"/proc/timer_stats",
 				"/proc/sched_debug",
 				"/sys/firmware",
-				"/sys/devices/virtual/powercap",
 				"/proc/scsi",
 			},
 			ReadonlyPaths: []string{
@@ -227,15 +204,6 @@ func populateDefaultWindowsSpec(ctx context.Context, s *Spec, id string) error {
 			Cwd: `C:\`,
 		},
 		Windows: &specs.Windows{},
-	}
-	return nil
-}
-
-func populateDefaultDarwinSpec(s *Spec) error {
-	*s = Spec{
-		Version: specs.Version,
-		Root:    &specs.Root{},
-		Process: &specs.Process{Cwd: "/"},
 	}
 	return nil
 }

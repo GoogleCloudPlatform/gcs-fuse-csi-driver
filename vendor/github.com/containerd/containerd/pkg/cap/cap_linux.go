@@ -80,14 +80,15 @@ func ParseProcPIDStatus(r io.Reader) (map[Type]uint64, error) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
-		k, v, ok := strings.Cut(line, ":")
-		if !ok {
+		pair := strings.SplitN(line, ":", 2)
+		if len(pair) != 2 {
 			continue
 		}
-		k = strings.TrimSpace(k)
+		k := strings.TrimSpace(pair[0])
+		v := strings.TrimSpace(pair[1])
 		switch k {
 		case "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb":
-			ui64, err := strconv.ParseUint(strings.TrimSpace(v), 16, 64)
+			ui64, err := strconv.ParseUint(v, 16, 64)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse line %q", line)
 			}
