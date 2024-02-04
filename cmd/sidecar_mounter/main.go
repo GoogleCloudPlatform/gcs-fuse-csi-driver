@@ -18,10 +18,8 @@ limitations under the License.
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,7 +29,6 @@ import (
 	"time"
 
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
@@ -64,7 +61,7 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		errWriter := sidecarmounter.NewErrorWriter(filepath.Join(filepath.Dir(sp), "error"))
-		mc, err := prepareMountConfig(sp)
+		mc, err := sidecarmounter.NewMountConfig(sp)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed prepare mount config: socket path %q: %v\n", sp, err)
 			klog.Errorf(errMsg)
@@ -153,47 +150,4 @@ func main() {
 	wg.Wait()
 
 	klog.Info("exiting sidecar mounter...")
-}
-
-// Fetch the following information from a given socket path:
-// 1. Pod volume name
-// 2. The file descriptor
-// 3. GCS bucket name
-// 4. Mount options passing to gcsfuse (passed by the csi mounter).
-func prepareMountConfig(sp string) (*sidecarmounter.MountConfig, error) {
-	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
-	volumeName := filepath.Base(filepath.Dir(sp))
-	mc := sidecarmounter.MountConfig{
-		VolumeName: volumeName,
-		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
-		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-	}
-
-	klog.Infof("connecting to socket %q", sp)
-	c, err := net.Dial("unix", sp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to the socket %q: %w", sp, err)
-	}
-
-	fd, msg, err := util.RecvMsg(c)
-	if err != nil {
-		return nil, fmt.Errorf("failed to receive mount options from the socket %q: %w", sp, err)
-	}
-	// as we got all the information from the socket, closing the connection and deleting the socket
-	c.Close()
-	if err = syscall.Unlink(sp); err != nil {
-		klog.Errorf("failed to close socket %q: %v", sp, err)
-	}
-
-	mc.FileDescriptor = fd
-
-	if err := json.Unmarshal(msg, &mc); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal the mount config: %w", err)
-	}
-
-	if mc.BucketName == "" {
-		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
-	}
-
-	return &mc, nil
 }
