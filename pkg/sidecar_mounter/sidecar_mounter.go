@@ -18,13 +18,19 @@ limitations under the License.
 package sidecarmounter
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
@@ -132,6 +138,49 @@ var boolFlags = map[string]bool{
 	"debug_http":                    true,
 	"debug_invariants":              true,
 	"debug_mutex":                   true,
+}
+
+// Fetch the following information from a given socket path:
+// 1. Pod volume name
+// 2. The file descriptor
+// 3. GCS bucket name
+// 4. Mount options passing to gcsfuse (passed by the csi mounter).
+func NewMountConfig(sp string) (*MountConfig, error) {
+	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
+	volumeName := filepath.Base(filepath.Dir(sp))
+	mc := MountConfig{
+		VolumeName: volumeName,
+		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+	}
+
+	klog.Infof("connecting to socket %q", sp)
+	c, err := net.Dial("unix", sp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to the socket %q: %w", sp, err)
+	}
+
+	fd, msg, err := util.RecvMsg(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive mount options from the socket %q: %w", sp, err)
+	}
+	// as we got all the information from the socket, closing the connection and deleting the socket
+	c.Close()
+	if err = syscall.Unlink(sp); err != nil {
+		klog.Errorf("failed to close socket %q: %v", sp, err)
+	}
+
+	mc.FileDescriptor = fd
+
+	if err := json.Unmarshal(msg, &mc); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the mount config: %w", err)
+	}
+
+	if mc.BucketName == "" {
+		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
+	}
+
+	return &mc, nil
 }
 
 func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string) {
@@ -246,7 +295,7 @@ func (mc *MountConfig) prepareConfigFile(flagMap map[string]string) error {
 		return err
 	}
 
-	klog.Infof("gcsfsue config file content:\n%v", string(yamlData))
+	klog.Infof("gcsfuse config file content:\n%v", string(yamlData))
 
 	return os.WriteFile(mc.ConfigFile, yamlData, 0o400)
 }
