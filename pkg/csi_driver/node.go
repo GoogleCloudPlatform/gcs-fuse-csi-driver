@@ -172,6 +172,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to prepare emptyDir path: %v", err)
 	}
 
+	// Check if the sidecar container is still required,
+	// if not, put an exit file to the emptyDir path to
+	// notify the sidecar container to exit.
+	// This check will be unnecessary when the Kubernetes sidecar container feature is adopted.
+	if err := putExitFile(pod, emptyDirBasePath); err != nil {
+		return nil, status.Errorf(codes.Internal, err.Error())
+	}
+
 	// Check if there is any error from the sidecar container
 	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
 	if err != nil && !os.IsNotExist(err) {
@@ -296,9 +304,6 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* bind mount */); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", targetPath, err)
 	}
-
-	podID, _, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	s.k8sClients.CleanupPodUID(podID)
 
 	klog.V(4).Infof("NodeUnpublishVolume succeeded on target path %q", targetPath)
 

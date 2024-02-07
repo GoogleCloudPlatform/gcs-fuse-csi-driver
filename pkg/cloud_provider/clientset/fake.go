@@ -47,13 +47,6 @@ func (c *FakeClientset) GetPod(_ context.Context, namespace, name string) (*v1.P
 	return pod, nil
 }
 
-func (c *FakeClientset) GetPodByUID(_ context.Context, _ string) (*v1.Pod, error) {
-	return &v1.Pod{}, nil
-}
-
-func (c *FakeClientset) CleanupPodUID(_ string) {
-}
-
 func (c *FakeClientset) GetDaemonSet(_ context.Context, _, _ string) (*appsv1.DaemonSet, error) {
 	return &appsv1.DaemonSet{}, nil
 }
