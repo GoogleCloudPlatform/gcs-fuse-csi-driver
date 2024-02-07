@@ -33,8 +33,6 @@ import (
 
 type Interface interface {
 	GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error)
-	GetPodByUID(ctx context.Context, uid string) (*v1.Pod, error)
-	CleanupPodUID(uid string)
 	GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
@@ -47,7 +45,6 @@ type PodInfo struct {
 
 type Clientset struct {
 	k8sClients kubernetes.Interface
-	dataStore  map[string]PodInfo
 }
 
 func New(kubeconfigPath string) (Interface, error) {
@@ -69,35 +66,11 @@ func New(kubeconfigPath string) (Interface, error) {
 		klog.Fatal("failed to configure k8s client")
 	}
 
-	return &Clientset{k8sClients: clientset, dataStore: map[string]PodInfo{}}, nil
+	return &Clientset{k8sClients: clientset}, nil
 }
 
 func (c *Clientset) GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error) {
-	pod, err := c.k8sClients.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	// update pod info in dataStore
-	uid := string(pod.UID)
-	if _, ok := c.dataStore[uid]; !ok {
-		c.dataStore[string(pod.UID)] = PodInfo{Name: pod.Name, Namespace: pod.Namespace}
-	}
-
-	return pod, nil
-}
-
-func (c *Clientset) GetPodByUID(ctx context.Context, uid string) (*v1.Pod, error) {
-	pi, ok := c.dataStore[uid]
-	if !ok {
-		return nil, fmt.Errorf("cannot find Pod info for UID %q", uid)
-	}
-
-	return c.k8sClients.CoreV1().Pods(pi.Namespace).Get(ctx, pi.Name, metav1.GetOptions{})
-}
-
-func (c *Clientset) CleanupPodUID(uid string) {
-	delete(c.dataStore, uid)
+	return c.k8sClients.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *Clientset) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {

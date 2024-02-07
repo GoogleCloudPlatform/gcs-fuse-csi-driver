@@ -197,6 +197,9 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
 	}
 
+	// TODO(songjiaxun) remove this when the native sidecar container is supported.
+	skipTests = append(skipTests, "fast.termination")
+
 	// TODO(songjiaxun) remove this logic after the next CSI driver release.
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "custom.buffer", "fast.termination", "Pod.RestartPolicy.is.OnFailure$")

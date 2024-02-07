@@ -219,7 +219,6 @@ func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context) {
 	for _, cs := range t.pod.Status.ContainerStatuses {
 		if cs.Name == webhook.SidecarContainerName {
 			sidecarContainerStatus = cs
-
 		}
 	}
 
@@ -763,12 +762,13 @@ func (t *TestDeployment) WaitForRunningAndReadyWithTimeout(ctx context.Context, 
 }
 
 func (t *TestDeployment) Scale(ctx context.Context, replica int) {
-	framework.Logf("Scaling Deployment %s from %s to %s", t.deployment.Name, &t.deployment.Spec.Replicas, replica)
+	framework.Logf("Scaling Deployment %s from %v to %v", t.deployment.Name, t.deployment.Spec.Replicas, replica)
 	scale, err := t.client.AppsV1().Deployments(t.namespace.Name).GetScale(ctx, t.deployment.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
 	scale.Spec.Replicas = int32(replica)
-	_, err = t.client.AppsV1().Deployments(t.namespace.Name).UpdateScale(ctx, t.deployment.Name, scale, metav1.UpdateOptions{})
+	newScale, err := t.client.AppsV1().Deployments(t.namespace.Name).UpdateScale(ctx, t.deployment.Name, scale, metav1.UpdateOptions{})
 	framework.ExpectNoError(err)
+	t.deployment.Spec.Replicas = &newScale.Spec.Replicas
 }
 
 func (t *TestDeployment) Cleanup(ctx context.Context) {
@@ -912,14 +912,16 @@ func (t *TestJob) WaitForJobFailed() {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestJob) WaitForAllJobPodsGone(ctx context.Context, timeout time.Duration) error {
-	return wait.PollUntilContextTimeout(ctx, framework.Poll, timeout, true, func(ctx context.Context) (bool, error) {
+func (t *TestJob) WaitForAllJobPodsGone(ctx context.Context, timeout time.Duration) {
+	err := wait.PollUntilContextTimeout(ctx, framework.Poll, timeout, true, func(ctx context.Context) (bool, error) {
 		pods, err := e2ejob.GetJobPods(ctx, t.client, t.namespace.Name, t.job.Name)
 		if err != nil {
 			return false, err
 		}
+
 		return len(pods.Items) == 0, nil
 	})
+	framework.ExpectNoError(err)
 }
 
 func (t *TestJob) Cleanup(ctx context.Context) {

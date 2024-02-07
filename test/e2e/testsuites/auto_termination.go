@@ -132,42 +132,25 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
 	})
 
-	ginkgo.It("should store data and retain the data when Pod RestartPolicy is Never", func() {
+	ginkgo.It("should succeed when Pod RestartPolicy is Never and eventually succeeding", func() {
 		init()
 		defer cleanup()
 
-		ginkgo.By("Configuring the first pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetRestartPolicy(v1.RestartPolicyNever)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-		tPod1.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetRestartPolicy(v1.RestartPolicyNever)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
-		ginkgo.By("Deploying the first pod")
-		tPod1.Create(ctx)
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the first pod succeeded")
-		tPod1.WaitForSuccess(ctx)
-
-		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup(ctx)
-
-		ginkgo.By("Configuring the second pod")
-		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-
-		ginkgo.By("Deploying the second pod")
-		tPod2.Create(ctx)
-		defer tPod2.Cleanup(ctx)
-
-		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the second pod command exits with no error")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+		ginkgo.By("Checking that the pod succeeded")
+		tPod.WaitForSuccess(ctx)
 	})
 
-	ginkgo.It("should auto terminate the sidecar container when Pod RestartPolicy is Never and eventually failing", func() {
+	ginkgo.It("should fail when Pod RestartPolicy is Never and eventually failing", func() {
 		init()
 		defer cleanup()
 
@@ -179,51 +162,32 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod failed")
 		tPod.WaitForFail(ctx, specs.PollTimeout)
-
-		ginkgo.By("Deleting the pod")
-		tPod.Cleanup(ctx)
 	})
 
-	ginkgo.It("[no auto termination] should store data and retain the data when Pod RestartPolicy is Always", func() {
+	ginkgo.It("[no auto termination] should not terminate the sidecar when Pod RestartPolicy is Always and succeeding", func() {
 		init()
 		defer cleanup()
 
 		ginkgo.By("Configuring the first pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetRestartPolicy(v1.RestartPolicyAlways)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-		tPod1.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetRestartPolicy(v1.RestartPolicyAlways)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
 		ginkgo.By("Deploying the first pod")
-		tPod1.Create(ctx)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitForRunning(ctx)
+		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
 		time.Sleep(specs.PollTimeout)
-		tPod1.CheckSidecarNeverTerminated(ctx)
-
-		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup(ctx)
-
-		ginkgo.By("Configuring the second pod")
-		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-
-		ginkgo.By("Deploying the second pod")
-		tPod2.Create(ctx)
-		defer tPod2.Cleanup(ctx)
-
-		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the second pod command exits with no error")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+		tPod.CheckSidecarNeverTerminated(ctx)
 	})
 
 	ginkgo.It("[no auto termination] should not terminate the sidecar when Pod RestartPolicy is Always and failing", func() {
@@ -238,6 +202,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
@@ -245,44 +210,24 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		ginkgo.By("Checking that the sidecar container is still running after a while")
 		time.Sleep(specs.PollTimeout)
 		tPod.CheckSidecarNeverTerminated(ctx)
-
-		ginkgo.By("Deleting the pod")
-		tPod.Cleanup(ctx)
 	})
 
-	ginkgo.It("should store data and retain the data when Pod RestartPolicy is OnFailure", func() {
+	ginkgo.It("should succeed when Pod RestartPolicy is OnFailure", func() {
 		init()
 		defer cleanup()
 
-		ginkgo.By("Configuring the first pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetRestartPolicy(v1.RestartPolicyOnFailure)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-		tPod1.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
-		ginkgo.By("Deploying the first pod")
-		tPod1.Create(ctx)
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the first pod succeeded")
-		tPod1.WaitForSuccess(ctx)
-
-		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup(ctx)
-
-		ginkgo.By("Configuring the second pod")
-		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-
-		ginkgo.By("Deploying the second pod")
-		tPod2.Create(ctx)
-		defer tPod2.Cleanup(ctx)
-
-		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the second pod command exits with no error")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+		ginkgo.By("Checking that the pod succeeded")
+		tPod.WaitForSuccess(ctx)
 	})
 
 	ginkgo.It("[no auto termination] should not terminate the sidecar when Pod RestartPolicy is OnFailure and failing", func() {
@@ -297,6 +242,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
@@ -304,8 +250,5 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		ginkgo.By("Checking that the sidecar container is still running after a while")
 		time.Sleep(specs.PollTimeout)
 		tPod.CheckSidecarNeverTerminated(ctx)
-
-		ginkgo.By("Deleting the pod")
-		tPod.Cleanup(ctx)
 	})
 }
