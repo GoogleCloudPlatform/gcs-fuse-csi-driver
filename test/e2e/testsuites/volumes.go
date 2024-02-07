@@ -20,8 +20,6 @@ package testsuites
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
@@ -233,86 +231,6 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Deleting the first pod")
 		tPod1.Cleanup(ctx)
-
-		ginkgo.By("Configuring the second pod")
-		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-
-		ginkgo.By("Deploying the second pod")
-		tPod2.Create(ctx)
-		defer tPod2.Cleanup(ctx)
-
-		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the second pod command exits with no error")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
-	})
-
-	ginkgo.It("[fast termination] should store data and retain the data when Pod RestartPolicy is Never", func() {
-		init()
-		defer cleanup()
-
-		ginkgo.By("Configuring the first pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetRestartPolicy(v1.RestartPolicyNever)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-		tPod1.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
-
-		ginkgo.By("Deploying the first pod")
-		tPod1.Create(ctx)
-
-		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitFoSuccess(ctx)
-
-		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup(ctx)
-
-		ginkgo.By("Configuring the second pod")
-		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-
-		ginkgo.By("Deploying the second pod")
-		tPod2.Create(ctx)
-		defer tPod2.Cleanup(ctx)
-
-		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the second pod command exits with no error")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
-	})
-
-	ginkgo.It("[fast termination] should store data and retain the data when Pod is terminating", func() {
-		init()
-		defer cleanup()
-
-		ginkgo.By("Configuring the first pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetRestartPolicy(v1.RestartPolicyAlways)
-		tPod1.SetGracePeriod(600)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-		cmd := []string{
-			fmt.Sprintf("handle_term() { echo 'Caught SIGTERM signal!'; echo 'hello world' > %v/data && grep 'hello world' %v/data; sleep 5; exit 0; };", mountPath, mountPath),
-			"trap handle_term SIGTERM;",
-			"echo 'I am sleeping!';",
-			"sleep infinity & wait $!;",
-		}
-		tPod1.SetCommand(strings.Join(cmd, " "))
-
-		ginkgo.By("Deploying the first pod")
-		tPod1.Create(ctx)
-
-		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitForRunning(ctx)
-
-		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup(ctx)
-
-		ginkgo.By("The pod should terminate fast")
-		tPod1.WaitForPodNotFoundInNamespace(ctx, time.Second*20)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)

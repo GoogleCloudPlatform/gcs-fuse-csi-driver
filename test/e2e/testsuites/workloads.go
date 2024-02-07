@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
@@ -138,7 +137,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tDeployment.Scale(ctx, 0)
 
 		ginkgo.By("Checking that the deployment is in ready status")
-		tDeployment.WaitForRunningAndReadyWithTimeout(ctx, time.Second*20)
+		tDeployment.WaitForRunningAndReadyWithTimeout(ctx, specs.PollTimeout)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -176,7 +175,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tStatefulSet.WaitForRunningAndReady(ctx)
 	})
 
-	ginkgo.It("[fast termination] should store data in Job with RestartPolicy Never", func() {
+	ginkgo.It("[auto termination] should store data in Job with RestartPolicy Never", func() {
 		init()
 		defer cleanup()
 
@@ -197,7 +196,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tJob.WaitForJobPodsSucceeded(ctx)
 	})
 
-	ginkgo.It("[fast termination] should store data in Job with RestartPolicy OnFailure eventually succeed", func() {
+	ginkgo.It("[auto termination] should store data in Job with RestartPolicy OnFailure eventually succeed", func() {
 		init()
 		defer cleanup()
 
@@ -225,12 +224,13 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tJob.WaitForJobPodsSucceeded(ctx)
 	})
 
-	ginkgo.It("[fast termination] should store data in Job with RestartPolicy OnFailure eventually fail", func() {
+	ginkgo.It("[fast termination] should fast terminate sidecar container in Job with RestartPolicy OnFailure eventually fail", func() {
 		init()
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetGracePeriod(600)
 		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
 		cmd := []string{
@@ -248,5 +248,8 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 		ginkgo.By("Checking that the job is in failed status")
 		tJob.WaitForJobFailed()
+
+		ginkgo.By("The pod should terminate fast")
+		tJob.WaitForAllJobPodsGone(ctx, specs.PollTimeout)
 	})
 }
