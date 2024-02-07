@@ -175,22 +175,12 @@ func checkContainerIsStopped(ctx context.Context, containerdClient *containerd.C
 }
 
 func putExitFile(ctx context.Context, containerdClient *containerd.Client, pod *v1.Pod, targetPath string) error {
-	// Check if the Pod is owned by a Job
-	isOwnedByJob := false
-	for _, o := range pod.ObjectMeta.OwnerReferences {
-		if o.Kind == "Job" {
-			isOwnedByJob = true
-
-			break
-		}
-	}
-
-	podRestartPolicyIsNever := pod.Spec.RestartPolicy == v1.RestartPolicyNever
 	podIsTerminating := pod.DeletionTimestamp != nil
-	jobWithOnFailureRestartPolicy := isOwnedByJob && pod.Spec.RestartPolicy == v1.RestartPolicyOnFailure
+	podRestartPolicyIsNever := pod.Spec.RestartPolicy == v1.RestartPolicyNever
+	podRestartPolicyIsOnFailure := pod.Spec.RestartPolicy == v1.RestartPolicyOnFailure
 
 	// Check if all the containers besides the sidecar container exited
-	if jobWithOnFailureRestartPolicy || podRestartPolicyIsNever || podIsTerminating {
+	if podRestartPolicyIsOnFailure || podRestartPolicyIsNever || podIsTerminating {
 		if pod.Status.ContainerStatuses == nil || len(pod.Status.ContainerStatuses) == 0 {
 			return nil
 		}
@@ -224,12 +214,12 @@ func putExitFile(ctx context.Context, containerdClient *containerd.Client, pod *
 			case cs.State.Running != nil || cs.State.Waiting != nil:
 				return nil
 
-			// If the Pod belongs to a Job with OnFailure RestartPolicy,
+			// If the Pod RestartPolicy is OnFailure,
 			// when the container terminated with a non-zero exit code,
 			// the container may restart. Do not terminate the gcsfuse sidecar container.
-			// When the container restart count reaches Job backoffLimit,
-			// the Pod will be directly terminated.
-			case jobWithOnFailureRestartPolicy && cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
+			// When the Pod belongs to a Job, and the container restart count reaches the Job backoffLimit,
+			// the Pod will be directly terminated, which goes to the first case.
+			case podRestartPolicyIsOnFailure && cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0:
 				return nil
 			}
 		}

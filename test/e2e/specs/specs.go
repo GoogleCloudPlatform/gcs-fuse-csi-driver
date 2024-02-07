@@ -68,8 +68,8 @@ const (
 
 	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:9143d9d3b8fc5eb1f907cb9a895c8442d860e51892dd52e74a84119eae120d84"
 
-	pollInterval     = 1 * time.Second
-	pollTimeout      = 1 * time.Minute
+	PollInterval     = 1 * time.Second
+	PollTimeout      = 1 * time.Minute
 	pollIntervalSlow = 10 * time.Second
 	pollTimeoutSlow  = 10 * time.Minute
 )
@@ -172,15 +172,20 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 }
 
 func (t *TestPod) WaitForRunning(ctx context.Context) {
-	err := e2epod.WaitForPodRunningInNamespaceSlow(ctx, t.client, t.pod.Name, t.pod.Namespace)
+	err := e2epod.WaitForPodNameRunningInNamespace(ctx, t.client, t.pod.Name, t.pod.Namespace)
 	framework.ExpectNoError(err)
 
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitFoSuccess(ctx context.Context) {
+func (t *TestPod) WaitForSuccess(ctx context.Context) {
 	err := e2epod.WaitForPodSuccessInNamespace(ctx, t.client, t.pod.Name, t.pod.Namespace)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) WaitForFail(ctx context.Context, timeout time.Duration) {
+	err := e2epod.WaitForPodFailedReason(ctx, t.client, t.pod, "", timeout)
 	framework.ExpectNoError(err)
 }
 
@@ -203,6 +208,24 @@ func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context, timeout time.Duration) {
 	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, timeout)
 	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context) {
+	var err error
+	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
+	framework.ExpectNoError(err)
+
+	var sidecarContainerStatus v1.ContainerStatus
+	for _, cs := range t.pod.Status.ContainerStatuses {
+		if cs.Name == webhook.SidecarContainerName {
+			sidecarContainerStatus = cs
+
+		}
+	}
+
+	gomega.Expect(sidecarContainerStatus).ToNot(gomega.BeNil())
+	gomega.Expect(sidecarContainerStatus.RestartCount).To(gomega.Equal(int32(0)))
+	gomega.Expect(sidecarContainerStatus.State.Running).ToNot(gomega.BeNil())
 }
 
 func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {
@@ -498,7 +521,7 @@ func (t *TestGCPServiceAccount) Create(ctx context.Context) {
 	t.serviceAccount, err = iamService.Projects.ServiceAccounts.Create("projects/"+t.serviceAccount.ProjectId, request).Do()
 	framework.ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, PollInterval, PollTimeout, true, func(context.Context) (bool, error) {
 		if _, e := iamService.Projects.ServiceAccounts.Get(t.serviceAccount.Name).Do(); e != nil {
 			//nolint:nilerr
 			return false, nil
@@ -567,7 +590,7 @@ func (t *TestGCPProjectIAMPolicyBinding) Create(ctx context.Context) {
 	crmService, err := cloudresourcemanager.NewService(ctx)
 	framework.ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, PollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
 		if addBinding(crmService, t.projectID, t.member, t.role) != nil {
 			//nolint:nilerr
 			return false, nil
@@ -583,7 +606,7 @@ func (t *TestGCPProjectIAMPolicyBinding) Cleanup(ctx context.Context) {
 	crmService, err := cloudresourcemanager.NewService(ctx)
 	framework.ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, PollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
 		if removeMember(crmService, t.projectID, t.member, t.role) != nil {
 			//nolint:nilerr
 			return false, nil
@@ -887,6 +910,16 @@ func (t *TestJob) WaitForJobFailed() {
 	framework.Logf("Waiting Job %s to fail", t.job.Name)
 	err := e2ejob.WaitForJobFailed(t.client, t.namespace.Name, t.job.Name)
 	framework.ExpectNoError(err)
+}
+
+func (t *TestJob) WaitForAllJobPodsGone(ctx context.Context, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, framework.Poll, timeout, true, func(ctx context.Context) (bool, error) {
+		pods, err := e2ejob.GetJobPods(ctx, t.client, t.namespace.Name, t.job.Name)
+		if err != nil {
+			return false, err
+		}
+		return len(pods.Items) == 0, nil
+	})
 }
 
 func (t *TestJob) Cleanup(ctx context.Context) {
