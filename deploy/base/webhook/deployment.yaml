@@ -45,11 +45,11 @@ spec:
           image: gke.gcr.io/gcs-fuse-csi-driver-webhook
           imagePullPolicy: IfNotPresent
           args:
-            - --sidecar-cpu-limit=250m
+            - --sidecar-cpu-limit=0
             - --sidecar-cpu-request=250m
-            - --sidecar-memory-limit=256Mi
+            - --sidecar-memory-limit=0
             - --sidecar-memory-request=256Mi
-            - --sidecar-ephemeral-storage-limit=5Gi
+            - --sidecar-ephemeral-storage-limit=0
             - --sidecar-ephemeral-storage-request=5Gi
             - --sidecar-image=$(SIDECAR_IMAGE)
             - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
