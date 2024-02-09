@@ -222,6 +222,7 @@ func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context) {
 	for _, cs := range t.pod.Status.ContainerStatuses {
 		if cs.Name == webhook.SidecarContainerName {
 			sidecarContainerStatus = cs
+
 			break
 		}
 	}
