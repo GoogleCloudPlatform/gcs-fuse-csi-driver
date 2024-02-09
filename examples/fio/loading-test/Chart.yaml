@@ -1,0 +1,5 @@
+apiVersion: v2
+name: fio-loading-test
+description: A Helm chart for FIO loading test
+type: application
+version: 0.1.0
