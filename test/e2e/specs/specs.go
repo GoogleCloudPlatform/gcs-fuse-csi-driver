@@ -91,10 +91,13 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "gcsfuse-volume-tester-",
 				Annotations: map[string]string{
-					"gke-gcsfuse/volumes":                 "true",
-					"gke-gcsfuse/cpu-limit":               "50m",
-					"gke-gcsfuse/memory-limit":            "50Mi",
-					"gke-gcsfuse/ephemeral-storage-limit": "50Mi",
+					"gke-gcsfuse/volumes":                   "true",
+					"gke-gcsfuse/cpu-limit":                 "0",
+					"gke-gcsfuse/memory-limit":              "0",
+					"gke-gcsfuse/ephemeral-storage-limit":   "0",
+					"gke-gcsfuse/cpu-request":               "100m",
+					"gke-gcsfuse/memory-request":            "100Mi",
+					"gke-gcsfuse/ephemeral-storage-request": "100Mi",
 				},
 			},
 			Spec: v1.PodSpec{
@@ -219,6 +222,7 @@ func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context) {
 	for _, cs := range t.pod.Status.ContainerStatuses {
 		if cs.Name == webhook.SidecarContainerName {
 			sidecarContainerStatus = cs
+			break
 		}
 	}
 
