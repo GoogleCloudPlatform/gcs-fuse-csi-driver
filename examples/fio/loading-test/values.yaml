@@ -1,0 +1,24 @@
+# Default values for unet3d-loading-test.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+image: ubuntu:24.04
+bucketName: gke-dlio-test-data
+scenario: local-ssd
+nodeType: n2-standard-96
+
+resourceLimits:
+  cpu: 100
+  memory: 400Gi
+
+fio:
+  readType: read
+  fileSize: 64K
+  blockSize: 64K
+  filesPerThread: "20000"
+
+gcsfuse:
+  metadataCacheTtlSecs: "6048000"
+  statCacheCapacity: "3000000"
+  fileCacheMaxSizeInMb: "650000"
+  fileCacheForRangeRead: true
