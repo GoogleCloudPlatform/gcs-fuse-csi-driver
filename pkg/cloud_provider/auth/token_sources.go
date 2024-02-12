@@ -163,10 +163,7 @@ func (ts *GCPTokenSource) fetchGCPSAToken(ctx context.Context, identityBindingTo
 	resp, err := gcpSAClient.GenerateAccessToken(
 		ctx,
 		&credentialspb.GenerateAccessTokenRequest{
-			Name: fmt.Sprintf(
-				"projects/-/serviceAccounts/%s",
-				gcpSAName,
-			),
+			Name: "projects/-/serviceAccounts/" + gcpSAName,
 			Scope: []string{
 				"https://www.googleapis.com/auth/devstorage.full_control",
 			},

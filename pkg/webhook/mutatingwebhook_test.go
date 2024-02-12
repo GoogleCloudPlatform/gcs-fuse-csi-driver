@@ -20,6 +20,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -251,7 +252,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		{
 			name:         "Empty request test.",
 			inputPod:     nil,
-			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("there is no content to decode")),
+			wantResponse: admission.Errored(http.StatusBadRequest, errors.New("there is no content to decode")),
 		},
 		{
 			name:      "Invalid resource request test.",
@@ -269,7 +270,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 					},
 				},
 			},
-			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$'")),
+			wantResponse: admission.Errored(http.StatusBadRequest, errors.New("failed to parse sidecar container resource allocation from pod annotations: quantities must match the regular expression '^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$'")),
 		},
 		{
 			name:      "Different operation test.",

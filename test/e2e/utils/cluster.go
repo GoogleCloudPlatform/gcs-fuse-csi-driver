@@ -68,7 +68,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 	standardClusterFlags := []string{
 		"--num-nodes", strconv.Itoa(testParams.NumNodes), "--image-type", testParams.NodeImageType,
 		"--machine-type", testParams.NodeMachineType,
-		"--workload-pool", fmt.Sprintf("%s.svc.id.goog", testParams.ProjectID),
+		"--workload-pool", testParams.ProjectID + ".svc.id.goog",
 	}
 
 	if testParams.UseGKEManagedDriver {

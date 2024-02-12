@@ -19,6 +19,7 @@ package sidecarmounter
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -177,7 +178,7 @@ func NewMountConfig(sp string) (*MountConfig, error) {
 	}
 
 	if mc.BucketName == "" {
-		return nil, fmt.Errorf("failed to fetch bucket name from CSI driver")
+		return nil, errors.New("failed to fetch bucket name from CSI driver")
 	}
 
 	return &mc, nil

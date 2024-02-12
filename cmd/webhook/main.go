@@ -81,7 +81,7 @@ func main() {
 		klog.Fatalf("Unable to set up overall controller manager: %v", err)
 	}
 
-	if err = mgr.AddReadyzCheck("readyz", func(req *http.Request) error {
+	if err = mgr.AddReadyzCheck("readyz", func(_ *http.Request) error {
 		return nil
 	}); err != nil {
 		klog.Errorf("Unable to set up readyz endpoint: %v", err)
