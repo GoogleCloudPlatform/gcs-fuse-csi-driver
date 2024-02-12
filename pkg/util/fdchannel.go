@@ -18,7 +18,7 @@ limitations under the License.
 package util
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"syscall"
 
@@ -29,7 +29,7 @@ func SendMsg(via net.Conn, fd int, msg []byte) error {
 	klog.V(4).Info("get the underlying socket")
 	conn, ok := via.(*net.UnixConn)
 	if !ok {
-		return fmt.Errorf("failed to cast via to *net.UnixConn")
+		return errors.New("failed to cast via to *net.UnixConn")
 	}
 	connf, err := conn.File()
 	if err != nil {
@@ -48,7 +48,7 @@ func RecvMsg(via net.Conn) (int, []byte, error) {
 	klog.V(4).Info("get the underlying socket")
 	conn, ok := via.(*net.UnixConn)
 	if !ok {
-		return 0, nil, fmt.Errorf("failed to cast via to *net.UnixConn")
+		return 0, nil, errors.New("failed to cast via to *net.UnixConn")
 	}
 	connf, err := conn.File()
 	if err != nil {

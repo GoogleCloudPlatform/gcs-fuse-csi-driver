@@ -19,6 +19,7 @@ package csimounter
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -49,7 +50,7 @@ type Mounter struct {
 func New(mounterPath string) (mount.Interface, error) {
 	m, ok := mount.New(mounterPath).(mount.MounterForceUnmounter)
 	if !ok {
-		return nil, fmt.Errorf("failed to cast mounter to MounterForceUnmounter")
+		return nil, errors.New("failed to cast mounter to MounterForceUnmounter")
 	}
 
 	return &Mounter{

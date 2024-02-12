@@ -18,7 +18,7 @@ limitations under the License.
 package driver
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -64,7 +64,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 		{
 			name:       "nil caps",
 			capability: nil,
-			expectErr:  fmt.Errorf("volume capability must be provided"),
+			expectErr:  errors.New("volume capability must be provided"),
 		},
 		{
 			name: "missing access type",
@@ -73,7 +73,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 					Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
 				},
 			},
-			expectErr: fmt.Errorf("volume capability access type not set"),
+			expectErr: errors.New("volume capability access type not set"),
 		},
 		{
 			name: "missing access mode",
@@ -82,7 +82,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 					Mount: &csi.VolumeCapability_MountVolume{},
 				},
 			},
-			expectErr: fmt.Errorf("volume capability access mode not set"),
+			expectErr: errors.New("volume capability access mode not set"),
 		},
 		{
 			name: "mount, snw ",
@@ -161,7 +161,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 					Mode: csi.VolumeCapability_AccessMode_UNKNOWN,
 				},
 			},
-			expectErr: fmt.Errorf("driver does not support access mode: UNKNOWN"),
+			expectErr: errors.New("driver does not support access mode: UNKNOWN"),
 		},
 		{
 			name: "block, mnmw ",
@@ -173,7 +173,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 					Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER,
 				},
 			},
-			expectErr: fmt.Errorf("driver only supports mount access type volume capability"),
+			expectErr: errors.New("driver only supports mount access type volume capability"),
 		},
 	}
 
@@ -200,7 +200,7 @@ func TestDriverValidateVolumeCapabilities(t *testing.T) {
 		{
 			name:         "nil caps",
 			capabilities: nil,
-			expectErr:    fmt.Errorf("volume capabilities must be provided"),
+			expectErr:    errors.New("volume capabilities must be provided"),
 		},
 		{
 			name: "multiple good capabilities",
@@ -225,7 +225,7 @@ func TestDriverValidateVolumeCapabilities(t *testing.T) {
 		},
 		{
 			name:      "multiple bad capabilities",
-			expectErr: fmt.Errorf("driver does not support access mode: UNKNOWN"),
+			expectErr: errors.New("driver does not support access mode: UNKNOWN"),
 			capabilities: []*csi.VolumeCapability{
 				{
 					AccessType: &csi.VolumeCapability_Mount{

@@ -18,6 +18,7 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -60,13 +61,13 @@ type GCSDriver struct {
 
 func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	if config.Name == "" {
-		return nil, fmt.Errorf("driver name missing")
+		return nil, errors.New("driver name missing")
 	}
 	if config.Version == "" {
-		return nil, fmt.Errorf("driver version missing")
+		return nil, errors.New("driver version missing")
 	}
 	if !config.RunController && !config.RunNode {
-		return nil, fmt.Errorf("must run at least one controller or node service")
+		return nil, errors.New("must run at least one controller or node service")
 	}
 
 	driver := &GCSDriver{
@@ -115,7 +116,7 @@ func (driver *GCSDriver) addVolumeCapabilityAccessModes(vc []csi.VolumeCapabilit
 
 func (driver *GCSDriver) validateVolumeCapabilities(caps []*csi.VolumeCapability) error {
 	if len(caps) == 0 {
-		return fmt.Errorf("volume capabilities must be provided")
+		return errors.New("volume capabilities must be provided")
 	}
 
 	for _, c := range caps {
@@ -129,13 +130,13 @@ func (driver *GCSDriver) validateVolumeCapabilities(caps []*csi.VolumeCapability
 
 func (driver *GCSDriver) validateVolumeCapability(c *csi.VolumeCapability) error {
 	if c == nil {
-		return fmt.Errorf("volume capability must be provided")
+		return errors.New("volume capability must be provided")
 	}
 
 	// Validate access mode
 	accessMode := c.GetAccessMode()
 	if accessMode == nil {
-		return fmt.Errorf("volume capability access mode not set")
+		return errors.New("volume capability access mode not set")
 	}
 	if driver.vcap[accessMode.GetMode()] == nil {
 		return fmt.Errorf("driver does not support access mode: %v", accessMode.GetMode().String())
@@ -144,11 +145,11 @@ func (driver *GCSDriver) validateVolumeCapability(c *csi.VolumeCapability) error
 	// Validate access type
 	accessType := c.GetAccessType()
 	if accessType == nil {
-		return fmt.Errorf("volume capability access type not set")
+		return errors.New("volume capability access type not set")
 	}
-	mountType := c.GetMount()
-	if mountType == nil {
-		return fmt.Errorf("driver only supports mount access type volume capability")
+
+	if c.GetMount() == nil {
+		return errors.New("driver only supports mount access type volume capability")
 	}
 
 	return nil

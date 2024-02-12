@@ -50,7 +50,7 @@ func NewMetadataService(identityPool, identityProvider string, clientset clients
 
 	if identityPool == "" {
 		klog.Infof("got empty identityPool, constructing the identityPool using projectID")
-		identityPool = fmt.Sprintf("%s.svc.id.goog", projectID)
+		identityPool = projectID + ".svc.id.goog"
 	}
 
 	if identityProvider == "" {

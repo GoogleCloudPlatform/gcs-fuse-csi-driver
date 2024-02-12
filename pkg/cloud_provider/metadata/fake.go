@@ -51,7 +51,7 @@ func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, e
 
 	s := fakeServiceManager{
 		projectID:    projectID,
-		identityPool: fmt.Sprintf("%s.svc.id.goog", projectID),
+		identityPool: projectID + ".svc.id.goog",
 		identityProvider: fmt.Sprintf(
 			"%sv1/projects/%s/locations/%s/clusters/%s",
 			gkeAPIEndpoint,
