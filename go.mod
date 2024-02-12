@@ -15,8 +15,8 @@ require (
 	github.com/onsi/ginkgo/v2 v2.15.0
 	github.com/onsi/gomega v1.31.1
 	golang.org/x/net v0.21.0
-	golang.org/x/oauth2 v0.16.0
-	google.golang.org/api v0.162.0
+	golang.org/x/oauth2 v0.17.0
+	google.golang.org/api v0.163.0
 	google.golang.org/grpc v1.61.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.29.1
@@ -27,8 +27,8 @@ require (
 	k8s.io/mount-utils v0.29.1
 	k8s.io/pod-security-admission v0.29.1
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
-	sigs.k8s.io/boskos v0.0.0-20240207011248-46320356b779
-	sigs.k8s.io/controller-runtime v0.17.0
+	sigs.k8s.io/boskos v0.0.0-20240208220146-efc15e20850a
+	sigs.k8s.io/controller-runtime v0.17.1
 )
 
 require (
@@ -135,10 +135,10 @@ require (
 	k8s.io/component-helpers v0.29.1 // indirect
 	k8s.io/controller-manager v0.29.1 // indirect
 	k8s.io/kms v0.29.1 // indirect
-	k8s.io/kube-openapi v0.0.0-20240126223410-2919ad4fcfec // indirect
+	k8s.io/kube-openapi v0.0.0-20240209001042-7a0d5b415232 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.29.1 // indirect
-	k8s.io/test-infra v0.0.0-20240208052228-af35ae509944 // indirect
+	k8s.io/test-infra v0.0.0-20240211212101-0ed0646bae89 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.29.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
