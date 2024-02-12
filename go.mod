@@ -27,13 +27,13 @@ require (
 	k8s.io/mount-utils v0.29.1
 	k8s.io/pod-security-admission v0.29.1
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
-	sigs.k8s.io/boskos v0.0.0-20240208220146-efc15e20850a
+	sigs.k8s.io/boskos v0.0.0-20240212181944-5972d0cb4503
 	sigs.k8s.io/controller-runtime v0.17.1
 )
 
 require (
 	cloud.google.com/go v0.112.0 // indirect
-	cloud.google.com/go/compute v1.23.4 // indirect
+	cloud.google.com/go/compute v1.24.0 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
@@ -138,7 +138,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20240209001042-7a0d5b415232 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.29.1 // indirect
-	k8s.io/test-infra v0.0.0-20240211212101-0ed0646bae89 // indirect
+	k8s.io/test-infra v0.0.0-20240212152437-393f4ee2f7a6 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.29.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
