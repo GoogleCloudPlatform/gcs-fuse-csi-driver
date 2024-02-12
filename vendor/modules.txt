@@ -4,7 +4,7 @@ cloud.google.com/go/internal
 cloud.google.com/go/internal/optional
 cloud.google.com/go/internal/trace
 cloud.google.com/go/internal/version
-# cloud.google.com/go/compute v1.23.4
+# cloud.google.com/go/compute v1.24.0
 ## explicit; go 1.19
 cloud.google.com/go/compute/internal
 # cloud.google.com/go/compute/metadata v0.2.3
@@ -1450,7 +1450,7 @@ k8s.io/mount-utils
 ## explicit; go 1.21
 k8s.io/pod-security-admission/api
 k8s.io/pod-security-admission/policy
-# k8s.io/test-infra v0.0.0-20240211212101-0ed0646bae89
+# k8s.io/test-infra v0.0.0-20240212152437-393f4ee2f7a6
 ## explicit; go 1.21
 k8s.io/test-infra/prow/config/secret
 k8s.io/test-infra/prow/logrusutil
@@ -1482,7 +1482,7 @@ sigs.k8s.io/apiserver-network-proxy/konnectivity-client/pkg/client
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client/pkg/client/metrics
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client/pkg/common/metrics
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client/proto/client
-# sigs.k8s.io/boskos v0.0.0-20240208220146-efc15e20850a
+# sigs.k8s.io/boskos v0.0.0-20240212181944-5972d0cb4503
 ## explicit; go 1.21
 sigs.k8s.io/boskos/client
 sigs.k8s.io/boskos/common
