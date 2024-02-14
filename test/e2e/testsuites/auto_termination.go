@@ -220,7 +220,14 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
 		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
-		tPod.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		cmd := []string{
+			"sleep 10;",
+			fmt.Sprintf("if [ -f %v/testfile ]; then echo 'Completed Successfully!'; exit 0; fi;", mountPath),
+			fmt.Sprintf("touch %v/testfile;", mountPath),
+			"echo 'Job Failed!';",
+			"exit 1;",
+		}
+		tPod.SetCommand(strings.Join(cmd, " "))
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
