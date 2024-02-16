@@ -45,7 +45,6 @@ const (
 	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
-	VolumeContextKeyMountOptions        = "mountOptions"
 
 	UmountTimeout = time.Second * 5
 
@@ -101,9 +100,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
-	if mountOptions, ok := vc[VolumeContextKeyMountOptions]; ok {
-		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
-	}
+
+	fuseMountOptions = parseVolumeAttributes(fuseMountOptions, vc)
 
 	if vc[VolumeContextKeyEphemeral] == "true" {
 		bucketName = vc[VolumeContextKeyBucketName]

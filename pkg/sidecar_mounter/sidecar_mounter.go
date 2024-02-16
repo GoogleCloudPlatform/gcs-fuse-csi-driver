@@ -236,7 +236,8 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 			value = argPair[1]
 		}
 
-		if boolFlags[flag] && value != "" {
+		switch {
+		case boolFlags[flag] && value != "":
 			flag = flag + "=" + value
 			if value == "true" || value == "false" {
 				value = ""
@@ -245,10 +246,11 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 
 				continue
 			}
-		}
-
-		if flag == "app-name" {
+		case flag == "app-name":
 			value = GCSFuseAppName + "-" + value
+		case flag == util.DisableFileCacheKey:
+			configFileFlagMap["cache-dir"] = ""
+			continue
 		}
 
 		flagMap[flag] = value
