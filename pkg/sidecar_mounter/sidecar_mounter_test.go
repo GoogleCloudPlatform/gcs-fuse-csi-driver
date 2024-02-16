@@ -38,23 +38,26 @@ var (
 	defaultConfigFileFlagMap = map[string]string{
 		"logging:file-path": "/dev/fd/1",
 		"logging:format":    "text",
-		"cache-location":    "test-cache-dir",
+		"cache-dir":         "test-cache-dir",
 	}
 
 	invalidArgs = []string{
 		"temp-dir",
+		"config-file",
 		"foreground",
 		"log-file",
 		"log-format",
+		"key-file",
+		"token-url",
+		"reuse-token-from-url",
+		"o",
 		"logging:file-path:test",
 		"logging:format:test",
 		"logging:log-rotate:max-file-size-mb:test",
 		"logging:log-rotate:backup-file-count:test",
 		"logging:log-rotate:compress:test",
-		"key-file",
-		"token-url",
-		"reuse-token-from-url",
-		"o",
+		"cache-dir",
+		"experimental-local-file-cache",
 	}
 )
 
@@ -103,7 +106,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:format":          "text",
 				"logging:severity":        "error",
 				"write:create-empty-file": "true",
-				"cache-location":          "test-cache-dir",
+				"cache-dir":               "test-cache-dir",
 			},
 		},
 		{
@@ -191,13 +194,15 @@ func TestPrepareConfigFile(t *testing.T) {
 				ConfigFile: "./test-config-file.yaml",
 			},
 			configMapArgs: map[string]string{
-				"logging:file-path":                    "/dev/fd/1",
-				"logging:format":                       "text",
-				"logging:severity":                     "error",
-				"write:create-empty-file":              "true",
-				"file-cache:max-size-in-mb":            "10000",
-				"file-cache:cache-file-for-range-read": "true",
-				"cache-location":                       "/gcsfuse-cache/.volumes/volume-name",
+				"logging:file-path":                     "/dev/fd/1",
+				"logging:format":                        "text",
+				"logging:severity":                      "error",
+				"write:create-empty-file":               "true",
+				"file-cache:max-size-mb":                "10000",
+				"file-cache:cache-file-for-range-read":  "true",
+				"metadata-cache:stat-cache-max-size-mb": "1000",
+				"metadata-cache:type-cache-max-size-mb": "-1",
+				"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
 			},
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{
@@ -209,10 +214,14 @@ func TestPrepareConfigFile(t *testing.T) {
 					"create-empty-file": true,
 				},
 				"file-cache": map[string]interface{}{
-					"max-size-in-mb":            10000,
+					"max-size-mb":               10000,
 					"cache-file-for-range-read": true,
 				},
-				"cache-location": "/gcsfuse-cache/.volumes/volume-name",
+				"metadata-cache": map[string]interface{}{
+					"stat-cache-max-size-mb": 1000,
+					"type-cache-max-size-mb": -1,
+				},
+				"cache-dir": "/gcsfuse-cache/.volumes/volume-name",
 			},
 		},
 		{

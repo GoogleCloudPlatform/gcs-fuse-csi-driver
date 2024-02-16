@@ -158,7 +158,7 @@ spec:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: {{ .Values.bucketName }}
-        mountOptions: implicit-dirs,{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }}only-dir={{ .Values.fio.fileSize }},{{- end }}stat-cache-capacity={{ .Values.gcsfuse.statCacheCapacity }},metadata-cache:ttl-secs:{{ .Values.gcsfuse.metadataCacheTtlSecs }},file-cache:max-size-in-mb:{{ .Values.gcsfuse.fileCacheMaxSizeInMb }},file-cache:cache-file-for-range-read:{{ .Values.gcsfuse.fileCacheForRangeRead }}
+        mountOptions: implicit-dirs,{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }}only-dir={{ .Values.fio.fileSize }},{{- end }}stat-cache-capacity={{ .Values.gcsfuse.statCacheCapacity }},metadata-cache:ttl-secs:{{ .Values.gcsfuse.metadataCacheTtlSecs }},file-cache:max-size-mb:{{ .Values.gcsfuse.fileCacheMaxSizeInMb }},file-cache:cache-file-for-range-read:{{ .Values.gcsfuse.fileCacheForRangeRead }}
   {{- else }}
     csi:
       driver: gcsfuse.csi.storage.gke.io
