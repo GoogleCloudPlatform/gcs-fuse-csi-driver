@@ -127,13 +127,12 @@ var disallowedFlags = map[string]bool{
 	"logging:log-rotate:max-file-size-mb":  true,
 	"logging:log-rotate:backup-file-count": true,
 	"logging:log-rotate:compress":          true,
-	"cache-location":                       true,
+	"cache-dir":                            true,
+	"experimental-local-file-cache":        true,
 }
 
-// TODO: move experimental-local-file-cache flag to disallowedFlags when the file cache feature is ready.
 var boolFlags = map[string]bool{
 	"implicit-dirs":                 true,
-	"experimental-local-file-cache": true,
 	"enable-nonexistent-type-cache": true,
 	"debug_fuse_errors":             true,
 	"debug_fuse":                    true,
@@ -201,7 +200,7 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 	configFileFlagMap := map[string]string{
 		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
 		"logging:format":    "text",
-		"cache-location":    mc.CacheDir,
+		"cache-dir":         mc.CacheDir,
 	}
 
 	invalidArgs := []string{}

@@ -92,7 +92,7 @@ spec:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: {{ .Values.bucketName }}
-        mountOptions: implicit-dirs,stat-cache-ttl={{ .Values.gcsfuse.statCacheTtl }},type-cache-ttl={{ .Values.gcsfuse.typeCacheTtl }},stat-cache-capacity={{ .Values.gcsfuse.statCacheCapacity }},file-cache:max-size-in-mb:{{ .Values.gcsfuse.fileCacheMaxSizeInMb }},file-cache:cache-file-for-range-read:{{ .Values.gcsfuse.fileCacheForRangeRead }}
+        mountOptions: implicit-dirs,stat-cache-ttl={{ .Values.gcsfuse.statCacheTtl }},type-cache-ttl={{ .Values.gcsfuse.typeCacheTtl }},stat-cache-capacity={{ .Values.gcsfuse.statCacheCapacity }},file-cache:max-size-mb:{{ .Values.gcsfuse.fileCacheMaxSizeInMb }},file-cache:cache-file-for-range-read:{{ .Values.gcsfuse.fileCacheForRangeRead }}
   {{- else }}
     csi:
       driver: gcsfuse.csi.storage.gke.io
