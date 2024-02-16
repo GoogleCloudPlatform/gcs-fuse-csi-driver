@@ -38,7 +38,10 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-const mountPath = "/mnt/test"
+const (
+	mountPath  = "/mnt/test"
+	volumeName = "test-gcsfuse-volume"
+)
 
 type gcsFuseCSIVolumesTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
@@ -105,7 +108,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
 		tPod1.Create(ctx)
@@ -122,7 +125,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
 		tPod2.Create(ctx)
@@ -143,7 +146,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the writer pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetName("gcsfuse-volume-tester-writer")
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the writer pod")
 		tPod.Create(ctx)
@@ -164,7 +167,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		if pattern.VolType == storageframework.CSIInlineVolume && l.volumeResource.VolSource != nil {
 			l.volumeResource.VolSource.CSI.ReadOnly = ptr.To(true)
 		}
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, true)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, true)
 
 		ginkgo.By("Deploying the reader pod")
 		tPod.Create(ctx)
@@ -188,7 +191,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod1.SetNonRootSecurityContext(1001, 2002, 0)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
 		tPod1.Create(ctx)
@@ -205,7 +208,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
 		tPod2.Create(ctx)
@@ -226,7 +229,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod1.SetNonRootSecurityContext(1001, 2002, 3003)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
 		tPod1.Create(ctx)
@@ -243,7 +246,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
 		tPod2.Create(ctx)
@@ -267,7 +270,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
@@ -288,7 +291,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetCustomSidecarContainerImage()
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
@@ -311,7 +314,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-buffer", "standard-rwo", "5Gi", v1.ReadWriteOnce)
 		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: tPVC.PVC}, webhook.SidecarContainerBufferVolumeName, "", false)
 		tPod.SetNonRootSecurityContext(0, 0, 1000)

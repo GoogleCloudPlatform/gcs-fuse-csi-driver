@@ -92,7 +92,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand(fmt.Sprintf("mount | grep %v | grep rw, && echo 'hello world' > %v/${POD_NAME} && grep 'hello world' %v/${POD_NAME} && tail -f /dev/null", mountPath, mountPath, mountPath))
 
 		ginkgo.By("Configuring the deployment")
@@ -113,7 +113,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("Configuring the pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod1.SetGracePeriod(600)
-		tPod1.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		cmd := []string{
 			fmt.Sprintf("handle_term() { echo 'Caught SIGTERM signal!'; echo 'hello world' > %v/data && grep 'hello world' %v/data; sleep 5; exit 0; };", mountPath, mountPath),
 			"trap handle_term SIGTERM;",
@@ -141,7 +141,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
 		tPod2.Create(ctx)
@@ -161,7 +161,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand(fmt.Sprintf("mount | grep %v | grep rw, && echo 'hello world' > %v/${POD_NAME} && grep 'hello world' %v/${POD_NAME} && tail -f /dev/null", mountPath, mountPath, mountPath))
 
 		ginkgo.By("Configuring the StatefulSet")
@@ -182,7 +182,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetRestartPolicy(v1.RestartPolicyNever)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand("touch /mnt/test/test_file && echo $(date) >> /mnt/test/test_file && cat /mnt/test/test_file")
 
 		ginkgo.By("Configuring the job")
@@ -203,7 +203,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		cmd := []string{
 			"sleep 10;",
 			fmt.Sprintf("if [ -f %v/testfile ]; then echo 'Completed Successfully!'; exit 0; fi;", mountPath),
@@ -232,7 +232,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetGracePeriod(600)
 		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		cmd := []string{
 			"sleep 10;",
 			"exit 1;",

@@ -60,6 +60,7 @@ const (
 	ForceNewBucketPrefix            = "gcsfuse-csi-force-new-bucket"
 	SubfolderInBucketPrefix         = "gcsfuse-csi-subfolder-in-bucket"
 	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
+	DisableFileCachePrefix          = "gcsfuse-csi-disable-file-cache"
 	ImplicitDirsPath                = "implicit-dir"
 	InvalidVolume                   = "<invalid-name>"
 
@@ -294,6 +295,14 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 	}
 
 	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, volume)
+}
+
+func (t *TestPod) SetupCacheVolumeMount(mountPath string) {
+	volumeMount := v1.VolumeMount{
+		Name:      webhook.SidecarContainerCacheVolumeName,
+		MountPath: mountPath,
+	}
+	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
 }
 
 func (t *TestPod) SetName(name string) {
@@ -1003,12 +1012,11 @@ func CreateImplicitDirInBucket(dirPath, bucketName string) {
 	}
 }
 
-func CreateEmptyFileInBucket(fileName, bucketName string) {
-	f, err := os.Create(fileName)
+func CreateTestFileInBucket(fileName, bucketName string) {
+	err := os.WriteFile(fileName, []byte(fileName), 0o644)
 	if err != nil {
-		framework.Failf("Failed to create an empty data file: %v", err)
+		framework.Failf("Failed to create a test file: %v", err)
 	}
-	f.Close()
 	defer func() {
 		err = os.Remove(fileName)
 		if err != nil {
@@ -1018,6 +1026,6 @@ func CreateEmptyFileInBucket(fileName, bucketName string) {
 
 	//nolint:gosec
 	if output, err := exec.Command("gsutil", "cp", fileName, fmt.Sprintf("gs://%v", bucketName)).CombinedOutput(); err != nil {
-		framework.Failf("Failed to create an empty file in GCS bucket: %v, output: %s", err, output)
+		framework.Failf("Failed to create a test file in GCS bucket: %v, output: %s", err, output)
 	}
 }

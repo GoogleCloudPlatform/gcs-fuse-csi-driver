@@ -197,7 +197,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			tPod.SetImage(specs.UbuntuImage)
 			tPod.SetResource("2", "5Gi", "5Gi")
 			mountPath := "/gcs"
-			tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false, "implicit-dirs", "max-conns-per-host=100", "client-protocol=http1")
+			tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false, "implicit-dirs", "max-conns-per-host=100", "client-protocol=http1")
 			tPod.SetAnnotations(map[string]string{
 				"gke-gcsfuse/cpu-limit":               "10",
 				"gke-gcsfuse/memory-limit":            "2Gi",

@@ -250,6 +250,8 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 			value = GCSFuseAppName + "-" + value
 		case flag == util.DisableFileCacheKey:
 			configFileFlagMap["cache-dir"] = ""
+			klog.Info("gcsfuse file cache is disabled.")
+
 			continue
 		}
 
