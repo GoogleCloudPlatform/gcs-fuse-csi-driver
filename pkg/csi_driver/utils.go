@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"golang.org/x/net/context"
@@ -37,6 +39,9 @@ const (
 	CreateVolumeCSIFullMethod      = "/csi.v1.Controller/CreateVolume"
 	DeleteVolumeCSIFullMethod      = "/csi.v1.Controller/DeleteVolume"
 	NodePublishVolumeCSIFullMethod = "/csi.v1.Node/NodePublishVolume"
+
+	VolumeContextKeyMountOptions     = "mountOptions"
+	VolumeContextKeyDisableFileCache = "disableFileCache"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -142,6 +147,21 @@ func joinMountOptions(existingOptions []string, newOptions []string) []string {
 	}
 
 	return allMountOptions.List()
+}
+
+// parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
+func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) []string {
+	if mountOptions, ok := volumeContext[VolumeContextKeyMountOptions]; ok {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
+	}
+
+	if disableFileCache, ok := volumeContext[VolumeContextKeyDisableFileCache]; ok {
+		if boolVal, err := strconv.ParseBool(disableFileCache); err == nil && boolVal {
+			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.DisableFileCacheKey})
+		}
+	}
+
+	return fuseMountOptions
 }
 
 func putExitFile(pod *v1.Pod, emptyDirBasePath string) error {

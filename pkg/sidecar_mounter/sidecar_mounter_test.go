@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -161,6 +162,22 @@ func TestPrepareMountArgs(t *testing.T) {
 				"gid":         "0",
 			},
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
+			name: "should return valid args when file cache is disabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{util.DisableFileCacheKey},
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "text",
+				"cache-dir":         "",
+			},
 		},
 	}
 
