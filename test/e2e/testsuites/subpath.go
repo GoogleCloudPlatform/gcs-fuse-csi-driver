@@ -95,8 +95,8 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		tPod1.SetAnnotations(map[string]string{
 			"gke-gcsfuse/memory-limit": "100Mi",
 		})
-		tPod1.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", false, "subpath1", false /* add the first volume */)
-		tPod1.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", false, "subpath2", true /* reuse the first volume */)
+		tPod1.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", false, "subpath1", false /* add the first volume */)
+		tPod1.SetupVolumeWithSubPath(nil, volumeName, mountPath+"2", false, "subpath2", true /* reuse the first volume */)
 
 		ginkgo.By("Deploying the first pod")
 		tPod1.Create(ctx)
@@ -118,7 +118,7 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		tPod2.SetAnnotations(map[string]string{
 			"gke-gcsfuse/memory-limit": "100Mi",
 		})
-		tPod2.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
 		tPod2.Create(ctx)
@@ -149,8 +149,8 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/memory-limit": "100Mi",
 		})
-		tPod.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", false, "subpath1", false /* add the first volume */)
-		tPod.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", false, "subpath2", true /* reuse the first volume */)
+		tPod.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", false, "subpath1", false /* add the first volume */)
+		tPod.SetupVolumeWithSubPath(nil, volumeName, mountPath+"2", false, "subpath2", true /* reuse the first volume */)
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
@@ -176,13 +176,13 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		// Create files using gsutil
 		file1 := uuid.NewString()
 		file2 := uuid.NewString()
-		specs.CreateEmptyFileInBucket(file1, bucketName)
-		specs.CreateEmptyFileInBucket(file2, bucketName)
+		specs.CreateTestFileInBucket(file1, bucketName)
+		specs.CreateTestFileInBucket(file2, bucketName)
 
 		ginkgo.By("Configuring the pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", false, file1, false /* add the first volume */)
-		tPod1.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", false, file2, true /* reuse the first volume */)
+		tPod1.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", false, file1, false /* add the first volume */)
+		tPod1.SetupVolumeWithSubPath(nil, volumeName, mountPath+"2", false, file2, true /* reuse the first volume */)
 
 		ginkgo.By("Deploying the pod")
 		tPod1.Create(ctx)
@@ -205,7 +205,7 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the writer pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetName("gcsfuse-volume-tester-writer")
-		tPod.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath, false, "subpath", false /* add the first volume */)
+		tPod.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath, false, "subpath", false /* add the first volume */)
 
 		ginkgo.By("Deploying the writer pod")
 		tPod.Create(ctx)
@@ -226,8 +226,8 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		if pattern.VolType == storageframework.CSIInlineVolume && l.volumeResource.VolSource != nil {
 			l.volumeResource.VolSource.CSI.ReadOnly = ptr.To(true)
 		}
-		tPod.SetupVolumeWithSubPath(l.volumeResource, "test-gcsfuse-volume", mountPath+"1", true, "subpath", false /* add the first volume */)
-		tPod.SetupVolumeWithSubPath(nil, "test-gcsfuse-volume", mountPath+"2", true, "subpath/data", true /* reuse the first volume */)
+		tPod.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", true, "subpath", false /* add the first volume */)
+		tPod.SetupVolumeWithSubPath(nil, volumeName, mountPath+"2", true, "subpath/data", true /* reuse the first volume */)
 
 		ginkgo.By("Deploying the reader pod")
 		tPod.Create(ctx)

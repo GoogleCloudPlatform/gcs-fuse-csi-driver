@@ -104,7 +104,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
 
-		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, readOnly, mountOptions...)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "250m",
 			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,

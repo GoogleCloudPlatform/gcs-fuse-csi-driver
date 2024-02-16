@@ -95,7 +95,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 	testTwoPodsSameBucket := func(diffVol, sameNode bool) {
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetupVolume(l.volumeResourceList[0], "test-gcsfuse-volume", mountPath, false)
+		tPod1.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
 		tPod1.Create(ctx)
@@ -110,7 +110,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		if diffVol {
 			volIndex = 1
 		}
-		tPod2.SetupVolume(l.volumeResourceList[volIndex], "test-gcsfuse-volume", mountPath, false)
+		tPod2.SetupVolume(l.volumeResourceList[volIndex], volumeName, mountPath, false)
 		tPod2.SetNodeAffinity(tPod1.GetNode(), sameNode)
 
 		ginkgo.By("Deploying the second pod")
@@ -137,7 +137,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		for i, vr := range l.volumeResourceList {
-			tPod.SetupVolume(vr, fmt.Sprintf("test-gcsfuse-volume-%v", i), fmt.Sprintf("%v/%v", mountPath, i), false)
+			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
 		}
 
 		ginkgo.By("Deploying the pod")
@@ -285,7 +285,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResourceList[0], "test-gcsfuse-volume", mountPath, false)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
 
 		ginkgo.By("Sleeping 2 minutes for the service account being propagated")
 		time.Sleep(time.Minute * 2)
