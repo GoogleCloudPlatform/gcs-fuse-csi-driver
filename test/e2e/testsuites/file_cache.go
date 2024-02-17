@@ -43,9 +43,9 @@ func InitGcsFuseCSIFileCacheTestSuite() storageframework.TestSuite {
 		tsInfo: storageframework.TestSuiteInfo{
 			Name: "fileCache",
 			TestPatterns: []storageframework.TestPattern{
-				// storageframework.DefaultFsCSIEphemeralVolume,
+				storageframework.DefaultFsCSIEphemeralVolume,
 				storageframework.DefaultFsPreprovisionedPV,
-				// storageframework.DefaultFsDynamicPV,
+				storageframework.DefaultFsDynamicPV,
 			},
 		},
 	}
