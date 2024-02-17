@@ -1013,7 +1013,7 @@ func CreateImplicitDirInBucket(dirPath, bucketName string) {
 }
 
 func CreateTestFileInBucket(fileName, bucketName string) {
-	err := os.WriteFile(fileName, []byte(fileName), 0o644)
+	err := os.WriteFile(fileName, []byte(fileName), 0o600)
 	if err != nil {
 		framework.Failf("Failed to create a test file: %v", err)
 	}
