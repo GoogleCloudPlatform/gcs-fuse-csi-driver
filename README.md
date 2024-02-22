@@ -56,7 +56,7 @@ Status: General Availability
 
 ### GKE Compatibility
 
-Refer to [Google Cloud Storage FUSE CSI Driver Release Notes](./docs/releases.md)
+Refer to the [Google Cloud Storage FUSE CSI Driver Release Notes](./docs/releases.md).
 
 ## Get Started
 - GKE documentation: [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver)
