@@ -24,9 +24,12 @@ import (
 	"net/http"
 	"strings"
 
-	v1 "k8s.io/api/admission/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/version"
+	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/util/parsers"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,8 +49,9 @@ const (
 type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
-	Config  *Config
-	Decoder *admission.Decoder
+	Config     *Config
+	Decoder    *admission.Decoder
+	NodeLister listersv1.NodeLister
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
@@ -60,7 +64,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	if req.Operation != v1.Create {
+	if req.Operation != admissionv1.Create {
 		return admission.Allowed(fmt.Sprintf("No injection required for operation %v.", req.Operation))
 	}
 
@@ -78,7 +82,8 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", AnnotationGcsfuseVolumeEnableKey))
 	}
 
-	if ValidatePodHasSidecarContainerInjected(pod, true) {
+	sidecarInjected, _ := ValidatePodHasSidecarContainerInjected(pod, true)
+	if sidecarInjected {
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
 
@@ -97,8 +102,20 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, sidecar image %q, CPU request %q, CPU limit %q, memory request %q, memory limit %q, ephemeral storage request %q, ephemeral storage limit %q",
 		pod.Name, pod.GenerateName, pod.Namespace, config.ContainerImage, &config.CPURequest, &config.CPULimit, &config.MemoryRequest, &config.MemoryLimit, &config.EphemeralStorageRequest, &config.EphemeralStorageLimit)
-	// the gcsfuse sidecar container has to before the containers that consume the gcsfuse volume
-	pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, pod.Spec.Containers...)
+
+	// Check support for native sidecar.
+	supportsNativeSidecar, err := si.supportsNativeSidecar()
+	if err != nil {
+		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to verify native sidecar support: %w", err))
+	}
+
+	// Inject container.
+	if supportsNativeSidecar {
+		pod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config)}, pod.Spec.InitContainers...)
+	} else {
+		pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, pod.Spec.Containers...)
+	}
+
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
@@ -173,4 +190,42 @@ func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
 	}
 
 	return image, nil
+}
+
+func MustParseVersion(v string) *version.Version {
+	minimumSupportedVersion, err := version.ParseGeneric(v)
+	if err != nil {
+		panic(err)
+	}
+
+	return minimumSupportedVersion
+}
+
+var minimumSupportedVersion = MustParseVersion("1.29.0")
+
+func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
+	clusterNodes, err := si.NodeLister.List(labels.Everything())
+	if err != nil {
+		return false, fmt.Errorf("failed to get cluster nodes: %w", err)
+	}
+
+	supportsNativeSidecar := true
+	for _, node := range clusterNodes {
+		nodeVersion, err := version.ParseGeneric(node.Status.NodeInfo.KubeletVersion)
+		if !nodeVersion.AtLeast(minimumSupportedVersion) || err != nil {
+			if err != nil {
+				klog.Errorf(`invalid node gke version: could not get node "%s" k8s release from version "%s": "%v"`, node.Name, nodeVersion, err)
+			}
+			supportsNativeSidecar = false
+
+			break
+		}
+	}
+
+	if len(clusterNodes) == 0 {
+		// TODO(jaimebz): Rely on cluster version in the event there's no nodes to reference.
+		supportsNativeSidecar = false
+	}
+
+	return supportsNativeSidecar, nil
 }

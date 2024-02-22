@@ -19,3 +19,4 @@ namespace: gcs-fuse-csi-driver
 resources:
 - deployment.yaml
 - mutatingwebhook.yaml
+- webhook_setup.yaml

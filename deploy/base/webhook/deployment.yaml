@@ -34,6 +34,8 @@ spec:
         runAsGroup: 2079
         seccompProfile:
           type: RuntimeDefault
+      priorityClassName: csi-gcp-gcs-webhook
+      serviceAccount: gcsfusecsi-webhook-sa
       containers:
         - name: gcs-fuse-csi-driver-webhook
           securityContext:

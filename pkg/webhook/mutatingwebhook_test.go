@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -32,6 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -248,6 +251,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		inputPod     *corev1.Pod
 		operation    v1.Operation
 		wantResponse admission.Response
+		nodes        []corev1.Node
 	}{
 		{
 			name:         "Empty request test.",
@@ -311,26 +315,61 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
 		},
 		{
-			name:         "Injection successful test.",
+			name:         "regular container injection successful test.",
 			operation:    v1.Create,
 			inputPod:     validInputPod(false),
-			wantResponse: wantResponse(t, false),
+			wantResponse: wantResponse(t, false, false),
+			nodes:        skewVersionNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
 			operation:    v1.Create,
 			inputPod:     validInputPod(true),
-			wantResponse: wantResponse(t, true),
+			wantResponse: wantResponse(t, true, false),
+			nodes:        regularSidecarSupportNodes(),
+		},
+		{
+			name:         "native container injection successful test.",
+			operation:    v1.Create,
+			inputPod:     validInputPod(false),
+			wantResponse: wantResponse(t, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "Injection with custom sidecar container image successful test.",
+			operation:    v1.Create,
+			inputPod:     validInputPod(true),
+			wantResponse: wantResponse(t, true, true),
+			nodes:        nativeSupportNodes(),
 		},
 	}
 
-	for n, tc := range testCases {
-		t.Logf("test case %v: %s", n+1, tc.name)
-		si := SidecarInjector{
-			Client:  nil,
-			Config:  FakeConfig(),
-			Decoder: admission.NewDecoder(runtime.NewScheme()),
+	for _, tc := range testCases {
+		fakeClient := fake.NewSimpleClientset()
+
+		// Create the nodes.
+		for _, node := range tc.nodes {
+			n := node
+			_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), &n, metav1.CreateOptions{})
+			if err != nil {
+				t.Error("failed to setup/create nodes")
+			}
 		}
+
+		informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
+		lister := informerFactory.Core().V1().Nodes().Lister()
+
+		si := SidecarInjector{
+			Client:     nil,
+			Config:     FakeConfig(),
+			Decoder:    admission.NewDecoder(runtime.NewScheme()),
+			NodeLister: lister,
+		}
+
+		stopCh := make(<-chan struct{})
+		informerFactory.Start(stopCh)
+		informerFactory.WaitForCacheSync(stopCh)
+
 		request := &admission.Request{
 			AdmissionRequest: v1.AdmissionRequest{
 				Operation: tc.operation,
@@ -345,8 +384,68 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		gotResponse := si.Handle(context.Background(), *request)
 
 		if err := compareResponses(tc.wantResponse, gotResponse); err != nil {
-			t.Errorf("\nGot injection result: %v, but want: %v.", gotResponse, tc.wantResponse)
-			t.Error("Details: ", err)
+			t.Errorf("for test: %s\nGot injection result: %v, but want: %v. details: %v", tc.name, gotResponse, tc.wantResponse, err)
+		}
+	}
+}
+
+func TestSupportsNativeSidecar(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		testName      string
+		nodes         []corev1.Node
+		expect        bool
+		expectedError error
+	}{
+		{
+			testName: "test should support native sidecar",
+			nodes:    nativeSupportNodes(),
+			expect:   true,
+		},
+		{
+			testName: "test should not support native sidecar, skew",
+			nodes:    skewVersionNodes(),
+			expect:   false,
+		},
+		{
+			testName: "test should not support native sidecar, all under 1.29",
+			nodes:    regularSidecarSupportNodes(),
+			expect:   false,
+		},
+		{
+			testName: "test no nodes present, supports native sidecar support",
+			nodes:    []corev1.Node{},
+			expect:   false,
+		},
+	}
+	for _, tc := range testCases {
+		fakeClient := fake.NewSimpleClientset()
+		// Create the nodes.
+		for _, node := range tc.nodes {
+			n := node
+			_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), &n, metav1.CreateOptions{})
+			if err != nil {
+				t.Error("failed to setup/create nodes")
+			}
+		}
+
+		informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
+		lister := informerFactory.Core().V1().Nodes().Lister()
+		si := &SidecarInjector{
+			NodeLister: lister,
+		}
+
+		stopCh := make(<-chan struct{})
+		informerFactory.Start(stopCh)
+		informerFactory.WaitForCacheSync(stopCh)
+
+		result, err := si.supportsNativeSidecar()
+		if result != tc.expect {
+			t.Errorf("\nfor %s, got native sidecar support to be: %t, but want: %t", tc.testName, result, tc.expect)
+			if err != nil {
+				t.Errorf("error returned from method: %v", err)
+			}
 		}
 	}
 }
@@ -424,7 +523,7 @@ func validInputPod(customImage bool) *corev1.Pod {
 	return pod
 }
 
-func wantResponse(t *testing.T, customImage bool) admission.Response {
+func wantResponse(t *testing.T, customImage bool, native bool) admission.Response {
 	t.Helper()
 	newPod := validInputPod(customImage)
 	config := FakeConfig()
@@ -432,8 +531,98 @@ func wantResponse(t *testing.T, customImage bool) admission.Response {
 		config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image
 		newPod.Spec.Containers = newPod.Spec.Containers[:len(newPod.Spec.Containers)-1]
 	}
-	newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+
+	if native {
+		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config)}, newPod.Spec.InitContainers...)
+	} else {
+		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
+}
+
+func nativeSupportNodes() []corev1.Node {
+	return []corev1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node1",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.29.1-gke.1670000",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node2",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.29.1-gke.1670000",
+				},
+			},
+		},
+	}
+}
+
+func regularSidecarSupportNodes() []corev1.Node {
+	return []corev1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node1",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.28.3-gke.1111000",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node2",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.28.3-gke.1111000",
+				},
+			},
+		},
+	}
+}
+
+func skewVersionNodes() []corev1.Node {
+	return []corev1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node1",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.29.1-gke.1670000",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node2",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.28.3-gke.1111000",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node3",
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "1.29.1-gke.1670000",
+				},
+			},
+		},
+	}
 }
