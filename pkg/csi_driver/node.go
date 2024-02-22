@@ -31,6 +31,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -157,7 +158,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
 	shouldInjectedByWebhook := strings.ToLower(pod.Annotations[webhook.AnnotationGcsfuseVolumeEnableKey]) == "true"
-	sidecarInjected := webhook.ValidatePodHasSidecarContainerInjected(pod, false)
+	sidecarInjected, isInitContainer := webhook.ValidatePodHasSidecarContainerInjected(pod, false)
 	if !sidecarInjected {
 		if shouldInjectedByWebhook {
 			return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
@@ -175,9 +176,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Check if the sidecar container is still required,
 	// if not, put an exit file to the emptyDir path to
 	// notify the sidecar container to exit.
-	// This check will be unnecessary when the Kubernetes sidecar container feature is adopted.
-	if err := putExitFile(pod, emptyDirBasePath); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+	if !isInitContainer {
+		if err := putExitFile(pod, emptyDirBasePath); err != nil {
+			return nil, status.Errorf(codes.Internal, err.Error())
+		}
 	}
 
 	// Check if there is any error from the sidecar container
@@ -211,8 +213,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(code, "the sidecar container failed with error: %v", errMsgStr)
 	}
 
+	var containerStatusList []corev1.ContainerStatus
+	// Use ContainerStatuses or InitContainerStatuses
+	if isInitContainer {
+		containerStatusList = pod.Status.InitContainerStatuses
+	} else {
+		containerStatusList = pod.Status.ContainerStatuses
+	}
+
 	// Check if the sidecar container terminated
-	for _, cs := range pod.Status.ContainerStatuses {
+	for _, cs := range containerStatusList {
 		if cs.Name != webhook.SidecarContainerName {
 			continue
 		}

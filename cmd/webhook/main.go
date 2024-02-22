@@ -20,10 +20,13 @@ package main
 import (
 	"flag"
 	"net/http"
+	"time"
 
 	"github.com/go-logr/logr"
 	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -52,6 +55,10 @@ var (
 	version = "unknown"
 )
 
+const (
+	resyncDuration = time.Minute * 30
+)
+
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
@@ -65,9 +72,28 @@ func main() {
 	// Load webhook config
 	c := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
 
+	// Load config for manager, informers, listers
+	kubeConfig := config.GetConfigOrDie()
+
+	// Setup client
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		klog.Fatalf("Unable to get clientset: %v", err)
+	}
+
+	// Setup stop channel
+	context := signals.SetupSignalHandler()
+
+	// Setup Informer
+	informerFactory := informers.NewSharedInformerFactory(client, resyncDuration)
+	nodeLister := informerFactory.Core().V1().Nodes().Lister()
+
+	informerFactory.Start(context.Done())
+	informerFactory.WaitForCacheSync(context.Done())
+
 	// Setup a Manager
 	klog.Info("Setting up manager.")
-	mgr, err := manager.New(config.GetConfigOrDie(), manager.Options{
+	mgr, err := manager.New(kubeConfig, manager.Options{
 		HealthProbeBindAddress: *healthProbeBindAddress,
 		ReadinessEndpointName:  "/readyz",
 		WebhookServer: webhook.NewServer(webhook.Options{
@@ -94,14 +120,15 @@ func main() {
 	klog.Info("Registering webhooks to the webhook server.")
 	hookServer.Register("/inject", &webhook.Admission{
 		Handler: &wh.SidecarInjector{
-			Client:  mgr.GetClient(),
-			Config:  c,
-			Decoder: admission.NewDecoder(runtime.NewScheme()),
+			Client:     mgr.GetClient(),
+			Config:     c,
+			Decoder:    admission.NewDecoder(runtime.NewScheme()),
+			NodeLister: nodeLister,
 		},
 	})
 
 	klog.Info("Starting manager.")
-	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(context); err != nil {
 		klog.Fatalf("Unable to run manager: %v", err)
 	}
 }

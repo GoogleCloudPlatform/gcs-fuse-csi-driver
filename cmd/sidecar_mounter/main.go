@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -121,12 +122,12 @@ func main() {
 	signal.Notify(c, syscall.SIGTERM)
 	klog.Info("waiting for SIGTERM signal...")
 
-	// Monitor the exit file.
-	// If the exit file is detected, send a syscall.SIGTERM signal to the signal channel.
-	go func() {
+	// Function that monitors the exit file used in regular sidecar containers.
+	monitorExitFile := func() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
 			<-ticker.C
+			// If exit file is detected, send a syscall.SIGTERM signal to the signal channel.
 			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
 				klog.Info("all the other containers terminated in the Pod, exiting the sidecar container.")
 
@@ -143,7 +144,17 @@ func main() {
 				return
 			}
 		}
-	}()
+	}
+
+	envVar := os.Getenv("NATIVE_SIDECAR")
+	isNativeSidecar, err := strconv.ParseBool(envVar)
+	if envVar != "" && err != nil {
+		klog.Warningf(`env variable "%s" could not be converted to boolean`, envVar)
+	}
+	// When the pod contains a regular container, we monitor for the exit file.
+	if !isNativeSidecar {
+		go monitorExitFile()
+	}
 
 	<-c // blocking the process
 	klog.Info("received SIGTERM signal, waiting for all the gcsfuse processes exit...")
