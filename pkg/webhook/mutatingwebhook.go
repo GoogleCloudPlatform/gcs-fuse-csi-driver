@@ -44,6 +44,8 @@ const (
 	annotationGcsfuseSidecarCPURequestKey              = "gke-gcsfuse/cpu-request"
 	annotationGcsfuseSidecarMemoryRequestKey           = "gke-gcsfuse/memory-request"
 	annotationGcsfuseSidecarEphemeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
+
+	istioSidecarName = "istio-proxy"
 )
 
 type SidecarInjector struct {
@@ -110,11 +112,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	// Inject container.
-	if supportsNativeSidecar {
-		pod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config)}, pod.Spec.InitContainers...)
-	} else {
-		pod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, pod.Spec.Containers...)
-	}
+	injectSidecarContainer(pod, config, supportsNativeSidecar)
 
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
@@ -228,4 +226,43 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	}
 
 	return supportsNativeSidecar, nil
+}
+
+func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
+	if supportsNativeSidecar {
+		sidecarSpec := GetNativeSidecarContainerSpec(config)
+		if sidecarPresentAtFirstPosition(pod.Spec.InitContainers, istioSidecarName) {
+			pod.Spec.InitContainers = injectAtSecondPosition(pod.Spec.InitContainers, sidecarSpec)
+		} else {
+			pod.Spec.InitContainers = append([]corev1.Container{sidecarSpec}, pod.Spec.InitContainers...)
+		}
+	} else {
+		sidecarSpec := GetSidecarContainerSpec(config)
+		if sidecarPresentAtFirstPosition(pod.Spec.Containers, istioSidecarName) {
+			pod.Spec.Containers = injectAtSecondPosition(pod.Spec.Containers, sidecarSpec)
+		} else {
+			pod.Spec.Containers = append([]corev1.Container{sidecarSpec}, pod.Spec.Containers...)
+		}
+	}
+}
+
+func injectAtSecondPosition(containers []corev1.Container, sidecar corev1.Container) []corev1.Container {
+	const index = 1
+	if len(containers) == 0 {
+		return []corev1.Container{sidecar}
+	}
+	containers = append(containers, corev1.Container{})
+	copy(containers[index+1:], containers[index:])
+	containers[index] = sidecar
+
+	return containers
+}
+
+// Checks the first index of the container array for the istio container sidecar.
+func sidecarPresentAtFirstPosition(containers []corev1.Container, sidecarName string) bool {
+	if len(containers) == 0 {
+		return false
+	}
+
+	return (containers[0].Name == sidecarName)
 }
