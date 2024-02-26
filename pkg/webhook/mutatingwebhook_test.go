@@ -39,6 +39,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
+var istioContainer = corev1.Container{
+	Name: "istio-proxy",
+}
+
 func TestPrepareConfig(t *testing.T) {
 	t.Parallel()
 
@@ -342,6 +346,20 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantResponse(t, true, true),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:         "regular container injection with istio present success test.",
+			operation:    v1.Create,
+			inputPod:     validInputPodWithIstio(false, false),
+			wantResponse: wantResponseWithIstio(t, false, false),
+			nodes:        skewVersionNodes(),
+		},
+		{
+			name:         "Injection with custom sidecar container image successful test.",
+			operation:    v1.Create,
+			inputPod:     validInputPodWithIstio(true, true),
+			wantResponse: wantResponseWithIstio(t, true, true),
+			nodes:        nativeSupportNodes(),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -523,6 +541,18 @@ func validInputPod(customImage bool) *corev1.Pod {
 	return pod
 }
 
+func validInputPodWithIstio(customImage, nativeIstio bool) *corev1.Pod {
+	pod := validInputPod(customImage)
+
+	if nativeIstio {
+		pod.Spec.InitContainers = append([]corev1.Container{istioContainer}, pod.Spec.InitContainers...)
+	} else {
+		pod.Spec.Containers = append([]corev1.Container{istioContainer}, pod.Spec.Containers...)
+	}
+
+	return pod
+}
+
 func wantResponse(t *testing.T, customImage bool, native bool) admission.Response {
 	t.Helper()
 	newPod := validInputPod(customImage)
@@ -540,6 +570,33 @@ func wantResponse(t *testing.T, customImage bool, native bool) admission.Respons
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
+}
+
+func wantResponseWithIstio(t *testing.T, customImage bool, native bool) admission.Response {
+	t.Helper()
+
+	originalPod := validInputPod(customImage)
+	if native {
+		originalPod.Spec.InitContainers = append([]corev1.Container{istioContainer}, originalPod.Spec.InitContainers...)
+	} else {
+		originalPod.Spec.Containers = append([]corev1.Container{istioContainer}, originalPod.Spec.Containers...)
+	}
+
+	newPod := validInputPod(customImage)
+	config := FakeConfig()
+	if customImage {
+		config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image
+		newPod.Spec.Containers = newPod.Spec.Containers[:len(newPod.Spec.Containers)-1]
+	}
+
+	if native {
+		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, GetNativeSidecarContainerSpec(config)}, newPod.Spec.InitContainers...)
+	} else {
+		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+	}
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
+
+	return admission.PatchResponseFromRaw(serialize(t, originalPod), serialize(t, newPod))
 }
 
 func nativeSupportNodes() []corev1.Node {
@@ -624,5 +681,84 @@ func skewVersionNodes() []corev1.Node {
 				},
 			},
 		},
+	}
+}
+
+func TestInjectAtSecondPosition(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name         string
+		containers   []corev1.Container
+		sidecar      corev1.Container
+		expectResult []corev1.Container
+	}{
+		{
+			name:       "successful injection at second position, 0 element initially",
+			containers: []corev1.Container{},
+			sidecar: corev1.Container{
+				Name: "two",
+			},
+			expectResult: []corev1.Container{
+				{
+					Name: "two",
+				},
+			},
+		},
+		{
+			name: "successful injection at second position, 1 element initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+			},
+			sidecar: corev1.Container{
+				Name: "two",
+			},
+			expectResult: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+			},
+		},
+		{
+			name: "successful injection at second position, 3 elements initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "three",
+				},
+				{
+					Name: "four",
+				},
+			},
+			sidecar: corev1.Container{
+				Name: "two",
+			},
+			expectResult: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+				{
+					Name: "four",
+				},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		result := injectAtSecondPosition(tc.containers, tc.sidecar)
+		if diff := cmp.Diff(tc.expectResult, result); diff != "" {
+			t.Errorf(`for test "%s", got different results (-expect, +got):\n"%s"`, tc.name, diff)
+		}
 	}
 }
