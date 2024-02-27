@@ -49,6 +49,8 @@ const (
 	UmountTimeout = time.Second * 5
 
 	FuseMountType = "fuse"
+	TrueStr       = "true"
+	FalseStr      = "false"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -101,9 +103,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
 
-	fuseMountOptions = parseVolumeAttributes(fuseMountOptions, vc)
+	fuseMountOptions, err := parseVolumeAttributes(fuseMountOptions, vc)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 
-	if vc[VolumeContextKeyEphemeral] == "true" {
+	if vc[VolumeContextKeyEphemeral] == TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
 			return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)

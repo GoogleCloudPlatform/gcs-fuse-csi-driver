@@ -88,7 +88,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 	}
 
 	ginkgo.It("should cache the data", func() {
-		init()
+		init(specs.EnableFileCachePrefix)
 		defer cleanup()
 
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
@@ -123,7 +123,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 	})
 
 	ginkgo.It("should cache the data using custom cache volume", func() {
-		init()
+		init(specs.EnableFileCachePrefix)
 		defer cleanup()
 
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
@@ -164,7 +164,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 	})
 
 	ginkgo.It("should not cache the data when the file cache is disabled", func() {
-		init(specs.DisableFileCachePrefix)
+		init()
 		defer cleanup()
 
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.

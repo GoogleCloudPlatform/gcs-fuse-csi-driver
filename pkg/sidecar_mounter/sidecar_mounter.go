@@ -200,7 +200,7 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 	configFileFlagMap := map[string]string{
 		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
 		"logging:format":    "text",
-		"cache-dir":         mc.CacheDir,
+		"cache-dir":         "", // by default the gcsfuse file cache is disabled on GKE
 	}
 
 	invalidArgs := []string{}
@@ -214,6 +214,12 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 				invalidArgs = append(invalidArgs, arg)
 			} else {
 				configFileFlagMap[f] = v
+			}
+
+			// if the value of flag file-cache:max-size-mb is not 0,
+			// enable the file cache feature by passing the cache directory.
+			if f == "file-cache:max-size-mb" && v != "0" {
+				configFileFlagMap["cache-dir"] = mc.CacheDir
 			}
 
 			continue
@@ -248,11 +254,6 @@ func (mc *MountConfig) prepareMountArgs() (map[string]string, map[string]string)
 			}
 		case flag == "app-name":
 			value = GCSFuseAppName + "-" + value
-		case flag == util.DisableFileCacheKey:
-			configFileFlagMap["cache-dir"] = ""
-			klog.Info("gcsfuse file cache is disabled.")
-
-			continue
 		}
 
 		flagMap[flag] = value
@@ -278,10 +279,10 @@ func (mc *MountConfig) prepareConfigFile(flagMap map[string]string) error {
 					return fmt.Errorf("invalid config file flag: %q", f)
 				}
 
-				if boolVal, err := strconv.ParseBool(v); err == nil {
-					curLevel[t] = boolVal
-				} else if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
+				if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
 					curLevel[t] = intVal
+				} else if boolVal, err := strconv.ParseBool(v); err == nil {
+					curLevel[t] = boolVal
 				} else {
 					curLevel[t] = v
 				}
