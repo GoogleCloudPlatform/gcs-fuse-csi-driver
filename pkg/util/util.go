@@ -35,8 +35,6 @@ const (
 var (
 	targetPathRegexp       = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
 	emptyReplacementRegexp = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
-
-	DisableFileCacheKey = "disable-file-cache"
 )
 
 // ConvertLabelsStringToMap converts the labels from string to map

@@ -22,7 +22,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,7 +38,7 @@ var (
 	defaultConfigFileFlagMap = map[string]string{
 		"logging:file-path": "/dev/fd/1",
 		"logging:format":    "text",
-		"cache-dir":         "test-cache-dir",
+		"cache-dir":         "",
 	}
 
 	invalidArgs = []string{
@@ -107,7 +106,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:format":          "text",
 				"logging:severity":        "error",
 				"write:create-empty-file": "true",
-				"cache-dir":               "test-cache-dir",
+				"cache-dir":               "",
 			},
 		},
 		{
@@ -170,13 +169,48 @@ func TestPrepareMountArgs(t *testing.T) {
 				BufferDir:  "test-buffer-dir",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
-				Options:    []string{util.DisableFileCacheKey},
+				Options:    []string{"file-cache:max-size-mb:0"},
 			},
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
-				"logging:file-path": "/dev/fd/1",
-				"logging:format":    "text",
-				"cache-dir":         "",
+				"logging:file-path":      "/dev/fd/1",
+				"logging:format":         "text",
+				"cache-dir":              "",
+				"file-cache:max-size-mb": "0",
+			},
+		},
+		{
+			name: "should return valid args when file cache is enabled with unlimited size",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"file-cache:max-size-mb:-1"},
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":      "/dev/fd/1",
+				"logging:format":         "text",
+				"cache-dir":              "test-cache-dir",
+				"file-cache:max-size-mb": "-1",
+			},
+		},
+		{
+			name: "should return valid args when file cache is enabled with a max size",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"file-cache:max-size-mb:100"},
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":      "/dev/fd/1",
+				"logging:format":         "text",
+				"cache-dir":              "test-cache-dir",
+				"file-cache:max-size-mb": "100",
 			},
 		},
 	}

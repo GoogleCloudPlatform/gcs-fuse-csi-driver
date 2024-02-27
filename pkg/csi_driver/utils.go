@@ -25,12 +25,12 @@ import (
 	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 )
@@ -40,8 +40,13 @@ const (
 	DeleteVolumeCSIFullMethod      = "/csi.v1.Controller/DeleteVolume"
 	NodePublishVolumeCSIFullMethod = "/csi.v1.Node/NodePublishVolume"
 
-	VolumeContextKeyMountOptions     = "mountOptions"
-	VolumeContextKeyDisableFileCache = "disableFileCache"
+	VolumeContextKeyMountOptions              = "mountOptions"
+	VolumeContextKeyFileCacheCapacity         = "fileCacheCapacity"
+	VolumeContextKeyFileCacheForRangeRead     = "fileCacheForRangeRead"
+	VolumeContextKeyMetadataStatCacheCapacity = "metadataStatCacheCapacity"
+	VolumeContextKeyMetadataTypeCacheCapacity = "metadataTypeCacheCapacity"
+	VolumeContextKeyMetadataCacheTTLSeconds   = "metadataCacheTTLSeconds"
+	VolumeContextKeyGcsfuseLoggingSeverity    = "gcsfuseLoggingSeverity"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -149,19 +154,78 @@ func joinMountOptions(existingOptions []string, newOptions []string) []string {
 	return allMountOptions.List()
 }
 
+var volumeAttributesToMountOptionsMapping = map[string]string{
+	VolumeContextKeyFileCacheCapacity:         "file-cache:max-size-mb:",
+	VolumeContextKeyFileCacheForRangeRead:     "file-cache:cache-file-for-range-read:",
+	VolumeContextKeyMetadataStatCacheCapacity: "metadata-cache:stat-cache-max-size-mb:",
+	VolumeContextKeyMetadataTypeCacheCapacity: "metadata-cache:type-cache-max-size-mb:",
+	VolumeContextKeyMetadataCacheTTLSeconds:   "metadata-cache:ttl-secs:",
+	VolumeContextKeyGcsfuseLoggingSeverity:    "logging:severity:",
+}
+
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
-func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) []string {
+func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) ([]string, error) {
 	if mountOptions, ok := volumeContext[VolumeContextKeyMountOptions]; ok {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
 	}
 
-	if disableFileCache, ok := volumeContext[VolumeContextKeyDisableFileCache]; ok {
-		if boolVal, err := strconv.ParseBool(disableFileCache); err == nil && boolVal {
-			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.DisableFileCacheKey})
+	for volumeAttribute, mountOption := range volumeAttributesToMountOptionsMapping {
+		value, ok := volumeContext[volumeAttribute]
+		if !ok {
+			continue
 		}
+
+		var mountOptionWithValue string
+		switch volumeAttribute {
+		// parse Quantity volume attributes,
+		// the input value should be a valid Quantity defined in https://kubernetes.io/docs/reference/kubernetes-api/common-definitions/quantity/,
+		// convert the input to a string representation in MB.
+		case VolumeContextKeyFileCacheCapacity, VolumeContextKeyMetadataStatCacheCapacity, VolumeContextKeyMetadataTypeCacheCapacity:
+			quantity, err := resource.ParseQuantity(value)
+			if err != nil {
+				return nil, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
+			}
+
+			megabytes := quantity.Value()
+			switch {
+			case megabytes < 0:
+				value = "-1"
+			case quantity.Format == resource.BinarySI:
+				value = strconv.FormatInt(megabytes/1024/1024, 10)
+			default:
+				value = strconv.FormatInt(megabytes/1000/1000, 10)
+			}
+
+			mountOptionWithValue = mountOption + value
+
+		// parse bool volume attributes
+		case VolumeContextKeyFileCacheForRangeRead:
+			if boolVal, err := strconv.ParseBool(value); err == nil {
+				mountOptionWithValue = mountOption + strconv.FormatBool(boolVal)
+			} else {
+				return nil, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
+			}
+
+		// parse int volume attributes
+		case VolumeContextKeyMetadataCacheTTLSeconds:
+			if intVal, err := strconv.Atoi(value); err == nil {
+				if intVal < 0 {
+					intVal = -1
+				}
+
+				mountOptionWithValue = mountOption + strconv.Itoa(intVal)
+			} else {
+				return nil, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
+			}
+
+		default:
+			mountOptionWithValue = mountOption + value
+		}
+
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{mountOptionWithValue})
 	}
 
-	return fuseMountOptions
+	return fuseMountOptions, nil
 }
 
 func putExitFile(pod *v1.Pod, emptyDirBasePath string) error {

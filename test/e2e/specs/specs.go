@@ -60,7 +60,7 @@ const (
 	ForceNewBucketPrefix            = "gcsfuse-csi-force-new-bucket"
 	SubfolderInBucketPrefix         = "gcsfuse-csi-subfolder-in-bucket"
 	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
-	DisableFileCachePrefix          = "gcsfuse-csi-disable-file-cache"
+	EnableFileCachePrefix           = "gcsfuse-csi-enable-file-cache"
 	ImplicitDirsPath                = "implicit-dir"
 	InvalidVolume                   = "<invalid-name>"
 
