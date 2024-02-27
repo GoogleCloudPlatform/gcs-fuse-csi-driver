@@ -181,8 +181,12 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			}
 		}
 
+		v := &gcsVolume{
+			bucketName:              bucketName,
+			serviceAccountNamespace: config.Framework.Namespace.Name,
+		}
 		mountOptions := "debug_gcs,debug_fuse,debug_fs"
-		fileCacheCapacity := "0"
+
 		switch config.Prefix {
 		case specs.NonRootVolumePrefix:
 			mountOptions += ",uid=1001"
@@ -196,15 +200,10 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			specs.CreateImplicitDirInBucket(dirPath, bucketName)
 			mountOptions += ",only-dir=" + dirPath
 		case specs.EnableFileCachePrefix:
-			fileCacheCapacity = "100Mi"
+			v.fileCacheCapacity = "100Mi"
 		}
 
-		v := &gcsVolume{
-			bucketName:              bucketName,
-			serviceAccountNamespace: config.Framework.Namespace.Name,
-			mountOptions:            mountOptions,
-			fileCacheCapacity:       fileCacheCapacity,
-		}
+		v.mountOptions = mountOptions
 
 		if !isMultipleBucketsPrefix {
 			n.volumeStore = append(n.volumeStore, v)
@@ -232,8 +231,11 @@ func (v *gcsVolume) DeleteVolume(_ context.Context) {
 func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string, volume storageframework.TestVolume) (*v1.PersistentVolumeSource, *v1.VolumeNodeAffinity) {
 	gv, _ := volume.(*gcsVolume)
 	va := map[string]string{
-		driver.VolumeContextKeyMountOptions:      gv.mountOptions,
-		driver.VolumeContextKeyFileCacheCapacity: gv.fileCacheCapacity,
+		driver.VolumeContextKeyMountOptions: gv.mountOptions,
+	}
+
+	if gv.fileCacheCapacity != "" {
+		va[driver.VolumeContextKeyFileCacheCapacity] = gv.fileCacheCapacity
 	}
 
 	return &v1.PersistentVolumeSource{
@@ -250,11 +252,16 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 	volume := n.CreateVolume(context.Background(), config, storageframework.PreprovisionedPV)
 	gv, _ := volume.(*gcsVolume)
 
-	return map[string]string{
-		driver.VolumeContextKeyBucketName:        gv.bucketName,
-		driver.VolumeContextKeyMountOptions:      gv.mountOptions,
-		driver.VolumeContextKeyFileCacheCapacity: gv.fileCacheCapacity,
-	}, gv.shared, gv.readOnly
+	va := map[string]string{
+		driver.VolumeContextKeyBucketName:   gv.bucketName,
+		driver.VolumeContextKeyMountOptions: gv.mountOptions,
+	}
+
+	if gv.fileCacheCapacity != "" {
+		va[driver.VolumeContextKeyFileCacheCapacity] = gv.fileCacheCapacity
+	}
+
+	return va, gv.shared, gv.readOnly
 }
 
 func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfig) string {
