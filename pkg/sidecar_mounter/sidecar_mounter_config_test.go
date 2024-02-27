@@ -218,13 +218,13 @@ func TestPrepareMountArgs(t *testing.T) {
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		flagMap, configFileFlagMap := tc.mc.prepareMountArgs()
-		if !reflect.DeepEqual(flagMap, tc.expectedArgs) {
-			t.Errorf("Got args %v, but expected %v", flagMap, tc.expectedArgs)
+		tc.mc.prepareMountArgs()
+		if !reflect.DeepEqual(tc.mc.FlagMap, tc.expectedArgs) {
+			t.Errorf("Got args %v, but expected %v", tc.mc.FlagMap, tc.expectedArgs)
 		}
 
-		if !reflect.DeepEqual(configFileFlagMap, tc.expectedConfigMapArgs) {
-			t.Errorf("Got config file args %v, but expected %v", configFileFlagMap, tc.expectedConfigMapArgs)
+		if !reflect.DeepEqual(tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs) {
+			t.Errorf("Got config file args %v, but expected %v", tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs)
 		}
 	}
 }
@@ -243,17 +243,17 @@ func TestPrepareConfigFile(t *testing.T) {
 			name: "should create valid config file correctly",
 			mc: &MountConfig{
 				ConfigFile: "./test-config-file.yaml",
-			},
-			configMapArgs: map[string]string{
-				"logging:file-path":                     "/dev/fd/1",
-				"logging:format":                        "text",
-				"logging:severity":                      "error",
-				"write:create-empty-file":               "true",
-				"file-cache:max-size-mb":                "10000",
-				"file-cache:cache-file-for-range-read":  "true",
-				"metadata-cache:stat-cache-max-size-mb": "1000",
-				"metadata-cache:type-cache-max-size-mb": "-1",
-				"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
+				ConfigFileFlagMap: map[string]string{
+					"logging:file-path":                     "/dev/fd/1",
+					"logging:format":                        "text",
+					"logging:severity":                      "error",
+					"write:create-empty-file":               "true",
+					"file-cache:max-size-mb":                "10000",
+					"file-cache:cache-file-for-range-read":  "true",
+					"metadata-cache:stat-cache-max-size-mb": "1000",
+					"metadata-cache:type-cache-max-size-mb": "-1",
+					"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
+				},
 			},
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{
@@ -279,11 +279,11 @@ func TestPrepareConfigFile(t *testing.T) {
 			name: "should throw error when incorrect flag is passed",
 			mc: &MountConfig{
 				ConfigFile: "./test-config-file.yaml",
-			},
-			configMapArgs: map[string]string{
-				"logging:file-path": "/dev/fd/1",
-				"logging:format":    "text",
-				"logging":           "invalid",
+				ConfigFileFlagMap: map[string]string{
+					"logging:file-path": "/dev/fd/1",
+					"logging:format":    "text",
+					"logging":           "invalid",
+				},
 			},
 			expectedErr: true,
 		},
@@ -292,7 +292,7 @@ func TestPrepareConfigFile(t *testing.T) {
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		err := tc.mc.prepareConfigFile(tc.configMapArgs)
+		err := tc.mc.prepareConfigFile()
 
 		if (err != nil) != tc.expectedErr {
 			t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
