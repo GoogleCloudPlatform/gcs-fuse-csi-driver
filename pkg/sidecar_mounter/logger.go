@@ -21,20 +21,27 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"k8s.io/klog/v2"
 )
+
+type stderrWriterInterface interface {
+	io.Writer
+	WriteMsg(errMsg string)
+}
 
 type stderrWriter struct {
 	errorFile string
 }
 
-func NewErrorWriter(errorFile string) io.Writer {
+func NewErrorWriter(errorFile string) stderrWriterInterface {
 	return &stderrWriter{errorFile: errorFile}
 }
 
 // Write writes the error message to a given local file.
-func (f *stderrWriter) Write(msg []byte) (int, error) {
-	if f.errorFile != "" {
-		errFile, err := os.OpenFile(f.errorFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+func (w *stderrWriter) Write(msg []byte) (int, error) {
+	if w.errorFile != "" {
+		errFile, err := os.OpenFile(w.errorFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			return 0, fmt.Errorf("failed to open file: %w", err)
 		}
@@ -46,4 +53,12 @@ func (f *stderrWriter) Write(msg []byte) (int, error) {
 	}
 
 	return len(msg), nil
+}
+
+// WriteMsg calls Write func and handles errors.
+func (w *stderrWriter) WriteMsg(errMsg string) {
+	klog.Errorf(errMsg)
+	if _, e := w.Write([]byte(errMsg)); e != nil {
+		klog.Errorf("failed to write the error message %q: %v", errMsg, e)
+	}
 }
