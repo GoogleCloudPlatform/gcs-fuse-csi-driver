@@ -67,7 +67,7 @@ const (
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	UbuntuImage         = "ubuntu:20.04"
 
-	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:9143d9d3b8fc5eb1f907cb9a895c8442d860e51892dd52e74a84119eae120d84"
+	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:c83609ecf50d05a141167b8c6cf4dfe14ff07f01cd96a9790921db6748d40902"
 
 	PollInterval     = 1 * time.Second
 	PollTimeout      = 1 * time.Minute
