@@ -18,14 +18,13 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -54,52 +53,19 @@ func main() {
 	}
 
 	mounter := sidecarmounter.New(*gcsfusePath)
-	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
 
 	for _, sp := range socketPaths {
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-		errWriter := sidecarmounter.NewErrorWriter(filepath.Join(filepath.Dir(sp), "error"))
-		mc, err := sidecarmounter.NewMountConfig(sp)
-		if err != nil {
-			errWriter.WriteMsg(fmt.Sprintf("failed prepare mount config: socket path %q: %v\n", sp, err))
-
-			continue
+		mc := sidecarmounter.NewMountConfig(sp)
+		if mc != nil {
+			if err := mounter.Mount(ctx, mc); err != nil {
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
+			}
 		}
-		mc.ErrWriter = errWriter
-
-		wg.Add(1)
-		go func(mc *sidecarmounter.MountConfig) {
-			defer wg.Done()
-			cmd, err := mounter.Mount(mc)
-			if err != nil {
-				errWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
-
-				return
-			}
-
-			if err = cmd.Start(); err != nil {
-				errWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
-
-				return
-			}
-
-			// Since the gcsfuse has taken over the file descriptor,
-			// closing the file descriptor to avoid other process forking it.
-			syscall.Close(mc.FileDescriptor)
-			if err = cmd.Wait(); err != nil {
-				errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
-				if strings.Contains(errMsg, "signal: terminated") {
-					klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
-				} else {
-					errWriter.WriteMsg(errMsg)
-				}
-			} else {
-				klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
-			}
-		}(mc)
 	}
 
 	c := make(chan os.Signal, 1)
@@ -115,13 +81,9 @@ func main() {
 			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
 				klog.Info("all the other containers terminated in the Pod, exiting the sidecar container.")
 
-				for _, cmd := range mounter.GetCmds() {
-					klog.V(4).Infof("sending SIGTERM to gcsfuse process: %v", cmd)
-					err := cmd.Process.Signal(syscall.SIGTERM)
-					if err != nil {
-						klog.Errorf("failed to terminate process %v with error: %v", cmd, err)
-					}
-				}
+				// After the Kubernetes native sidecar container feature is adopted,
+				// we should propagate the SIGTERM signal outside of this goroutine.
+				cancel()
 
 				if err := os.Remove(*volumeBasePath + "/exit"); err != nil {
 					klog.Error("failed to remove the exit file from emptyDir.")
@@ -146,7 +108,11 @@ func main() {
 
 	<-c // blocking the process
 	klog.Info("received SIGTERM signal, waiting for all the gcsfuse processes exit...")
-	wg.Wait()
+
+	// After the Kubernetes native sidecar container feature is adopted,
+	// we should propagate the SIGTERM signal to gcsfuse processes here.
+	// cancel()
+	mounter.WaitGroup.Wait()
 
 	klog.Info("exiting sidecar mounter...")
 }

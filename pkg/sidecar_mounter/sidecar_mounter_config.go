@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -42,16 +41,16 @@ const (
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor    int               `json:"-"`
-	VolumeName        string            `json:"volumeName,omitempty"`
-	BucketName        string            `json:"bucketName,omitempty"`
-	BufferDir         string            `json:"-"`
-	CacheDir          string            `json:"-"`
-	ConfigFile        string            `json:"-"`
-	Options           []string          `json:"options,omitempty"`
-	ErrWriter         io.Writer         `json:"-"`
-	FlagMap           map[string]string `json:"-"`
-	ConfigFileFlagMap map[string]string `json:"-"`
+	FileDescriptor    int                   `json:"-"`
+	VolumeName        string                `json:"volumeName,omitempty"`
+	BucketName        string                `json:"bucketName,omitempty"`
+	BufferDir         string                `json:"-"`
+	CacheDir          string                `json:"-"`
+	ConfigFile        string                `json:"-"`
+	Options           []string              `json:"options,omitempty"`
+	ErrWriter         stderrWriterInterface `json:"-"`
+	FlagMap           map[string]string     `json:"-"`
+	ConfigFileFlagMap map[string]string     `json:"-"`
 }
 
 var disallowedFlags = map[string]bool{
@@ -90,7 +89,7 @@ var boolFlags = map[string]bool{
 // 2. The file descriptor
 // 3. GCS bucket name
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
-func NewMountConfig(sp string) (*MountConfig, error) {
+func NewMountConfig(sp string) *MountConfig {
 	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
 	volumeName := filepath.Base(filepath.Dir(sp))
 	mc := MountConfig{
@@ -98,17 +97,22 @@ func NewMountConfig(sp string) (*MountConfig, error) {
 		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
 		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
 		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+		ErrWriter:  NewErrorWriter(filepath.Join(filepath.Dir(sp), "error")),
 	}
 
 	klog.Infof("connecting to socket %q", sp)
 	c, err := net.Dial("unix", sp)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to the socket %q: %w", sp, err)
+		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to connect to the socket %q: %v", sp, err))
+
+		return nil
 	}
 
 	fd, msg, err := util.RecvMsg(c)
 	if err != nil {
-		return nil, fmt.Errorf("failed to receive mount options from the socket %q: %w", sp, err)
+		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to receive mount options from the socket %q: %v", sp, err))
+
+		return nil
 	}
 	// as we got all the information from the socket, closing the connection and deleting the socket
 	c.Close()
@@ -119,19 +123,25 @@ func NewMountConfig(sp string) (*MountConfig, error) {
 	mc.FileDescriptor = fd
 
 	if err := json.Unmarshal(msg, &mc); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal the mount config: %w", err)
+		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to unmarshal the mount config: %v", err))
+
+		return nil
 	}
 
 	if mc.BucketName == "" {
-		return nil, errors.New("failed to fetch bucket name from CSI driver")
+		mc.ErrWriter.WriteMsg("failed to fetch bucket name from CSI driver")
+
+		return nil
 	}
 
 	mc.prepareMountArgs()
 	if err := mc.prepareConfigFile(); err != nil {
-		return nil, fmt.Errorf("failed to create config file %q: %w", mc.ConfigFile, err)
+		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to create config file %q: %v", mc.ConfigFile, err))
+
+		return nil
 	}
 
-	return &mc, nil
+	return &mc
 }
 
 func (mc *MountConfig) prepareMountArgs() {

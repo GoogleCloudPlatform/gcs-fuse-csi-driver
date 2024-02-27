@@ -18,10 +18,14 @@ limitations under the License.
 package sidecarmounter
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
+	"syscall"
 
 	"k8s.io/klog/v2"
 )
@@ -29,7 +33,7 @@ import (
 // Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
 	mounterPath string
-	cmds        []*exec.Cmd
+	WaitGroup   sync.WaitGroup
 }
 
 // New returns a Mounter for the current system.
@@ -37,19 +41,17 @@ type Mounter struct {
 func New(mounterPath string) *Mounter {
 	return &Mounter{
 		mounterPath: mounterPath,
-		cmds:        []*exec.Cmd{},
 	}
 }
 
-func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
+func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
 	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+TempDir, err)
+		return fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+TempDir, err)
 	}
 
-	args := []string{"gcsfuse"}
-
+	args := []string{}
 	for k, v := range mc.FlagMap {
 		args = append(args, "--"+k)
 		if v != "" {
@@ -63,19 +65,40 @@ func (m *Mounter) Mount(mc *MountConfig) (*exec.Cmd, error) {
 	args = append(args, "/dev/fd/3")
 
 	klog.Infof("gcsfuse mounting with args %v...", args)
-	cmd := exec.Cmd{
-		Path:       m.mounterPath,
-		Args:       args,
-		ExtraFiles: []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")},
-		Stdout:     os.Stdout,
-		Stderr:     io.MultiWriter(os.Stderr, mc.ErrWriter),
+	//nolint: gosec
+	cmd := exec.CommandContext(ctx, m.mounterPath, args...)
+	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, mc.ErrWriter)
+	cmd.Cancel = func() error {
+		klog.V(4).Infof("sending SIGTERM to gcsfuse process: %v", cmd)
+
+		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	m.cmds = append(m.cmds, &cmd)
+	m.WaitGroup.Add(1)
+	go func() {
+		defer m.WaitGroup.Done()
+		if err := cmd.Start(); err != nil {
+			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
 
-	return &cmd, nil
-}
+			return
+		}
 
-func (m *Mounter) GetCmds() []*exec.Cmd {
-	return m.cmds
+		// Since the gcsfuse has taken over the file descriptor,
+		// closing the file descriptor to avoid other process forking it.
+		syscall.Close(mc.FileDescriptor)
+		if err := cmd.Wait(); err != nil {
+			errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
+			if strings.Contains(errMsg, "signal: terminated") {
+				klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
+			} else {
+				mc.ErrWriter.WriteMsg(errMsg)
+			}
+		} else {
+			klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
+		}
+	}()
+
+	return nil
 }
