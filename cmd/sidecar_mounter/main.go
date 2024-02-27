@@ -64,11 +64,7 @@ func main() {
 		errWriter := sidecarmounter.NewErrorWriter(filepath.Join(filepath.Dir(sp), "error"))
 		mc, err := sidecarmounter.NewMountConfig(sp)
 		if err != nil {
-			errMsg := fmt.Sprintf("failed prepare mount config: socket path %q: %v\n", sp, err)
-			klog.Errorf(errMsg)
-			if _, e := errWriter.Write([]byte(errMsg)); e != nil {
-				klog.Errorf("failed to write the error message %q: %v", errMsg, e)
-			}
+			errWriter.WriteMsg(fmt.Sprintf("failed prepare mount config: socket path %q: %v\n", sp, err))
 
 			continue
 		}
@@ -79,21 +75,13 @@ func main() {
 			defer wg.Done()
 			cmd, err := mounter.Mount(mc)
 			if err != nil {
-				errMsg := fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err)
-				klog.Errorf(errMsg)
-				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
-					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
-				}
+				errWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 
 				return
 			}
 
 			if err = cmd.Start(); err != nil {
-				errMsg := fmt.Sprintf("failed to start gcsfuse with error: %v\n", err)
-				klog.Errorf(errMsg)
-				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
-					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
-				}
+				errWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
 
 				return
 			}
@@ -106,11 +94,7 @@ func main() {
 				if strings.Contains(errMsg, "signal: terminated") {
 					klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
 				} else {
-					klog.Errorf(errMsg)
-				}
-
-				if _, e := errWriter.Write([]byte(errMsg)); e != nil {
-					klog.Errorf("failed to write the error message %q: %v", errMsg, e)
+					errWriter.WriteMsg(errMsg)
 				}
 			} else {
 				klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
