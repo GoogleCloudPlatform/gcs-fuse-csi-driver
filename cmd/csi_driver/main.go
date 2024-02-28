@@ -19,7 +19,10 @@ package main
 
 import (
 	"flag"
+	"net/http"
+	"net/http/pprof"
 	"os"
+	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -39,6 +42,7 @@ var (
 	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
 	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	enableProfiling  = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -47,6 +51,27 @@ var (
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	if *enableProfiling {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+		go func() {
+			server := &http.Server{
+				Addr:         "localhost:6060",
+				Handler:      mux,
+				ReadTimeout:  5 * time.Second,
+				WriteTimeout: 10 * time.Second,
+			}
+			if err := server.ListenAndServe(); err != nil {
+				klog.Fatalf("Failed to start the golang pprof server: %v", err)
+			}
+		}()
+	}
 
 	clientset, err := clientset.New(*kubeconfigPath)
 	if err != nil {
