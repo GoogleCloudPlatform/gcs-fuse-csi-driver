@@ -18,6 +18,7 @@ limitations under the License.
 package csimounter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,11 +38,13 @@ import (
 	"k8s.io/mount-utils"
 )
 
+const socketPath = "./socket"
+
 // Mounter provides the Cloud Storage FUSE CSI implementation of mount.Interface
 // for the linux platform.
 type Mounter struct {
 	mount.MounterForceUnmounter
-	chdirMu sync.Mutex
+	mux sync.Mutex
 }
 
 // New returns a mount.MounterForceUnmounter for the current system.
@@ -60,7 +63,20 @@ func New(mounterPath string) (mount.Interface, error) {
 }
 
 func (m *Mounter) Mount(source string, target string, fstype string, options []string) error {
+	m.mux.Lock()
+	defer m.mux.Unlock()
+
 	csiMountOptions, sidecarMountOptions := prepareMountOptions(options)
+
+	// Prepare sidecar mounter MountConfig
+	mc := sidecarmounter.MountConfig{
+		BucketName: source,
+		Options:    sidecarMountOptions,
+	}
+	msg, err := json.Marshal(mc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %w", mc, err)
+	}
 
 	// Prepare the temp emptyDir path
 	emptyDirBasePath, err := util.PrepareEmptyDir(target, false)
@@ -84,84 +100,97 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
+	listener, err := createSocket(emptyDirBasePath, logPrefix)
+	if err != nil {
+		// If mount failed at this step,
+		// cleanup the mount point and allow the CSI driver NodePublishVolume to retry.
+		klog.Warningf("%v failed to create socket, clean up the mount point", logPrefix)
+
+		syscall.Close(fd)
+		if m.UnmountWithForce(target, time.Second*5) != nil {
+			klog.Warningf("%v failed to clean up the mount point", logPrefix)
+		}
+
+		return err
+	}
+
+	// Close the listener and fd after 1 hour timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	go func() {
+		<-ctx.Done()
+		klog.V(4).Infof("%v closing the socket and fd", logPrefix)
+		listener.Close()
+		syscall.Close(fd)
+	}()
+
+	// Asynchronously waiting for the sidecar container to connect to the listener
+	go startAcceptConn(listener, logPrefix, msg, fd, cancel)
+
+	return nil
+}
+
+func createSocket(emptyDirBasePath string, logPrefix string) (net.Listener, error) {
 	klog.V(4).Infof("%v passing the descriptor", logPrefix)
 	// Need to change the current working directory to the temp volume base path,
 	// because the socket absolute path is longer than 104 characters,
 	// which will cause "bind: invalid argument" errors.
-	m.chdirMu.Lock()
 	exPwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get the current directory to %w", err)
-	}
-	if err = os.Chdir(emptyDirBasePath); err != nil {
-		return fmt.Errorf("failed to change directory to %q: %w", emptyDirBasePath, err)
+		return nil, fmt.Errorf("failed to get the current directory: %w", err)
 	}
 
-	klog.V(4).Infof("%v creating a listener for the socket", logPrefix)
-	l, err := net.Listen("unix", "./socket")
+	if err = os.Chdir(emptyDirBasePath); err != nil {
+		return nil, fmt.Errorf("failed to change directory to %q: %w", emptyDirBasePath, err)
+	}
+
+	defer func() {
+		if err := os.Chdir(exPwd); err != nil {
+			klog.Errorf("%v failed to change directory back to %q: %v", logPrefix, exPwd, err)
+		}
+	}()
+
+	klog.V(4).Infof("%v create a listener using the socket", logPrefix)
+	l, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("failed to create the listener for the socket: %w", err)
+		return nil, fmt.Errorf("failed to create a listener using the socket: %w", err)
 	}
 
 	// Change the socket ownership
-	err = os.Chown(filepath.Dir(emptyDirBasePath), webhook.NobodyUID, webhook.NobodyGID)
+	if err = os.Chown(filepath.Dir(emptyDirBasePath), webhook.NobodyUID, webhook.NobodyGID); err != nil {
+		return nil, fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %w", err)
+	}
+	if err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
+		return nil, fmt.Errorf("failed to change ownership on emptyDirBasePath: %w", err)
+	}
+	if err = os.Chown(socketPath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
+		return nil, fmt.Errorf("failed to change ownership on socket: %w", err)
+	}
+
+	if _, err = os.Stat(socketPath); err != nil {
+		return nil, fmt.Errorf("failed to verify the socket: %w", err)
+	}
+
+	return l, nil
+}
+
+func startAcceptConn(l net.Listener, logPrefix string, msg []byte, fd int, cancel context.CancelFunc) {
+	defer cancel()
+
+	klog.V(4).Infof("%v start to accept connections to the listener.", logPrefix)
+	a, err := l.Accept()
 	if err != nil {
-		return fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %w", err)
-	}
-	err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID)
-	if err != nil {
-		return fmt.Errorf("failed to change ownership on emptyDirBasePath: %w", err)
-	}
-	err = os.Chown("./socket", webhook.NobodyUID, webhook.NobodyGID)
-	if err != nil {
-		return fmt.Errorf("failed to change ownership on socket: %w", err)
-	}
+		klog.Errorf("%v failed to accept connections to the listener: %v", logPrefix, err)
 
-	// Close the listener after 1 hour
-	// TODO: properly handle the socket listener timeout
-	go func(l net.Listener) {
-		time.Sleep(time.Hour)
-		l.Close()
-	}(l)
-
-	if err = os.Chdir(exPwd); err != nil {
-		return fmt.Errorf("failed to change directory to %q: %w", exPwd, err)
+		return
 	}
-	m.chdirMu.Unlock()
+	defer a.Close()
 
-	// Prepare sidecar mounter MountConfig
-	mc := sidecarmounter.MountConfig{
-		BucketName: source,
-		Options:    sidecarMountOptions,
-	}
-	mcb, err := json.Marshal(mc)
-	if err != nil {
-		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %w", mc, err)
+	klog.V(4).Infof("%v start to send file descriptor and mount options", logPrefix)
+	if err = util.SendMsg(a, fd, msg); err != nil {
+		klog.Errorf("%v failed to send file descriptor and mount options: %v", logPrefix, err)
 	}
 
-	// Asynchronously waiting for the sidecar container to connect to the listener
-	go func(l net.Listener, logPrefix string, msg []byte, fd int) {
-		defer syscall.Close(fd)
-		defer l.Close()
-
-		klog.V(4).Infof("%v start to accept connections to the listener.", logPrefix)
-		a, err := l.Accept()
-		if err != nil {
-			klog.Errorf("%v failed to accept connections to the listener: %v", logPrefix, err)
-
-			return
-		}
-		defer a.Close()
-
-		klog.V(4).Infof("%v start to send file descriptor and mount options", logPrefix)
-		if err = util.SendMsg(a, fd, msg); err != nil {
-			klog.Errorf("%v failed to send file descriptor and mount options: %v", logPrefix, err)
-		}
-
-		klog.V(4).Infof("%v exiting the goroutine.", logPrefix)
-	}(l, logPrefix, mcb, fd)
-
-	return nil
+	klog.V(4).Infof("%v exiting the listener goroutine.", logPrefix)
 }
 
 func prepareMountOptions(options []string) ([]string, []string) {
