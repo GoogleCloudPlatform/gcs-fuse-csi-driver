@@ -139,6 +139,10 @@ func main() {
 					}
 				}
 
+				if err := os.Remove(*volumeBasePath + "/exit"); err != nil {
+					klog.Error("failed to remove the exit file from emptyDir.")
+				}
+
 				c <- syscall.SIGTERM
 
 				return
