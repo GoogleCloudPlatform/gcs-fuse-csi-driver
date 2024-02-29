@@ -20,13 +20,17 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
@@ -59,6 +63,11 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) SkipUnsupportedTests(_ storageframe
 }
 
 func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
+	supportsNativeSidecar, err := strconv.ParseBool(envVar)
+	if err != nil {
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
+	}
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -187,7 +196,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
 		time.Sleep(specs.PollTimeout)
-		tPod.CheckSidecarNeverTerminated(ctx)
+		tPod.CheckSidecarNeverTerminated(ctx, supportsNativeSidecar)
 	})
 
 	ginkgo.It("[no auto termination] should not terminate the sidecar when Pod RestartPolicy is Always and failing", func() {
@@ -209,7 +218,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
 		time.Sleep(specs.PollTimeout)
-		tPod.CheckSidecarNeverTerminated(ctx)
+		tPod.CheckSidecarNeverTerminated(ctx, supportsNativeSidecar)
 	})
 
 	ginkgo.It("should succeed when Pod RestartPolicy is OnFailure", func() {
@@ -256,6 +265,6 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
 		time.Sleep(specs.PollTimeout)
-		tPod.CheckSidecarNeverTerminated(ctx)
+		tPod.CheckSidecarNeverTerminated(ctx, supportsNativeSidecar)
 	})
 }
