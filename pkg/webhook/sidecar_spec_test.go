@@ -28,6 +28,7 @@ type testCase struct {
 	name             string
 	pod              *v1.Pod
 	expectedInjected bool
+	isInitContainer  bool
 }
 
 var commonTestCases = []testCase{
@@ -40,6 +41,29 @@ var commonTestCases = []testCase{
 			},
 		},
 		expectedInjected: true,
+	},
+	{
+		name: "should pass the validation with the init sidecar container",
+		pod: &v1.Pod{
+			Spec: v1.PodSpec{
+				InitContainers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes:        GetSidecarContainerVolumeSpec([]v1.Volume{}),
+			},
+		},
+		expectedInjected: true,
+		isInitContainer:  true,
+	},
+	{
+		name: "should pass the validation with the both the init and regular sidecar containers",
+		pod: &v1.Pod{
+			Spec: v1.PodSpec{
+				Containers:     []v1.Container{GetSidecarContainerSpec(FakeConfig())},
+				InitContainers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes:        GetSidecarContainerVolumeSpec([]v1.Volume{}),
+			},
+		},
+		expectedInjected: true,
+		isInitContainer:  true,
 	},
 	{
 		name: "should pass the validation with a simplified sidecar container",
@@ -98,6 +122,36 @@ var commonTestCases = []testCase{
 			},
 		},
 		expectedInjected: true,
+	},
+	{
+		name: "should pass the validation with a private sidecar container image in init container",
+		pod: &v1.Pod{
+			Spec: v1.PodSpec{
+				InitContainers: []v1.Container{
+					{
+						Name:  SidecarContainerName,
+						Image: "private-repo/sidecar-image",
+						SecurityContext: &v1.SecurityContext{
+							RunAsUser:  ptr.To(int64(NobodyUID)),
+							RunAsGroup: ptr.To(int64(NobodyGID)),
+						},
+						VolumeMounts: []v1.VolumeMount{
+							{
+								Name:      SidecarContainerTmpVolumeName,
+								MountPath: SidecarContainerTmpVolumeMountPath,
+							},
+							{
+								Name:      SidecarContainerBufferVolumeName,
+								MountPath: SidecarContainerBufferVolumeMountPath,
+							},
+						},
+					},
+				},
+				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+			},
+		},
+		expectedInjected: true,
+		isInitContainer:  true,
 	},
 	{
 		name: "should fail the validation with random UID and GID",
@@ -266,10 +320,13 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		injected := ValidatePodHasSidecarContainerInjected(tc.pod, true)
+		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(tc.pod, true)
 
 		if injected != tc.expectedInjected {
 			t.Errorf("got injection result %v, but expected %v", injected, tc.expectedInjected)
+		}
+		if isInitContainer != tc.isInitContainer {
+			t.Errorf("got injection result for is init container %v, but expected %v", isInitContainer, tc.isInitContainer)
 		}
 	}
 }
@@ -300,10 +357,13 @@ func TestValidatePodHasSidecarContainerInjectedForManualInjection(t *testing.T) 
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		injected := ValidatePodHasSidecarContainerInjected(tc.pod, false)
+		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(tc.pod, false)
 
 		if injected != tc.expectedInjected {
 			t.Errorf("got injection result %v, but expected %v", injected, tc.expectedInjected)
+		}
+		if isInitContainer != tc.isInitContainer {
+			t.Errorf("got injection result for is init container %v, but expected %v", isInitContainer, tc.isInitContainer)
 		}
 	}
 }

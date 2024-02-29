@@ -20,12 +20,16 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -62,6 +66,11 @@ func (t *gcsFuseCSIVolumesTestSuite) SkipUnsupportedTests(_ storageframework.Tes
 }
 
 func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
+	supportsNativeSidecar, err := strconv.ParseBool(envVar)
+	if err != nil {
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
+	}
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -289,7 +298,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the sidecar container is using the custom image")
-		tPod.VerifyCustomSidecarContainerImage()
+		tPod.VerifyCustomSidecarContainerImage(supportsNativeSidecar)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -321,5 +330,28 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+	})
+
+	ginkgo.It("should store data and retain the data in init container", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "test-gcsfuse-volume", mountPath, false)
+		tPod.SetInitContainerWithCommand(fmt.Sprintf("echo 'hello world from the init container' > %v/data1 && grep 'hello world from the init container' %v/data1", mountPath, mountPath))
+		tPod.SetupVolumeForInitContainer("test-gcsfuse-volume", mountPath, false, "")
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world from the init container' %v/data1", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world from the regular container' > %v/data2 && grep 'hello world from the regular container' %v/data2", mountPath, mountPath))
 	})
 }

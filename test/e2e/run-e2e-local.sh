@@ -21,6 +21,7 @@ set -o errexit
 
 readonly PKGDIR="$( dirname -- "$0"; )/../.."
 readonly gke_cluster_region=${GKE_CLUSTER_REGION:-us-central1}
+readonly gke_cluster_version=$(kubectl version | grep -Eo 'Server Version: v[0-9]+\.[0-9]+\.[0-9]+' | grep -Eo  '[0-9]+\.[0-9]+\.[0-9]+')
 readonly use_gke_autopilot=${E2E_TEST_USE_GKE_AUTOPILOT:-false}
 readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
 
@@ -53,6 +54,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --build-gcs-fuse-from-source=${BUILD_GCSFUSE_FROM_SOURCE} \
             --deploy-overlay-name=${OVERLAY} \
             --use-gke-managed-driver=${use_gke_managed_driver} \
+            --gke-cluster-version=${gke_cluster_version} \
             --ginkgo-focus=${ginkgo_focus} \
             --ginkgo-skip=${ginkgo_skip} \
             --ginkgo-procs=${ginkgo_procs} \

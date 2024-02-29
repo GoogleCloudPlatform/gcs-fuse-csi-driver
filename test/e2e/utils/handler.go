@@ -66,7 +66,11 @@ type TestParameters struct {
 	GinkgoTimeout       string
 	GinkgoFlakeAttempts string
 	GinkgoSkipGcpSaTest bool
+
+	SupportsNativeSidecar bool
 }
+
+const TestWithNativeSidecarEnvVar = "TEST_WITH_NATIVE_SIDECAR"
 
 func Handle(testParams *TestParameters) error {
 	oldMask := syscall.Umask(0o000)
@@ -119,6 +123,7 @@ func Handle(testParams *TestParameters) error {
 			}
 		}()
 	}
+	// TODO(jaimebz): Extract server version using kubeapi if not present.
 
 	// Build and push the driver if the test does not use the pre-installed managed CSI driver. Defer the driver image deletion.
 	if !testParams.UseGKEManagedDriver {
@@ -158,6 +163,16 @@ func Handle(testParams *TestParameters) error {
 		testFocusStr = fmt.Sprintf(".*%s.*", testFocusStr)
 	}
 
+	supportsNativeSidecar, err := ClusterSupportsNativeSidecar(testParams.GkeClusterVersion, testParams.GkeNodeVersion)
+	if err != nil {
+		klog.Fatalf(`native sidecar support could not be determined: %v`, err)
+	}
+	testParams.SupportsNativeSidecar = supportsNativeSidecar
+
+	if err = os.Setenv(TestWithNativeSidecarEnvVar, strconv.FormatBool(supportsNativeSidecar)); err != nil {
+		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithNativeSidecarEnvVar, err)
+	}
+
 	//nolint:gosec
 	cmd := exec.Command("ginkgo", "run", "-v",
 		"--procs", testParams.GinkgoProcs,
@@ -195,6 +210,10 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if testParams.UseGKEAutopilot {
 		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
+	}
+
+	if !testParams.SupportsNativeSidecar {
+		skipTests = append(skipTests, "init.container")
 	}
 
 	// TODO(songjiaxun) remove this when the native sidecar container is supported.

@@ -24,8 +24,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
+
+var nativeSidecarMinimumVersion = webhook.MustParseVersion("1.29.0")
 
 func clusterDownGKE(testParams *TestParameters) error {
 	//nolint:gosec
@@ -134,4 +138,29 @@ func clusterUpGKE(testParams *TestParameters) error {
 	}
 
 	return nil
+}
+
+func ClusterSupportsNativeSidecar(clusterVersion, nodeVersion string) (bool, error) {
+	supportsNativeSidecar := false
+	if clusterVersion != "" {
+		parsedClusterVersion, err := version.ParseGeneric(clusterVersion)
+		if err != nil {
+			return false, err
+		}
+		if parsedClusterVersion.AtLeast(nativeSidecarMinimumVersion) {
+			supportsNativeSidecar = true
+
+			if nodeVersion != "" {
+				parsedNodeVersion, err := version.ParseGeneric(nodeVersion)
+				if err != nil {
+					return false, err
+				}
+				if !parsedNodeVersion.AtLeast(nativeSidecarMinimumVersion) {
+					supportsNativeSidecar = false
+				}
+			}
+		}
+	}
+
+	return supportsNativeSidecar, nil
 }
