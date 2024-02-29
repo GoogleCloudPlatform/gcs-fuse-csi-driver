@@ -214,13 +214,20 @@ func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context, timeout tim
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context) {
+func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context, isNativeSidecar bool) {
 	var err error
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
 
+	var containerStatusList []v1.ContainerStatus
+	if isNativeSidecar {
+		containerStatusList = t.pod.Status.InitContainerStatuses
+	} else {
+		containerStatusList = t.pod.Status.ContainerStatuses
+	}
+
 	var sidecarContainerStatus v1.ContainerStatus
-	for _, cs := range t.pod.Status.ContainerStatuses {
+	for _, cs := range containerStatusList {
 		if cs.Name == webhook.SidecarContainerName {
 			sidecarContainerStatus = cs
 
@@ -233,9 +240,13 @@ func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context) {
 	gomega.Expect(sidecarContainerStatus.State.Running).ToNot(gomega.BeNil())
 }
 
+func (t *TestPod) SetupVolumeForInitContainer(name, mountPath string, readOnly bool, subPath string) {
+	t.setupVolumeMount(name, mountPath, readOnly, subPath, true)
+}
+
 func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {
 	t.setupVolume(volumeResource, name, readOnly, mountOptions...)
-	t.setupVolumeMount(name, mountPath, readOnly, "")
+	t.setupVolumeMount(name, mountPath, readOnly, "", false)
 }
 
 func (t *TestPod) SetupVolumeWithSubPath(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, subPath string, reuseMount bool, mountOptions ...string) {
@@ -243,10 +254,10 @@ func (t *TestPod) SetupVolumeWithSubPath(volumeResource *storageframework.Volume
 		t.setupVolume(volumeResource, name, readOnly, mountOptions...)
 	}
 
-	t.setupVolumeMount(name, mountPath, readOnly, subPath)
+	t.setupVolumeMount(name, mountPath, readOnly, subPath, false)
 }
 
-func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPath string) {
+func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPath string, isNativeSidecar bool) {
 	if name == webhook.SidecarContainerBufferVolumeName || name == webhook.SidecarContainerCacheVolumeName {
 		return
 	}
@@ -257,7 +268,12 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 		ReadOnly:  readOnly,
 		SubPath:   subPath,
 	}
-	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
+
+	if isNativeSidecar {
+		t.pod.Spec.InitContainers[0].VolumeMounts = append(t.pod.Spec.InitContainers[0].VolumeMounts, volumeMount)
+	} else {
+		t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
+	}
 }
 
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
@@ -384,10 +400,41 @@ func (t *TestPod) SetCustomSidecarContainerImage() {
 	})
 }
 
-func (t *TestPod) VerifyCustomSidecarContainerImage() {
-	gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
-	gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.Equal(webhook.SidecarContainerName))
-	gomega.Expect(t.pod.Spec.Containers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
+func (t *TestPod) VerifyCustomSidecarContainerImage(isNativeSidecar bool) {
+	if isNativeSidecar {
+		gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(1))
+		gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.Equal(webhook.SidecarContainerName))
+		gomega.Expect(t.pod.Spec.InitContainers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
+	} else {
+		gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
+		gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.Equal(webhook.SidecarContainerName))
+		gomega.Expect(t.pod.Spec.Containers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
+	}
+}
+
+func (t *TestPod) SetInitContainerWithCommand(cmd string) {
+	cpu, _ := resource.ParseQuantity("100m")
+	mem, _ := resource.ParseQuantity("20Mi")
+
+	t.pod.Spec.InitContainers = []v1.Container{
+		{
+			Name:         TesterContainerName + "-init",
+			Image:        imageutils.GetE2EImage(imageutils.BusyBox),
+			Command:      []string{"/bin/sh"},
+			Args:         []string{"-c", cmd},
+			VolumeMounts: make([]v1.VolumeMount, 0),
+			Resources: v1.ResourceRequirements{
+				Limits: v1.ResourceList{
+					v1.ResourceCPU:    cpu,
+					v1.ResourceMemory: mem,
+				},
+				Requests: v1.ResourceList{
+					v1.ResourceCPU:    cpu,
+					v1.ResourceMemory: mem,
+				},
+			},
+		},
+	}
 }
 
 func (t *TestPod) Cleanup(ctx context.Context) {
