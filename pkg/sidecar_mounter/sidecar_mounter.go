@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"k8s.io/klog/v2"
 )
@@ -76,6 +77,20 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 
+	// when the ctx.Done() is closed,
+	// the main workload containers have exited,
+	// so it is safe to force kill the gcsfuse process.
+	go func(cmd *exec.Cmd) {
+		<-ctx.Done()
+		time.Sleep(time.Second * 5)
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
+			if err := cmd.Process.Kill(); err != nil {
+				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
+			}
+		}
+	}(cmd)
+
 	m.WaitGroup.Add(1)
 	go func() {
 		defer m.WaitGroup.Done()
@@ -84,6 +99,8 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 			return
 		}
+
+		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
 
 		// Since the gcsfuse has taken over the file descriptor,
 		// closing the file descriptor to avoid other process forking it.
