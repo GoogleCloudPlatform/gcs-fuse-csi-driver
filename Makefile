@@ -43,7 +43,7 @@ $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
 $(info SIDECAR_IMAGE is ${SIDECAR_IMAGE})
 $(info WEBHOOK_IMAGE is ${WEBHOOK_IMAGE})
 
-all: build-image-and-push-multi-arch
+all: driver sidecar-mounter webhook
 
 driver:
 	mkdir -p ${BINDIR}
