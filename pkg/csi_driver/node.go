@@ -71,7 +71,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		mounter:               mounter,
 		volumeLocks:           util.NewVolumeLocks(),
 		k8sClients:            driver.config.K8sClients,
-		limiter:               *rate.NewLimiter(rate.Every(time.Second), 5),
+		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
 	}
 }
 
@@ -89,8 +89,8 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Rate limit NodePublishVolume calls to avoid kube API throttling.
-	if s.limiter.Wait(ctx) != nil {
-		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit")
+	if err := s.limiter.Wait(ctx); err != nil {
+		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
 	}
 
 	// Validate arguments
