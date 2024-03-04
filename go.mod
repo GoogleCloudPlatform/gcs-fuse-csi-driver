@@ -23,12 +23,12 @@ require (
 	k8s.io/apimachinery v0.29.1
 	k8s.io/client-go v1.5.2
 	k8s.io/klog/v2 v2.120.1
-	k8s.io/kubernetes v1.29.1
+	k8s.io/kubernetes v1.29.2
 	k8s.io/mount-utils v0.29.1
 	k8s.io/pod-security-admission v0.29.1
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
 	sigs.k8s.io/boskos v0.0.0-20240212181944-5972d0cb4503
-	sigs.k8s.io/controller-runtime v0.17.1
+	sigs.k8s.io/controller-runtime v0.17.2
 )
 
 require (
