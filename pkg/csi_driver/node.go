@@ -156,6 +156,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 				code = codes.PermissionDenied
 			}
 
+			if storage.IsCanceledErr(err) {
+				code = codes.Aborted
+			}
+
 			return nil, status.Errorf(code, "failed to get GCS bucket %q: %v", bucketName, err)
 		}
 	}
@@ -163,7 +167,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Check if the sidecar container was injected into the Pod
 	pod, err := s.k8sClients.GetPod(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get pod: %v", err)
+		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
 
 	// Since the webhook mutating ordering is not definitive,

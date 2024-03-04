@@ -238,3 +238,7 @@ func IsNotExistErr(err error) bool {
 func IsPermissionDeniedErr(err error) bool {
 	return strings.Contains(err.Error(), "googleapi: Error 403")
 }
+
+func IsCanceledErr(err error) bool {
+	return strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")
+}
