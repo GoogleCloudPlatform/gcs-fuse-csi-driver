@@ -109,9 +109,10 @@ func main() {
 	<-c // blocking the process
 	klog.Info("received SIGTERM signal, waiting for all the gcsfuse processes exit...")
 
-	// After the Kubernetes native sidecar container feature is adopted,
-	// we should propagate the SIGTERM signal to gcsfuse processes here.
-	// cancel()
+	if isNativeSidecar {
+		cancel()
+	}
+
 	mounter.WaitGroup.Wait()
 
 	klog.Info("exiting sidecar mounter...")
