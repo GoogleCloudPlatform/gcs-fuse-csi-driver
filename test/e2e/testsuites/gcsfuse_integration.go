@@ -90,7 +90,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
 		ginkgo.By("Configuring the test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetImage(specs.GoogleCloudCliImage)
+		tPod.SetImage(specs.GolangImage)
 		tPod.SetResource("1", "1Gi", "5Gi")
 		sidecarMemoryLimit := "256Mi"
 		if testName == "write_large_files" || testName == "read_large_files" {
@@ -138,8 +138,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "apt-get update && apt-get install wget git -y")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "wget https://go.dev/dl/go1.21.5.linux-$(dpkg --print-architecture).tar.gz -q && tar -C /usr/local -xzf go1.21.5.linux-$(dpkg --print-architecture).tar.gz")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "git clone https://github.com/GoogleCloudPlatform/gcsfuse.git")
 
 		baseTestCommand := fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
