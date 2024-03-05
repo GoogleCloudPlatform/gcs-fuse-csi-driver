@@ -51,9 +51,10 @@ const (
 type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
-	Config     *Config
-	Decoder    *admission.Decoder
-	NodeLister listersv1.NodeLister
+	Config        *Config
+	Decoder       *admission.Decoder
+	NodeLister    listersv1.NodeLister
+	ServerVersion *version.Version
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
@@ -232,8 +233,12 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	}
 
 	if len(clusterNodes) == 0 {
-		// TODO(jaimebz): Rely on cluster version in the event there's no nodes to reference.
-		supportsNativeSidecar = false
+		// Rely on cluster version in the event there's no nodes to reference.
+		if si.ServerVersion != nil {
+			supportsNativeSidecar = si.ServerVersion.AtLeast(minimumSupportedVersion)
+		} else {
+			supportsNativeSidecar = false
+		}
 	}
 
 	return supportsNativeSidecar, nil
