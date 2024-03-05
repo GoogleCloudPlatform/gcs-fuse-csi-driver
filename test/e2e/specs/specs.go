@@ -298,9 +298,22 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, volume)
 }
 
-func (t *TestPod) SetupCacheVolumeMount(mountPath string) {
+func (t *TestPod) SetupCacheVolumeMount(mountPath string, subPath ...string) {
 	volumeMount := v1.VolumeMount{
 		Name:      webhook.SidecarContainerCacheVolumeName,
+		MountPath: mountPath,
+	}
+
+	if len(subPath) != 0 {
+		volumeMount.SubPath = subPath[0]
+	}
+
+	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
+}
+
+func (t *TestPod) SetupTmpVolumeMount(mountPath string) {
+	volumeMount := v1.VolumeMount{
+		Name:      webhook.SidecarContainerTmpVolumeName,
 		MountPath: mountPath,
 	}
 	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
