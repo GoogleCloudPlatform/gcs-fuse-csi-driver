@@ -51,8 +51,6 @@ var (
 		"token-url",
 		"reuse-token-from-url",
 		"o",
-		"logging:file-path:test",
-		"logging:format:test",
 		"logging:log-rotate:max-file-size-mb:test",
 		"logging:log-rotate:backup-file-count:test",
 		"logging:log-rotate:compress:test",

@@ -63,8 +63,6 @@ var disallowedFlags = map[string]bool{
 	"token-url":                            true,
 	"reuse-token-from-url":                 true,
 	"o":                                    true,
-	"logging:file-path":                    true,
-	"logging:format":                       true,
 	"logging:log-rotate:max-file-size-mb":  true,
 	"logging:log-rotate:backup-file-count": true,
 	"logging:log-rotate:compress":          true,
