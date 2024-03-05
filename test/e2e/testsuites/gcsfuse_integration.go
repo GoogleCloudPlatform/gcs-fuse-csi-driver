@@ -137,9 +137,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		}
 
-		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
+		ginkgo.By("Installing dependencies")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "git clone https://github.com/GoogleCloudPlatform/gcsfuse.git")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "apt-get install -y apt-transport-https ca-certificates gnupg curl")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list")
+		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install google-cloud-cli")
 
+		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 		baseTestCommand := fmt.Sprintf("export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 		switch testName {
@@ -149,7 +154,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
 			}
-		case "explicit_dir", "implicit_dir", "gzip", "local_file":
+		case "explicit_dir", "implicit_dir", "gzip", "local_file", "operations":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
 		case "list_large_dir", "write_large_files":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 60m")
