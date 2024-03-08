@@ -48,7 +48,7 @@ spec:
 
         echo "Generating data for file number: {{ .Values.dlio.numFilesTrain }}, file size: {{ .Values.dlio.recordLength }}..."
 
-        mpirun -np 20 dlio_benchmark workload=unet3d \
+        mpirun -np 20 dlio_benchmark workload=unet3d_a100 \
         ++workload.workflow.generate_data=True \
         ++workload.workflow.train=False \
         ++workload.dataset.data_folder=/data \

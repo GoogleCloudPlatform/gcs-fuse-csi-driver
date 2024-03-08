@@ -25,8 +25,8 @@ limitations under the License.
 # Replace the docker registry.
 git clone https://github.com/argonne-lcf/dlio_benchmark.git
 cd dlio_benchmark/
-docker build -t jiaxun/dlio:v1.0.0 .
-docker image push jiaxun/dlio:v1.0.0
+docker build -t jiaxun/dlio:v1.1.0 .
+docker image push jiaxun/dlio:v1.1.0
 ```
 
 ### Create a new node pool
@@ -38,10 +38,10 @@ For an existing GKE cluster, use the following command to create a new node pool
 ```bash
 # Replace the cluster name and zone.
 gcloud container node-pools create large-pool \
-    --cluster gcsfuse-csi-test-cluster \
+    --cluster test-cluster-us-west1-c \
     --ephemeral-storage-local-ssd count=16 \
     --machine-type n2-standard-96 \
-    --zone us-central1-a \
+    --zone us-west1-c \
     --num-nodes 3
 ```
 
@@ -90,192 +90,16 @@ dlio-unet3d-150mb-5k-data-loader
 
 ## DLIO Unet3D Loading Tests
 
-Change the directory to `./examples/dlio`. Run the following commands to run the loading tests. Each `helm install` command will deploy a Pod to run the test, and upload logs to the bucket. You may need to `--set image=<your-registry>/dlio:v1.0.0` and `--set bucketName=<your-bucket-name>` to set your registry and bucket name.
-
-### dlio-unet3d-100kb-500k dlio.batchSize=800
+Change the directory to `./examples/dlio`. Run the following commands to run the loading tests.
 
 ```bash
-helm install dlio-unet3d-100kb-500k-800-local-ssd unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-100kb-500k \
---set dlio.numFilesTrain=500000 \
---set dlio.recordLength=102400 \
---set dlio.batchSize=800 \
---set scenario=local-ssd
-
-helm install dlio-unet3d-100kb-500k-800-gcsfuse-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-100kb-500k \
---set dlio.numFilesTrain=500000 \
---set dlio.recordLength=102400 \
---set dlio.batchSize=800 \
---set scenario=gcsfuse-file-cache
-
-helm install dlio-unet3d-100kb-500k-800-gcsfuse-no-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-100kb-500k \
---set dlio.numFilesTrain=500000 \
---set dlio.recordLength=102400 \
---set dlio.batchSize=800 \
---set scenario=gcsfuse-no-file-cache
-
-# Clean up
-helm uninstall \
-dlio-unet3d-100kb-500k-800-local-ssd \
-dlio-unet3d-100kb-500k-800-gcsfuse-file-cache \
-dlio-unet3d-100kb-500k-800-gcsfuse-no-file-cache
+python ./run_tests.py
 ```
 
-### dlio-unet3d-100kb-500k dlio.batchSize=128
+### Delete the tests
 
 ```bash
-helm install dlio-unet3d-100kb-500k-128-local-ssd unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-100kb-500k \
---set dlio.numFilesTrain=500000 \
---set dlio.recordLength=102400 \
---set dlio.batchSize=128 \
---set scenario=local-ssd
-
-helm install dlio-unet3d-100kb-500k-128-gcsfuse-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-100kb-500k \
---set dlio.numFilesTrain=500000 \
---set dlio.recordLength=102400 \
---set dlio.batchSize=128 \
---set scenario=gcsfuse-file-cache
-
-helm install dlio-unet3d-100kb-500k-128-gcsfuse-no-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-100kb-500k \
---set dlio.numFilesTrain=500000 \
---set dlio.recordLength=102400 \
---set dlio.batchSize=128 \
---set scenario=gcsfuse-no-file-cache
-
-# Clean up
-helm uninstall \
-dlio-unet3d-100kb-500k-128-local-ssd \
-dlio-unet3d-100kb-500k-128-gcsfuse-file-cache \
-dlio-unet3d-100kb-500k-128-gcsfuse-no-file-cache
-```
-
-### dlio-unet3d-500kb-1m dlio.batchSize=800
-
-```bash
-helm install dlio-unet3d-500kb-1m-800-local-ssd unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-500kb-1m \
---set dlio.numFilesTrain=1000000 \
---set dlio.recordLength=512000 \
---set dlio.batchSize=800 \
---set scenario=local-ssd
-
-helm install dlio-unet3d-500kb-1m-800-gcsfuse-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-500kb-1m \
---set dlio.numFilesTrain=1000000 \
---set dlio.recordLength=512000 \
---set dlio.batchSize=800 \
---set scenario=gcsfuse-file-cache
-
-helm install dlio-unet3d-500kb-1m-800-gcsfuse-no-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-500kb-1m \
---set dlio.numFilesTrain=1000000 \
---set dlio.recordLength=512000 \
---set dlio.batchSize=800 \
---set scenario=gcsfuse-no-file-cache
-
-# Clean up
-helm uninstall \
-dlio-unet3d-500kb-1m-800-local-ssd \
-dlio-unet3d-500kb-1m-800-gcsfuse-file-cache \
-dlio-unet3d-500kb-1m-800-gcsfuse-no-file-cache
-```
-
-### dlio-unet3d-500kb-1m dlio.batchSize=128
-
-```bash
-helm install dlio-unet3d-500kb-1m-128-local-ssd unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-500kb-1m \
---set dlio.numFilesTrain=1000000 \
---set dlio.recordLength=512000 \
---set dlio.batchSize=128 \
---set scenario=local-ssd
-
-helm install dlio-unet3d-500kb-1m-128-gcsfuse-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-500kb-1m \
---set dlio.numFilesTrain=1000000 \
---set dlio.recordLength=512000 \
---set dlio.batchSize=128 \
---set scenario=gcsfuse-file-cache
-
-helm install dlio-unet3d-500kb-1m-128-gcsfuse-no-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-500kb-1m \
---set dlio.numFilesTrain=1000000 \
---set dlio.recordLength=512000 \
---set dlio.batchSize=128 \
---set scenario=gcsfuse-no-file-cache
-
-# Clean up
-helm uninstall \
-dlio-unet3d-500kb-1m-128-local-ssd \
-dlio-unet3d-500kb-1m-128-gcsfuse-file-cache \
-dlio-unet3d-500kb-1m-128-gcsfuse-no-file-cache
-```
-
-### dlio-unet3d-3mb-100k dlio.batchSize=200
-
-```bash
-helm install dlio-unet3d-3mb-100k-200-local-ssd unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-3mb-100k \
---set dlio.numFilesTrain=100000 \
---set dlio.recordLength=3145728 \
---set dlio.batchSize=200 \
---set scenario=local-ssd
-
-helm install dlio-unet3d-3mb-100k-200-gcsfuse-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-3mb-100k \
---set dlio.numFilesTrain=100000 \
---set dlio.recordLength=3145728 \
---set dlio.batchSize=200 \
---set scenario=gcsfuse-file-cache
-
-helm install dlio-unet3d-3mb-100k-200-gcsfuse-no-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-3mb-100k \
---set dlio.numFilesTrain=100000 \
---set dlio.recordLength=3145728 \
---set dlio.batchSize=200 \
---set scenario=gcsfuse-no-file-cache
-
-# Clean up
-helm uninstall \
-dlio-unet3d-3mb-100k-200-local-ssd \
-dlio-unet3d-3mb-100k-200-gcsfuse-file-cache \
-dlio-unet3d-3mb-100k-200-gcsfuse-no-file-cache
-```
-
-### dlio-unet3d-150mb-5k dlio.batchSize=4
-
-```bash
-helm install dlio-unet3d-150mb-5k-4-local-ssd unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-150mb-5k \
---set dlio.numFilesTrain=5000 \
---set dlio.recordLength=157286400 \
---set dlio.batchSize=4 \
---set scenario=local-ssd
-
-helm install dlio-unet3d-150mb-5k-4-gcsfuse-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-150mb-5k \
---set dlio.numFilesTrain=5000 \
---set dlio.recordLength=157286400 \
---set dlio.batchSize=4 \
---set scenario=gcsfuse-file-cache
-
-helm install dlio-unet3d-150mb-5k-4-gcsfuse-no-file-cache unet3d-loading-test \
---set bucketName=gke-dlio-unet3d-150mb-5k \
---set dlio.numFilesTrain=5000 \
---set dlio.recordLength=157286400 \
---set dlio.batchSize=4 \
---set scenario=gcsfuse-no-file-cache
-
-# Clean up
-helm uninstall \
-dlio-unet3d-150mb-5k-4-local-ssd \
-dlio-unet3d-150mb-5k-4-gcsfuse-file-cache \
-dlio-unet3d-150mb-5k-4-gcsfuse-no-file-cache
+python ./delete_tests.py
 ```
 
 ## Parsing the test results
