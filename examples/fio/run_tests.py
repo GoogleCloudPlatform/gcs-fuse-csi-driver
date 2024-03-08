@@ -22,22 +22,21 @@ def run_command(command: str):
     print(result.stdout)
     print(result.stderr)
 
-metadataCacheTtlSecs = 6048000
-bucketName_fileSize_blockSize_statCacheCapacity_fileCacheMaxSizeInMb = [
-    ("princer-read-cache-load-test-west", "64K", "64K", 3000000, 650000), 
-    ("princer-read-cache-load-test-west", "128K", "128K", 3000000, 1300000),
-    ("princer-read-cache-load-test-west", "1M", "256K", 3000000, 1000000),
-    ("fio-100mb-50k", "100M", "1M", 150000, 5000000),
-    ("fio-200gb-1", "200G", "1M", 0, 300000)
+bucketName_fileSize_blockSize = [
+    ("princer-read-cache-load-test-west", "64K", "64K"), 
+    ("princer-read-cache-load-test-west", "128K", "128K"),
+    ("princer-read-cache-load-test-west", "1M", "256K"),
+    ("fio-100mb-50k", "100M", "1M"),
+    ("fio-200gb-1", "200G", "1M")
     ]
 
 scenarios = ["gcsfuse-file-cache", "gcsfuse-no-file-cache", "local-ssd"]
 
-for bucketName, fileSize, blockSize, statCacheCapacity, fileCacheMaxSizeInMb in bucketName_fileSize_blockSize_statCacheCapacity_fileCacheMaxSizeInMb:
+for bucketName, fileSize, blockSize in bucketName_fileSize_blockSize:
     if fileSize in ["100M", "200G"]:
-        run_command("gcloud container clusters get-credentials --zone us-central1-a gcsfuse-csi-test-cluster")
+        run_command("gcloud container clusters get-credentials --zone us-central1-c test-cluster-us-central1-c")
     else:
-        run_command("gcloud container clusters get-credentials --zone us-west1-c cluster-1-29-us-west1")
+        run_command("gcloud container clusters get-credentials --zone us-west1-c test-cluster-us-west1-c")
     
     for readType in ["read", "randread"]:
         for scenario in scenarios:
@@ -49,11 +48,10 @@ for bucketName, fileSize, blockSize, statCacheCapacity, fileCacheMaxSizeInMb in 
                         f"--set scenario={scenario}",
                         f"--set fio.readType={readType}",
                         f"--set fio.fileSize={fileSize}",
-                        f"--set fio.blockSize={blockSize}",
-                        f"--set gcsfuse.metadataCacheTtlSecs={metadataCacheTtlSecs}",
-                        f"--set gcsfuse.statCacheCapacity={statCacheCapacity}",
-                        f"--set gcsfuse.fileCacheMaxSizeInMb={fileCacheMaxSizeInMb}",
-                        "--set gcsfuse.fileCacheForRangeRead=true"]
+                        f"--set fio.blockSize={blockSize}"]
+            
+            if fileSize == "200G":
+                commands.append("--set gcsfuse.metadataStatCacheCapacity=0")
             
             helm_command = " ".join(commands)
 
