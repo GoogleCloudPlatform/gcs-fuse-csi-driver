@@ -33,7 +33,8 @@ fio:
   filesPerThread: "20000"
 
 gcsfuse:
-  metadataCacheTtlSecs: "6048000"
-  statCacheCapacity: "3000000"
-  fileCacheMaxSizeInMb: "650000"
-  fileCacheForRangeRead: true
+  metadataCacheTTLSeconds: "6048000"
+  metadataStatCacheCapacity: "-1"
+  metadataTypeCacheCapacity: "-1"
+  fileCacheCapacity: "-1"
+  fileCacheForRangeRead: "true"

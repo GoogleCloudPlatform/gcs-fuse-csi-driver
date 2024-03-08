@@ -20,9 +20,6 @@ metadata:
   {{- if ne .Values.scenario "local-ssd" }}
   annotations:
     gke-gcsfuse/volumes: "true"
-    gke-gcsfuse/cpu-limit: "0"
-    gke-gcsfuse/memory-limit: "0"
-    gke-gcsfuse/ephemeral-storage-limit: "0"
   {{- end }}
 spec:
   restartPolicy: Never
@@ -41,7 +38,6 @@ spec:
       requests:
         cpu: "30"
         memory: 300Gi
-        ephemeral-storage: 7900Gi
     command:
       - "/bin/sh"
       - "-c"
@@ -173,11 +169,18 @@ spec:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: {{ .Values.bucketName }}
-        mountOptions: implicit-dirs,{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }}only-dir={{ .Values.fio.fileSize }},{{- end }}stat-cache-capacity={{ .Values.gcsfuse.statCacheCapacity }},metadata-cache:ttl-secs:{{ .Values.gcsfuse.metadataCacheTtlSecs }},file-cache:max-size-mb:{{ .Values.gcsfuse.fileCacheMaxSizeInMb }},file-cache:cache-file-for-range-read:{{ .Values.gcsfuse.fileCacheForRangeRead }}
+        metadataCacheTTLSeconds: "{{ .Values.gcsfuse.metadataCacheTTLSeconds }}"
+        metadataTypeCacheCapacity: "{{ .Values.gcsfuse.metadataTypeCacheCapacity }}"
+        metadataStatCacheCapacity: "{{ .Values.gcsfuse.metadataStatCacheCapacity }}"
+        fileCacheCapacity: "{{ .Values.gcsfuse.fileCacheCapacity }}"
+        mountOptions: implicit-dirs{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }},only-dir={{ .Values.fio.fileSize }}{{- end }}
   {{- else }}
     csi:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: {{ .Values.bucketName }}
-        mountOptions: implicit-dirs,{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }}only-dir={{ .Values.fio.fileSize }},{{- end }}stat-cache-capacity={{ .Values.gcsfuse.statCacheCapacity }},metadata-cache:ttl-secs:{{ .Values.gcsfuse.metadataCacheTtlSecs }}
+        metadataCacheTTLSeconds: "{{ .Values.gcsfuse.metadataCacheTTLSeconds }}"
+        metadataTypeCacheCapacity: "{{ .Values.gcsfuse.metadataTypeCacheCapacity }}"
+        metadataStatCacheCapacity: "{{ .Values.gcsfuse.metadataStatCacheCapacity }}"
+        mountOptions: implicit-dirs{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }},only-dir={{ .Values.fio.fileSize }}{{- end }}
   {{- end }}

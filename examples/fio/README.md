@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# FIO Loading Tests (TODO: current doc is for DLIO, modify it for FIO)
+# FIO Loading Tests
 
 ## Prerequisites
 
@@ -28,10 +28,10 @@ For an existing GKE cluster, use the following command to create a new node pool
 ```bash
 # Replace the cluster name and zone.
 gcloud container node-pools create large-pool \
-    --cluster cluster-1-29-us-west1 \
+    --cluster test-cluster-us-central1-c \
     --ephemeral-storage-local-ssd count=16 \
     --machine-type n2-standard-96 \
-    --zone us-west1-c \
+    --zone us-central1-c \
     --num-nodes 3
 ```
 
