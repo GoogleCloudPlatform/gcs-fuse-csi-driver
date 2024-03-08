@@ -17,14 +17,10 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-image: jiaxun/dlio:v1.0.0
+image: jiaxun/dlio:v1.1.0
 bucketName: gke-dlio-test-data
 scenario: local-ssd
 nodeType: n2-standard-96
-
-resourceLimits:
-  cpu: 100
-  memory: 400Gi
 
 dlio:
   numFilesTrain: 500000
@@ -33,8 +29,8 @@ dlio:
   readThreads: 12
 
 gcsfuse:
-  statCacheTtl: 100m
-  typeCacheTtl: 100m
-  statCacheCapacity: "2000000"
-  fileCacheMaxSizeInMb: -1
-  fileCacheForRangeRead: true
+  metadataCacheTTLSeconds: "360000"
+  metadataStatCacheCapacity: "-1"
+  metadataTypeCacheCapacity: "-1"
+  fileCacheCapacity: "-1"
+  fileCacheForRangeRead: "true"

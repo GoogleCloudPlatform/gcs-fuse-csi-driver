@@ -175,8 +175,8 @@ if __name__ == "__main__":
         record_set = output[key]
         total_size = int(int(record_set['mean_file_size']) * int(record_set['num_files_train']) / (1024 ** 3))
 
-        for i in range(len(record_set["records"]["local-ssd"])):
-            for scenario in scenario_order:
+        for scenario in scenario_order:
+            for i in range(len(record_set["records"]["local-ssd"])):
                 r = record_set["records"][scenario][i]
                 r["throughput_over_local_ssd"] = round(r["train_throughput_mb_per_second"] / record_set["records"]["local-ssd"][i]["train_throughput_mb_per_second"] * 100, 2)
                 output_file.write(f"{record_set['mean_file_size']},{record_set['num_files_train']},{total_size},{record_set['batch_size']},{scenario},")
