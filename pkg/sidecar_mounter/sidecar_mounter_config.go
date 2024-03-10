@@ -266,7 +266,7 @@ func (mc *MountConfig) prepareConfigFile() error {
 		return err
 	}
 
-	klog.Infof("gcsfuse config file content:\n%v", string(yamlData))
+	klog.Infof("gcsfuse config file content: %v", configMap)
 
 	return os.WriteFile(mc.ConfigFile, yamlData, 0o400)
 }
