@@ -42,6 +42,7 @@ import (
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
 	e2ejob "k8s.io/kubernetes/test/e2e/framework/job"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epodooutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	"k8s.io/utils/ptr"
@@ -51,18 +52,19 @@ const (
 	TesterContainerName   = "volume-tester"
 	K8sServiceAccountName = "gcsfuse-csi-sa"
 	//nolint:gosec
-	K8sSecretName                   = "gcsfuse-csi-test-secret"
-	FakeVolumePrefix                = "gcsfuse-csi-fake-volume"
-	InvalidVolumePrefix             = "gcsfuse-csi-invalid-volume"
-	NonRootVolumePrefix             = "gcsfuse-csi-non-root-volume"
-	InvalidMountOptionsVolumePrefix = "gcsfuse-csi-invalid-mount-options-volume"
-	ImplicitDirsVolumePrefix        = "gcsfuse-csi-implicit-dirs-volume"
-	ForceNewBucketPrefix            = "gcsfuse-csi-force-new-bucket"
-	SubfolderInBucketPrefix         = "gcsfuse-csi-subfolder-in-bucket"
-	MultipleBucketsPrefix           = "gcsfuse-csi-multiple-buckets"
-	EnableFileCachePrefix           = "gcsfuse-csi-enable-file-cache"
-	ImplicitDirsPath                = "implicit-dir"
-	InvalidVolume                   = "<invalid-name>"
+	K8sSecretName                          = "gcsfuse-csi-test-secret"
+	FakeVolumePrefix                       = "gcsfuse-csi-fake-volume"
+	InvalidVolumePrefix                    = "gcsfuse-csi-invalid-volume"
+	NonRootVolumePrefix                    = "gcsfuse-csi-non-root-volume"
+	InvalidMountOptionsVolumePrefix        = "gcsfuse-csi-invalid-mount-options-volume"
+	ImplicitDirsVolumePrefix               = "gcsfuse-csi-implicit-dirs-volume"
+	ForceNewBucketPrefix                   = "gcsfuse-csi-force-new-bucket"
+	SubfolderInBucketPrefix                = "gcsfuse-csi-subfolder-in-bucket"
+	MultipleBucketsPrefix                  = "gcsfuse-csi-multiple-buckets"
+	EnableFileCachePrefix                  = "gcsfuse-csi-enable-file-cache"
+	EnableFileCacheWithLargeCapacityPrefix = "gcsfuse-csi-enable-file-cache-large-capacity"
+	ImplicitDirsPath                       = "implicit-dir"
+	InvalidVolume                          = "<invalid-name>"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.0"
@@ -212,6 +214,11 @@ func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 
 func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context, timeout time.Duration) {
 	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, timeout)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) WaitForLog(ctx context.Context, container string, expectedString string, timeout time.Duration) {
+	_, err := e2epodooutput.LookForStringInLogWithoutKubectl(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, timeout)
 	framework.ExpectNoError(err)
 }
 
@@ -1027,7 +1034,15 @@ func CreateImplicitDirInBucket(dirPath, bucketName string) {
 }
 
 func CreateTestFileInBucket(fileName, bucketName string) {
-	err := os.WriteFile(fileName, []byte(fileName), 0o600)
+	createTestFileInBucket(fileName, bucketName, []byte(fileName))
+}
+
+func CreateTestFileWithSizeInBucket(fileName, bucketName string, fileSize int) {
+	createTestFileInBucket(fileName, bucketName, make([]byte, fileSize))
+}
+
+func createTestFileInBucket(fileName, bucketName string, fileContent []byte) {
+	err := os.WriteFile(fileName, fileContent, 0o600)
 	if err != nil {
 		framework.Failf("Failed to create a test file: %v", err)
 	}

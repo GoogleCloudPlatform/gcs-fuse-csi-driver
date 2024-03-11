@@ -185,7 +185,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			bucketName:              bucketName,
 			serviceAccountNamespace: config.Framework.Namespace.Name,
 		}
-		mountOptions := "debug_gcs,debug_fuse,debug_fs"
+		mountOptions := "logging:severity:info"
 
 		switch config.Prefix {
 		case specs.NonRootVolumePrefix:
@@ -201,6 +201,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",only-dir=" + dirPath
 		case specs.EnableFileCachePrefix:
 			v.fileCacheCapacity = "100Mi"
+		case specs.EnableFileCacheWithLargeCapacityPrefix:
+			v.fileCacheCapacity = "2Gi"
 		}
 
 		v.mountOptions = mountOptions
@@ -209,7 +211,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			n.volumeStore = append(n.volumeStore, v)
 		}
 
-		if config.Prefix == "" || config.Prefix == specs.EnableFileCachePrefix {
+		switch config.Prefix {
+		case "", specs.EnableFileCachePrefix, specs.EnableFileCacheWithLargeCapacityPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
