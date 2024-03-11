@@ -37,7 +37,7 @@ var (
 
 	defaultConfigFileFlagMap = map[string]string{
 		"logging:file-path": "/dev/fd/1",
-		"logging:format":    "text",
+		"logging:format":    "json",
 		"cache-dir":         "",
 	}
 
@@ -101,7 +101,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 			expectedConfigMapArgs: map[string]string{
 				"logging:file-path":       "/dev/fd/1",
-				"logging:format":          "text",
+				"logging:format":          "json",
 				"logging:severity":        "error",
 				"write:create-empty-file": "true",
 				"cache-dir":               "",
@@ -172,7 +172,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
 				"logging:file-path":      "/dev/fd/1",
-				"logging:format":         "text",
+				"logging:format":         "json",
 				"cache-dir":              "",
 				"file-cache:max-size-mb": "0",
 			},
@@ -189,7 +189,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
 				"logging:file-path":      "/dev/fd/1",
-				"logging:format":         "text",
+				"logging:format":         "json",
 				"cache-dir":              "test-cache-dir",
 				"file-cache:max-size-mb": "-1",
 			},
@@ -206,7 +206,7 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
 				"logging:file-path":      "/dev/fd/1",
-				"logging:format":         "text",
+				"logging:format":         "json",
 				"cache-dir":              "test-cache-dir",
 				"file-cache:max-size-mb": "100",
 			},
@@ -243,7 +243,7 @@ func TestPrepareConfigFile(t *testing.T) {
 				ConfigFile: "./test-config-file.yaml",
 				ConfigFileFlagMap: map[string]string{
 					"logging:file-path":                     "/dev/fd/1",
-					"logging:format":                        "text",
+					"logging:format":                        "json",
 					"logging:severity":                      "error",
 					"write:create-empty-file":               "true",
 					"file-cache:max-size-mb":                "10000",
@@ -256,7 +256,7 @@ func TestPrepareConfigFile(t *testing.T) {
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{
 					"file-path": "/dev/fd/1",
-					"format":    "text",
+					"format":    "json",
 					"severity":  "error",
 				},
 				"write": map[string]interface{}{
@@ -279,7 +279,7 @@ func TestPrepareConfigFile(t *testing.T) {
 				ConfigFile: "./test-config-file.yaml",
 				ConfigFileFlagMap: map[string]string{
 					"logging:file-path": "/dev/fd/1",
-					"logging:format":    "text",
+					"logging:format":    "json",
 					"logging":           "invalid",
 				},
 			},

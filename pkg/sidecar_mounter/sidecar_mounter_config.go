@@ -154,7 +154,7 @@ func (mc *MountConfig) prepareMountArgs() {
 
 	configFileFlagMap := map[string]string{
 		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
-		"logging:format":    "text",
+		"logging:format":    "json",
 		"cache-dir":         "", // by default the gcsfuse file cache is disabled on GKE
 	}
 
