@@ -121,11 +121,11 @@ func TestPrepareConfig(t *testing.T) {
 				ContainerImage:          FakeConfig().ContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
-				CPURequest:              resource.Quantity{},
+				CPURequest:              FakeConfig().CPURequest,
 				MemoryLimit:             resource.Quantity{},
-				MemoryRequest:           resource.Quantity{},
+				MemoryRequest:           FakeConfig().MemoryRequest,
 				EphemeralStorageLimit:   resource.Quantity{},
-				EphemeralStorageRequest: resource.Quantity{},
+				EphemeralStorageRequest: FakeConfig().EphemeralStorageRequest,
 			},
 			expectErr: false,
 		},
@@ -229,8 +229,7 @@ func TestPrepareConfig(t *testing.T) {
 		},
 	}
 
-	for n, tc := range testCases {
-		t.Logf("test case %v: %s", n+1, tc.name)
+	for _, tc := range testCases {
 		si := SidecarInjector{
 			Client:  nil,
 			Config:  FakeConfig(),
@@ -238,11 +237,11 @@ func TestPrepareConfig(t *testing.T) {
 		}
 		gotConfig, gotErr := si.prepareConfig(tc.annotations)
 		if tc.expectErr != (gotErr != nil) {
-			t.Errorf("Expect error: %v, but got error: %v", tc.expectErr, gotErr)
+			t.Errorf(`for "%s", expect error: %v, but got error: %v`, tc.name, tc.expectErr, gotErr)
 		}
 
 		if diff := cmp.Diff(gotConfig, tc.wantConfig); diff != "" {
-			t.Errorf("config differ (-got, +want)\n%s", diff)
+			t.Errorf(`for "%s", config differ (-got, +want)\n%s`, tc.name, diff)
 		}
 	}
 }
