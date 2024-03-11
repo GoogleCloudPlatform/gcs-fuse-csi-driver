@@ -123,6 +123,34 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
 }
 
+// populateResource assigns request and limits based on the following conditions:
+//  1. If both of the request and limit are unset, assign the default values.
+//  2. If one of the request or limit is set and another is unset, enforce them to be set as the same.
+//
+// Note: when the annotation limit is zero and request is unset, we set request to use the default value.
+func populateResource(requestQuantity, limitQuantity *resource.Quantity, defaultRequestQuantity, defaultLimitQuantity resource.Quantity) {
+	// Use defaults when no annotations are set.
+	if requestQuantity.Format == "" && limitQuantity.Format == "" {
+		*requestQuantity = defaultRequestQuantity
+		*limitQuantity = defaultLimitQuantity
+	}
+
+	// Set request to equal default when limit is zero/unlimited and request is unset.
+	if limitQuantity.IsZero() && requestQuantity.Format == "" {
+		*requestQuantity = defaultRequestQuantity
+	}
+
+	// Set request to equal limit when request annotation is not provided.
+	if requestQuantity.Format == "" {
+		*requestQuantity = *limitQuantity
+	}
+
+	// Set limit to equal request when limit annotation is not provided.
+	if limitQuantity.Format == "" {
+		*limitQuantity = *requestQuantity
+	}
+}
+
 // use the default config values,
 // overwritten by the user input from pod annotations.
 func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
@@ -138,23 +166,6 @@ func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config
 
 	if err := json.Unmarshal(jsonData, config); err != nil {
 		return nil, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: %w", err)
-	}
-
-	// if both of the request and limit are unset, assign the default values.
-	// if one of the request or limit is set and another is unset, enforce them to be set as the same.
-	populateResource := func(rq, lq *resource.Quantity, drq, dlq resource.Quantity) {
-		if rq.Format == "" && lq.Format == "" {
-			*rq = drq
-			*lq = dlq
-		}
-
-		if lq.Format == "" {
-			*lq = *rq
-		}
-
-		if rq.Format == "" {
-			*rq = *lq
-		}
 	}
 
 	populateResource(&config.CPURequest, &config.CPULimit, si.Config.CPURequest, si.Config.CPULimit)
