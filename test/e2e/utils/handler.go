@@ -213,18 +213,15 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	if !testParams.SupportsNativeSidecar {
-		skipTests = append(skipTests, "init.container")
+		skipTests = append(skipTests, "init.container", "fast.termination")
 	}
-
-	// TODO(songjiaxun) remove this when the native sidecar container is supported.
-	skipTests = append(skipTests, "fast.termination")
 
 	// TODO(songjiaxun) remove this logic after the next CSI driver release.
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "custom.buffer", "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache")
+		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container")
 
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.29") && testParams.SupportsNativeSidecar {
-			skipTests = append(skipTests, "init.container", "autoTermination", "custom.sidecar.container")
+			skipTests = append(skipTests, "autoTermination", "custom.sidecar.container")
 		}
 	}
 
