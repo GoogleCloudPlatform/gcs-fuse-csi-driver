@@ -98,7 +98,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		fileName := uuid.NewString()
 		specs.CreateTestFileInBucket(fileName, bucketName)
 
-		ginkgo.By("Configuring the first pod")
+		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		// Mount the gcsfuse cache volume to the test container
@@ -109,14 +109,14 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 			cacheSubfolder = l.volumeResource.Pv.Name
 		}
 
-		ginkgo.By("Deploying the first pod")
+		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the first pod is running")
+		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
 
-		ginkgo.By("Checking that the first pod command exits with no error")
+		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep '%v' /cache/.volumes/%v/gcsfuse-file-cache/%v/%v", fileName, cacheSubfolder, bucketName, fileName))
@@ -174,23 +174,90 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		fileName := uuid.NewString()
 		specs.CreateTestFileInBucket(fileName, bucketName)
 
-		ginkgo.By("Configuring the first pod")
+		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		// Mount the gcsfuse cache volume to the test container
 		tPod.SetupCacheVolumeMount("/cache")
 
-		ginkgo.By("Deploying the first pod")
+		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the first pod is running")
+		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
 
-		ginkgo.By("Checking that the first pod command exits with no error")
+		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
 		// the cache volume should be empty
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "[ ! -d '/cache/.volumes' ] && exit 0 || exit 1")
+	})
+
+	ginkgo.It("should have cache miss when the data is larger than fileCacheCapacity", func() {
+		init(specs.EnableFileCachePrefix)
+		defer cleanup()
+
+		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
+		bucketName := l.config.Prefix
+
+		// Create files using gsutil
+		fileName := uuid.NewString()
+		// The file size 110 MB is larger than the 100 MB fileCacheCapacity
+		specs.CreateTestFileWithSizeInBucket(fileName, bucketName, 110*1024*1024)
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v > /dev/null", mountPath, fileName))
+
+		tPod.WaitForLog(ctx, webhook.SidecarContainerName, "while inserting into the cache: size of the entry is more than the cache's maxSize", specs.PollTimeout)
+	})
+
+	ginkgo.It("should have cache miss when the fileCacheCapacity is larger than underlying storage", func() {
+		init(specs.EnableFileCacheWithLargeCapacityPrefix)
+		defer cleanup()
+
+		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
+		bucketName := l.config.Prefix
+
+		// Create files using gsutil
+		fileName := uuid.NewString()
+		// The file size 2 GB is larger than the 1 GB PD
+		specs.CreateTestFileWithSizeInBucket(fileName, bucketName, 2*1024*1024*1024)
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-cache", "standard-rwo", "1Gi", v1.ReadWriteOnce)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: tPVC.PVC}, webhook.SidecarContainerCacheVolumeName, "", false)
+		tPod.SetNonRootSecurityContext(0, 0, 1000)
+
+		ginkgo.By("Creating the PVC")
+		tPVC.Create(ctx)
+		defer tPVC.Cleanup(ctx)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v > /dev/null", mountPath, fileName))
+
+		tPod.WaitForLog(ctx, webhook.SidecarContainerName, "no space left on device", specs.PollTimeout)
 	})
 }
