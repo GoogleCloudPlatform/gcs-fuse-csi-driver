@@ -210,6 +210,10 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if testParams.UseGKEAutopilot {
 		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
+
+		if strings.HasPrefix(testParams.GkeClusterVersion, "1.29") {
+			skipTests = append(skipTests, "buffer.volume")
+		}
 	}
 
 	if !testParams.SupportsNativeSidecar {
