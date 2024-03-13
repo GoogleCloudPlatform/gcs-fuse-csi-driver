@@ -45,7 +45,7 @@ const (
 	annotationGcsfuseSidecarMemoryRequestKey           = "gke-gcsfuse/memory-request"
 	annotationGcsfuseSidecarEphemeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
 
-	istioSidecarName = "istio-proxy"
+	IstioSidecarName = "istio-proxy"
 )
 
 type SidecarInjector struct {
@@ -247,14 +247,14 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
 	if supportsNativeSidecar {
 		sidecarSpec := GetNativeSidecarContainerSpec(config)
-		if sidecarPresentAtFirstPosition(pod.Spec.InitContainers, istioSidecarName) {
+		if sidecarPresentAtFirstPosition(pod.Spec.InitContainers, IstioSidecarName) {
 			pod.Spec.InitContainers = injectAtSecondPosition(pod.Spec.InitContainers, sidecarSpec)
 		} else {
 			pod.Spec.InitContainers = append([]corev1.Container{sidecarSpec}, pod.Spec.InitContainers...)
 		}
 	} else {
 		sidecarSpec := GetSidecarContainerSpec(config)
-		if sidecarPresentAtFirstPosition(pod.Spec.Containers, istioSidecarName) {
+		if sidecarPresentAtFirstPosition(pod.Spec.Containers, IstioSidecarName) {
 			pod.Spec.Containers = injectAtSecondPosition(pod.Spec.Containers, sidecarSpec)
 		} else {
 			pod.Spec.Containers = append([]corev1.Container{sidecarSpec}, pod.Spec.Containers...)
