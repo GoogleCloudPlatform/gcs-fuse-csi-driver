@@ -315,6 +315,92 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			},
 			expectedInjected: false,
 		},
+		testCase{
+			name: "should fail the validation when the sidecar container is at position 1",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					InitContainers: []v1.Container{
+						{
+							Name: "first-container",
+						},
+						GetSidecarContainerSpec(FakeConfig()),
+					},
+					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				},
+			},
+			expectedInjected: false,
+		},
+		testCase{
+			name: "should fail the validation when the init container is at another position",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					InitContainers: []v1.Container{
+						{
+							Name: "first-container",
+						},
+						{
+							Name: "second-container",
+						},
+						GetSidecarContainerSpec(FakeConfig()),
+					},
+					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				},
+			},
+			expectedInjected: false,
+		},
+		testCase{
+			name: "should pass the validation when the container is at position 1 and istio is present",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{
+						{
+							Name: IstioSidecarName,
+						},
+						GetSidecarContainerSpec(FakeConfig()),
+					},
+					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				},
+			},
+			expectedInjected: true,
+		},
+		testCase{
+			name: "should pass the validation when the init container is at position 1 and istio is present",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					InitContainers: []v1.Container{
+						{
+							Name: IstioSidecarName,
+						},
+						GetSidecarContainerSpec(FakeConfig()),
+					},
+					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				},
+			},
+			expectedInjected: true,
+			isInitContainer:  true,
+		},
+		testCase{
+			name: "should pass the validation when the init container is at another position and istio is present",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					InitContainers: []v1.Container{
+						{
+							Name: "istio-init",
+						},
+						{
+							Name: IstioSidecarName,
+						},
+						GetSidecarContainerSpec(FakeConfig()),
+						{
+							Name: "workload",
+						},
+					},
+					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				},
+			},
+			expectedInjected: true,
+			isInitContainer:  true,
+		},
 	)
 
 	for _, tc := range testCases {
