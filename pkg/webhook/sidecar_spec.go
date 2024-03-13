@@ -145,7 +145,7 @@ func sidecarContainerPresent(containers []v1.Container, shouldInjectedByWebhook 
 			// If the sidecar container is injected by the webhook,
 			// the sidecar container needs to be at 0 index,
 			// unless the istio-proxy is present, then we check
-			// the container is present immediatelly after istio-proxy.
+			// the container is present immediately after istio-proxy.
 			if shouldInjectedByWebhook {
 				containerAtValidIndex := false
 

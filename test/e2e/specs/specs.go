@@ -382,6 +382,55 @@ func (t *TestPod) SetCommand(cmd string) {
 	t.pod.Spec.Containers[0].Args = []string{"-c", cmd}
 }
 
+func (t *TestPod) SetIstioSidecar(isNativeSidecar bool) {
+	istioSidecar := []v1.Container{{
+		Name:  webhook.IstioSidecarName,
+		Image: imageutils.GetE2EImage(imageutils.BusyBox),
+	}}
+	if isNativeSidecar {
+		t.pod.Spec.InitContainers = append(istioSidecar, t.pod.Spec.InitContainers...)
+	} else {
+		t.pod.Spec.Containers = append(istioSidecar, t.pod.Spec.Containers...)
+	}
+}
+
+func (t *TestPod) VerifyInjectionOrder(gcsFuseNativeSidecar, istioNativeSidecar bool) {
+	if gcsFuseNativeSidecar {
+		// Expect the gcsfuse sidecar to be native.
+		if istioNativeSidecar {
+			// Expect both gcsfuse and istio to be native sidecar.
+			gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(2))
+
+			// Verify ordering of sidecars.
+			gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.BeEquivalentTo(webhook.IstioSidecarName))
+			gomega.Expect(t.pod.Spec.InitContainers[1].Name).To(gomega.BeEquivalentTo(webhook.SidecarContainerName))
+
+			// Verify workload is present
+			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(1))
+		} else {
+			gomega.Panic().FailureMessage("container istio-proxy is not supported with native GCSFuse sidecar")
+		}
+	} else {
+		// Expect gcsfuse sidecar to be regular container.
+		if istioNativeSidecar {
+			// Verify istio-proxy is first in native containers.
+			gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(1))
+			gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.BeEquivalentTo(webhook.IstioSidecarName))
+
+			// Verify gcsfuse is first in regular containers.
+			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
+			gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.BeEquivalentTo(webhook.SidecarContainerName))
+		} else {
+			// Expect both gcsfuse and istio to be regular containers.
+			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(3))
+
+			// Verify ordering of sidecars.
+			gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.BeEquivalentTo(webhook.IstioSidecarName))
+			gomega.Expect(t.pod.Spec.Containers[1].Name).To(gomega.BeEquivalentTo(webhook.SidecarContainerName))
+		}
+	}
+}
+
 func (t *TestPod) SetGracePeriod(s int) {
 	t.pod.Spec.TerminationGracePeriodSeconds = ptr.To(int64(s))
 }
