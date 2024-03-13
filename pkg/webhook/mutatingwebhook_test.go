@@ -40,7 +40,7 @@ import (
 )
 
 var istioContainer = corev1.Container{
-	Name: "istio-proxy",
+	Name: IstioSidecarName,
 }
 
 func TestPrepareConfig(t *testing.T) {
