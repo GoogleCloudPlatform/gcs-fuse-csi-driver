@@ -296,9 +296,11 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 		}
 	} else if volumeResource.VolSource != nil {
 		volume.VolumeSource = *volumeResource.VolSource
-		volume.VolumeSource.CSI.ReadOnly = &readOnly
-		if len(mountOptions) > 0 {
-			volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
+		if volumeResource.VolSource.CSI != nil {
+			volume.VolumeSource.CSI.ReadOnly = &readOnly
+			if len(mountOptions) > 0 {
+				volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
+			}
 		}
 	}
 
