@@ -38,11 +38,11 @@ type gcsFuseCSIIstioTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
 
-// InitGcsFuseCSIIstioTestSuite returns gcsFuseCSIVolumesTestSuite that implements TestSuite interface.
+// InitGcsFuseCSIIstioTestSuite returns gcsFuseCSIIstioTestSuite that implements TestSuite interface.
 func InitGcsFuseCSIIstioTestSuite() storageframework.TestSuite {
 	return &gcsFuseCSIIstioTestSuite{
 		tsInfo: storageframework.TestSuiteInfo{
-			Name: "volumes",
+			Name: "istio",
 			TestPatterns: []storageframework.TestPattern{
 				storageframework.DefaultFsCSIEphemeralVolume,
 				storageframework.DefaultFsPreprovisionedPV,
