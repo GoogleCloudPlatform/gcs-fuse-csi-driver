@@ -222,7 +222,7 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	// TODO(songjiaxun) remove this logic after the next CSI driver release.
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container")
+		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container", "istio")
 
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.29") && testParams.SupportsNativeSidecar {
 			skipTests = append(skipTests, "autoTermination", "custom.sidecar.container")
