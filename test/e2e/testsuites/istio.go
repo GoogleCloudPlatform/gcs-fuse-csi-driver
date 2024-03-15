@@ -120,16 +120,14 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 	// - GCSFuse is native sidecar.
 	// - Istio is a regular container.
 	ginkgo.It("should store data with istio regular container present", func() {
-		const setIstioNativeSidecar = false
 		if gcsFuseSupportsNativeSidecar {
 			ginkgo.Skip("Unsupported case: istio-proxy is regular container while GCSFuse is an native sidecar")
 		} else {
-			testSidecarStoreDataSupportScenario(gcsFuseSupportsNativeSidecar, setIstioNativeSidecar)
+			testSidecarStoreDataSupportScenario(gcsFuseSupportsNativeSidecar, false /* setIstioNativeSidecar */)
 		}
 	})
 
-	ginkgo.It("should store data with istio native container", func() {
-		const setIstioNativeSidecar = true
-		testSidecarStoreDataSupportScenario(gcsFuseSupportsNativeSidecar, setIstioNativeSidecar)
+	ginkgo.It("should store data with istio native container present", func() {
+		testSidecarStoreDataSupportScenario(gcsFuseSupportsNativeSidecar, true /* setIstioNativeSidecar */)
 	})
 }

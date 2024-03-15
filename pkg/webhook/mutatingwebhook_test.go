@@ -762,20 +762,6 @@ func TestInsert(t *testing.T) {
 			name: "successful injection at first position, 3 elements initially",
 			containers: []corev1.Container{
 				{
-					Name: "two",
-				},
-				{
-					Name: "three",
-				},
-				{
-					Name: "four",
-				},
-			},
-			sidecar: corev1.Container{
-				Name: "one",
-			},
-			expectResult: []corev1.Container{
-				{
 					Name: "one",
 				},
 				{
@@ -784,8 +770,22 @@ func TestInsert(t *testing.T) {
 				{
 					Name: "three",
 				},
+			},
+			sidecar: corev1.Container{
+				Name: "sidecar",
+			},
+			expectResult: []corev1.Container{
 				{
-					Name: "four",
+					Name: "sidecar",
+				},
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
 				},
 			},
 			idx: 0,
@@ -857,13 +857,13 @@ func TestGetInjectIndex(t *testing.T) {
 			name: "injection at first position, 3 elements initially",
 			containers: []corev1.Container{
 				{
+					Name: "one",
+				},
+				{
 					Name: "two",
 				},
 				{
 					Name: "three",
-				},
-				{
-					Name: "four",
 				},
 			},
 			idx: 0,
@@ -873,10 +873,10 @@ func TestGetInjectIndex(t *testing.T) {
 			containers: []corev1.Container{
 				istioContainer,
 				{
-					Name: "three",
+					Name: "two",
 				},
 				{
-					Name: "four",
+					Name: "three",
 				},
 			},
 			idx: 1,
