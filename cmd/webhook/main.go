@@ -79,18 +79,18 @@ func main() {
 	// Setup client
 	client, err := kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
-		klog.Fatalf("Unable to get clientset: %v", err)
+		klog.Warningf("Unable to get clientset: %v", err)
 	}
 
 	var serverVersion *version.Version
 	// Get and format sever version.
 	v, err := client.DiscoveryClient.ServerVersion()
 	if err != nil || v == nil {
-		klog.Fatalf("Unable to get server version : %v", err)
+		klog.Warningf("Unable to get server version : %v", err)
 	} else {
 		serverVersion, err = version.ParseGeneric(v.String())
 		if err != nil {
-			klog.Fatalf(`Unable to parse server version "%s": %v`, v.String(), err)
+			klog.Warningf(`Unable to parse server version "%s": %v`, v.String(), err)
 		}
 	}
 
