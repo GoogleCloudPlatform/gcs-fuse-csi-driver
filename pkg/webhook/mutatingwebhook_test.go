@@ -40,7 +40,7 @@ import (
 )
 
 var istioContainer = corev1.Container{
-	Name: "istio-proxy",
+	Name: IstioSidecarName,
 }
 
 func TestPrepareConfig(t *testing.T) {
@@ -683,25 +683,27 @@ func skewVersionNodes() []corev1.Node {
 	}
 }
 
-func TestInjectAtSecondPosition(t *testing.T) {
+func TestInsert(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		name         string
 		containers   []corev1.Container
 		sidecar      corev1.Container
 		expectResult []corev1.Container
+		idx          int
 	}{
 		{
-			name:       "successful injection at second position, 0 element initially",
+			name:       "successful injection at 1st position, 0 element initially",
 			containers: []corev1.Container{},
 			sidecar: corev1.Container{
-				Name: "two",
+				Name: "one",
 			},
 			expectResult: []corev1.Container{
 				{
-					Name: "two",
+					Name: "one",
 				},
 			},
+			idx: 0,
 		},
 		{
 			name: "successful injection at second position, 1 element initially",
@@ -721,6 +723,7 @@ func TestInjectAtSecondPosition(t *testing.T) {
 					Name: "two",
 				},
 			},
+			idx: 1,
 		},
 		{
 			name: "successful injection at second position, 3 elements initially",
@@ -752,12 +755,163 @@ func TestInjectAtSecondPosition(t *testing.T) {
 					Name: "four",
 				},
 			},
+			idx: 1,
+		},
+
+		{
+			name: "successful injection at first position, 3 elements initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+			},
+			sidecar: corev1.Container{
+				Name: "sidecar",
+			},
+			expectResult: []corev1.Container{
+				{
+					Name: "sidecar",
+				},
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+			},
+			idx: 0,
+		},
+		{
+			name: "successful injection at last position, 3 elements initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+			},
+			sidecar: corev1.Container{
+				Name: "four",
+			},
+			expectResult: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+				{
+					Name: "four",
+				},
+			},
+			idx: 3,
 		},
 	}
 	for _, tc := range testCases {
-		result := injectAtSecondPosition(tc.containers, tc.sidecar)
+		result := insert(tc.containers, tc.sidecar, tc.idx)
 		if diff := cmp.Diff(tc.expectResult, result); diff != "" {
 			t.Errorf(`for test "%s", got different results (-expect, +got):\n"%s"`, tc.name, diff)
+		}
+	}
+}
+
+func TestGetInjectIndex(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name       string
+		containers []corev1.Container
+		idx        int
+	}{
+		{
+			name:       "injection at first position, 0 element initially",
+			containers: []corev1.Container{},
+			idx:        0,
+		},
+		{
+			name: "injection at first position, 1 element initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+			},
+			idx: 0,
+		},
+		{
+			name: "injection at first position, 3 elements initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+			},
+			idx: 0,
+		},
+		{
+			name: "injection at second position, 3 elements initially",
+			containers: []corev1.Container{
+				istioContainer,
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+			},
+			idx: 1,
+		},
+		{
+			name: "injection at third position, 3 elements initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+				istioContainer,
+				{
+					Name: "three",
+				},
+			},
+			idx: 2,
+		},
+		{
+			name: "injection at last position, 3 elements initially",
+			containers: []corev1.Container{
+				{
+					Name: "one",
+				},
+				{
+					Name: "two",
+				},
+				istioContainer,
+			},
+			idx: 3,
+		},
+	}
+	for _, tc := range testCases {
+		idx := getInjectIndex(tc.containers)
+		if idx != tc.idx {
+			t.Errorf(`expected injection to be at index "%d" but got "%d"`, tc.idx, idx)
 		}
 	}
 }

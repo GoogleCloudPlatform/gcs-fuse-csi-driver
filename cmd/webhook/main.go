@@ -25,6 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -52,7 +53,7 @@ var (
 	sidecarImage            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 
 	// These are set at compile time.
-	version = "unknown"
+	webhookVersion = "unknown"
 )
 
 const (
@@ -67,7 +68,7 @@ func main() {
 	// This line prevents controller-runtime from complaining about log.SetLogger never being called
 	log.SetLogger(logr.New(log.NullLogSink{}))
 
-	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", version, *sidecarImage)
+	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", webhookVersion, *sidecarImage)
 
 	// Load webhook config
 	c := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
@@ -78,7 +79,19 @@ func main() {
 	// Setup client
 	client, err := kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
-		klog.Fatalf("Unable to get clientset: %v", err)
+		klog.Warningf("Unable to get clientset: %v", err)
+	}
+
+	var serverVersion *version.Version
+	// Get and format sever version.
+	v, err := client.DiscoveryClient.ServerVersion()
+	if err != nil || v == nil {
+		klog.Warningf("Unable to get server version : %v", err)
+	} else {
+		serverVersion, err = version.ParseGeneric(v.String())
+		if err != nil {
+			klog.Warningf(`Unable to parse server version "%s": %v`, v.String(), err)
+		}
 	}
 
 	// Setup stop channel
@@ -120,10 +133,11 @@ func main() {
 	klog.Info("Registering webhooks to the webhook server.")
 	hookServer.Register("/inject", &webhook.Admission{
 		Handler: &wh.SidecarInjector{
-			Client:     mgr.GetClient(),
-			Config:     c,
-			Decoder:    admission.NewDecoder(runtime.NewScheme()),
-			NodeLister: nodeLister,
+			Client:        mgr.GetClient(),
+			Config:        c,
+			Decoder:       admission.NewDecoder(runtime.NewScheme()),
+			NodeLister:    nodeLister,
+			ServerVersion: serverVersion,
 		},
 	})
 

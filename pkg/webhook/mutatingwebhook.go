@@ -45,15 +45,16 @@ const (
 	annotationGcsfuseSidecarMemoryRequestKey           = "gke-gcsfuse/memory-request"
 	annotationGcsfuseSidecarEphemeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
 
-	istioSidecarName = "istio-proxy"
+	IstioSidecarName = "istio-proxy"
 )
 
 type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
-	Config     *Config
-	Decoder    *admission.Decoder
-	NodeLister listersv1.NodeLister
+	Config        *Config
+	Decoder       *admission.Decoder
+	NodeLister    listersv1.NodeLister
+	ServerVersion *version.Version
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
@@ -232,8 +233,12 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	}
 
 	if len(clusterNodes) == 0 {
-		// TODO(jaimebz): Rely on cluster version in the event there's no nodes to reference.
-		supportsNativeSidecar = false
+		// Rely on cluster version in the event there's no nodes to reference.
+		if si.ServerVersion != nil {
+			supportsNativeSidecar = si.ServerVersion.AtLeast(minimumSupportedVersion)
+		} else {
+			supportsNativeSidecar = false
+		}
 	}
 
 	return supportsNativeSidecar, nil
@@ -241,39 +246,41 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 
 func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
 	if supportsNativeSidecar {
-		sidecarSpec := GetNativeSidecarContainerSpec(config)
-		if sidecarPresentAtFirstPosition(pod.Spec.InitContainers, istioSidecarName) {
-			pod.Spec.InitContainers = injectAtSecondPosition(pod.Spec.InitContainers, sidecarSpec)
-		} else {
-			pod.Spec.InitContainers = append([]corev1.Container{sidecarSpec}, pod.Spec.InitContainers...)
-		}
+		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, GetNativeSidecarContainerSpec(config), getInjectIndex(pod.Spec.InitContainers))
 	} else {
-		sidecarSpec := GetSidecarContainerSpec(config)
-		if sidecarPresentAtFirstPosition(pod.Spec.Containers, istioSidecarName) {
-			pod.Spec.Containers = injectAtSecondPosition(pod.Spec.Containers, sidecarSpec)
-		} else {
-			pod.Spec.Containers = append([]corev1.Container{sidecarSpec}, pod.Spec.Containers...)
+		pod.Spec.Containers = insert(pod.Spec.Containers, GetSidecarContainerSpec(config), getInjectIndex(pod.Spec.Containers))
+	}
+}
+
+func insert(a []corev1.Container, value corev1.Container, index int) []corev1.Container {
+	// For index == len(a)
+	if len(a) == index {
+		return append(a, value)
+	}
+
+	// For index < len(a)
+	a = append(a[:index+1], a[index:]...)
+	a[index] = value
+
+	return a
+}
+
+func getInjectIndex(containers []corev1.Container) int {
+	idx, present := containerPresent(containers, IstioSidecarName)
+	if present {
+		return idx + 1
+	}
+
+	return 0
+}
+
+// Checks by name matching that the container is present in container list.
+func containerPresent(containers []corev1.Container, container string) (int, bool) {
+	for idx, c := range containers {
+		if c.Name == container {
+			return idx, true
 		}
 	}
-}
 
-func injectAtSecondPosition(containers []corev1.Container, sidecar corev1.Container) []corev1.Container {
-	const index = 1
-	if len(containers) == 0 {
-		return []corev1.Container{sidecar}
-	}
-	containers = append(containers, corev1.Container{})
-	copy(containers[index+1:], containers[index:])
-	containers[index] = sidecar
-
-	return containers
-}
-
-// Checks the first index of the container array for the istio container sidecar.
-func sidecarPresentAtFirstPosition(containers []corev1.Container, sidecarName string) bool {
-	if len(containers) == 0 {
-		return false
-	}
-
-	return (containers[0].Name == sidecarName)
+	return -1, false
 }

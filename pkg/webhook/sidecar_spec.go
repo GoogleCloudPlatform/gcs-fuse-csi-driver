@@ -142,10 +142,25 @@ func sidecarContainerPresent(containers []v1.Container, shouldInjectedByWebhook 
 
 	for i, c := range containers {
 		if c.Name == SidecarContainerName {
-			// if the sidecar container is injected by the webhook,
-			// the sidecar container needs to be at 0 index.
-			if shouldInjectedByWebhook && i != 0 {
-				break
+			// If the sidecar container is injected by the webhook,
+			// the sidecar container needs to be at 0 index,
+			// unless the istio-proxy is present, then we check
+			// the container is present immediately after istio-proxy.
+			if shouldInjectedByWebhook {
+				containerAtValidIndex := false
+
+				idx, present := containerPresent(containers, IstioSidecarName)
+				if i == 0 && !present {
+					containerAtValidIndex = true
+				}
+
+				if i == idx+1 && present {
+					containerAtValidIndex = true
+				}
+
+				if !containerAtValidIndex {
+					break
+				}
 			}
 
 			if c.SecurityContext != nil &&
