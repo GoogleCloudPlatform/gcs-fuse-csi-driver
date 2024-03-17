@@ -27,7 +27,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -315,7 +315,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-buffer", "standard-rwo", "5Gi", v1.ReadWriteOnce)
+		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-buffer", "standard-rwo", "5Gi", corev1.ReadWriteOnce)
 		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: tPVC.PVC}, webhook.SidecarContainerBufferVolumeName, "", false)
 		tPod.SetNonRootSecurityContext(0, 0, 1000)
 

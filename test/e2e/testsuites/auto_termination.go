@@ -28,7 +28,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -102,7 +102,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetRestartPolicy(v1.RestartPolicyAlways)
+		tPod1.SetRestartPolicy(corev1.RestartPolicyAlways)
 		tPod1.SetGracePeriod(600)
 		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		cmd := []string{
@@ -147,7 +147,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetRestartPolicy(v1.RestartPolicyNever)
+		tPod.SetRestartPolicy(corev1.RestartPolicyNever)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
@@ -165,7 +165,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetRestartPolicy(v1.RestartPolicyNever)
+		tPod.SetRestartPolicy(corev1.RestartPolicyNever)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand("sleep 10; exit 1;")
 
@@ -183,7 +183,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the first pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetRestartPolicy(v1.RestartPolicyAlways)
+		tPod.SetRestartPolicy(corev1.RestartPolicyAlways)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand(fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 
@@ -205,7 +205,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetRestartPolicy(v1.RestartPolicyAlways)
+		tPod.SetRestartPolicy(corev1.RestartPolicyAlways)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand("sleep 10; exit 1;")
 
@@ -227,7 +227,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetRestartPolicy(v1.RestartPolicyOnFailure)
+		tPod.SetRestartPolicy(corev1.RestartPolicyOnFailure)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		cmd := []string{
 			"sleep 10;",
@@ -252,7 +252,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetRestartPolicy(v1.RestartPolicyAlways)
+		tPod.SetRestartPolicy(corev1.RestartPolicyAlways)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetCommand("sleep 10; exit 1;")
 

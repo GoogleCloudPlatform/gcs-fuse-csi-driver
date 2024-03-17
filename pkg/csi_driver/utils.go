@@ -29,7 +29,7 @@ import (
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
@@ -228,10 +228,10 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 	return fuseMountOptions, nil
 }
 
-func putExitFile(pod *v1.Pod, emptyDirBasePath string) error {
+func putExitFile(pod *corev1.Pod, emptyDirBasePath string) error {
 	podIsTerminating := pod.DeletionTimestamp != nil
-	podRestartPolicyIsNever := pod.Spec.RestartPolicy == v1.RestartPolicyNever
-	podRestartPolicyIsOnFailure := pod.Spec.RestartPolicy == v1.RestartPolicyOnFailure
+	podRestartPolicyIsNever := pod.Spec.RestartPolicy == corev1.RestartPolicyNever
+	podRestartPolicyIsOnFailure := pod.Spec.RestartPolicy == corev1.RestartPolicyOnFailure
 
 	// Check if all the containers besides the sidecar container exited
 	if podRestartPolicyIsOnFailure || podRestartPolicyIsNever || podIsTerminating {

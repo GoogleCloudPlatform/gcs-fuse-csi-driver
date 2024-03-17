@@ -28,7 +28,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	v1 "k8s.io/api/admission/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -252,7 +252,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 	testCases := []struct {
 		name         string
 		inputPod     *corev1.Pod
-		operation    v1.Operation
+		operation    admissionv1.Operation
 		wantResponse admission.Response
 		nodes        []corev1.Node
 	}{
@@ -263,7 +263,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:      "Invalid resource request test.",
-			operation: v1.Create,
+			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers:                    []corev1.Container{},
@@ -281,18 +281,18 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:      "Different operation test.",
-			operation: v1.Update,
+			operation: admissionv1.Update,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
 					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
-			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", v1.Update)),
+			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", admissionv1.Update)),
 		},
 		{
 			name:      "Annotation key not found test.",
-			operation: v1.Create,
+			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
@@ -303,7 +303,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:      "Sidecar already injected test.",
-			operation: v1.Create,
+			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
@@ -319,42 +319,42 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:         "regular container injection successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(false),
 			wantResponse: wantResponse(t, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(true),
 			wantResponse: wantResponse(t, true, false),
 			nodes:        regularSidecarSupportNodes(),
 		},
 		{
 			name:         "native container injection successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(false),
 			wantResponse: wantResponse(t, false, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(true),
 			wantResponse: wantResponse(t, true, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "regular container injection with istio present success test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPodWithIstio(false, false),
 			wantResponse: wantResponseWithIstio(t, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPodWithIstio(true, true),
 			wantResponse: wantResponseWithIstio(t, true, true),
 			nodes:        nativeSupportNodes(),
@@ -388,7 +388,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		informerFactory.WaitForCacheSync(stopCh)
 
 		request := &admission.Request{
-			AdmissionRequest: v1.AdmissionRequest{
+			AdmissionRequest: admissionv1.AdmissionRequest{
 				Operation: tc.operation,
 			},
 		}

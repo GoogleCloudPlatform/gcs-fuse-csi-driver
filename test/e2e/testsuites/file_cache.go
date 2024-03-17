@@ -25,7 +25,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -136,7 +136,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-cache", "standard-rwo", "5Gi", v1.ReadWriteOnce)
+		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-cache", "standard-rwo", "5Gi", corev1.ReadWriteOnce)
 		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: tPVC.PVC}, webhook.SidecarContainerCacheVolumeName, "", false)
 		tPod.SetupCacheVolumeMount("/cache")
 		tPod.SetNonRootSecurityContext(0, 0, 1000)
@@ -178,9 +178,9 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		inMemoryCache := &storageframework.VolumeResource{
-			VolSource: &v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{
-					Medium: v1.StorageMediumMemory,
+			VolSource: &corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium: corev1.StorageMediumMemory,
 				},
 			},
 		}
@@ -281,7 +281,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-cache", "standard-rwo", "1Gi", v1.ReadWriteOnce)
+		tPVC := specs.NewTestPVC(f.ClientSet, f.Namespace, "custom-cache", "standard-rwo", "1Gi", corev1.ReadWriteOnce)
 		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: tPVC.PVC}, webhook.SidecarContainerCacheVolumeName, "", false)
 		tPod.SetNonRootSecurityContext(0, 0, 1000)
 
