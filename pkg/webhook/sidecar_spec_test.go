@@ -20,13 +20,13 @@ package webhook
 import (
 	"testing"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 )
 
 type testCase struct {
 	name             string
-	pod              *v1.Pod
+	pod              *corev1.Pod
 	expectedInjected bool
 	isInitContainer  bool
 }
@@ -34,20 +34,20 @@ type testCase struct {
 var commonTestCases = []testCase{
 	{
 		name: "should pass the validation with the standard sidecar container",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-				Volumes:    GetSidecarContainerVolumeSpec([]v1.Volume{}),
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: true,
 	},
 	{
 		name: "should pass the validation with the init sidecar container",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				InitContainers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-				Volumes:        GetSidecarContainerVolumeSpec([]v1.Volume{}),
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				InitContainers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes:        GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: true,
@@ -55,11 +55,11 @@ var commonTestCases = []testCase{
 	},
 	{
 		name: "should pass the validation with the both the init and regular sidecar containers",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers:     []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-				InitContainers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-				Volumes:        GetSidecarContainerVolumeSpec([]v1.Volume{}),
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers:     []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				InitContainers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes:        GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: true,
@@ -67,17 +67,17 @@ var commonTestCases = []testCase{
 	},
 	{
 		name: "should pass the validation with a simplified sidecar container",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
 					{
 						Name:  SidecarContainerName,
 						Image: FakeConfig().ContainerImage,
-						SecurityContext: &v1.SecurityContext{
+						SecurityContext: &corev1.SecurityContext{
 							RunAsUser:  ptr.To(int64(NobodyUID)),
 							RunAsGroup: ptr.To(int64(NobodyGID)),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      SidecarContainerTmpVolumeName,
 								MountPath: SidecarContainerTmpVolumeMountPath,
@@ -89,24 +89,24 @@ var commonTestCases = []testCase{
 						},
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: true,
 	},
 	{
 		name: "should pass the validation with a private sidecar container image",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
 					{
 						Name:  SidecarContainerName,
 						Image: "private-repo/sidecar-image",
-						SecurityContext: &v1.SecurityContext{
+						SecurityContext: &corev1.SecurityContext{
 							RunAsUser:  ptr.To(int64(NobodyUID)),
 							RunAsGroup: ptr.To(int64(NobodyGID)),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      SidecarContainerTmpVolumeName,
 								MountPath: SidecarContainerTmpVolumeMountPath,
@@ -118,24 +118,24 @@ var commonTestCases = []testCase{
 						},
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: true,
 	},
 	{
 		name: "should pass the validation with a private sidecar container image in init container",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				InitContainers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				InitContainers: []corev1.Container{
 					{
 						Name:  SidecarContainerName,
 						Image: "private-repo/sidecar-image",
-						SecurityContext: &v1.SecurityContext{
+						SecurityContext: &corev1.SecurityContext{
 							RunAsUser:  ptr.To(int64(NobodyUID)),
 							RunAsGroup: ptr.To(int64(NobodyGID)),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      SidecarContainerTmpVolumeName,
 								MountPath: SidecarContainerTmpVolumeMountPath,
@@ -147,7 +147,7 @@ var commonTestCases = []testCase{
 						},
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: true,
@@ -155,17 +155,17 @@ var commonTestCases = []testCase{
 	},
 	{
 		name: "should fail the validation with random UID and GID",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
 					{
 						Name:  SidecarContainerName,
 						Image: FakeConfig().ContainerImage,
-						SecurityContext: &v1.SecurityContext{
+						SecurityContext: &corev1.SecurityContext{
 							RunAsUser:  ptr.To(int64(1234)),
 							RunAsGroup: ptr.To(int64(1234)),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      SidecarContainerTmpVolumeName,
 								MountPath: SidecarContainerTmpVolumeMountPath,
@@ -177,38 +177,38 @@ var commonTestCases = []testCase{
 						},
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: false,
 	},
 	{
 		name: "should fail the validation when the sidecar container is missing",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
 					{
 						Name: "first-container",
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: false,
 	},
 	{
 		name: "should fail the validation when the temp volume name is wrong",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
 					{
 						Name:  SidecarContainerName,
 						Image: FakeConfig().ContainerImage,
-						SecurityContext: &v1.SecurityContext{
+						SecurityContext: &corev1.SecurityContext{
 							RunAsUser:  ptr.To(int64(NobodyUID)),
 							RunAsGroup: ptr.To(int64(NobodyGID)),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      "wrong-tmp-volume-name",
 								MountPath: SidecarContainerTmpVolumeMountPath,
@@ -220,24 +220,24 @@ var commonTestCases = []testCase{
 						},
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: false,
 	},
 	{
 		name: "should fail the validation when the temp volume mount path is wrong",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
 					{
 						Name:  SidecarContainerName,
 						Image: FakeConfig().ContainerImage,
-						SecurityContext: &v1.SecurityContext{
+						SecurityContext: &corev1.SecurityContext{
 							RunAsUser:  ptr.To(int64(NobodyUID)),
 							RunAsGroup: ptr.To(int64(NobodyGID)),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      SidecarContainerTmpVolumeName,
 								MountPath: "wrong-tmp-volume-mount-path",
@@ -249,21 +249,21 @@ var commonTestCases = []testCase{
 						},
 					},
 				},
-				Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+				Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 			},
 		},
 		expectedInjected: false,
 	},
 	{
 		name: "should fail the validation when the temp volume is missing",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-				Volumes: []v1.Volume{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes: []corev1.Volume{
 					{
 						Name: SidecarContainerBufferVolumeName,
-						VolumeSource: v1.VolumeSource{
-							EmptyDir: &v1.EmptyDirVolumeSource{},
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
 						},
 					},
 				},
@@ -273,18 +273,18 @@ var commonTestCases = []testCase{
 	},
 	{
 		name: "should fail the validation with a non-emptyDir temp volume",
-		pod: &v1.Pod{
-			Spec: v1.PodSpec{
-				Containers: []v1.Container{GetSidecarContainerSpec(FakeConfig())},
-				Volumes: []v1.Volume{
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes: []corev1.Volume{
 					{
 						Name:         SidecarContainerTmpVolumeName,
-						VolumeSource: v1.VolumeSource{},
+						VolumeSource: corev1.VolumeSource{},
 					},
 					{
 						Name: SidecarContainerBufferVolumeName,
-						VolumeSource: v1.VolumeSource{
-							EmptyDir: &v1.EmptyDirVolumeSource{},
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
 						},
 					},
 				},
@@ -302,39 +302,39 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 	testCases = append(testCases,
 		testCase{
 			name: "should fail the validation when the sidecar container is not at position 0",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
 						{
 							Name: "first-container",
 						},
 						GetSidecarContainerSpec(FakeConfig()),
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: false,
 		},
 		testCase{
 			name: "should fail the validation when the sidecar container is at position 1",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					InitContainers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
 						{
 							Name: "first-container",
 						},
 						GetSidecarContainerSpec(FakeConfig()),
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: false,
 		},
 		testCase{
 			name: "should fail the validation when the init container is at another position",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					InitContainers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
 						{
 							Name: "first-container",
 						},
@@ -343,37 +343,37 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						},
 						GetSidecarContainerSpec(FakeConfig()),
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: false,
 		},
 		testCase{
 			name: "should pass the validation when the container is at position 1 and istio is present",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
 						{
 							Name: IstioSidecarName,
 						},
 						GetSidecarContainerSpec(FakeConfig()),
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: true,
 		},
 		testCase{
 			name: "should pass the validation when the init container is at position 1 and istio is present",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					InitContainers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
 						{
 							Name: IstioSidecarName,
 						},
 						GetSidecarContainerSpec(FakeConfig()),
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: true,
@@ -381,9 +381,9 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 		},
 		testCase{
 			name: "should pass the validation when the init container is at another position and istio is present",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					InitContainers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
 						{
 							Name: "istio-init",
 						},
@@ -395,7 +395,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							Name: "workload",
 						},
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: true,
@@ -425,15 +425,15 @@ func TestValidatePodHasSidecarContainerInjectedForManualInjection(t *testing.T) 
 	testCases = append(testCases,
 		testCase{
 			name: "should pass the validation when the sidecar container is not at position 0",
-			pod: &v1.Pod{
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
 						{
 							Name: "first-container",
 						},
 						GetSidecarContainerSpec(FakeConfig()),
 					},
-					Volumes: GetSidecarContainerVolumeSpec([]v1.Volume{}),
+					Volumes: GetSidecarContainerVolumeSpec([]corev1.Volume{}),
 				},
 			},
 			expectedInjected: true,
