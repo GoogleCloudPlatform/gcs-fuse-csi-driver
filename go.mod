@@ -24,7 +24,7 @@ require (
 	k8s.io/apimachinery v0.29.2
 	k8s.io/client-go v1.5.2
 	k8s.io/klog/v2 v2.120.1
-	k8s.io/kubernetes v1.29.2
+	k8s.io/kubernetes v1.29.3
 	k8s.io/mount-utils v0.29.2
 	k8s.io/pod-security-admission v0.29.2
 	k8s.io/utils v0.0.0-20240310230437-4693a0247e57
@@ -139,7 +139,7 @@ require (
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/kubelet v0.29.2 // indirect
 	k8s.io/test-infra v0.0.0-20240310231845-bac0a3c10573 // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.0 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.2 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
