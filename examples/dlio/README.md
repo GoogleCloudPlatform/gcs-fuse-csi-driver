@@ -25,8 +25,8 @@ limitations under the License.
 # Replace the docker registry.
 git clone https://github.com/argonne-lcf/dlio_benchmark.git
 cd dlio_benchmark/
-docker build -t jiaxun/dlio:v1.1.0 .
-docker image push jiaxun/dlio:v1.1.0
+docker build -t jiaxun/dlio:v1.2.0 .
+docker image push jiaxun/dlio:v1.2.0
 ```
 
 ### Create a new node pool
@@ -38,11 +38,12 @@ For an existing GKE cluster, use the following command to create a new node pool
 ```bash
 # Replace the cluster name and zone.
 gcloud container node-pools create large-pool \
-    --cluster test-cluster-us-west1-c \
+    --cluster test-cluster-us-central1-c \
     --ephemeral-storage-local-ssd count=16 \
+    --network-performance-configs=total-egress-bandwidth-tier=TIER_1 \
     --machine-type n2-standard-96 \
-    --zone us-west1-c \
-    --num-nodes 3
+    --zone us-central1-c \
+    --num-nodes 8
 ```
 
 ### Set up GCS bucket
