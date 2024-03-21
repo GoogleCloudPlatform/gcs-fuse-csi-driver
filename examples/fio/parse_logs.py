@@ -96,7 +96,7 @@ def unix_to_timestamp(unix_timestamp: int) -> str:
     return utc_timestamp_string
 
 if __name__ == "__main__":
-    logLocations = [("princer-read-cache-load-test-west/64K", "64K"), ("princer-read-cache-load-test-west/128K", "128K"), ("princer-read-cache-load-test-west/1M", "1M"), ("fio-100mb-50k", "100M"), ("fio-200gb-1", "200G")]
+    logLocations = [("gke-fio-64k-1m", "64K"), ("gke-fio-128k-1m", "128K"), ("gke-fio-1mb-1m", "1M"), ("gke-fio-100mb-50k", "100M"), ("gke-fio-200gb-1", "200G")]
     
     try:
         os.makedirs(LOCAL_LOGS_LOCATION)
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     scenario_order = ["local-ssd", "gcsfuse-no-file-cache", "gcsfuse-file-cache"]
 
     output_file = open("./output.csv", "a")
-    output_file.write("File Size,Read Type,Scenario,Epoch,Duration (s),Throughput (MB/s),IOPS,GCSFuse Lowest Memory (MB),GCSFuse Highest Memory (MB),GCSFuse Lowest CPU (core),GCSFuse Highest CPU (core),Pod,Start,End\n")
+    output_file.write("File Size,Read Type,Scenario,Epoch,Duration (s),Throughput (MB/s),IOPS,Throughput over Local SSD (%),GCSFuse Lowest Memory (MB),GCSFuse Highest Memory (MB),GCSFuse Lowest CPU (core),GCSFuse Highest CPU (core),Pod,Start,End\n")
     
     for key in output_order:
         if key not in output:
@@ -183,7 +183,7 @@ if __name__ == "__main__":
         for scenario in scenario_order:
             for i in range(len(record_set["records"][scenario])):
                 r = record_set["records"][scenario][i]
-                # r["throughput_over_local_ssd"] = round(r["throughput_mb_per_second"] / record_set["records"]["local-ssd"][i]["throughput_mb_per_second"] * 100, 2)
-                output_file.write(f"{record_set['mean_file_size']},{record_set['read_type']},{scenario},{r['epoch']},{r['duration']},{r['throughput_mb_per_second']},{r['IOPS']},{r['lowest_memory']},{r['highest_memory']},{r['lowest_cpu']},{r['highest_cpu']},{r['pod_name']},{r['start']},{r['end']}\n")
+                r["throughput_over_local_ssd"] = round(r["throughput_mb_per_second"] / record_set["records"]["local-ssd"][i]["throughput_mb_per_second"] * 100, 2)
+                output_file.write(f"{record_set['mean_file_size']},{record_set['read_type']},{scenario},{r['epoch']},{r['duration']},{r['throughput_mb_per_second']},{r['IOPS']},{r['throughput_over_local_ssd']},{r['lowest_memory']},{r['highest_memory']},{r['lowest_cpu']},{r['highest_cpu']},{r['pod_name']},{r['start']},{r['end']}\n")
 
     output_file.close()

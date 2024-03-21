@@ -23,21 +23,16 @@ def run_command(command: str):
     print(result.stderr)
 
 bucketName_fileSize_blockSize = [
-    ("princer-read-cache-load-test-west", "64K", "64K"), 
-    ("princer-read-cache-load-test-west", "128K", "128K"),
-    ("princer-read-cache-load-test-west", "1M", "256K"),
-    ("fio-100mb-50k", "100M", "1M"),
-    ("fio-200gb-1", "200G", "1M")
+    ("gke-fio-64k-1m", "64K", "64K"), 
+    ("gke-fio-128k-1m", "128K", "128K"),
+    ("gke-fio-1mb-1m", "1M", "256K"),
+    ("gke-fio-100mb-50k", "100M", "1M"),
+    ("gke-fio-200gb-1", "200G", "1M")
     ]
 
 scenarios = ["gcsfuse-file-cache", "gcsfuse-no-file-cache", "local-ssd"]
 
-for bucketName, fileSize, blockSize in bucketName_fileSize_blockSize:
-    if fileSize in ["100M", "200G"]:
-        run_command("gcloud container clusters get-credentials --zone us-central1-c test-cluster-us-central1-c")
-    else:
-        run_command("gcloud container clusters get-credentials --zone us-west1-c test-cluster-us-west1-c")
-    
+for bucketName, fileSize, blockSize in bucketName_fileSize_blockSize:    
     for readType in ["read", "randread"]:
         for scenario in scenarios:
             if readType == "randread" and fileSize in ["64K", "128K"]:
@@ -50,8 +45,11 @@ for bucketName, fileSize, blockSize in bucketName_fileSize_blockSize:
                         f"--set fio.fileSize={fileSize}",
                         f"--set fio.blockSize={blockSize}"]
             
-            if fileSize == "200G":
-                commands.append("--set gcsfuse.metadataStatCacheCapacity=0")
+            match fileSize:
+                case "200G":
+                    commands.append("--set gcsfuse.metadataStatCacheCapacity=0")
+                case "100M":
+                    commands.append("--set fio.filesPerThread=1000")
             
             helm_command = " ".join(commands)
 

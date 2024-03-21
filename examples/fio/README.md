@@ -30,9 +30,10 @@ For an existing GKE cluster, use the following command to create a new node pool
 gcloud container node-pools create large-pool \
     --cluster test-cluster-us-central1-c \
     --ephemeral-storage-local-ssd count=16 \
+    --network-performance-configs=total-egress-bandwidth-tier=TIER_1 \
     --machine-type n2-standard-96 \
     --zone us-central1-c \
-    --num-nodes 3
+    --num-nodes 8
 ```
 
 ### Set up GCS bucket
@@ -42,6 +43,48 @@ Create a GCS bucket using `Location type`: `Region`, and select the same region 
 ### Install Helm
 
 The example uses Helm charts to manage the applications. Follow the [Helm documentation](https://helm.sh/docs/intro/install/#from-script) to install Helm.
+
+## FIO Datasets Loading
+
+Run the following commands to generate FIO datasets, and upload to the bucket. You may need to pass `--set bucketName=<your-bucket-name>` to set your bucket name.
+
+```bash
+cd ./examples/fio
+
+helm install fio-64k-data-loader data-loader \
+--set bucketName=gke-fio-64k-1m \
+--set fio.fileSize=64K \
+--set fio.blockSize=64K
+
+helm install fio-128k-data-loader data-loader \
+--set bucketName=gke-fio-128k-1m \
+--set fio.fileSize=128K \
+--set fio.blockSize=128K
+
+helm install fio-1mb-data-loader data-loader \
+--set bucketName=gke-fio-1mb-1m \
+--set fio.fileSize=1M \
+--set fio.blockSize=256K
+
+helm install fio-100mb-data-loader data-loader \
+--set bucketName=gke-fio-100mb-50k \
+--set fio.fileSize=100M \
+--set fio.blockSize=1M \
+--set fio.filesPerThread=1000
+
+helm install fio-200gb-data-loader data-loader \
+--set bucketName=gke-fio-200gb-1 \
+--set fio.fileSize=200G \
+--set fio.blockSize=1M
+
+# Clean up
+helm uninstall \
+fio-64k-data-loader \
+fio-128k-data-loader \
+fio-1mb-data-loader \
+fio-100mb-data-loader \
+fio-200gb-data-loader
+```
 
 ## FIO Loading Tests
 

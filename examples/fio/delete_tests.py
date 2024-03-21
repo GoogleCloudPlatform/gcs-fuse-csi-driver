@@ -25,12 +25,7 @@ def run_command(command: str):
 fileSizes = ["64K", "128K", "1M", "100M", "200G"]
 scenarios = ["gcsfuse-file-cache", "gcsfuse-no-file-cache", "local-ssd"]
 
-for fileSize in fileSizes:
-    if fileSize in ["100M", "200G"]:
-        run_command("gcloud container clusters get-credentials --zone us-central1-c test-cluster-us-central1-c")
-    else:
-        run_command("gcloud container clusters get-credentials --zone us-west1-c test-cluster-us-west1-c")
-    
+for fileSize in fileSizes: 
     for readType in ["read", "randread"]:
         for scenario in scenarios:
             if readType == "randread" and fileSize in ["64K", "128K"]:
