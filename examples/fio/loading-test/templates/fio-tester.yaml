@@ -53,7 +53,7 @@ spec:
         echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
         apt-get update && apt-get install google-cloud-cli
 
-        gsutil -m cp -R gs://{{ .Values.bucketName }}{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }}/{{ .Values.fio.fileSize }}{{- end }}/* /data 
+        gsutil -m cp -R gs://{{ .Values.bucketName }}/* /data 
 
         echo "Sleeping 5 minutes to wait for Local SSD RAID to populate data."
         sleep 300
@@ -148,7 +148,7 @@ spec:
         done
         
         {{ if eq .Values.scenario "local-ssd" }}
-        gsutil -m cp -R /data/fio-output/local-ssd gs://{{ .Values.bucketName }}{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }}/{{ .Values.fio.fileSize }}{{- end }}/fio-output
+        gsutil -m cp -R /data/fio-output/local-ssd gs://{{ .Values.bucketName }}/fio-output
         {{ end }}
         
         echo "fio job completed!"
@@ -173,7 +173,8 @@ spec:
         metadataTypeCacheCapacity: "{{ .Values.gcsfuse.metadataTypeCacheCapacity }}"
         metadataStatCacheCapacity: "{{ .Values.gcsfuse.metadataStatCacheCapacity }}"
         fileCacheCapacity: "{{ .Values.gcsfuse.fileCacheCapacity }}"
-        mountOptions: implicit-dirs{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }},only-dir={{ .Values.fio.fileSize }}{{- end }}
+        fileCacheForRangeRead: "true"
+        mountOptions: implicit-dirs
   {{- else }}
     csi:
       driver: gcsfuse.csi.storage.gke.io
@@ -182,5 +183,5 @@ spec:
         metadataCacheTTLSeconds: "{{ .Values.gcsfuse.metadataCacheTTLSeconds }}"
         metadataTypeCacheCapacity: "{{ .Values.gcsfuse.metadataTypeCacheCapacity }}"
         metadataStatCacheCapacity: "{{ .Values.gcsfuse.metadataStatCacheCapacity }}"
-        mountOptions: implicit-dirs{{- if and (ne .Values.fio.fileSize "100M") (ne .Values.fio.fileSize "200G") }},only-dir={{ .Values.fio.fileSize }}{{- end }}
+        mountOptions: implicit-dirs
   {{- end }}
