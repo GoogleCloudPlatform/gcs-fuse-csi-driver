@@ -285,7 +285,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
 			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", admissionv1.Update)),
@@ -296,7 +296,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
 			wantResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", GcsFuseVolumeEnableAnnotation)),
@@ -307,7 +307,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
@@ -566,7 +566,7 @@ func wantResponse(t *testing.T, customImage bool, native bool) admission.Respons
 	} else {
 		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
 	}
-	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
 }
@@ -593,7 +593,7 @@ func wantResponseWithIstio(t *testing.T, customImage bool, native bool) admissio
 	} else {
 		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
 	}
-	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, originalPod), serialize(t, newPod))
 }
