@@ -40,7 +40,7 @@ func (c *FakeClientset) GetPod(_ context.Context, namespace, name string) (*core
 			Containers: []corev1.Container{
 				webhook.GetSidecarContainerSpec(config),
 			},
-			Volumes: webhook.GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+			Volumes: webhook.GetSidecarContainerVolumeSpec(),
 		},
 	}
 
