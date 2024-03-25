@@ -406,7 +406,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(tc.pod, true)
+		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(SidecarContainerName, tc.pod, GetSidecarContainerVolumeSpec(tc.pod.Spec.Volumes...), []corev1.VolumeMount{TmpVolumeMount}, true)
 
 		if injected != tc.expectedInjected {
 			t.Errorf("got injection result %v, but expected %v", injected, tc.expectedInjected)
@@ -443,7 +443,7 @@ func TestValidatePodHasSidecarContainerInjectedForManualInjection(t *testing.T) 
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(tc.pod, false)
+		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(SidecarContainerName, tc.pod, GetSidecarContainerVolumeSpec(tc.pod.Spec.Volumes...), []corev1.VolumeMount{TmpVolumeMount}, false)
 
 		if injected != tc.expectedInjected {
 			t.Errorf("got injection result %v, but expected %v", injected, tc.expectedInjected)
