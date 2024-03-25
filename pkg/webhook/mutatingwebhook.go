@@ -115,7 +115,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	// Inject container.
 	injectSidecarContainer(pod, config, supportsNativeSidecar)
 
-	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes), pod.Spec.Volumes...)
+	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))

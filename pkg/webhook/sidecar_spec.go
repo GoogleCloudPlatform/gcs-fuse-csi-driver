@@ -38,6 +38,34 @@ const (
 	NobodyGID = 65534
 )
 
+var (
+	tmpVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerTmpVolumeName,
+		MountPath: SidecarContainerTmpVolumeMountPath,
+	}
+
+	tmpVolume = corev1.Volume{
+		Name: SidecarContainerTmpVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	buffVolume = corev1.Volume{
+		Name: SidecarContainerBufferVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	cacheVolume = corev1.Volume{
+		Name: SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+)
+
 func GetNativeSidecarContainerSpec(c *Config) corev1.Container {
 	container := GetSidecarContainerSpec(c)
 	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
@@ -94,46 +122,42 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 	return container
 }
 
-func GetSidecarContainerVolumeSpec(existingVolumes []corev1.Volume) []corev1.Volume {
-	var bufferVolumeExisted, cacheVolumeExisted bool
+func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Volume {
+	volumes := []corev1.Volume{tmpVolume}
+	var bufferVolumeExists, cacheVolumeExists bool
 
 	for _, v := range existingVolumes {
 		switch v.Name {
 		case SidecarContainerBufferVolumeName:
-			bufferVolumeExisted = true
+			bufferVolumeExists = true
 		case SidecarContainerCacheVolumeName:
-			cacheVolumeExisted = true
+			cacheVolumeExists = true
 		}
 	}
 
-	volumes := []corev1.Volume{
-		{
-			Name: SidecarContainerTmpVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		},
+	if !bufferVolumeExists {
+		volumes = append(volumes, buffVolume)
 	}
 
-	if !bufferVolumeExisted {
-		volumes = append(volumes, corev1.Volume{
-			Name: SidecarContainerBufferVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		})
-	}
-
-	if !cacheVolumeExisted {
-		volumes = append(volumes, corev1.Volume{
-			Name: SidecarContainerCacheVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		})
+	if !cacheVolumeExists {
+		volumes = append(volumes, cacheVolume)
 	}
 
 	return volumes
+}
+
+func GetSidecarContainerVolumeMountsSpec() []corev1.VolumeMount {
+	buffVolumeMount := corev1.VolumeMount{
+		Name:      SidecarContainerBufferVolumeName,
+		MountPath: SidecarContainerBufferVolumeMountPath,
+	}
+
+	cacheVolumeMount := corev1.VolumeMount{
+		Name:      SidecarContainerCacheVolumeName,
+		MountPath: SidecarContainerCacheVolumeMountPath,
+	}
+
+	return []corev1.VolumeMount{tmpVolumeMount, buffVolumeMount, cacheVolumeMount}
 }
 
 func sidecarContainerPresent(containers []corev1.Container, shouldInjectedByWebhook bool) bool {
