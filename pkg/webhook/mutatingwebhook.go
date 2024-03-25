@@ -37,13 +37,13 @@ import (
 )
 
 const (
-	AnnotationGcsfuseVolumeEnableKey                   = "gke-gcsfuse/volumes"
-	annotationGcsfuseSidecarCPULimitKey                = "gke-gcsfuse/cpu-limit"
-	annotationGcsfuseSidecarMemoryLimitKey             = "gke-gcsfuse/memory-limit"
-	annotationGcsfuseSidecarEphemeralStorageLimitKey   = "gke-gcsfuse/ephemeral-storage-limit"
-	annotationGcsfuseSidecarCPURequestKey              = "gke-gcsfuse/cpu-request"
-	annotationGcsfuseSidecarMemoryRequestKey           = "gke-gcsfuse/memory-request"
-	annotationGcsfuseSidecarEphemeralStorageRequestKey = "gke-gcsfuse/ephemeral-storage-request"
+	GcsFuseVolumeEnableAnnotation     = "gke-gcsfuse/volumes"
+	cpuLimitAnnotation                = "gke-gcsfuse/cpu-limit"
+	cpuRequestAnnotation              = "gke-gcsfuse/cpu-request"
+	memoryLimitAnnotation             = "gke-gcsfuse/memory-limit"
+	memoryRequestAnnotation           = "gke-gcsfuse/memory-request"
+	ephemeralStorageLimitAnnotation   = "gke-gcsfuse/ephemeral-storage-limit"
+	ephemeralStorageRequestAnnotation = "gke-gcsfuse/ephemeral-storage-request"
 
 	IstioSidecarName = "istio-proxy"
 )
@@ -71,18 +71,18 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Allowed(fmt.Sprintf("No injection required for operation %v.", req.Operation))
 	}
 
-	enableGcsfuseVolumes, ok := pod.Annotations[AnnotationGcsfuseVolumeEnableKey]
+	enableGcsfuseVolumes, ok := pod.Annotations[GcsFuseVolumeEnableAnnotation]
 	if !ok {
-		return admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey))
+		return admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", GcsFuseVolumeEnableAnnotation))
 	}
 
 	switch strings.ToLower(enableGcsfuseVolumes) {
 	case "false":
-		return admission.Allowed(fmt.Sprintf("found annotation '%v: false' for Pod: Name %q, GenerateName %q, Namespace %q, no injection required.", AnnotationGcsfuseVolumeEnableKey, pod.Name, pod.GenerateName, pod.Namespace))
+		return admission.Allowed(fmt.Sprintf("found annotation '%v: false' for Pod: Name %q, GenerateName %q, Namespace %q, no injection required.", GcsFuseVolumeEnableAnnotation, pod.Name, pod.GenerateName, pod.Namespace))
 	case "true":
-		klog.Infof("found annotation '%v: true' for Pod: Name %q, GenerateName %q, Namespace %q, start to inject the sidecar container.", AnnotationGcsfuseVolumeEnableKey, pod.Name, pod.GenerateName, pod.Namespace)
+		klog.Infof("found annotation '%v: true' for Pod: Name %q, GenerateName %q, Namespace %q, start to inject the sidecar container.", GcsFuseVolumeEnableAnnotation, pod.Name, pod.GenerateName, pod.Namespace)
 	default:
-		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", AnnotationGcsfuseVolumeEnableKey))
+		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", GcsFuseVolumeEnableAnnotation))
 	}
 
 	sidecarInjected, _ := ValidatePodHasSidecarContainerInjected(pod, true)
