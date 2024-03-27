@@ -29,7 +29,7 @@ import (
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -231,7 +231,7 @@ func (v *gcsVolume) DeleteVolume(_ context.Context) {
 	// Does nothing because the driver cleanup will delete all the buckets.
 }
 
-func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string, volume storageframework.TestVolume) (*v1.PersistentVolumeSource, *v1.VolumeNodeAffinity) {
+func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string, volume storageframework.TestVolume) (*corev1.PersistentVolumeSource, *corev1.VolumeNodeAffinity) {
 	gv, _ := volume.(*gcsVolume)
 	va := map[string]string{
 		driver.VolumeContextKeyMountOptions: gv.mountOptions,
@@ -241,8 +241,8 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 		va[driver.VolumeContextKeyFileCacheCapacity] = gv.fileCacheCapacity
 	}
 
-	return &v1.PersistentVolumeSource{
-		CSI: &v1.CSIPersistentVolumeSource{
+	return &corev1.PersistentVolumeSource{
+		CSI: &corev1.CSIPersistentVolumeSource{
 			Driver:           n.driverInfo.Name,
 			VolumeHandle:     gv.bucketName,
 			VolumeAttributes: va,

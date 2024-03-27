@@ -28,7 +28,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	v1 "k8s.io/api/admission/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,7 +55,7 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "use default values if no annotation is found",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey: "true",
+				GcsFuseVolumeEnableAnnotation: "true",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -72,10 +72,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "only limits are specified",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                 "true",
-				annotationGcsfuseSidecarCPULimitKey:              "500m",
-				annotationGcsfuseSidecarMemoryLimitKey:           "1Gi",
-				annotationGcsfuseSidecarEphemeralStorageLimitKey: "50Gi",
+				GcsFuseVolumeEnableAnnotation:   "true",
+				cpuLimitAnnotation:              "500m",
+				memoryLimitAnnotation:           "1Gi",
+				ephemeralStorageLimitAnnotation: "50Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -92,10 +92,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "only requests are specified",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                   "true",
-				annotationGcsfuseSidecarCPURequestKey:              "500m",
-				annotationGcsfuseSidecarMemoryRequestKey:           "1Gi",
-				annotationGcsfuseSidecarEphemeralStorageRequestKey: "50Gi",
+				GcsFuseVolumeEnableAnnotation:     "true",
+				cpuRequestAnnotation:              "500m",
+				memoryRequestAnnotation:           "1Gi",
+				ephemeralStorageRequestAnnotation: "50Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -112,10 +112,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "limits are set to '0'",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                 "true",
-				annotationGcsfuseSidecarCPULimitKey:              "0",
-				annotationGcsfuseSidecarMemoryLimitKey:           "0",
-				annotationGcsfuseSidecarEphemeralStorageLimitKey: "0",
+				GcsFuseVolumeEnableAnnotation:   "true",
+				cpuLimitAnnotation:              "0",
+				memoryLimitAnnotation:           "0",
+				ephemeralStorageLimitAnnotation: "0",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -132,10 +132,10 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests are set to '0'",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                   "true",
-				annotationGcsfuseSidecarCPURequestKey:              "0",
-				annotationGcsfuseSidecarMemoryRequestKey:           "0",
-				annotationGcsfuseSidecarEphemeralStorageRequestKey: "0",
+				GcsFuseVolumeEnableAnnotation:     "true",
+				cpuRequestAnnotation:              "0",
+				memoryRequestAnnotation:           "0",
+				ephemeralStorageRequestAnnotation: "0",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -152,13 +152,13 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests and limits are explicitly set",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                   "true",
-				annotationGcsfuseSidecarCPULimitKey:                "500m",
-				annotationGcsfuseSidecarMemoryLimitKey:             "1Gi",
-				annotationGcsfuseSidecarEphemeralStorageLimitKey:   "50Gi",
-				annotationGcsfuseSidecarCPURequestKey:              "100m",
-				annotationGcsfuseSidecarMemoryRequestKey:           "500Mi",
-				annotationGcsfuseSidecarEphemeralStorageRequestKey: "10Gi",
+				GcsFuseVolumeEnableAnnotation:     "true",
+				cpuLimitAnnotation:                "500m",
+				memoryLimitAnnotation:             "1Gi",
+				ephemeralStorageLimitAnnotation:   "50Gi",
+				cpuRequestAnnotation:              "100m",
+				memoryRequestAnnotation:           "500Mi",
+				ephemeralStorageRequestAnnotation: "10Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -175,13 +175,13 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests and limits are explicitly set with '0' limits",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                   "true",
-				annotationGcsfuseSidecarCPULimitKey:                "0",
-				annotationGcsfuseSidecarMemoryLimitKey:             "0",
-				annotationGcsfuseSidecarEphemeralStorageLimitKey:   "0",
-				annotationGcsfuseSidecarCPURequestKey:              "100m",
-				annotationGcsfuseSidecarMemoryRequestKey:           "500Mi",
-				annotationGcsfuseSidecarEphemeralStorageRequestKey: "10Gi",
+				GcsFuseVolumeEnableAnnotation:     "true",
+				cpuLimitAnnotation:                "0",
+				memoryLimitAnnotation:             "0",
+				ephemeralStorageLimitAnnotation:   "0",
+				cpuRequestAnnotation:              "100m",
+				memoryRequestAnnotation:           "500Mi",
+				ephemeralStorageRequestAnnotation: "10Gi",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -198,13 +198,13 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "requests and limits are explicitly set with '0' requests",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:                   "true",
-				annotationGcsfuseSidecarCPULimitKey:                "500m",
-				annotationGcsfuseSidecarMemoryLimitKey:             "1Gi",
-				annotationGcsfuseSidecarEphemeralStorageLimitKey:   "50Gi",
-				annotationGcsfuseSidecarCPURequestKey:              "0",
-				annotationGcsfuseSidecarMemoryRequestKey:           "0",
-				annotationGcsfuseSidecarEphemeralStorageRequestKey: "0",
+				GcsFuseVolumeEnableAnnotation:     "true",
+				cpuLimitAnnotation:                "500m",
+				memoryLimitAnnotation:             "1Gi",
+				ephemeralStorageLimitAnnotation:   "50Gi",
+				cpuRequestAnnotation:              "0",
+				memoryRequestAnnotation:           "0",
+				ephemeralStorageRequestAnnotation: "0",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
@@ -221,8 +221,8 @@ func TestPrepareConfig(t *testing.T) {
 		{
 			name: "invalid resource Quantity should throw error",
 			annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey:    "true",
-				annotationGcsfuseSidecarCPULimitKey: "invalid",
+				GcsFuseVolumeEnableAnnotation: "true",
+				cpuLimitAnnotation:            "invalid",
 			},
 			wantConfig: nil,
 			expectErr:  true,
@@ -252,7 +252,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 	testCases := []struct {
 		name         string
 		inputPod     *corev1.Pod
-		operation    v1.Operation
+		operation    admissionv1.Operation
 		wantResponse admission.Response
 		nodes        []corev1.Node
 	}{
@@ -263,7 +263,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:      "Invalid resource request test.",
-			operation: v1.Create,
+			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers:                    []corev1.Container{},
@@ -272,8 +272,8 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						AnnotationGcsfuseVolumeEnableKey:    "true",
-						annotationGcsfuseSidecarCPULimitKey: "invalid",
+						GcsFuseVolumeEnableAnnotation: "true",
+						cpuLimitAnnotation:            "invalid",
 					},
 				},
 			},
@@ -281,37 +281,37 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:      "Different operation test.",
-			operation: v1.Update,
+			operation: admissionv1.Update,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
-			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", v1.Update)),
+			wantResponse: admission.Allowed(fmt.Sprintf("No injection required for operation %v.", admissionv1.Update)),
 		},
 		{
 			name:      "Annotation key not found test.",
-			operation: v1.Create,
+			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
-			wantResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", AnnotationGcsfuseVolumeEnableKey)),
+			wantResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", GcsFuseVolumeEnableAnnotation)),
 		},
 		{
 			name:      "Sidecar already injected test.",
-			operation: v1.Create,
+			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					Volumes:    GetSidecarContainerVolumeSpec([]corev1.Volume{}),
+					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						AnnotationGcsfuseVolumeEnableKey: "true",
+						GcsFuseVolumeEnableAnnotation: "true",
 					},
 				},
 			},
@@ -319,42 +319,42 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		},
 		{
 			name:         "regular container injection successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(false),
 			wantResponse: wantResponse(t, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(true),
 			wantResponse: wantResponse(t, true, false),
 			nodes:        regularSidecarSupportNodes(),
 		},
 		{
 			name:         "native container injection successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(false),
 			wantResponse: wantResponse(t, false, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPod(true),
 			wantResponse: wantResponse(t, true, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "regular container injection with istio present success test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPodWithIstio(false, false),
 			wantResponse: wantResponseWithIstio(t, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
 			name:         "Injection with custom sidecar container image successful test.",
-			operation:    v1.Create,
+			operation:    admissionv1.Create,
 			inputPod:     validInputPodWithIstio(true, true),
 			wantResponse: wantResponseWithIstio(t, true, true),
 			nodes:        nativeSupportNodes(),
@@ -388,7 +388,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 		informerFactory.WaitForCacheSync(stopCh)
 
 		request := &admission.Request{
-			AdmissionRequest: v1.AdmissionRequest{
+			AdmissionRequest: admissionv1.AdmissionRequest{
 				Operation: tc.operation,
 			},
 		}
@@ -525,7 +525,7 @@ func validInputPod(customImage bool) *corev1.Pod {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				AnnotationGcsfuseVolumeEnableKey: "true",
+				GcsFuseVolumeEnableAnnotation: "true",
 			},
 		},
 	}
@@ -566,7 +566,7 @@ func wantResponse(t *testing.T, customImage bool, native bool) admission.Respons
 	} else {
 		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
 	}
-	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
 }
@@ -593,7 +593,7 @@ func wantResponseWithIstio(t *testing.T, customImage bool, native bool) admissio
 	} else {
 		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
 	}
-	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes), newPod.Spec.Volumes...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
 	return admission.PatchResponseFromRaw(serialize(t, originalPod), serialize(t, newPod))
 }

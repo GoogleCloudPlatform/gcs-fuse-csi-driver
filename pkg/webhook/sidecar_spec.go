@@ -18,7 +18,7 @@ limitations under the License.
 package webhook
 
 import (
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -38,32 +38,60 @@ const (
 	NobodyGID = 65534
 )
 
-func GetNativeSidecarContainerSpec(c *Config) v1.Container {
+var (
+	TmpVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerTmpVolumeName,
+		MountPath: SidecarContainerTmpVolumeMountPath,
+	}
+
+	tmpVolume = corev1.Volume{
+		Name: SidecarContainerTmpVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	buffVolume = corev1.Volume{
+		Name: SidecarContainerBufferVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	cacheVolume = corev1.Volume{
+		Name: SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+)
+
+func GetNativeSidecarContainerSpec(c *Config) corev1.Container {
 	container := GetSidecarContainerSpec(c)
-	container.Env = append(container.Env, v1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
-	container.RestartPolicy = ptr.To(v1.ContainerRestartPolicyAlways)
+	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
+	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
 
 	return container
 }
 
-func GetSidecarContainerSpec(c *Config) v1.Container {
+func GetSidecarContainerSpec(c *Config) corev1.Container {
 	limits, requests := prepareResourceList(c)
 
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
-	container := v1.Container{
+	container := corev1.Container{
 		Name:            SidecarContainerName,
 		Image:           c.ContainerImage,
-		ImagePullPolicy: v1.PullPolicy(c.ImagePullPolicy),
-		SecurityContext: &v1.SecurityContext{
+		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
+		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr.To(false),
 			ReadOnlyRootFilesystem:   ptr.To(true),
-			Capabilities: &v1.Capabilities{
-				Drop: []v1.Capability{
-					v1.Capability("ALL"),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{
+					corev1.Capability("ALL"),
 				},
 			},
-			SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			RunAsNonRoot:   ptr.To(true),
 			RunAsUser:      ptr.To(int64(NobodyUID)),
 			RunAsGroup:     ptr.To(int64(NobodyGID)),
@@ -71,11 +99,11 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 		Args: []string{
 			"--v=5",
 		},
-		Resources: v1.ResourceRequirements{
+		Resources: corev1.ResourceRequirements{
 			Limits:   limits,
 			Requests: requests,
 		},
-		VolumeMounts: []v1.VolumeMount{
+		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      SidecarContainerTmpVolumeName,
 				MountPath: SidecarContainerTmpVolumeMountPath,
@@ -94,54 +122,53 @@ func GetSidecarContainerSpec(c *Config) v1.Container {
 	return container
 }
 
-func GetSidecarContainerVolumeSpec(existingVolumes []v1.Volume) []v1.Volume {
-	var bufferVolumeExisted, cacheVolumeExisted bool
+func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Volume {
+	volumes := []corev1.Volume{tmpVolume}
+	var bufferVolumeExists, cacheVolumeExists bool
 
 	for _, v := range existingVolumes {
 		switch v.Name {
 		case SidecarContainerBufferVolumeName:
-			bufferVolumeExisted = true
+			bufferVolumeExists = true
 		case SidecarContainerCacheVolumeName:
-			cacheVolumeExisted = true
+			cacheVolumeExists = true
 		}
 	}
 
-	volumes := []v1.Volume{
-		{
-			Name: SidecarContainerTmpVolumeName,
-			VolumeSource: v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{},
-			},
-		},
+	if !bufferVolumeExists {
+		volumes = append(volumes, buffVolume)
 	}
 
-	if !bufferVolumeExisted {
-		volumes = append(volumes, v1.Volume{
-			Name: SidecarContainerBufferVolumeName,
-			VolumeSource: v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{},
-			},
-		})
-	}
-
-	if !cacheVolumeExisted {
-		volumes = append(volumes, v1.Volume{
-			Name: SidecarContainerCacheVolumeName,
-			VolumeSource: v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{},
-			},
-		})
+	if !cacheVolumeExists {
+		volumes = append(volumes, cacheVolume)
 	}
 
 	return volumes
 }
 
-func sidecarContainerPresent(containers []v1.Container, shouldInjectedByWebhook bool) bool {
+func GetSidecarContainerVolumeMountsSpec() []corev1.VolumeMount {
+	buffVolumeMount := corev1.VolumeMount{
+		Name:      SidecarContainerBufferVolumeName,
+		MountPath: SidecarContainerBufferVolumeMountPath,
+	}
+
+	cacheVolumeMount := corev1.VolumeMount{
+		Name:      SidecarContainerCacheVolumeName,
+		MountPath: SidecarContainerCacheVolumeMountPath,
+	}
+
+	return []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount}
+}
+
+func sidecarContainerPresent(containerName string, containers []corev1.Container, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) bool {
 	containerInjected := false
-	tempVolumeMountInjected := false
+	volumeMountMap := map[string]string{}
+	for _, vm := range volumeMounts {
+		volumeMountMap[vm.Name] = vm.MountPath
+	}
 
 	for i, c := range containers {
-		if c.Name == SidecarContainerName {
+		if c.Name == containerName {
 			// If the sidecar container is injected by the webhook,
 			// the sidecar container needs to be at 0 index,
 			// unless the istio-proxy is present, then we check
@@ -164,14 +191,18 @@ func sidecarContainerPresent(containers []v1.Container, shouldInjectedByWebhook 
 			}
 
 			if c.SecurityContext != nil &&
+				c.SecurityContext.RunAsUser != nil &&
+				c.SecurityContext.RunAsGroup != nil &&
 				*c.SecurityContext.RunAsUser == NobodyUID &&
 				*c.SecurityContext.RunAsGroup == NobodyGID {
 				containerInjected = true
 			}
-
-			for _, v := range c.VolumeMounts {
-				if v.Name == SidecarContainerTmpVolumeName && v.MountPath == SidecarContainerTmpVolumeMountPath {
-					tempVolumeMountInjected = true
+			// Delete volumeMounts present from map.
+			for _, vm := range c.VolumeMounts {
+				if mountPath, exists := volumeMountMap[vm.Name]; exists {
+					if vm.MountPath == mountPath {
+						delete(volumeMountMap, vm.Name)
+					}
 				}
 			}
 
@@ -179,7 +210,7 @@ func sidecarContainerPresent(containers []v1.Container, shouldInjectedByWebhook 
 		}
 	}
 
-	if containerInjected && tempVolumeMountInjected {
+	if containerInjected && len(volumeMountMap) == 0 {
 		return true
 	}
 
@@ -196,24 +227,28 @@ func sidecarContainerPresent(containers []v1.Container, shouldInjectedByWebhook 
 // Returns two booleans:
 //  1. True when either native or regular sidecar is present.
 //  2. True iff the sidecar present is a native sidecar container.
-func ValidatePodHasSidecarContainerInjected(pod *v1.Pod, shouldInjectedByWebhook bool) (bool, bool) {
-	// Checks that the temp volume is present in pod.
-	tempVolumeInjected := func(pod *v1.Pod) bool {
-		tmpVolumeInjected := false
-		for _, v := range pod.Spec.Volumes {
-			if v.Name == SidecarContainerTmpVolumeName && v.VolumeSource.EmptyDir != nil {
-				tmpVolumeInjected = true
+func ValidatePodHasSidecarContainerInjected(containerName string, pod *corev1.Pod, volumes []corev1.Volume, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) (bool, bool) {
+	// Checks that the volumes are present in pod.
+	volumesInjected := func(pod *corev1.Pod) bool {
+		volumeMap := map[string]corev1.EmptyDirVolumeSource{}
+		for _, v := range volumes {
+			volumeMap[v.Name] = *v.EmptyDir
+		}
 
-				break
+		for _, v := range pod.Spec.Volumes {
+			if _, exists := volumeMap[v.Name]; exists {
+				if v.EmptyDir != nil {
+					delete(volumeMap, v.Name)
+				}
 			}
 		}
 
-		return tmpVolumeInjected
+		return len(volumeMap) == 0
 	}
 
 	// Check the sidecar container is present in regular or init container list.
-	containerAndVolumeMountPresentInContainers := sidecarContainerPresent(pod.Spec.Containers, shouldInjectedByWebhook)
-	containerAndVolumeMountPresentInInitContainers := sidecarContainerPresent(pod.Spec.InitContainers, shouldInjectedByWebhook)
+	containerAndVolumeMountPresentInContainers := sidecarContainerPresent(containerName, pod.Spec.Containers, volumeMounts, shouldInjectedByWebhook)
+	containerAndVolumeMountPresentInInitContainers := sidecarContainerPresent(containerName, pod.Spec.InitContainers, volumeMounts, shouldInjectedByWebhook)
 
 	if containerAndVolumeMountPresentInContainers && containerAndVolumeMountPresentInInitContainers {
 		klog.Errorf("sidecar present in containers and init containers... make sure only one sidecar is present.")
@@ -223,29 +258,30 @@ func ValidatePodHasSidecarContainerInjected(pod *v1.Pod, shouldInjectedByWebhook
 		return false, false
 	}
 
-	if !tempVolumeInjected(pod) {
+	// We continue validation if all sidecar volumes are present in the pod.
+	if !volumesInjected(pod) {
 		return false, false
 	}
 
 	return true, containerAndVolumeMountPresentInInitContainers
 }
 
-func prepareResourceList(c *Config) (v1.ResourceList, v1.ResourceList) {
-	limitsResourceList := v1.ResourceList{}
-	requestsResourceList := v1.ResourceList{}
+func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {
+	limitsResourceList := corev1.ResourceList{}
+	requestsResourceList := corev1.ResourceList{}
 
-	checkZeroQuantity := func(rl map[v1.ResourceName]resource.Quantity, rn v1.ResourceName, q resource.Quantity) {
+	checkZeroQuantity := func(rl map[corev1.ResourceName]resource.Quantity, rn corev1.ResourceName, q resource.Quantity) {
 		if !q.IsZero() {
 			rl[rn] = q
 		}
 	}
 
-	checkZeroQuantity(limitsResourceList, v1.ResourceCPU, c.CPULimit)
-	checkZeroQuantity(limitsResourceList, v1.ResourceMemory, c.MemoryLimit)
-	checkZeroQuantity(limitsResourceList, v1.ResourceEphemeralStorage, c.EphemeralStorageLimit)
-	checkZeroQuantity(requestsResourceList, v1.ResourceCPU, c.CPURequest)
-	checkZeroQuantity(requestsResourceList, v1.ResourceMemory, c.MemoryRequest)
-	checkZeroQuantity(requestsResourceList, v1.ResourceEphemeralStorage, c.EphemeralStorageRequest)
+	checkZeroQuantity(limitsResourceList, corev1.ResourceCPU, c.CPULimit)
+	checkZeroQuantity(limitsResourceList, corev1.ResourceMemory, c.MemoryLimit)
+	checkZeroQuantity(limitsResourceList, corev1.ResourceEphemeralStorage, c.EphemeralStorageLimit)
+	checkZeroQuantity(requestsResourceList, corev1.ResourceCPU, c.CPURequest)
+	checkZeroQuantity(requestsResourceList, corev1.ResourceMemory, c.MemoryRequest)
+	checkZeroQuantity(requestsResourceList, corev1.ResourceEphemeralStorage, c.EphemeralStorageRequest)
 
 	return limitsResourceList, requestsResourceList
 }

@@ -31,7 +31,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -80,18 +80,18 @@ const (
 
 type TestPod struct {
 	client    clientset.Interface
-	pod       *v1.Pod
-	namespace *v1.Namespace
+	pod       *corev1.Pod
+	namespace *corev1.Namespace
 }
 
-func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
+func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 	cpu, _ := resource.ParseQuantity("100m")
 	mem, _ := resource.ParseQuantity("20Mi")
 
 	return &TestPod{
 		client:    c,
 		namespace: ns,
-		pod: &v1.Pod{
+		pod: &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "gcsfuse-volume-tester-",
 				Annotations: map[string]string{
@@ -104,42 +104,42 @@ func NewTestPod(c clientset.Interface, ns *v1.Namespace) *TestPod {
 					"gke-gcsfuse/ephemeral-storage-request": "100Mi",
 				},
 			},
-			Spec: v1.PodSpec{
+			Spec: corev1.PodSpec{
 				TerminationGracePeriodSeconds: ptr.To(int64(5)),
 				NodeSelector:                  map[string]string{"kubernetes.io/os": "linux"},
 				ServiceAccountName:            K8sServiceAccountName,
-				Containers: []v1.Container{
+				Containers: []corev1.Container{
 					{
 						Name:         TesterContainerName,
 						Image:        imageutils.GetE2EImage(imageutils.BusyBox),
 						Command:      []string{"/bin/sh"},
 						Args:         []string{"-c", "tail -f /dev/null"},
-						VolumeMounts: make([]v1.VolumeMount, 0),
-						Resources: v1.ResourceRequirements{
-							Limits: v1.ResourceList{
-								v1.ResourceCPU:    cpu,
-								v1.ResourceMemory: mem,
+						VolumeMounts: make([]corev1.VolumeMount, 0),
+						Resources: corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    cpu,
+								corev1.ResourceMemory: mem,
 							},
-							Requests: v1.ResourceList{
-								v1.ResourceCPU:    cpu,
-								v1.ResourceMemory: mem,
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    cpu,
+								corev1.ResourceMemory: mem,
 							},
 						},
-						Env: []v1.EnvVar{
+						Env: []corev1.EnvVar{
 							{
 								Name: "POD_NAME",
-								ValueFrom: &v1.EnvVarSource{
-									FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.name"},
+								ValueFrom: &corev1.EnvVarSource{
+									FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 								},
 							},
 						},
 					},
 				},
-				RestartPolicy:                v1.RestartPolicyAlways,
-				Volumes:                      make([]v1.Volume, 0),
+				RestartPolicy:                corev1.RestartPolicyAlways,
+				Volumes:                      make([]corev1.Volume, 0),
 				AutomountServiceAccountToken: ptr.To(false),
-				Tolerations: []v1.Toleration{
-					{Operator: v1.TolerationOpExists},
+				Tolerations: []corev1.Toleration{
+					{Operator: corev1.TolerationOpExists},
 				},
 			},
 		},
@@ -227,14 +227,14 @@ func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context, isNativeSidec
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
 
-	var containerStatusList []v1.ContainerStatus
+	var containerStatusList []corev1.ContainerStatus
 	if isNativeSidecar {
 		containerStatusList = t.pod.Status.InitContainerStatuses
 	} else {
 		containerStatusList = t.pod.Status.ContainerStatuses
 	}
 
-	var sidecarContainerStatus v1.ContainerStatus
+	var sidecarContainerStatus corev1.ContainerStatus
 	for _, cs := range containerStatusList {
 		if cs.Name == webhook.SidecarContainerName {
 			sidecarContainerStatus = cs
@@ -270,7 +270,7 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 		return
 	}
 
-	volumeMount := v1.VolumeMount{
+	volumeMount := corev1.VolumeMount{
 		Name:      name,
 		MountPath: mountPath,
 		ReadOnly:  readOnly,
@@ -285,12 +285,12 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 }
 
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
-	volume := v1.Volume{
+	volume := corev1.Volume{
 		Name: name,
 	}
 	if volumeResource.Pvc != nil {
-		volume.VolumeSource = v1.VolumeSource{
-			PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+		volume.VolumeSource = corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeResource.Pvc.Name,
 			},
 		}
@@ -308,7 +308,7 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 }
 
 func (t *TestPod) SetupCacheVolumeMount(mountPath string, subPath ...string) {
-	volumeMount := v1.VolumeMount{
+	volumeMount := corev1.VolumeMount{
 		Name:      webhook.SidecarContainerCacheVolumeName,
 		MountPath: mountPath,
 	}
@@ -321,7 +321,7 @@ func (t *TestPod) SetupCacheVolumeMount(mountPath string, subPath ...string) {
 }
 
 func (t *TestPod) SetupTmpVolumeMount(mountPath string) {
-	volumeMount := v1.VolumeMount{
+	volumeMount := corev1.VolumeMount{
 		Name:      webhook.SidecarContainerTmpVolumeName,
 		MountPath: mountPath,
 	}
@@ -363,7 +363,7 @@ func (t *TestPod) SetServiceAccount(sa string) {
 }
 
 func (t *TestPod) SetNonRootSecurityContext(uid, gid, fsgroup int) {
-	psc := &v1.PodSecurityContext{}
+	psc := &corev1.PodSecurityContext{}
 	if uid != 0 {
 		psc.RunAsNonRoot = ptr.To(true)
 		psc.RunAsUser = ptr.To(int64(uid))
@@ -383,7 +383,7 @@ func (t *TestPod) SetCommand(cmd string) {
 }
 
 func (t *TestPod) SetIstioSidecar(isNativeSidecar bool) {
-	istioSidecar := []v1.Container{{
+	istioSidecar := []corev1.Container{{
 		Name:  webhook.IstioSidecarName,
 		Image: imageutils.GetE2EImage(imageutils.BusyBox),
 	}}
@@ -435,11 +435,11 @@ func (t *TestPod) SetGracePeriod(s int) {
 	t.pod.Spec.TerminationGracePeriodSeconds = ptr.To(int64(s))
 }
 
-func (t *TestPod) SetPod(pod *v1.Pod) {
+func (t *TestPod) SetPod(pod *corev1.Pod) {
 	t.pod = pod
 }
 
-func (t *TestPod) SetRestartPolicy(rp v1.RestartPolicy) {
+func (t *TestPod) SetRestartPolicy(rp corev1.RestartPolicy) {
 	t.pod.Spec.RestartPolicy = rp
 }
 
@@ -451,22 +451,22 @@ func (t *TestPod) SetResource(cpuLimit, memoryLimit, storageLimit string) {
 	cpu, _ := resource.ParseQuantity(cpuLimit)
 	mem, _ := resource.ParseQuantity(memoryLimit)
 	eph, _ := resource.ParseQuantity(storageLimit)
-	t.pod.Spec.Containers[0].Resources = v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceCPU:              cpu,
-			v1.ResourceMemory:           mem,
-			v1.ResourceEphemeralStorage: eph,
+	t.pod.Spec.Containers[0].Resources = corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:              cpu,
+			corev1.ResourceMemory:           mem,
+			corev1.ResourceEphemeralStorage: eph,
 		},
-		Requests: v1.ResourceList{
-			v1.ResourceCPU:              cpu,
-			v1.ResourceMemory:           mem,
-			v1.ResourceEphemeralStorage: eph,
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:              cpu,
+			corev1.ResourceMemory:           mem,
+			corev1.ResourceEphemeralStorage: eph,
 		},
 	}
 }
 
 func (t *TestPod) SetCustomSidecarContainerImage() {
-	t.pod.Spec.Containers = append(t.pod.Spec.Containers, v1.Container{
+	t.pod.Spec.Containers = append(t.pod.Spec.Containers, corev1.Container{
 		Name:  webhook.SidecarContainerName,
 		Image: LastPublishedSidecarContainerImage,
 	})
@@ -488,21 +488,21 @@ func (t *TestPod) SetInitContainerWithCommand(cmd string) {
 	cpu, _ := resource.ParseQuantity("100m")
 	mem, _ := resource.ParseQuantity("20Mi")
 
-	t.pod.Spec.InitContainers = []v1.Container{
+	t.pod.Spec.InitContainers = []corev1.Container{
 		{
 			Name:         TesterContainerName + "-init",
 			Image:        imageutils.GetE2EImage(imageutils.BusyBox),
 			Command:      []string{"/bin/sh"},
 			Args:         []string{"-c", cmd},
-			VolumeMounts: make([]v1.VolumeMount, 0),
-			Resources: v1.ResourceRequirements{
-				Limits: v1.ResourceList{
-					v1.ResourceCPU:    cpu,
-					v1.ResourceMemory: mem,
+			VolumeMounts: make([]corev1.VolumeMount, 0),
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    cpu,
+					corev1.ResourceMemory: mem,
 				},
-				Requests: v1.ResourceList{
-					v1.ResourceCPU:    cpu,
-					v1.ResourceMemory: mem,
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    cpu,
+					corev1.ResourceMemory: mem,
 				},
 			},
 		},
@@ -515,24 +515,24 @@ func (t *TestPod) Cleanup(ctx context.Context) {
 
 type TestPVC struct {
 	client    clientset.Interface
-	PVC       *v1.PersistentVolumeClaim
-	namespace *v1.Namespace
+	PVC       *corev1.PersistentVolumeClaim
+	namespace *corev1.Namespace
 }
 
-func NewTestPVC(c clientset.Interface, ns *v1.Namespace, pvcName, storageClassName, capacity string, accessMode v1.PersistentVolumeAccessMode) *TestPVC {
+func NewTestPVC(c clientset.Interface, ns *corev1.Namespace, pvcName, storageClassName, capacity string, accessMode corev1.PersistentVolumeAccessMode) *TestPVC {
 	return &TestPVC{
 		client:    c,
 		namespace: ns,
-		PVC: &v1.PersistentVolumeClaim{
+		PVC: &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: pvcName,
 			},
-			Spec: v1.PersistentVolumeClaimSpec{
-				AccessModes: []v1.PersistentVolumeAccessMode{
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{
 					accessMode,
 				},
-				Resources: v1.VolumeResourceRequirements{
-					Requests: v1.ResourceList{
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
 						"storage": resource.MustParse(capacity),
 					},
 				},
@@ -557,20 +557,20 @@ func (t *TestPVC) Cleanup(ctx context.Context) {
 
 type TestSecret struct {
 	client    clientset.Interface
-	secret    *v1.Secret
-	namespace *v1.Namespace
+	secret    *corev1.Secret
+	namespace *corev1.Namespace
 }
 
-func NewTestSecret(c clientset.Interface, ns *v1.Namespace, name string, data map[string]string) *TestSecret {
+func NewTestSecret(c clientset.Interface, ns *corev1.Namespace, name string, data map[string]string) *TestSecret {
 	return &TestSecret{
 		client:    c,
 		namespace: ns,
-		secret: &v1.Secret{
+		secret: &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name,
 			},
 			StringData: data,
-			Type:       v1.SecretTypeOpaque,
+			Type:       corev1.SecretTypeOpaque,
 		},
 	}
 }
@@ -590,15 +590,15 @@ func (t *TestSecret) Cleanup(ctx context.Context) {
 
 type TestKubernetesServiceAccount struct {
 	client         clientset.Interface
-	serviceAccount *v1.ServiceAccount
-	namespace      *v1.Namespace
+	serviceAccount *corev1.ServiceAccount
+	namespace      *corev1.Namespace
 }
 
-func NewTestKubernetesServiceAccount(c clientset.Interface, ns *v1.Namespace, name, gcpSAEmail string) *TestKubernetesServiceAccount {
+func NewTestKubernetesServiceAccount(c clientset.Interface, ns *corev1.Namespace, name, gcpSAEmail string) *TestKubernetesServiceAccount {
 	sa := &TestKubernetesServiceAccount{
 		client:    c,
 		namespace: ns,
-		serviceAccount: &v1.ServiceAccount{
+		serviceAccount: &corev1.ServiceAccount{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name,
 			},
@@ -664,7 +664,7 @@ func (t *TestGCPServiceAccount) Create(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ctx context.Context, ns *v1.Namespace) {
+func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ctx context.Context, ns *corev1.Namespace) {
 	framework.Logf("Binding the GCP IAM Service Account %s with Role roles/iam.workloadIdentityUser", t.serviceAccount.Name)
 	iamService, err := iam.NewService(ctx)
 	framework.ExpectNoError(err)
@@ -842,11 +842,11 @@ func setPolicy(crmService *cloudresourcemanager.Service, projectID string, polic
 type TestDeployment struct {
 	client     clientset.Interface
 	deployment *appsv1.Deployment
-	namespace  *v1.Namespace
+	namespace  *corev1.Namespace
 }
 
-func NewTestDeployment(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestDeployment {
-	tPod.pod.Spec.RestartPolicy = v1.RestartPolicyAlways
+func NewTestDeployment(c clientset.Interface, ns *corev1.Namespace, tPod *TestPod) *TestDeployment {
+	tPod.pod.Spec.RestartPolicy = corev1.RestartPolicyAlways
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "gcsfuse-volume-deployment-tester-",
@@ -858,7 +858,7 @@ func NewTestDeployment(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *
 					"app": "gcsfuse-volume-deployment-tester",
 				},
 			},
-			Template: v1.PodTemplateSpec{
+			Template: corev1.PodTemplateSpec{
 				ObjectMeta: tPod.pod.ObjectMeta,
 				Spec:       tPod.pod.Spec,
 			},
@@ -886,12 +886,12 @@ func (t *TestDeployment) SetReplicas(replica int) {
 
 func (t *TestDeployment) WaitForRunningAndReady(ctx context.Context) {
 	framework.Logf("Waiting Deployment %s to running and ready", t.deployment.Name)
-	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, v1.PodRunning, pollTimeoutSlow)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, corev1.PodRunning, pollTimeoutSlow)
 }
 
 func (t *TestDeployment) WaitForRunningAndReadyWithTimeout(ctx context.Context, timeout time.Duration) {
 	framework.Logf("Waiting Deployment %s to running and ready", t.deployment.Name)
-	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, v1.PodRunning, timeout)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, corev1.PodRunning, timeout)
 }
 
 func (t *TestDeployment) Scale(ctx context.Context, replica int) {
@@ -913,11 +913,11 @@ func (t *TestDeployment) Cleanup(ctx context.Context) {
 type TestStatefulSet struct {
 	client      clientset.Interface
 	statefulSet *appsv1.StatefulSet
-	namespace   *v1.Namespace
+	namespace   *corev1.Namespace
 }
 
-func NewTestStatefulSet(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestStatefulSet {
-	tPod.pod.Spec.RestartPolicy = v1.RestartPolicyAlways
+func NewTestStatefulSet(c clientset.Interface, ns *corev1.Namespace, tPod *TestPod) *TestStatefulSet {
+	tPod.pod.Spec.RestartPolicy = corev1.RestartPolicyAlways
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "gcsfuse-volume-statefulset-tester-",
@@ -929,7 +929,7 @@ func NewTestStatefulSet(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) 
 					"app": "gcsfuse-volume-statefulset-tester",
 				},
 			},
-			Template: v1.PodTemplateSpec{
+			Template: corev1.PodTemplateSpec{
 				ObjectMeta: tPod.pod.ObjectMeta,
 				Spec:       tPod.pod.Spec,
 			},
@@ -953,7 +953,7 @@ func (t *TestStatefulSet) Create(ctx context.Context) {
 
 func (t *TestStatefulSet) WaitForRunningAndReady(ctx context.Context) {
 	framework.Logf("Waiting StatefulSet %s to running and ready", t.statefulSet.Name)
-	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.statefulSet.Spec.Selector, *t.statefulSet.Spec.Replicas, v1.PodRunning, pollTimeoutSlow)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.statefulSet.Spec.Selector, *t.statefulSet.Spec.Replicas, corev1.PodRunning, pollTimeoutSlow)
 }
 
 func (t *TestStatefulSet) Cleanup(ctx context.Context) {
@@ -963,7 +963,7 @@ func (t *TestStatefulSet) Cleanup(ctx context.Context) {
 }
 
 // WaitForWorkloadReady waits for the pods in the workload to reach the expected status.
-func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace string, selector *metav1.LabelSelector, replica int32, expectedPodStatus v1.PodPhase, timeout time.Duration) {
+func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace string, selector *metav1.LabelSelector, replica int32, expectedPodStatus corev1.PodPhase, timeout time.Duration) {
 	err := wait.PollUntilContextTimeout(ctx, pollIntervalSlow, timeout, true,
 		func(ctx context.Context) (bool, error) {
 			replicaSetSelector, err := metav1.LabelSelectorAsSelector(selector)
@@ -995,10 +995,10 @@ func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace 
 type TestJob struct {
 	client    clientset.Interface
 	job       *batchv1.Job
-	namespace *v1.Namespace
+	namespace *corev1.Namespace
 }
 
-func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob {
+func NewTestJob(c clientset.Interface, ns *corev1.Namespace, tPod *TestPod) *TestJob {
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "gcsfuse-volume-job-tester",
@@ -1010,7 +1010,7 @@ func NewTestJob(c clientset.Interface, ns *v1.Namespace, tPod *TestPod) *TestJob
 					e2ejob.JobSelectorKey: "gcsfuse-volume-job-tester",
 				},
 			},
-			Template: v1.PodTemplateSpec{
+			Template: corev1.PodTemplateSpec{
 				ObjectMeta: tPod.pod.ObjectMeta,
 				Spec:       tPod.pod.Spec,
 			},
