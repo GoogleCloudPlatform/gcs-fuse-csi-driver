@@ -23,7 +23,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
@@ -123,7 +122,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		tPod1.Cleanup(ctx)
 
 		ginkgo.By("The pod should terminate fast")
-		tPod1.WaitForPodNotFoundInNamespace(ctx, specs.PollTimeout)
+		tPod1.WaitForPodNotFoundInNamespace(ctx)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -174,7 +173,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod failed")
-		tPod.WaitForFail(ctx, specs.PollTimeout)
+		tPod.WaitForFail(ctx)
 	})
 
 	ginkgo.It("[no auto termination] should not terminate the sidecar when Pod RestartPolicy is Always and succeeding", func() {
@@ -195,8 +194,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
-		time.Sleep(specs.PollTimeout)
-		tPod.CheckSidecarNeverTerminated(ctx, supportsNativeSidecar)
+		tPod.CheckSidecarNeverTerminatedAfterAWhile(ctx, supportsNativeSidecar)
 	})
 
 	ginkgo.It("[no auto termination] should not terminate the sidecar when Pod RestartPolicy is Always and failing", func() {
@@ -217,8 +215,7 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
-		time.Sleep(specs.PollTimeout)
-		tPod.CheckSidecarNeverTerminated(ctx, supportsNativeSidecar)
+		tPod.CheckSidecarNeverTerminatedAfterAWhile(ctx, supportsNativeSidecar)
 	})
 
 	ginkgo.It("should succeed when Pod RestartPolicy is OnFailure", func() {
@@ -264,7 +261,6 @@ func (t *gcsFuseCSIAutoTerminationTestSuite) DefineTests(driver storageframework
 		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the sidecar container is still running after a while")
-		time.Sleep(specs.PollTimeout)
-		tPod.CheckSidecarNeverTerminated(ctx, supportsNativeSidecar)
+		tPod.CheckSidecarNeverTerminatedAfterAWhile(ctx, supportsNativeSidecar)
 	})
 }

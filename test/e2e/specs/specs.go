@@ -72,8 +72,8 @@ const (
 
 	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:c83609ecf50d05a141167b8c6cf4dfe14ff07f01cd96a9790921db6748d40902"
 
-	PollInterval     = 1 * time.Second
-	PollTimeout      = 1 * time.Minute
+	pollInterval     = 1 * time.Second
+	pollTimeout      = 1 * time.Minute
 	pollIntervalSlow = 10 * time.Second
 	pollTimeoutSlow  = 10 * time.Minute
 )
@@ -179,7 +179,7 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 }
 
 func (t *TestPod) WaitForRunning(ctx context.Context) {
-	err := e2epod.WaitForPodNameRunningInNamespace(ctx, t.client, t.pod.Name, t.pod.Namespace)
+	err := e2epod.WaitTimeoutForPodRunningInNamespace(ctx, t.client, t.pod.Name, t.pod.Namespace, pollTimeoutSlow)
 	framework.ExpectNoError(err)
 
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
@@ -187,12 +187,12 @@ func (t *TestPod) WaitForRunning(ctx context.Context) {
 }
 
 func (t *TestPod) WaitForSuccess(ctx context.Context) {
-	err := e2epod.WaitForPodSuccessInNamespace(ctx, t.client, t.pod.Name, t.pod.Namespace)
+	err := e2epod.WaitForPodSuccessInNamespaceTimeout(ctx, t.client, t.pod.Name, t.pod.Namespace, pollTimeoutSlow)
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitForFail(ctx context.Context, timeout time.Duration) {
-	err := e2epod.WaitForPodFailedReason(ctx, t.client, t.pod, "", timeout)
+func (t *TestPod) WaitForFail(ctx context.Context) {
+	err := e2epod.WaitForPodFailedReason(ctx, t.client, t.pod, "", pollTimeoutSlow)
 	framework.ExpectNoError(err)
 }
 
@@ -212,17 +212,19 @@ func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context, timeout time.Duration) {
-	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, timeout)
+func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context) {
+	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, pollTimeout)
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) WaitForLog(ctx context.Context, container string, expectedString string, timeout time.Duration) {
-	_, err := e2epodooutput.LookForStringInLogWithoutKubectl(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, timeout)
+func (t *TestPod) WaitForLog(ctx context.Context, container string, expectedString string) {
+	_, err := e2epodooutput.LookForStringInLogWithoutKubectl(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, pollTimeout)
 	framework.ExpectNoError(err)
 }
 
-func (t *TestPod) CheckSidecarNeverTerminated(ctx context.Context, isNativeSidecar bool) {
+func (t *TestPod) CheckSidecarNeverTerminatedAfterAWhile(ctx context.Context, isNativeSidecar bool) {
+	time.Sleep(pollTimeout)
+
 	var err error
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
@@ -653,7 +655,7 @@ func (t *TestGCPServiceAccount) Create(ctx context.Context) {
 	t.serviceAccount, err = iamService.Projects.ServiceAccounts.Create("projects/"+t.serviceAccount.ProjectId, request).Do()
 	framework.ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, PollInterval, PollTimeout, true, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(context.Context) (bool, error) {
 		if _, e := iamService.Projects.ServiceAccounts.Get(t.serviceAccount.Name).Do(); e != nil {
 			//nolint:nilerr
 			return false, nil
@@ -722,7 +724,7 @@ func (t *TestGCPProjectIAMPolicyBinding) Create(ctx context.Context) {
 	crmService, err := cloudresourcemanager.NewService(ctx)
 	framework.ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, PollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
 		if addBinding(crmService, t.projectID, t.member, t.role) != nil {
 			//nolint:nilerr
 			return false, nil
@@ -738,7 +740,7 @@ func (t *TestGCPProjectIAMPolicyBinding) Cleanup(ctx context.Context) {
 	crmService, err := cloudresourcemanager.NewService(ctx)
 	framework.ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, PollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
 		if removeMember(crmService, t.projectID, t.member, t.role) != nil {
 			//nolint:nilerr
 			return false, nil
@@ -889,9 +891,9 @@ func (t *TestDeployment) WaitForRunningAndReady(ctx context.Context) {
 	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, corev1.PodRunning, pollTimeoutSlow)
 }
 
-func (t *TestDeployment) WaitForRunningAndReadyWithTimeout(ctx context.Context, timeout time.Duration) {
+func (t *TestDeployment) WaitForRunningAndReadyWithTimeout(ctx context.Context) {
 	framework.Logf("Waiting Deployment %s to running and ready", t.deployment.Name)
-	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, corev1.PodRunning, timeout)
+	WaitForWorkloadReady(ctx, t.client, t.namespace.Name, t.deployment.Spec.Selector, *t.deployment.Spec.Replicas, corev1.PodRunning, pollTimeoutSlow)
 }
 
 func (t *TestDeployment) Scale(ctx context.Context, replica int) {
@@ -1045,8 +1047,8 @@ func (t *TestJob) WaitForJobFailed() {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestJob) WaitForAllJobPodsGone(ctx context.Context, timeout time.Duration) {
-	err := wait.PollUntilContextTimeout(ctx, framework.Poll, timeout, true, func(ctx context.Context) (bool, error) {
+func (t *TestJob) WaitForAllJobPodsGone(ctx context.Context) {
+	err := wait.PollUntilContextTimeout(ctx, framework.Poll, pollTimeout, true, func(ctx context.Context) (bool, error) {
 		pods, err := e2ejob.GetJobPods(ctx, t.client, t.namespace.Name, t.job.Name)
 		if err != nil {
 			return false, err

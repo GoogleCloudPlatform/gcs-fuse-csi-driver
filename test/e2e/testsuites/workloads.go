@@ -137,7 +137,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tDeployment.Scale(ctx, 0)
 
 		ginkgo.By("Checking that the deployment is in ready status")
-		tDeployment.WaitForRunningAndReadyWithTimeout(ctx, specs.PollTimeout)
+		tDeployment.WaitForRunningAndReadyWithTimeout(ctx)
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -250,6 +250,6 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		tJob.WaitForJobFailed()
 
 		ginkgo.By("The pod should terminate fast")
-		tJob.WaitForAllJobPodsGone(ctx, specs.PollTimeout)
+		tJob.WaitForAllJobPodsGone(ctx)
 	})
 }
