@@ -13,19 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-kind: PersistentVolumeClaim
-apiVersion: v1
-metadata:
-  namespace: gcs-csi-example
-  name: local-pd
-spec:
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: standard-rwo
-  resources:
-    requests:
-      storage: 100Gi
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -73,17 +60,17 @@ spec:
     volumeMounts:
     - name: gcs-fuse-csi-ephemeral-non-root
       mountPath: /home/jovyan/gcs_bucket # jovyan is the default user
-    - name: local-pd-pvc
-      mountPath: /home/jovyan/local_disk # jovyan is the default user
   serviceAccountName: gcs-csi
   volumes:
-  - name: local-pd-pvc
-    persistentVolumeClaim:
-      claimName: local-pd
-      readOnly: false
   - name: gcs-fuse-csi-ephemeral-non-root
     csi:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: <bucket-name> # unique bucket name
+        fileCacheCapacity: "-1"
+        fileCacheForRangeRead: "true"
+        metadataStatCacheCapacity: "-1"
+        metadataTypeCacheCapacity: "-1"
+        metadataCacheTTLSeconds: "-1"
+        gcsfuseLoggingSeverity: "debug"
         mountOptions: "implicit-dirs,uid=1000,gid=100" # the image uses uid 1000 and gid 100 by default
