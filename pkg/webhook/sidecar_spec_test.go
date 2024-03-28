@@ -54,7 +54,7 @@ var commonTestCases = []testCase{
 		isInitContainer:  true,
 	},
 	{
-		name: "should pass the validation with the both the init and regular sidecar containers",
+		name: "should pass the validation with the both init and regular sidecar containers",
 		pod: &corev1.Pod{
 			Spec: corev1.PodSpec{
 				Containers:     []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
@@ -292,6 +292,40 @@ var commonTestCases = []testCase{
 		},
 		expectedInjected: false,
 	},
+	{
+		name: "should pass the validation with a custom buffer volume",
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes: append(GetSidecarContainerVolumeSpec(), corev1.Volume{
+					Name: SidecarContainerBufferVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "custom-buffer-volume-pvc",
+						},
+					},
+				}),
+			},
+		},
+		expectedInjected: true,
+	},
+	{
+		name: "should pass the validation with a custom cache volume",
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+				Volumes: append(GetSidecarContainerVolumeSpec(), corev1.Volume{
+					Name: SidecarContainerCacheVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "custom-cache-volume-pvc",
+						},
+					},
+				}),
+			},
+		},
+		expectedInjected: true,
+	},
 }
 
 func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
@@ -316,7 +350,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			expectedInjected: false,
 		},
 		testCase{
-			name: "should fail the validation when the sidecar container is at position 1",
+			name: "should fail the validation when the init sidecar container is not at position 0",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -406,7 +440,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(SidecarContainerName, tc.pod, GetSidecarContainerVolumeSpec(tc.pod.Spec.Volumes...), []corev1.VolumeMount{TmpVolumeMount}, true)
+		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(tc.pod, true)
 
 		if injected != tc.expectedInjected {
 			t.Errorf("got injection result %v, but expected %v", injected, tc.expectedInjected)
@@ -443,7 +477,7 @@ func TestValidatePodHasSidecarContainerInjectedForManualInjection(t *testing.T) 
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(SidecarContainerName, tc.pod, GetSidecarContainerVolumeSpec(tc.pod.Spec.Volumes...), []corev1.VolumeMount{TmpVolumeMount}, false)
+		injected, isInitContainer := ValidatePodHasSidecarContainerInjected(tc.pod, false)
 
 		if injected != tc.expectedInjected {
 			t.Errorf("got injection result %v, but expected %v", injected, tc.expectedInjected)

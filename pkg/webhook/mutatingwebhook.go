@@ -85,7 +85,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", GcsFuseVolumeEnableAnnotation))
 	}
 
-	sidecarInjected, _ := ValidatePodHasSidecarContainerInjected(SidecarContainerName, pod, GetSidecarContainerVolumeSpec(), []corev1.VolumeMount{TmpVolumeMount}, true)
+	sidecarInjected, _ := ValidatePodHasSidecarContainerInjected(pod, true)
 	if sidecarInjected {
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
@@ -202,16 +202,7 @@ func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
 	return image, nil
 }
 
-func MustParseVersion(v string) *version.Version {
-	minimumSupportedVersion, err := version.ParseGeneric(v)
-	if err != nil {
-		panic(err)
-	}
-
-	return minimumSupportedVersion
-}
-
-var minimumSupportedVersion = MustParseVersion("1.29.0")
+var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
 
 func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	clusterNodes, err := si.NodeLister.List(labels.Everything())

@@ -39,11 +39,6 @@ const (
 )
 
 var (
-	TmpVolumeMount = corev1.VolumeMount{
-		Name:      SidecarContainerTmpVolumeName,
-		MountPath: SidecarContainerTmpVolumeMountPath,
-	}
-
 	tmpVolume = corev1.Volume{
 		Name: SidecarContainerTmpVolumeName,
 		VolumeSource: corev1.VolumeSource{
@@ -63,6 +58,21 @@ var (
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
+	}
+
+	TmpVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerTmpVolumeName,
+		MountPath: SidecarContainerTmpVolumeMountPath,
+	}
+
+	buffVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerBufferVolumeName,
+		MountPath: SidecarContainerBufferVolumeMountPath,
+	}
+
+	cacheVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerCacheVolumeName,
+		MountPath: SidecarContainerCacheVolumeMountPath,
 	}
 )
 
@@ -103,25 +113,14 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 			Limits:   limits,
 			Requests: requests,
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      SidecarContainerTmpVolumeName,
-				MountPath: SidecarContainerTmpVolumeMountPath,
-			},
-			{
-				Name:      SidecarContainerBufferVolumeName,
-				MountPath: SidecarContainerBufferVolumeMountPath,
-			},
-			{
-				Name:      SidecarContainerCacheVolumeName,
-				MountPath: SidecarContainerCacheVolumeMountPath,
-			},
-		},
+		VolumeMounts: []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount},
 	}
 
 	return container
 }
 
+// GetSidecarContainerVolumeSpec returns volumes required by the sidecar container,
+// skipping the existing custom volumes.
 func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Volume {
 	volumes := []corev1.Volume{tmpVolume}
 	var bufferVolumeExists, cacheVolumeExists bool
@@ -146,18 +145,18 @@ func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Vo
 	return volumes
 }
 
-func GetSidecarContainerVolumeMountsSpec() []corev1.VolumeMount {
-	buffVolumeMount := corev1.VolumeMount{
-		Name:      SidecarContainerBufferVolumeName,
-		MountPath: SidecarContainerBufferVolumeMountPath,
-	}
-
-	cacheVolumeMount := corev1.VolumeMount{
-		Name:      SidecarContainerCacheVolumeName,
-		MountPath: SidecarContainerCacheVolumeMountPath,
-	}
-
-	return []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount}
+// ValidatePodHasSidecarContainerInjected validates the following:
+//  1. One of the container or init container name matches the sidecar container name.
+//  2. The container uses NobodyUID and NobodyGID.
+//  3. The container uses the temp volume.
+//  4. The temp volume have correct volume mount paths.
+//  5. The Pod has the temp volume and the volume is an emptyDir volumes.
+//
+// Returns two booleans:
+//  1. True when either native or regular sidecar is present.
+//  2. True iff the sidecar present is a native sidecar container.
+func ValidatePodHasSidecarContainerInjected(pod *corev1.Pod, shouldInjectedByWebhook bool) (bool, bool) {
+	return validatePodHasSidecarContainerInjected(SidecarContainerName, pod, GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), []corev1.VolumeMount{TmpVolumeMount}, shouldInjectedByWebhook)
 }
 
 func sidecarContainerPresent(containerName string, containers []corev1.Container, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) bool {
@@ -217,18 +216,8 @@ func sidecarContainerPresent(containerName string, containers []corev1.Container
 	return false
 }
 
-// ValidatePodHasSidecarContainerInjected validates the following:
-//  1. One of the container or init container name matches the sidecar container name.
-//  2. The container uses NobodyUID and NobodyGID.
-//  3. The container uses the temp volume.
-//  4. The temp volume have correct volume mount paths.
-//  5. The Pod has the temp volume and the volume is an emptyDir volumes.
-//
-// Returns two booleans:
-//  1. True when either native or regular sidecar is present.
-//  2. True iff the sidecar present is a native sidecar container.
-func ValidatePodHasSidecarContainerInjected(containerName string, pod *corev1.Pod, volumes []corev1.Volume, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) (bool, bool) {
-	// Checks that the volumes are present in pod.
+func validatePodHasSidecarContainerInjected(containerName string, pod *corev1.Pod, volumes []corev1.Volume, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) (bool, bool) {
+	// Checks that the default emptyDir volumes are present in pod, skipping the custom volumes.
 	volumesInjected := func(pod *corev1.Pod) bool {
 		volumeMap := map[string]corev1.EmptyDirVolumeSource{}
 		for _, v := range volumes {
