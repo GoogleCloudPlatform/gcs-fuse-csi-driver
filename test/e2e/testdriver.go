@@ -122,7 +122,9 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 
 	ginkgo.DeferCleanup(func() {
 		for _, v := range n.volumeStore {
-			n.deleteBucket(ctx, v.bucketName)
+			if err := n.deleteBucket(ctx, v.bucketName); err != nil {
+				e2eframework.Logf("failed to delete bucket: %v", err)
+			}
 		}
 		n.volumeStore = []*gcsVolume{}
 
@@ -361,21 +363,23 @@ func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountN
 }
 
 // deleteBucket deletes the GCS bucket.
-func (n *GCSFuseCSITestDriver) deleteBucket(ctx context.Context, bucketName string) {
+func (n *GCSFuseCSITestDriver) deleteBucket(ctx context.Context, bucketName string) error {
 	if bucketName == specs.InvalidVolume {
-		return
+		return nil
 	}
 
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
-		e2eframework.Failf("Failed to prepare storage service: %v", err)
+		return fmt.Errorf("failed to prepare storage service: %w", err)
 	}
 
 	ginkgo.By(fmt.Sprintf("Deleting bucket %q", bucketName))
 	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: bucketName})
 	if err != nil {
-		e2eframework.Failf("Failed to delete the GCS bucket: %v", err)
+		return fmt.Errorf("failed to delete the GCS bucket: %w", err)
 	}
+
+	return nil
 }
 
 func prepareGcpSAName(ns string) string {
