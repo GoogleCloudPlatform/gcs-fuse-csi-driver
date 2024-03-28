@@ -47,3 +47,6 @@ Session.vim
 # Kubernetes test files
 _artifacts/
 _rundir/
+
+# Python cache
+__pycache__

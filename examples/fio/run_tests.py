@@ -45,11 +45,8 @@ for bucketName, fileSize, blockSize in bucketName_fileSize_blockSize:
                         f"--set fio.fileSize={fileSize}",
                         f"--set fio.blockSize={blockSize}"]
             
-            match fileSize:
-                case "200G":
-                    commands.append("--set gcsfuse.metadataStatCacheCapacity=0")
-                case "100M":
-                    commands.append("--set fio.filesPerThread=1000")
+            if fileSize == "100M":
+                commands.append("--set fio.filesPerThread=1000")
             
             helm_command = " ".join(commands)
 
