@@ -24,12 +24,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
-var nativeSidecarMinimumVersion = webhook.MustParseVersion("1.29.0")
+var nativeSidecarMinimumVersion = version.MustParseGeneric("1.29.0")
 
 func clusterDownGKE(testParams *TestParameters) error {
 	//nolint:gosec
