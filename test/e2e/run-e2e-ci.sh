@@ -43,7 +43,7 @@ export PATH=$PATH:/usr/local/go/bin && go version && rm go_tar.tar.gz
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.16.0
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
 
 # Build e2e-test CLI
 go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
