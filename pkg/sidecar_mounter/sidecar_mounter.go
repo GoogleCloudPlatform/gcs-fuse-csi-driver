@@ -18,6 +18,7 @@ limitations under the License.
 package sidecarmounter
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -102,6 +103,11 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
 
+		loggingSeverity := mc.ConfigFileFlagMap["logging:severity"]
+		if loggingSeverity == "debug" || loggingSeverity == "trace" {
+			go logMemoryUsage(ctx, cmd.Process.Pid)
+		}
+
 		// Since the gcsfuse has taken over the file descriptor,
 		// closing the file descriptor to avoid other process forking it.
 		syscall.Close(mc.FileDescriptor)
@@ -118,4 +124,42 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	}()
 
 	return nil
+}
+
+// logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every minute.
+func logMemoryUsage(ctx context.Context, pid int) {
+	ticker := time.NewTicker(time.Minute)
+	filepath := fmt.Sprintf("/proc/%d/status", pid)
+	file, err := os.Open(filepath)
+	if err != nil {
+		klog.Errorf("failed to open %v: %v", filepath, err)
+
+		return
+	}
+	defer file.Close()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, err := file.Seek(0, io.SeekStart)
+			if err != nil {
+				klog.Errorf("failed to seek to the file beginning: %v", err)
+
+				return
+			}
+
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "VmRSS:") {
+					fields := strings.Fields(line)
+					klog.Infof("gcsfuse with PID %v uses VmRSS: %v %v", pid, fields[1], fields[2])
+
+					break
+				}
+			}
+		}
+	}
 }
