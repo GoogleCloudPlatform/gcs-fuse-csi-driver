@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -106,6 +107,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		loggingSeverity := mc.ConfigFileFlagMap["logging:severity"]
 		if loggingSeverity == "debug" || loggingSeverity == "trace" {
 			go logMemoryUsage(ctx, cmd.Process.Pid)
+			go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
 		}
 
 		// Since the gcsfuse has taken over the file descriptor,
@@ -161,5 +163,44 @@ func logMemoryUsage(ctx context.Context, pid int) {
 				}
 			}
 		}
+	}
+}
+
+// logVolumeUsage logs gcsfuse process buffer and cache volume usage every 30 seconds.
+func logVolumeUsage(ctx context.Context, bufferDir, cacheDir string) {
+	ticker := time.NewTicker(30 * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// TODO: this method does not work for the buffer dir
+			logVolumeTotalSize(bufferDir)
+			logVolumeTotalSize(cacheDir)
+		}
+	}
+}
+
+// logVolumeTotalSize logs the total volume size of dirPath.
+// Warning: this func uses filepath.Walk func that is less efficient when dealing with very large directory trees.
+func logVolumeTotalSize(dirPath string) {
+	var totalSize int64
+
+	err := filepath.Walk(dirPath, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		klog.Errorf("failed to calculate volume total size for %q: %v", dirPath, err)
+	} else {
+		klog.Infof("total volume size of %v: %v bytes", dirPath, totalSize)
 	}
 }
