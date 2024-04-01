@@ -95,6 +95,38 @@ var commonTestCases = []testCase{
 		expectedInjected: true,
 	},
 	{
+		// This test ensures that we meet backwards compatibility.
+		//
+		// First version of GCSFuse only supported tmp volume. Any workloads using this sidecar version
+		// should still be able to pass validation after an upgrade that affects node.
+
+		name: "should pass the validation with only tmp volume/volumeMount sidecar container",
+		pod: &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  SidecarContainerName,
+						Image: FakeConfig().ContainerImage,
+						SecurityContext: &corev1.SecurityContext{
+							RunAsUser:  ptr.To(int64(NobodyUID)),
+							RunAsGroup: ptr.To(int64(NobodyGID)),
+						},
+						VolumeMounts: []corev1.VolumeMount{
+							{
+								Name:      SidecarContainerTmpVolumeName,
+								MountPath: SidecarContainerTmpVolumeMountPath,
+							},
+						},
+					},
+				},
+				Volumes: []corev1.Volume{
+					tmpVolume,
+				},
+			},
+		},
+		expectedInjected: true,
+	},
+	{
 		name: "should pass the validation with a private sidecar container image",
 		pod: &corev1.Pod{
 			Spec: corev1.PodSpec{
