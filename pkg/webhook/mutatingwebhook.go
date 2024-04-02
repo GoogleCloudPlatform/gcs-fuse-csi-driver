@@ -27,7 +27,6 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/version"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
@@ -44,8 +43,6 @@ const (
 	memoryRequestAnnotation           = "gke-gcsfuse/memory-request"
 	ephemeralStorageLimitAnnotation   = "gke-gcsfuse/ephemeral-storage-limit"
 	ephemeralStorageRequestAnnotation = "gke-gcsfuse/ephemeral-storage-request"
-
-	IstioSidecarName = "istio-proxy"
 )
 
 type SidecarInjector struct {
@@ -200,78 +197,4 @@ func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
 	}
 
 	return image, nil
-}
-
-var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
-
-func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
-	clusterNodes, err := si.NodeLister.List(labels.Everything())
-	if err != nil {
-		return false, fmt.Errorf("failed to get cluster nodes: %w", err)
-	}
-
-	supportsNativeSidecar := true
-	for _, node := range clusterNodes {
-		nodeVersion, err := version.ParseGeneric(node.Status.NodeInfo.KubeletVersion)
-		if !nodeVersion.AtLeast(minimumSupportedVersion) || err != nil {
-			if err != nil {
-				klog.Errorf(`invalid node gke version: could not get node "%s" k8s release from version "%s": "%v"`, node.Name, nodeVersion, err)
-			}
-			supportsNativeSidecar = false
-
-			break
-		}
-	}
-
-	if len(clusterNodes) == 0 {
-		// Rely on cluster version in the event there's no nodes to reference.
-		if si.ServerVersion != nil {
-			supportsNativeSidecar = si.ServerVersion.AtLeast(minimumSupportedVersion)
-		} else {
-			supportsNativeSidecar = false
-		}
-	}
-
-	return supportsNativeSidecar, nil
-}
-
-func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
-	if supportsNativeSidecar {
-		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, GetNativeSidecarContainerSpec(config), getInjectIndex(pod.Spec.InitContainers))
-	} else {
-		pod.Spec.Containers = insert(pod.Spec.Containers, GetSidecarContainerSpec(config), getInjectIndex(pod.Spec.Containers))
-	}
-}
-
-func insert(a []corev1.Container, value corev1.Container, index int) []corev1.Container {
-	// For index == len(a)
-	if len(a) == index {
-		return append(a, value)
-	}
-
-	// For index < len(a)
-	a = append(a[:index+1], a[index:]...)
-	a[index] = value
-
-	return a
-}
-
-func getInjectIndex(containers []corev1.Container) int {
-	idx, present := containerPresent(containers, IstioSidecarName)
-	if present {
-		return idx + 1
-	}
-
-	return 0
-}
-
-// Checks by name matching that the container is present in container list.
-func containerPresent(containers []corev1.Container, container string) (int, bool) {
-	for idx, c := range containers {
-		if c.Name == container {
-			return idx, true
-		}
-	}
-
-	return -1, false
 }
