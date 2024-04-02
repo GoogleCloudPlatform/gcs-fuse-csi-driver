@@ -28,8 +28,6 @@ import (
 
 const IstioSidecarName = "istio-proxy"
 
-var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
-
 func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	clusterNodes, err := si.NodeLister.List(labels.Everything())
 	if err != nil {
