@@ -98,9 +98,6 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, sidecar image %q, CPU request %q, CPU limit %q, memory request %q, memory limit %q, ephemeral storage request %q, ephemeral storage limit %q",
-		pod.Name, pod.GenerateName, pod.Namespace, config.ContainerImage, &config.CPURequest, &config.CPULimit, &config.MemoryRequest, &config.MemoryLimit, &config.EphemeralStorageRequest, &config.EphemeralStorageLimit)
-
 	// Check support for native sidecar.
 	supportsNativeSidecar, err := si.supportsNativeSidecar()
 	if err != nil {
@@ -109,8 +106,11 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	// Inject container.
 	injectSidecarContainer(pod, config, supportsNativeSidecar)
-
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
+
+	// Log pod mutation.
+	LogPodMutation(pod, config)
+
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))

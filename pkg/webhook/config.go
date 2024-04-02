@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/klog/v2"
 )
 
 type Config struct {
@@ -107,8 +108,8 @@ func populateResource(requestQuantity, limitQuantity *resource.Quantity, default
 	}
 }
 
-// use the default config values,
-// overwritten by the user input from pod annotations.
+// prepareConfig overwrittes config values set by user input from pod annotations,
+// remaining values that are not specified by user are kept as the default config values.
 func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
 	config := &Config{
 		ContainerImage:  si.Config.ContainerImage,
@@ -129,4 +130,20 @@ func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config
 	populateResource(&config.EphemeralStorageRequest, &config.EphemeralStorageLimit, si.Config.EphemeralStorageRequest, si.Config.EphemeralStorageLimit)
 
 	return config, nil
+}
+
+func LogPodMutation(pod *corev1.Pod, sidecarConfig *Config) {
+	klog.Infof("mutating Pod. Name: %q, GenerateName: %q, Namespace: %q, Sidecar Image: %s, CPU Request: %q, CPU limit: %q, Memory request: %q, Memory limit: %q, Ephemeral storage request: %q, Ephemeral storage limit: %q, Pull policy: %s",
+		pod.Name,
+		pod.GenerateName,
+		pod.Namespace,
+		sidecarConfig.ContainerImage,
+		sidecarConfig.CPURequest.String(),
+		sidecarConfig.CPULimit.String(),
+		sidecarConfig.MemoryRequest.String(),
+		sidecarConfig.MemoryLimit.String(),
+		sidecarConfig.EphemeralStorageRequest.String(),
+		sidecarConfig.EphemeralStorageLimit.String(),
+		sidecarConfig.ImagePullPolicy,
+	)
 }
