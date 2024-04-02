@@ -156,7 +156,7 @@ func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Vo
 //  1. True when either native or regular sidecar is present.
 //  2. True iff the sidecar present is a native sidecar container.
 func ValidatePodHasSidecarContainerInjected(pod *corev1.Pod, shouldInjectedByWebhook bool) (bool, bool) {
-	return validatePodHasSidecarContainerInjected(SidecarContainerName, pod, GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), []corev1.VolumeMount{TmpVolumeMount}, shouldInjectedByWebhook)
+	return validatePodHasSidecarContainerInjected(SidecarContainerName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount}, shouldInjectedByWebhook)
 }
 
 func sidecarContainerPresent(containerName string, containers []corev1.Container, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) bool {
@@ -224,6 +224,7 @@ func validatePodHasSidecarContainerInjected(containerName string, pod *corev1.Po
 			volumeMap[v.Name] = *v.EmptyDir
 		}
 
+		// volumeMap/volumes represents all of the volumes that should be present in the pod.
 		for _, v := range pod.Spec.Volumes {
 			if _, exists := volumeMap[v.Name]; exists {
 				if v.EmptyDir != nil {
