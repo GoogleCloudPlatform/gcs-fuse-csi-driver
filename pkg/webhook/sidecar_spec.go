@@ -19,7 +19,6 @@ package webhook
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
@@ -254,24 +253,4 @@ func validatePodHasSidecarContainerInjected(containerName string, pod *corev1.Po
 	}
 
 	return true, containerAndVolumeMountPresentInInitContainers
-}
-
-func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {
-	limitsResourceList := corev1.ResourceList{}
-	requestsResourceList := corev1.ResourceList{}
-
-	checkZeroQuantity := func(rl map[corev1.ResourceName]resource.Quantity, rn corev1.ResourceName, q resource.Quantity) {
-		if !q.IsZero() {
-			rl[rn] = q
-		}
-	}
-
-	checkZeroQuantity(limitsResourceList, corev1.ResourceCPU, c.CPULimit)
-	checkZeroQuantity(limitsResourceList, corev1.ResourceMemory, c.MemoryLimit)
-	checkZeroQuantity(limitsResourceList, corev1.ResourceEphemeralStorage, c.EphemeralStorageLimit)
-	checkZeroQuantity(requestsResourceList, corev1.ResourceCPU, c.CPURequest)
-	checkZeroQuantity(requestsResourceList, corev1.ResourceMemory, c.MemoryRequest)
-	checkZeroQuantity(requestsResourceList, corev1.ResourceEphemeralStorage, c.EphemeralStorageRequest)
-
-	return limitsResourceList, requestsResourceList
 }
