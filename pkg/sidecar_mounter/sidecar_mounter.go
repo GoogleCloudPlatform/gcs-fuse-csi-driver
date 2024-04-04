@@ -126,9 +126,9 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	return nil
 }
 
-// logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every minute.
+// logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.
 func logMemoryUsage(ctx context.Context, pid int) {
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	filepath := fmt.Sprintf("/proc/%d/status", pid)
 	file, err := os.Open(filepath)
 	if err != nil {
