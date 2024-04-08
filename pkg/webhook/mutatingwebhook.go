@@ -26,12 +26,9 @@ import (
 
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/version"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/util/parsers"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -44,8 +41,6 @@ const (
 	memoryRequestAnnotation           = "gke-gcsfuse/memory-request"
 	ephemeralStorageLimitAnnotation   = "gke-gcsfuse/ephemeral-storage-limit"
 	ephemeralStorageRequestAnnotation = "gke-gcsfuse/ephemeral-storage-request"
-
-	IstioSidecarName = "istio-proxy"
 )
 
 type SidecarInjector struct {
@@ -103,9 +98,6 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	klog.Infof("mutating Pod: Name %q, GenerateName %q, Namespace %q, sidecar image %q, CPU request %q, CPU limit %q, memory request %q, memory limit %q, ephemeral storage request %q, ephemeral storage limit %q",
-		pod.Name, pod.GenerateName, pod.Namespace, config.ContainerImage, &config.CPURequest, &config.CPULimit, &config.MemoryRequest, &config.MemoryLimit, &config.EphemeralStorageRequest, &config.EphemeralStorageLimit)
-
 	// Check support for native sidecar.
 	supportsNativeSidecar, err := si.supportsNativeSidecar()
 	if err != nil {
@@ -114,164 +106,15 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	// Inject container.
 	injectSidecarContainer(pod, config, supportsNativeSidecar)
-
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
+
+	// Log pod mutation.
+	LogPodMutation(pod, config)
+
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
-}
-
-// populateResource assigns request and limits based on the following conditions:
-//  1. If both of the request and limit are unset, assign the default values.
-//  2. If one of the request or limit is set and another is unset, enforce them to be set as the same.
-//
-// Note: when the annotation limit is zero and request is unset, we set request to use the default value.
-func populateResource(requestQuantity, limitQuantity *resource.Quantity, defaultRequestQuantity, defaultLimitQuantity resource.Quantity) {
-	// Use defaults when no annotations are set.
-	if requestQuantity.Format == "" && limitQuantity.Format == "" {
-		*requestQuantity = defaultRequestQuantity
-		*limitQuantity = defaultLimitQuantity
-	}
-
-	// Set request to equal default when limit is zero/unlimited and request is unset.
-	if limitQuantity.IsZero() && requestQuantity.Format == "" {
-		*requestQuantity = defaultRequestQuantity
-	}
-
-	// Set request to equal limit when request annotation is not provided.
-	if requestQuantity.Format == "" {
-		*requestQuantity = *limitQuantity
-	}
-
-	// Set limit to equal request when limit annotation is not provided.
-	if limitQuantity.Format == "" {
-		*limitQuantity = *requestQuantity
-	}
-}
-
-// use the default config values,
-// overwritten by the user input from pod annotations.
-func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
-	config := &Config{
-		ContainerImage:  si.Config.ContainerImage,
-		ImagePullPolicy: si.Config.ImagePullPolicy,
-	}
-
-	jsonData, err := json.Marshal(annotations)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal pod annotations: %w", err)
-	}
-
-	if err := json.Unmarshal(jsonData, config); err != nil {
-		return nil, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: %w", err)
-	}
-
-	populateResource(&config.CPURequest, &config.CPULimit, si.Config.CPURequest, si.Config.CPULimit)
-	populateResource(&config.MemoryRequest, &config.MemoryLimit, si.Config.MemoryRequest, si.Config.MemoryLimit)
-	populateResource(&config.EphemeralStorageRequest, &config.EphemeralStorageLimit, si.Config.EphemeralStorageRequest, si.Config.EphemeralStorageLimit)
-
-	return config, nil
-}
-
-// iterates the container list,
-// if a container is named "gke-gcsfuse-sidecar",
-// extract the container image and check if the image is valid,
-// then removes this container from the container list.
-func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
-	var image string
-	var index int
-	for i, c := range pod.Spec.Containers {
-		if c.Name == SidecarContainerName {
-			image = c.Image
-			index = i
-
-			if _, _, _, err := parsers.ParseImageName(image); err != nil {
-				return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
-			}
-		}
-	}
-
-	if image != "" {
-		copy(pod.Spec.Containers[index:], pod.Spec.Containers[index+1:])
-		pod.Spec.Containers = pod.Spec.Containers[:len(pod.Spec.Containers)-1]
-	}
-
-	return image, nil
-}
-
-var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
-
-func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
-	clusterNodes, err := si.NodeLister.List(labels.Everything())
-	if err != nil {
-		return false, fmt.Errorf("failed to get cluster nodes: %w", err)
-	}
-
-	supportsNativeSidecar := true
-	for _, node := range clusterNodes {
-		nodeVersion, err := version.ParseGeneric(node.Status.NodeInfo.KubeletVersion)
-		if !nodeVersion.AtLeast(minimumSupportedVersion) || err != nil {
-			if err != nil {
-				klog.Errorf(`invalid node gke version: could not get node "%s" k8s release from version "%s": "%v"`, node.Name, nodeVersion, err)
-			}
-			supportsNativeSidecar = false
-
-			break
-		}
-	}
-
-	if len(clusterNodes) == 0 {
-		// Rely on cluster version in the event there's no nodes to reference.
-		if si.ServerVersion != nil {
-			supportsNativeSidecar = si.ServerVersion.AtLeast(minimumSupportedVersion)
-		} else {
-			supportsNativeSidecar = false
-		}
-	}
-
-	return supportsNativeSidecar, nil
-}
-
-func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
-	if supportsNativeSidecar {
-		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, GetNativeSidecarContainerSpec(config), getInjectIndex(pod.Spec.InitContainers))
-	} else {
-		pod.Spec.Containers = insert(pod.Spec.Containers, GetSidecarContainerSpec(config), getInjectIndex(pod.Spec.Containers))
-	}
-}
-
-func insert(a []corev1.Container, value corev1.Container, index int) []corev1.Container {
-	// For index == len(a)
-	if len(a) == index {
-		return append(a, value)
-	}
-
-	// For index < len(a)
-	a = append(a[:index+1], a[index:]...)
-	a[index] = value
-
-	return a
-}
-
-func getInjectIndex(containers []corev1.Container) int {
-	idx, present := containerPresent(containers, IstioSidecarName)
-	if present {
-		return idx + 1
-	}
-
-	return 0
-}
-
-// Checks by name matching that the container is present in container list.
-func containerPresent(containers []corev1.Container, container string) (int, bool) {
-	for idx, c := range containers {
-		if c.Name == container {
-			return idx, true
-		}
-	}
-
-	return -1, false
 }
