@@ -19,7 +19,10 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"cloud.google.com/go/compute/metadata"
@@ -48,19 +51,13 @@ func NewMetadataService(identityPool, identityProvider string, clientset clients
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
 
-	if identityPool == "" {
-		klog.Infof("got empty identityPool, constructing the identityPool using projectID")
-		identityPool = projectID + ".svc.id.goog"
-	}
-
-	if identityProvider == "" {
-		klog.Infof("got empty identityProvider, constructing the identityProvider using the gke-metadata-server flags")
-		ds, err := clientset.GetDaemonSet(context.TODO(), "kube-system", "gke-metadata-server")
+	identityPool, identityProvider, err = gkeWorkloadIdentity(projectID, identityPool, identityProvider, clientset)
+	if err != nil {
+		err2 := err
+		identityPool, identityProvider, err = fleetWorkloadIdentity()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get gke-metadata-server DaemonSet spec: %w", err)
+			return nil, err2
 		}
-
-		identityProvider = getIdentityProvider(ds)
 	}
 
 	return &metadataServiceManager{
@@ -91,4 +88,65 @@ func getIdentityProvider(ds *appsv1.DaemonSet) string {
 	}
 
 	return ""
+}
+
+// JSON key file types.
+const (
+	externalAccountKey = "external_account"
+)
+
+// credentialsFile is the unmarshalled representation of a credentials file.
+type credentialsFile struct {
+	Type string `json:"type"`
+	// External Account fields
+	Audience string `json:"audience"`
+}
+
+func gkeWorkloadIdentity(projectID string, identityPool string, identityProvider string, clientset clientset.Interface) (string, string, error) {
+	if identityPool == "" {
+		klog.Infof("got empty identityPool, constructing the identityPool using projectID")
+		identityPool = projectID + ".svc.id.goog"
+	}
+
+	if identityProvider == "" {
+		klog.Infof("got empty identityProvider, constructing the identityProvider using the gke-metadata-server flags")
+		ds, err := clientset.GetDaemonSet(context.TODO(), "kube-system", "gke-metadata-server")
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get gke-metadata-server DaemonSet spec: %w", err)
+		}
+
+		identityProvider = getIdentityProvider(ds)
+	}
+	return identityPool, identityProvider, nil
+}
+
+func fleetWorkloadIdentity() (string, string, error) {
+	const envVar = "GOOGLE_APPLICATION_CREDENTIALS"
+	var jsonData []byte
+	var err error
+	if filename := os.Getenv(envVar); filename != "" {
+		jsonData, err = os.ReadFile(filepath.Clean(filename))
+		if err != nil {
+			return "", "", fmt.Errorf("google: error getting credentials using %v environment variable: %v", envVar, err)
+		}
+	}
+
+	// Parse jsonData as one of the other supported credentials files.
+	var f credentialsFile
+	if err := json.Unmarshal(jsonData, &f); err != nil {
+		return "", "", err
+	}
+
+	if f.Type != externalAccountKey {
+		return "", "", fmt.Errorf("google: unexpected credentials type: %v, expected: %v", f.Type, externalAccountKey)
+	}
+
+	split := strings.SplitN(f.Audience, ":", 3)
+	if split == nil || len(split) < 3 {
+		return "", "", fmt.Errorf("google: unexpected audience value: %v", f.Audience)
+	}
+	idPool := split[1]
+	idProvider := split[2]
+
+	return idPool, idProvider, nil
 }
