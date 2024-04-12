@@ -31,11 +31,15 @@ After the CSI driver creates the mount point, it will inform kubelet to proceed 
 
 In the sidecar container, which is an unprivileged container, a process connects to the UDS and calls [recvmsg(2)](https://man7.org/linux/man-pages/man2/recvmsg.2.html) to receive the file descriptor. Then the process calls Cloud Storage FUSE passing the file descriptor to start to serve the FUSE mount point. Instead of passing the actual mount point path, we pass the file descriptor to Cloud Storage FUSE as it supports the [magic /dev/fd/N syntax](https://github.com/GoogleCloudPlatform/gcsfuse/blob/8ab11cd07016a247f64023697383c6e88bc022b0/vendor/github.com/jacobsa/fuse/mount_linux.go#L128-L134). Before the Cloud Storage FUSE takes over the file descriptor, any operations against the mount point will hang.
 
+Since the CSI driver sets `requiresRepublish: true`, it periodically checks whether the GCSFuse volume is still needed by the containers. When the CSI driver detects all the main workload containers have terminated, it creates an exit file in a Pod emptyDir volume to notify the sidecar container to terminate.
+
 ### Implications of the sidecar container design
 
 Until the Cloud Storage FUSE takes over the file descriptor, the mount point is not accessible. Any operations against the mount point will hang, including [stat(2)](https://man7.org/linux/man-pages/man2/lstat.2.html) that is used to check if the mount point exists.
 
 The sidecar container, or more precisely, the Cloud Storage FUSE process that serves the mount point needs to remain running for the full duration of the Pod's lifecycle. If the Cloud Storage FUSE process is killed, the workload application will throw IO error `Transport endpoint is not connected`.
+
+The sidecar container auto-termination depends on Kubernetes API correctly reporting the Pod status. However, due to a [Kubernetes issue](https://github.com/kubernetes/kubernetes/issues/106896), container status is not updated after termination caused by Pod deletion. As a result, the sidecar container may not automatically terminate in some scenarios.
 
 ### Issues
 
@@ -44,24 +48,16 @@ The sidecar container, or more precisely, the Cloud Storage FUSE process that se
 - [subPath does not work when Anthos Service Mesh is enabled](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/47)
 - ["Error: context deadline exceeded" when Anthos Service Mesh is enabled](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/46)
 - [The sidecar container does not work well with istio-proxy sidecar container](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/53)
+- [The sidecar container does not respect terminationGracePeriodSeconds when the Pod restartPolicy is OnFailure or Always](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/168)
 
 ### Solutions
 
-Unfortunately, there is no good short-term solution or workaround for the above issues due to the restrictions of the sidecar container mode design.
+The GCS FUSE SCI Driver now utilizes the [Kubernetes native sidecar container feature](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers), available in GKE versions 1.29.3-gke.1093000 or later.
 
-The [sidecar containers KEP](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers) is implemented in this PR [Add SidecarContainers feature](https://github.com/kubernetes/kubernetes/pull/116429).
+The Kubernetes native sidecar container feature introduces sidecar containers, a new type of init container that starts before other containers but remains running for the full duration of the pod's lifecycle and will not block pod termination.
 
-> The new feature gate "SidecarContainers" is now available. This feature introduces sidecar containers, a new type of init container that starts before other containers but remains running for the full duration of the pod's lifecycle and will not block pod termination.
-
-This new feature is a good long-term solution. Instead of injecting the sidecar container as a regular container, we will leverage the new SidecarContainers feature to inject the container as an init container, so that other non-sidecar init container can also use the CSI driver.
-
-We are currently testing the SidecarContainers feature, and will adopt the feature when it is available on GKE.
+Instead of injecting the sidecar container as a regular container, the sidecar container is now injected as an init container, so that other non-sidecar init containers can also use the CSI driver. Moreover, the sidecar container lifecycle, such as auto-termination, is managed by Kubernetes.
 
 ## Issues in Autopilot clusters
 
 - [Resource limitation for the sidecar container on Autopilot using GPU: 2 CPU and 14GB Memory](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/35)
-- [Cannot upload files larger than 10Gi in Autopilot clusters](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/21)
-
-## Other issues
-
-- [Multiple PVs referring to the same bucket does not work](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/48)
