@@ -34,12 +34,23 @@ limitations under the License.
 | [v0.1.12](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v0.1.12) | Released   | 2024-01-25   | [v1.4.0](https://github.com/GoogleCloudPlatform/gcsfuse/releases/tag/v1.4.0)   | [7898e40bf57f](https://gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:7898e40bf57f159dc828511f4217cb42c08fa4df0c9ad732a0b0747b66e415c6) | None                | 1.25.16-gke.1268000 | 1.26.12-gke.1111000 | 1.27.9-gke.1092000  | None               | 1.29.0-gke.1381000 |
 | [v0.1.13](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v0.1.13) | Released   | 2024-02-08   | [v1.4.1](https://github.com/GoogleCloudPlatform/gcsfuse/releases/tag/v1.4.1)   | [972699a4bf89](https://gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:972699a4bf8973f7614f09908412a1fca24ea939eac2d3fcca599109f71fc162) | None                | 1.25.16-gke.1360000 | 1.26.13-gke.1052000 | 1.27.10-gke.1055000 | 1.28.6-gke.1095000 | 1.29.1-gke.1425000 |
 | [v0.1.14](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v0.1.14) | Released   | 2024-02-20   | [v1.4.1](https://github.com/GoogleCloudPlatform/gcsfuse/releases/tag/v1.4.1)   | [c83609ecf50d](https://gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:c83609ecf50d05a141167b8c6cf4dfe14ff07f01cd96a9790921db6748d40902) | None                | 1.25.16-gke.1537000 | 1.26.14-gke.1006000 | 1.27.11-gke.1018000 | 1.28.6-gke.1456000 | 1.29.2-gke.1060000 |
+| [v1.2.0](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.2.0) | Released   | 2024-04-04   | [v2.0.0](https://github.com/GoogleCloudPlatform/gcsfuse/releases/tag/v2.0.0)   | [31880114306b](https://gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:31880114306b1fb5d9e365ae7d4771815ea04eb56f0464a514a810df9470f88f) | None                | TBD | TBD | TBD | TBD | 1.29.3-gke.1093000 |
 
 > Note: The above GKE versions may not be valid any more, please follow the [GKE documentation](https://cloud.google.com/kubernetes-engine/docs/concepts/release-channels#what_versions_are_available_in_a_channel) to check what versions are available in a channel.
 
 The new CSI driver version will be first available in GKE Rapid channel on its release date. For Regular and Stable channels, plan for a 4-week and 12-week wait respectively.
 
 ## Releases
+
+### v1.2.0
+
+- Update gcsfuse to v2.0.0.
+- Update golang version to 1.22.2.
+- Add GCSFuse file cache features.
+- Add volume attributes supports.
+- Adopt Kubernetes native sidecar container features in GKE 1.29 to support init container volume mounting. Fix the [issue](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/168) where the sidecar container does not respect terminationGracePeriodSeconds when the Pod restartPolicy is OnFailure or Always.
+- Add a rate limiter to the CSI node server to avoid GCP API throttling errors.
+- Refactor code to increase stability and readability.
 
 ### v0.1.14
 
@@ -84,15 +95,15 @@ This release is abandoned.
 - Updated go modules.
 - Updated gcsfuse version to v1.2.1-gke.0.
 - Updated CSI driver golang builder version to go1.21.4.
-- Allow users to override sidecar grace-period to fix https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/91.
-- Add CSI fsgroup delegation support to fix https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/16.
+- Allow users to override sidecar grace-period to fix <https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/91>.
+- Add CSI fsgroup delegation support to fix <https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/16>.
 
 ### v0.1.6
 
 - Updated go modules.
 - Updated sidecar container versions.
 - Updated CSI driver golang builder version to go1.21.2.
-- Make the sidecar container follow the [Restricted Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), setting securityContext.capabilities.drop=["ALL"] to fix the issue https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/52
+- Make the sidecar container follow the [Restricted Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), setting securityContext.capabilities.drop=["ALL"] to fix the issue <https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/52>
 - Fixed the behavior when users pass "0" to the pod annotation to configure the sidecar container resources, allowing the sidecar container to consume unlimited resources on Standard clusters.
 - Fixed sidecar container validation logic in webhook.
 
@@ -131,7 +142,7 @@ This release is abandoned.
 - Fixed copyright information.
 - Updated documentation.
 - Added ARM node support.
-- Fixed issue https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/23.
+- Fixed issue <https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/23>.
 - Fixed other issues.
 
 ### v0.1.2

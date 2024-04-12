@@ -21,7 +21,7 @@ If you are using Terraform to create GKE clusters, use `gcs_fuse_csi_driver_conf
 
 The following example is a `.tf` file excerpt showing how to enable the CSI driver, GKE Workload Identity, and GKE Metadata Server:
 
-```
+```terraform
 resource "google_container_cluster" "primary" {
     
     # Enable GKE Workload Identity.
