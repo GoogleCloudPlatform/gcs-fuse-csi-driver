@@ -15,15 +15,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Configure access to Cloud Storage buckets using GKE Workload Identity
+# Configure access to Cloud Storage buckets using GKE Workload Identity Federation
 
 ## Configure access
 
 See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver#authentication)
 
-## Validate the service account setup (optional)
+## Validate Workload Identity Federation and Kubernetes ServiceAccount setup
 
-- Make sure the Workload Identity feature is enabled on your cluster:
+- Make sure the Workload Identity Federation feature is enabled on your cluster:
 
     ```bash
     gcloud container clusters describe ${CLUSTER_NAME} | grep workloadPool
@@ -31,11 +31,11 @@ See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage 
 
     The output should be like:
 
-    ```
+    ```text
     workloadPool: ${PROJECT_ID}.svc.id.goog
     ```
 
-    If not, [have Workload Identity enabled](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable).
+    If not, [have Workload Identity Federation enabled](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable_on_clusters_and_node_pools).
 
 - Make sure the DaemonSet `gke-metadata-server` is running on your node pool:
 
@@ -45,37 +45,85 @@ See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage 
 
     The output should be like:
 
-    ```
+    ```text
     NAME                  DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR                                                             AGE
     gke-metadata-server   3         3         3       3            3           beta.kubernetes.io/os=linux,iam.gke.io/gke-metadata-server-enabled=true   17d
     ```
 
     If not, [have GKE metadata server enabled on your node pool](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#migrate_applications_to).
 
-- Check whether the GCP Service Account was created:
+- Check whether the Kubernetes ServiceAccount was created correctly:
+
+    ```bash
+    kubectl get serviceaccount ${KSA_NAME} --namespace ${NAMESPACE}
+    ```
+
+    The output should be like:
+
+    ```text
+    NAME          SECRETS   AGE
+    ${KSA_NAME}   0         64m
+    ```
+
+    If not, create a namespace and Kubernetes ServiceAccount accordingly. Make sure your workload runs in the same Kubernetes namespace using the Kubernetes ServiceAccount.
+
+- Check whether the Cloud Storage bucket has correct IAM policy bindings:
+
+    ```bash
+    gcloud storage buckets get-iam-policy gs://${BUCKET_NAME}
+    ```
+
+    The output should be like:
+
+    ```text
+    bindings:
+    - members:
+        - principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/${NAMESPACE}/sa/${KSA_NAME}
+        role: roles/storage.objectViewer
     
+    OR
+    
+    bindings:
+    - members:
+        - principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/${NAMESPACE}/sa/${KSA_NAME}
+        role: roles/storage.objectUser
+    ...
+    ```
+
+    If not, follow the GKE documentation to grant one of the [IAM roles for Cloud Storage](https://cloud.devsite.corp.google.com/storage/docs/access-control/iam-roles) to the Kubernetes ServiceAccount.
+
+## Validate the GCP and Kubernetes ServiceAccount setup (deprecated)
+
+> Note: Workload Identity Federation for GKE simplified configuration steps in GKE documentation: [Configure applications to use Workload Identity Federation for GKE](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#authenticating_to). Previously, the Workload Identity configuration involves extra steps to [link Kubernetes ServiceAccounts to IAM](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#kubernetes-sa-to-iam), such as GCP Service Account (GSA) creation and Kubernetes ServiceAccount (KSA) configuration. With the new Workload Identity Federation for GKE feature, these steps are no longer required. This section provides validation steps for the users who still use the old configurations.
+
+- Make sure the Workload Identity Federation feature is enabled on the GKE cluster and node pools
+
+    Follow the first two steps in the previous section.
+
+- Check whether the GCP Service Account was created:
+
     ```bash
     gcloud iam service-accounts describe ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
     ```
-    
+
     The output should be like:
 
-    ```
+    ```text
     email: ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
     name: projects/${GSA_PROJECT}/serviceAccounts/${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
     projectId: ${GSA_PROJECT}
     ...
     ```
-    
+
 - Check whether the GCP Service Account has correct IAM policy bindings:
 
-    ```
+    ```bash
     gcloud iam service-accounts get-iam-policy ${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
     ```
 
     The output should be like:
 
-    ```
+    ```text
     bindings:
     - members:
         - serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${KSA_NAME}]
@@ -85,13 +133,13 @@ See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage 
 
 - Check whether the Cloud Storage bucket has correct IAM policy bindings:
 
-    ```
+    ```bash
     gcloud storage buckets get-iam-policy gs://${BUCKET_NAME}
     ```
 
     The output should be like:
 
-    ```
+    ```text
     bindings:
     - members:
         - serviceAccount:${GSA_NAME}@${GSA_PROJECT}.iam.gserviceaccount.com
@@ -106,9 +154,9 @@ See the GKE documentation: [Access Cloud Storage buckets with the Cloud Storage 
     ...
     ```
 
-- Check whether the Kubernetes Service Account was configured correctly:
+- Check whether the Kubernetes ServiceAccount was configured correctly:
 
-    ```
+    ```bash
     kubectl get serviceaccount ${KSA_NAME} --namespace ${NAMESPACE} -o yaml
     ```
 
