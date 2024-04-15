@@ -29,7 +29,7 @@ require (
 	k8s.io/pod-security-admission v0.29.3
 	k8s.io/utils v0.0.0-20240310230437-4693a0247e57
 	sigs.k8s.io/boskos v0.0.0-20240306174220-786da16d0019
-	sigs.k8s.io/controller-runtime v0.17.2
+	sigs.k8s.io/controller-runtime v0.17.3
 )
 
 require (
