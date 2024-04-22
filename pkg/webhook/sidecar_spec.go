@@ -115,6 +115,8 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 		VolumeMounts: []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount},
 	}
 
+	// TODO: change this spec to add the config map and env var for fleet WI.
+
 	return container
 }
 

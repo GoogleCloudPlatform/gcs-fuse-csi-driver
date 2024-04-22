@@ -138,8 +138,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	defer s.volumeLocks.Release(targetPath)
 
+	// Check if the sidecar container was injected into the Pod
+	pod, err := s.k8sClients.GetPod(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
+	}
+
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
-	if bucketName != "_" {
+	if bucketName != "_" && pod.Annotations[webhook.CredConfigNameAnnotation] == "" {
 		storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
@@ -162,12 +168,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 			return nil, status.Errorf(code, "failed to get GCS bucket %q: %v", bucketName, err)
 		}
-	}
-
-	// Check if the sidecar container was injected into the Pod
-	pod, err := s.k8sClients.GetPod(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
 
 	// Since the webhook mutating ordering is not definitive,

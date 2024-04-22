@@ -41,6 +41,7 @@ const (
 	memoryRequestAnnotation           = "gke-gcsfuse/memory-request"
 	ephemeralStorageLimitAnnotation   = "gke-gcsfuse/ephemeral-storage-limit"
 	ephemeralStorageRequestAnnotation = "gke-gcsfuse/ephemeral-storage-request"
+	CredConfigNameAnnotation          = "gke-gcsfuse/cred-config-name"
 )
 
 type SidecarInjector struct {
@@ -105,6 +106,7 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	}
 
 	// Inject container.
+	// TODO: check CredConfigNameAnnotation and decide whether to inject the cred config map.
 	injectSidecarContainer(pod, config, supportsNativeSidecar)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
