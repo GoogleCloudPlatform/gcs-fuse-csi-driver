@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
-	appsv1 "k8s.io/api/apps/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,10 +44,6 @@ func (c *FakeClientset) GetPod(_ context.Context, namespace, name string) (*core
 	}
 
 	return pod, nil
-}
-
-func (c *FakeClientset) GetDaemonSet(_ context.Context, _, _ string) (*appsv1.DaemonSet, error) {
-	return &appsv1.DaemonSet{}, nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

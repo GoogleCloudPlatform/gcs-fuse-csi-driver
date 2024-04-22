@@ -43,3 +43,9 @@ patches:
     kind: MutatingWebhookConfiguration
     name: gcsfuse-sidecar-injector.csi.storage.gke.io
     version: v1
+- path: identity_provider_patch_csi_node.json
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1

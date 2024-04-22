@@ -51,6 +51,7 @@ spec:
             - --endpoint=unix:/csi/csi.sock
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
+            - --identity-provider=$(IDENTITY_PROVIDER)
           resources:
             limits:
               cpu: 200m
@@ -63,6 +64,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: IDENTITY_PROVIDER
+              value: ""
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet/pods
