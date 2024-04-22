@@ -18,13 +18,9 @@ limitations under the License.
 package metadata
 
 import (
-	"context"
 	"fmt"
-	"strings"
 
 	"cloud.google.com/go/compute/metadata"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
-	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -42,7 +38,7 @@ type metadataServiceManager struct {
 
 var _ Service = &metadataServiceManager{}
 
-func NewMetadataService(identityPool, identityProvider string, clientset clientset.Interface) (Service, error) {
+func NewMetadataService(identityPool, identityProvider string) (Service, error) {
 	projectID, err := metadata.ProjectID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %w", err)
@@ -51,16 +47,6 @@ func NewMetadataService(identityPool, identityProvider string, clientset clients
 	if identityPool == "" {
 		klog.Infof("got empty identityPool, constructing the identityPool using projectID")
 		identityPool = projectID + ".svc.id.goog"
-	}
-
-	if identityProvider == "" {
-		klog.Infof("got empty identityProvider, constructing the identityProvider using the gke-metadata-server flags")
-		ds, err := clientset.GetDaemonSet(context.TODO(), "kube-system", "gke-metadata-server")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get gke-metadata-server DaemonSet spec: %w", err)
-		}
-
-		identityProvider = getIdentityProvider(ds)
 	}
 
 	return &metadataServiceManager{
@@ -80,15 +66,4 @@ func (manager *metadataServiceManager) GetIdentityPool() string {
 
 func (manager *metadataServiceManager) GetIdentityProvider() string {
 	return manager.identityProvider
-}
-
-func getIdentityProvider(ds *appsv1.DaemonSet) string {
-	for _, c := range ds.Spec.Template.Spec.Containers[0].Command {
-		l := strings.Split(c, "=")
-		if len(l) == 2 && l[0] == "--identity-provider" {
-			return l[1]
-		}
-	}
-
-	return ""
 }

@@ -78,7 +78,7 @@ func main() {
 		klog.Fatal("Failed to configure k8s client")
 	}
 
-	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider, clientset)
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}

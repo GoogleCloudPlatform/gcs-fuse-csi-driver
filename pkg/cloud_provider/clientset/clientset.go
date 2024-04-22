@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,7 +32,6 @@ import (
 
 type Interface interface {
 	GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error)
-	GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -71,10 +69,6 @@ func New(kubeconfigPath string) (Interface, error) {
 
 func (c *Clientset) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
 	return c.k8sClients.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
-}
-
-func (c *Clientset) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
-	return c.k8sClients.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
