@@ -22,17 +22,19 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"gopkg.in/yaml.v3"
 )
 
 var (
 	defaultFlagMap = map[string]string{
-		"app-name":    GCSFuseAppName,
-		"temp-dir":    "test-buffer-dir/temp-dir",
-		"config-file": "test-config-file",
-		"foreground":  "",
-		"uid":         "0",
-		"gid":         "0",
+		"app-name":        GCSFuseAppName,
+		"temp-dir":        "test-buffer-dir/temp-dir",
+		"config-file":     "test-config-file",
+		"foreground":      "",
+		"uid":             "0",
+		"gid":             "0",
+		"prometheus-port": "0",
 	}
 
 	defaultConfigFileFlagMap = map[string]string{
@@ -96,6 +98,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"foreground":         "",
 				"uid":                "100",
 				"gid":                "200",
+				"prometheus-port":    "0",
 				"debug_gcs":          "",
 				"max-conns-per-host": "10",
 			},
@@ -124,6 +127,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"foreground":         "",
 				"uid":                "100",
 				"gid":                "200",
+				"prometheus-port":    "0",
 				"debug_gcs":          "",
 				"max-conns-per-host": "10",
 			},
@@ -151,12 +155,13 @@ func TestPrepareMountArgs(t *testing.T) {
 				Options:    []string{"app-name=Vertex"},
 			},
 			expectedArgs: map[string]string{
-				"app-name":    GCSFuseAppName + "-Vertex",
-				"temp-dir":    "test-buffer-dir/temp-dir",
-				"config-file": "test-config-file",
-				"foreground":  "",
-				"uid":         "0",
-				"gid":         "0",
+				"app-name":        GCSFuseAppName + "-Vertex",
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"prometheus-port": "0",
 			},
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
@@ -210,6 +215,26 @@ func TestPrepareMountArgs(t *testing.T) {
 				"cache-dir":              "test-cache-dir",
 				"file-cache:max-size-mb": "100",
 			},
+		},
+		{
+			name: "should return valid args when metrics is enabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{util.EnableMetricsForGKE + ":true"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":        GCSFuseAppName,
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"prometheus-port": "8080",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
 	}
 
