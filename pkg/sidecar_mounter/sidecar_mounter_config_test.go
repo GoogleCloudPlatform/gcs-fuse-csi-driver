@@ -27,12 +27,13 @@ import (
 
 var (
 	defaultFlagMap = map[string]string{
-		"app-name":    GCSFuseAppName,
-		"temp-dir":    "test-buffer-dir/temp-dir",
-		"config-file": "test-config-file",
-		"foreground":  "",
-		"uid":         "0",
-		"gid":         "0",
+		"app-name":        GCSFuseAppName,
+		"temp-dir":        "test-buffer-dir/temp-dir",
+		"config-file":     "test-config-file",
+		"foreground":      "",
+		"uid":             "0",
+		"gid":             "0",
+		"prometheus-port": "8080",
 	}
 
 	defaultConfigFileFlagMap = map[string]string{
@@ -71,10 +72,11 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args correctly",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
 			},
 			expectedArgs:          defaultFlagMap,
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
@@ -82,11 +84,12 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args with options correctly",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
@@ -96,6 +99,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"foreground":         "",
 				"uid":                "100",
 				"gid":                "200",
+				"prometheus-port":    "8080",
 				"debug_gcs":          "",
 				"max-conns-per-host": "10",
 			},
@@ -110,11 +114,12 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args with bool options correctly",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs=true"},
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs=true"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs=true": "",
@@ -124,6 +129,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"foreground":         "",
 				"uid":                "100",
 				"gid":                "200",
+				"prometheus-port":    "8080",
 				"debug_gcs":          "",
 				"max-conns-per-host": "10",
 			},
@@ -132,11 +138,12 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args with error correctly",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    invalidArgs,
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        invalidArgs,
 			},
 			expectedArgs:          defaultFlagMap,
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
@@ -144,30 +151,33 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args with custom app-name",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"app-name=Vertex"},
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        []string{"app-name=Vertex"},
 			},
 			expectedArgs: map[string]string{
-				"app-name":    GCSFuseAppName + "-Vertex",
-				"temp-dir":    "test-buffer-dir/temp-dir",
-				"config-file": "test-config-file",
-				"foreground":  "",
-				"uid":         "0",
-				"gid":         "0",
+				"app-name":        GCSFuseAppName + "-Vertex",
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"prometheus-port": "8080",
 			},
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
 		{
 			name: "should return valid args when file cache is disabled",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"file-cache:max-size-mb:0"},
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        []string{"file-cache:max-size-mb:0"},
 			},
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
@@ -180,11 +190,12 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args when file cache is enabled with unlimited size",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"file-cache:max-size-mb:-1"},
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        []string{"file-cache:max-size-mb:-1"},
 			},
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
@@ -197,11 +208,12 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name: "should return valid args when file cache is enabled with a max size",
 			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"file-cache:max-size-mb:100"},
+				BucketName:     "test-bucket",
+				BufferDir:      "test-buffer-dir",
+				CacheDir:       "test-cache-dir",
+				ConfigFile:     "test-config-file",
+				PrometheusPort: "8080",
+				Options:        []string{"file-cache:max-size-mb:100"},
 			},
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{

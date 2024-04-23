@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,6 +110,8 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			go logMemoryUsage(ctx, cmd.Process.Pid)
 			go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
 		}
+
+		go collectMetrics(ctx, mc.PrometheusPort, mc.TempDir)
 
 		// Since the gcsfuse has taken over the file descriptor,
 		// closing the file descriptor to avoid other process forking it.
@@ -202,5 +205,66 @@ func logVolumeTotalSize(dirPath string) {
 		klog.Errorf("failed to calculate volume total size for %q: %v", dirPath, err)
 	} else {
 		klog.Infof("total volume size of %v: %v bytes", dirPath, totalSize)
+	}
+}
+
+// collectMetrics collects metrics from the gcsfuse instance every 10 seconds.
+func collectMetrics(ctx context.Context, port, dirPath string) {
+	metricEndpoint := "http://localhost:" + port + "/metrics"
+	outputPath := dirPath + "/metrics.prom"
+	ticker := time.NewTicker(10 * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			newCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			scrapeMetrics(newCtx, metricEndpoint, outputPath)
+			cancel()
+		}
+	}
+}
+
+// scrapeMetrics connects to the metrics endpoint, scrapes metrics, and save the metrics to the given file path.
+func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
+	// Make the HTTP GET request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
+	if err != nil {
+		klog.Errorf("failed to create HTTP request to %q: %v", metricEndpoint, err)
+
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		klog.Errorf("failed to make HTTP request to %q: %v", metricEndpoint, err)
+
+		return
+	}
+	defer resp.Body.Close() // Ensure closure of response body
+
+	// Check for a successful HTTP status code
+	if resp.StatusCode != http.StatusOK {
+		klog.Errorf("unexpected HTTP status: %v", resp.Status)
+
+		return
+	}
+
+	// Create the output file
+	out, err := os.Create(outputPath)
+	if err != nil {
+		klog.Errorf("error creating output file: %v", err)
+
+		return
+	}
+	defer out.Close() // Ensure closure of output file
+
+	// Copy the response body (file content) to our output file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		klog.Errorf("error writing to output file: %v", err)
+
+		return
 	}
 }

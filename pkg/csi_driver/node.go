@@ -188,6 +188,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to prepare emptyDir path: %v", err)
 	}
 
+	// Register metrics collecter.
+	s.driver.config.MetricsManager.RegisterMetricsCollector(pod.Name, targetPath, emptyDirBasePath, bucketName)
+
 	// Check if the sidecar container is still required,
 	// if not, put an exit file to the emptyDir path to
 	// notify the sidecar container to exit.
@@ -303,6 +306,9 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
+
+	// Unregister metrics collecter.
+	s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
 
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {

@@ -46,12 +46,16 @@ type MountConfig struct {
 	BucketName        string                `json:"bucketName,omitempty"`
 	BufferDir         string                `json:"-"`
 	CacheDir          string                `json:"-"`
+	TempDir           string                `json:"-"`
 	ConfigFile        string                `json:"-"`
 	Options           []string              `json:"options,omitempty"`
 	ErrWriter         stderrWriterInterface `json:"-"`
 	FlagMap           map[string]string     `json:"-"`
 	ConfigFileFlagMap map[string]string     `json:"-"`
+	PrometheusPort    string                `json:"-"`
 }
+
+var initPrometheusPort = 8080
 
 var disallowedFlags = map[string]bool{
 	"temp-dir":                             true,
@@ -68,6 +72,7 @@ var disallowedFlags = map[string]bool{
 	"logging:log-rotate:compress":          true,
 	"cache-dir":                            true,
 	"experimental-local-file-cache":        true,
+	"prometheus-port":                      true,
 }
 
 var boolFlags = map[string]bool{
@@ -89,14 +94,19 @@ var boolFlags = map[string]bool{
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
 func NewMountConfig(sp string) *MountConfig {
 	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
-	volumeName := filepath.Base(filepath.Dir(sp))
+	tempDir := filepath.Dir(sp)
+	volumeName := filepath.Base(tempDir)
 	mc := MountConfig{
-		VolumeName: volumeName,
-		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
-		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
-		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-		ErrWriter:  NewErrorWriter(filepath.Join(filepath.Dir(sp), "error")),
+		VolumeName:     volumeName,
+		BufferDir:      filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		CacheDir:       filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		TempDir:        tempDir,
+		ConfigFile:     filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+		ErrWriter:      NewErrorWriter(filepath.Join(tempDir, "error")),
+		PrometheusPort: strconv.Itoa(initPrometheusPort),
 	}
+
+	initPrometheusPort++
 
 	klog.Infof("connecting to socket %q", sp)
 	c, err := net.Dial("unix", sp)
@@ -144,12 +154,13 @@ func NewMountConfig(sp string) *MountConfig {
 
 func (mc *MountConfig) prepareMountArgs() {
 	flagMap := map[string]string{
-		"app-name":    GCSFuseAppName,
-		"temp-dir":    mc.BufferDir + TempDir,
-		"config-file": mc.ConfigFile,
-		"foreground":  "",
-		"uid":         "0",
-		"gid":         "0",
+		"app-name":        GCSFuseAppName,
+		"temp-dir":        mc.BufferDir + TempDir,
+		"config-file":     mc.ConfigFile,
+		"foreground":      "",
+		"uid":             "0",
+		"gid":             "0",
+		"prometheus-port": mc.PrometheusPort,
 	}
 
 	configFileFlagMap := map[string]string{
