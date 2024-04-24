@@ -34,10 +34,14 @@ FROM gcr.io/distroless/base-debian12 as distroless-base
 # The distroless amd64 image has a target triplet of x86_64
 FROM distroless-base AS distroless-amd64
 ENV LIB_DIR_PREFIX x86_64
+ENV LD_LINUX_FILE /lib64/ld-linux-x86-64.so.2
+ENV LIB_DIR /lib64/
 
 # The distroless arm64 image has a target triplet of aarch64
 FROM distroless-base AS distroless-arm64
 ENV LIB_DIR_PREFIX aarch64
+ENV LD_LINUX_FILE /lib/ld-linux-aarch64.so.1
+ENV LIB_DIR /lib/
 
 FROM distroless-$TARGETARCH as output-image
 
@@ -46,16 +50,17 @@ COPY --from=debian /bin/mount /bin/mount
 COPY --from=debian /bin/umount /bin/umount
 
 # Copy shared libraries into distroless base.
-COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libselinux.so.1 /lib/${LIB_DIR_PREFIX}-linux-gnu/
+COPY --from=debian ${LD_LINUX_FILE} ${LIB_DIR}
 
-COPY --from=debian /usr/lib/${LIB_DIR_PREFIX}-linux-gnu/libblkid.so.1 \
-                   /usr/lib/${LIB_DIR_PREFIX}-linux-gnu/libmount.so.1 \
-                   /usr/lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre2-8.so.0 /usr/lib/${LIB_DIR_PREFIX}-linux-gnu/
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libselinux.so.1 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libc.so.6 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libblkid.so.1 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libmount.so.1 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre2-8.so.0 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 
 # Build stage used for validation of the output-image
 FROM output-image as validation-image
-COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libtinfo.so.6 \
-                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre.so.3 /lib/${LIB_DIR_PREFIX}-linux-gnu/
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libtinfo.so.6 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 COPY --from=debian /bin/bash /bin/bash
 COPY --from=debian /bin/grep /bin/grep
 COPY --from=debian /usr/bin/ldd /usr/bin/ldd
