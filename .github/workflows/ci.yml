@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
     - name: Checkout repo
@@ -31,7 +31,7 @@ jobs:
       run: go build -mod=vendor ./test/e2e
   
   unit-test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
     - name: Checkout repo
@@ -45,7 +45,7 @@ jobs:
       run: make unit-test
   
   sanity-test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
     - name: Checkout repo
@@ -59,7 +59,7 @@ jobs:
       run: make sanity-test
   
   verify:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
     - name: Checkout repo
