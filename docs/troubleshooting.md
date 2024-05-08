@@ -379,7 +379,7 @@ Cloud Storage FUSE has higher latency than a local file system. Throughput is re
 
 ### Other considerations
 
-Set the number of threads according to the number of CPU cores available. ML frameworks typically use `num_workers` to define the number of threads. If the number of cores or threads is higher than `100`, change the mount option `max-cons-per-host` to the same value. For example:
+Set the number of threads according to the number of CPU cores available. ML frameworks typically use `num_workers` to define the number of threads. If the number of cores or threads is higher than `100`, change the mount option `max-conns-per-host` to the same value. For example:
 
 - Inline ephemeral volume
 
@@ -394,7 +394,7 @@ spec:
       driver: gcsfuse.csi.storage.gke.io
       volumeAttributes:
         bucketName: <bucket-name>
-        mountOptions: "max-cons-per-host=500"
+        mountOptions: "max-conns-per-host=500"
 ```
 
 - PersistentVolume
@@ -405,7 +405,7 @@ kind: PersistentVolume
 spec:
   ...
   mountOptions:
-    - max-cons-per-host=500
+    - max-conns-per-host=500
   csi:
     driver: gcsfuse.csi.storage.gke.io
     volumeHandle: <bucket-name>
