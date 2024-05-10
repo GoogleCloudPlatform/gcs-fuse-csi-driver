@@ -23,7 +23,7 @@ ADD . .
 RUN make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.1 as debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 as debian
 # Install necessary dependencies
 RUN clean-install mount bash
 
