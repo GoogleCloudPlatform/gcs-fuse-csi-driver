@@ -18,7 +18,6 @@ limitations under the License.
 package driver
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -137,32 +136,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
-
-	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
-	if bucketName != "_" {
-		storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
-		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
-		}
-		defer storageService.Close()
-
-		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-			code := codes.Internal
-			if storage.IsNotExistErr(err) {
-				code = codes.NotFound
-			}
-
-			if storage.IsPermissionDeniedErr(err) {
-				code = codes.PermissionDenied
-			}
-
-			if storage.IsCanceledErr(err) {
-				code = codes.Aborted
-			}
-
-			return nil, status.Errorf(code, "failed to get GCS bucket %q: %v", bucketName, err)
-		}
-	}
 
 	// Check if the sidecar container was injected into the Pod
 	pod, err := s.k8sClients.GetPod(ctx, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
@@ -348,15 +321,4 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	}
 
 	return false, nil
-}
-
-// prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
-func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
-	if err != nil {
-		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
-	}
-
-	return storageService, nil
 }
