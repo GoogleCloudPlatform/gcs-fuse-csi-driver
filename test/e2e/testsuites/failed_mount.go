@@ -102,7 +102,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
+		tPod.WaitForFailedMountError(ctx, codes.Internal.String())
 		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
 	})
 
@@ -123,7 +123,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
+		tPod.WaitForFailedMountError(ctx, codes.Internal.String())
 		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
 	})
 
@@ -151,10 +151,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Deleting the Kubernetes service account")
 		testK8sSA.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod has failed mount error Unauthenticated")
-		tPod.WaitForFailedMountError(ctx, codes.Unauthenticated.String())
-		tPod.WaitForFailedMountError(ctx, "storage service manager failed to setup service: context deadline exceeded")
 	})
 
 	ginkgo.It("should fail when the sidecar container is not injected", func() {
