@@ -22,8 +22,8 @@ require (
 	google.golang.org/api v0.176.1
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.29.4
-	k8s.io/apimachinery v0.29.4
+	k8s.io/api v0.30.1
+	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v1.5.2
 	k8s.io/klog/v2 v2.120.1
 	k8s.io/kubernetes v1.29.4
@@ -170,7 +170,7 @@ replace (
 	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.29.4
 	k8s.io/code-generator => k8s.io/code-generator v0.29.4
 	k8s.io/component-base => k8s.io/component-base v0.29.4
-	k8s.io/component-helpers => k8s.io/component-helpers v0.29.4
+	k8s.io/component-helpers => k8s.io/component-helpers v0.30.1
 	k8s.io/controller-manager => k8s.io/controller-manager v0.29.4
 	k8s.io/cri-api => k8s.io/cri-api v0.29.4
 	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.29.4
