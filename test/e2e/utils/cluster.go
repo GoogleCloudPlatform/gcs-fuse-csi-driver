@@ -83,7 +83,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 	}
 
 	// TODO: change the cluster version to the new version in the rapid channel.
-	if strings.Contains(testParams.GkeClusterVersion, "1.28") {
+	if strings.Contains(testParams.GkeClusterVersion, "1.30") {
 		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	} else {
 		standardClusterFlags = append(standardClusterFlags, "--no-enable-autoupgrade")
