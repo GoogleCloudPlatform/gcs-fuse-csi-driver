@@ -85,12 +85,8 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	ginkgo.It("should fail when the specified GCS bucket does not exist", func() {
-		if pattern.VolType == storageframework.DynamicPV {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
-		}
-
-		init(specs.FakeVolumePrefix)
+	testCaseNonExistentBucket := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -104,31 +100,57 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+	}
+
+	ginkgo.It("should fail when the specified GCS bucket does not exist", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseNonExistentBucket(specs.FakeVolumePrefix)
 	})
+
+	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified GCS bucket does not exist", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseNonExistentBucket(specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix)
+	})
+
+	testCaseInvalidBucketName := func(configPrefix string) {
+		init(configPrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
+		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+	}
 
 	ginkgo.It("should fail when the specified GCS bucket name is invalid", func() {
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
 
-		init(specs.InvalidVolumePrefix)
-		defer cleanup()
-
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
-		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+		testCaseInvalidBucketName(specs.InvalidVolumePrefix)
 	})
 
-	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
-		init()
+	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified GCS bucket name is invalid", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+
+		testCaseInvalidBucketName(specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix)
+	})
+
+	testCaseSAInsufficientAccess := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -152,13 +174,26 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Deleting the Kubernetes service account")
 		testK8sSA.Cleanup(ctx)
 
+		// For invalid SA testcase, The Unauthenticated error spawns from prepareStorageClient() in CSI NodePublish. When CSI skips bucket access check, this step is skipped.
+		if configPrefix == specs.SkipCSIBucketAccessCheckPrefix {
+			return
+		}
+
 		ginkgo.By("Checking that the pod has failed mount error Unauthenticated")
 		tPod.WaitForFailedMountError(ctx, codes.Unauthenticated.String())
 		tPod.WaitForFailedMountError(ctx, "storage service manager failed to setup service: context deadline exceeded")
+	}
+
+	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
+		testCaseSAInsufficientAccess("")
 	})
 
-	ginkgo.It("should fail when the sidecar container is not injected", func() {
-		init()
+	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified service account does not have access to the GCS bucket", func() {
+		testCaseSAInsufficientAccess(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+
+	testCaseSidecarNotInjected := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -176,10 +211,18 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.FailedPrecondition.String())
 		tPod.WaitForFailedMountError(ctx, "failed to find the sidecar container in Pod spec")
+	}
+
+	ginkgo.It("should fail when the sidecar container is not injected", func() {
+		testCaseSidecarNotInjected("")
 	})
 
-	ginkgo.It("should fail when the gcsfuse processes got killed due to OOM", func() {
-		init()
+	ginkgo.It("[csi-skip-bucket-access-check] should fail when the sidecar container is not injected", func() {
+		testCaseSidecarNotInjected(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+
+	testCaseGCSFuseOOM := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -198,10 +241,19 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.ResourceExhausted.String())
+	}
+
+	ginkgo.It("should fail when the gcsfuse processes got killed due to OOM", func() {
+		testCaseGCSFuseOOM("")
 	})
 
-	ginkgo.It("should fail when invalid mount options are passed", func() {
-		init(specs.InvalidMountOptionsVolumePrefix)
+	ginkgo.It("[csi-skip-bucket-access-check] should fail when the gcsfuse processes got killed due to OOM", func() {
+		testCaseGCSFuseOOM(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+
+	testcaseInvalidMountOptions := func(configPrefix string) {
+		// init(specs.InvalidMountOptionsVolumePrefix)
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -215,6 +267,14 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
 		tPod.WaitForFailedMountError(ctx, "Incorrect Usage. flag provided but not defined: -invalid-option")
+	}
+
+	ginkgo.It("should fail when invalid mount options are passed", func() {
+		testcaseInvalidMountOptions(specs.InvalidMountOptionsVolumePrefix)
+	})
+
+	ginkgo.It("[csi-skip-bucket-access-check] should fail when invalid mount options are passed", func() {
+		testcaseInvalidMountOptions(specs.SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix)
 	})
 
 	ginkgo.It("should fail when the sidecar container is specified with high resource usage", func() {
