@@ -24,6 +24,10 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
+const (
+	TraceStr = "trace"
+)
+
 func TestJoinMountOptions(t *testing.T) {
 	t.Parallel()
 	t.Run("joining mount options into one", func(t *testing.T) {
@@ -279,7 +283,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 			{
 				name:                 "should return correct gcsfuseLoggingSeverity",
 				volumeContext:        map[string]string{VolumeContextKeyGcsfuseLoggingSeverity: "trace"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + "trace"},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + TraceStr},
 			},
 			{
 				name: "should return correct mount options",
