@@ -24,6 +24,10 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
+const (
+	TraceStr = "trace"
+)
+
 func TestJoinMountOptions(t *testing.T) {
 	t.Parallel()
 	t.Run("joining mount options into one", func(t *testing.T) {
@@ -65,10 +69,11 @@ func TestParseVolumeAttributes(t *testing.T) {
 	t.Run("parsing volume attributes into mount options", func(t *testing.T) {
 		t.Parallel()
 		testCases := []struct {
-			name                 string
-			volumeContext        map[string]string
-			expectedMountOptions []string
-			expectedErr          bool
+			name                          string
+			volumeContext                 map[string]string
+			expectedMountOptions          []string
+			expectedSkipBucketAccessCheck bool
+			expectedErr                   bool
 		}{
 			{
 				name:                 "should return correct fileCacheCapacity 1",
@@ -278,7 +283,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 			{
 				name:                 "should return correct gcsfuseLoggingSeverity",
 				volumeContext:        map[string]string{VolumeContextKeyGcsfuseLoggingSeverity: "trace"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + "trace"},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + TraceStr},
 			},
 			{
 				name: "should return correct mount options",
@@ -302,18 +307,44 @@ func TestParseVolumeAttributes(t *testing.T) {
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
 				},
 			},
+			{
+				name:                          "should return correct mount options, and skip bucket access check flag",
+				expectedSkipBucketAccessCheck: true,
+				volumeContext: map[string]string{
+					VolumeContextKeyMountOptions:              "implicit-dirs,uid=1001",
+					VolumeContextKeyGcsfuseLoggingSeverity:    "trace",
+					VolumeContextKeyFileCacheCapacity:         "500Gi",
+					VolumeContextKeyFileCacheForRangeRead:     "true",
+					VolumeContextKeyMetadataStatCacheCapacity: "-100",
+					VolumeContextKeyMetadataTypeCacheCapacity: "0",
+					VolumeContextKeyMetadataCacheTTLSeconds:   "3600",
+					VolumeContextKeySkipCSIBucketAccessCheck:  "true",
+				},
+				expectedMountOptions: []string{
+					"implicit-dirs",
+					"uid=1001",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + "trace",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheCapacity] + "512000",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + "true",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataStatCacheCapacity] + "-1",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataTypeCacheCapacity] + "0",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
+				},
+			},
 		}
 
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			output, err := parseVolumeAttributes([]string{}, tc.volumeContext)
-
+			output, skipCSIBucketAccessCheck, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 			if (err != nil) != tc.expectedErr {
 				t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 			}
 
 			if tc.expectedErr {
 				continue
+			}
+			if tc.expectedSkipBucketAccessCheck != skipCSIBucketAccessCheck {
+				t.Errorf("Got skipBucketAccessCheck %v, but expected %v", skipCSIBucketAccessCheck, tc.expectedSkipBucketAccessCheck)
 			}
 
 			less := func(a, b string) bool { return a > b }
