@@ -102,8 +102,8 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	ginkgo.It("should store data and retain the data", func() {
-		init()
+	testCaseStoreAndRetainData := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the first pod")
@@ -137,10 +137,18 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the second pod command exits with no error")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+	}
+
+	ginkgo.It("should store data and retain the data", func() {
+		testCaseStoreAndRetainData("")
 	})
 
-	ginkgo.It("[read-only] should fail when write", func() {
-		init()
+	ginkgo.It("[csi-skip-bucket-access-check] should store data and retain the data", func() {
+		testCaseStoreAndRetainData(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+
+	testCaseReadOnlyFailedWrite := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the writer pod")
@@ -182,15 +190,22 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Expecting error when write to read-only volumes")
 		tPod.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data", mountPath), 1)
+	}
+
+	ginkgo.It("[read-only] should fail when write", func() {
+		testCaseReadOnlyFailedWrite("")
+	})
+	ginkgo.It("[read-only][csi-skip-bucket-access-check] should fail when write", func() {
+		testCaseReadOnlyFailedWrite(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
-	ginkgo.It("[non-root] should store data and retain the data", func() {
-		init(specs.NonRootVolumePrefix)
+	testCaseStoreRetainData := func(configPrefix string, uid, gid, fsgroup int) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetNonRootSecurityContext(1001, 2002, 0)
+		tPod1.SetNonRootSecurityContext(uid, gid, fsgroup)
 		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the first pod")
@@ -220,52 +235,25 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the second pod command exits with no error")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+	}
+
+	ginkgo.It("[non-root] should store data and retain the data", func() {
+		testCaseStoreRetainData(specs.NonRootVolumePrefix, 1001, 2002, 0)
+	})
+	ginkgo.It("[non-root][csi-skip-bucket-access-check] should store data and retain the data", func() {
+		testCaseStoreRetainData(specs.SkipCSIBucketAccessCheckAndNonRootVolumePrefix, 1001, 2002, 0)
 	})
 
 	ginkgo.It("[fsgroup delegation] should store data and retain the data", func() {
-		init()
-		defer cleanup()
-
-		ginkgo.By("Configuring the first pod")
-		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetNonRootSecurityContext(1001, 2002, 3003)
-		tPod1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-
-		ginkgo.By("Deploying the first pod")
-		tPod1.Create(ctx)
-
-		ginkgo.By("Checking that the first pod is running")
-		tPod1.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the first pod command exits with no error")
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
-
-		ginkgo.By("Deleting the first pod")
-		tPod1.Cleanup(ctx)
-
-		ginkgo.By("Configuring the second pod")
-		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-
-		ginkgo.By("Deploying the second pod")
-		tPod2.Create(ctx)
-		defer tPod2.Cleanup(ctx)
-
-		ginkgo.By("Checking that the second pod is running")
-		tPod2.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the second pod command exits with no error")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/data", mountPath))
+		testCaseStoreRetainData("", 1001, 2002, 3003)
 	})
 
-	ginkgo.It("should store data in implicit directory", func() {
-		if pattern.VolType == storageframework.DynamicPV {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
-		}
+	ginkgo.It("[fsgroup delegation][csi-skip-bucket-access-check] should store data and retain the data", func() {
+		testCaseStoreRetainData(specs.SkipCSIBucketAccessCheckPrefix, 1001, 2002, 3003)
+	})
 
-		init(specs.ImplicitDirsVolumePrefix)
+	testCaseImplicitDir := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -282,10 +270,24 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/%v/data && grep 'hello world' %v/%v/data", mountPath, specs.ImplicitDirsPath, mountPath, specs.ImplicitDirsPath))
+	}
+	ginkgo.It("should store data in implicit directory", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+
+		testCaseImplicitDir(specs.ImplicitDirsVolumePrefix)
+	})
+	ginkgo.It("[csi-skip-bucket-access-check] should store data in implicit directory", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+
+		testCaseImplicitDir(specs.SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix)
 	})
 
-	ginkgo.It("should store data using custom sidecar container image", func() {
-		init()
+	testCaseStoreDataCustomContainerImage := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -306,10 +308,17 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+	}
+
+	ginkgo.It("should store data using custom sidecar container image", func() {
+		testCaseStoreDataCustomContainerImage("")
+	})
+	ginkgo.It("[csi-skip-bucket-access-check] should store data using custom sidecar container image", func() {
+		testCaseStoreDataCustomContainerImage(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
-	ginkgo.It("should store data using custom buffer volume", func() {
-		init()
+	testCaseCustomBufferVol := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -333,10 +342,17 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+	}
+
+	ginkgo.It("should store data using custom buffer volume", func() {
+		testCaseCustomBufferVol("")
+	})
+	ginkgo.It("[csi-skip-bucket-access-check] should store data using custom buffer volume", func() {
+		testCaseCustomBufferVol(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
-	ginkgo.It("should store data and retain the data in init container", func() {
-		init()
+	testCaseStoreDataInitContainer := func(configPrefix string) {
+		init(configPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -356,5 +372,12 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world from the init container' %v/data1", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world from the regular container' > %v/data2 && grep 'hello world from the regular container' %v/data2", mountPath, mountPath))
+	}
+
+	ginkgo.It("should store data and retain the data in init container", func() {
+		testCaseStoreDataInitContainer("")
+	})
+	ginkgo.It("[csi-skip-bucket-access-check] should store data and retain the data in init container", func() {
+		testCaseStoreDataInitContainer(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 }
