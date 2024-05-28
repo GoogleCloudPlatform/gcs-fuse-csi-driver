@@ -55,6 +55,7 @@ type gcsVolume struct {
 	fileCacheCapacity       string
 	shared                  bool
 	readOnly                bool
+	skipBucketAccessCheck   bool
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
@@ -144,9 +145,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		isMultipleBucketsPrefix := false
 
 		switch config.Prefix {
-		case specs.FakeVolumePrefix:
+		case specs.FakeVolumePrefix, specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix:
 			bucketName = uuid.NewString()
-		case specs.InvalidVolumePrefix:
+		case specs.InvalidVolumePrefix, specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			bucketName = specs.InvalidVolume
 		case specs.ForceNewBucketPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
@@ -205,6 +206,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			v.fileCacheCapacity = "100Mi"
 		case specs.EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
+		case specs.SkipCSIBucketAccessCheckPrefix, specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix, specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
+			v.skipBucketAccessCheck = true
+		case specs.SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix:
+			mountOptions += ",invalid-option"
+			v.skipBucketAccessCheck = true
 		}
 
 		v.mountOptions = mountOptions
@@ -243,6 +249,10 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 		va[driver.VolumeContextKeyFileCacheCapacity] = gv.fileCacheCapacity
 	}
 
+	if gv.skipBucketAccessCheck {
+		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = "true"
+	}
+
 	return &corev1.PersistentVolumeSource{
 		CSI: &corev1.CSIPersistentVolumeSource{
 			Driver:           n.driverInfo.Name,
@@ -264,6 +274,10 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 
 	if gv.fileCacheCapacity != "" {
 		va[driver.VolumeContextKeyFileCacheCapacity] = gv.fileCacheCapacity
+	}
+
+	if gv.skipBucketAccessCheck {
+		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = "true"
 	}
 
 	return va, gv.shared, gv.readOnly
