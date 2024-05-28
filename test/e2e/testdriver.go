@@ -211,6 +211,13 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case specs.SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 			v.skipBucketAccessCheck = true
+		case specs.SkipCSIBucketAccessCheckAndNonRootVolumePrefix:
+			mountOptions += ",uid=1001"
+			v.skipBucketAccessCheck = true
+		case specs.SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix:
+			specs.CreateImplicitDirInBucket(specs.ImplicitDirsPath, bucketName)
+			mountOptions += ",implicit-dirs"
+			v.skipBucketAccessCheck = true
 		}
 
 		v.mountOptions = mountOptions
