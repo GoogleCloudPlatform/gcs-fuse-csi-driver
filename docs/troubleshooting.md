@@ -256,7 +256,7 @@ The Cloud Storage FUSE [stat metadata cache](https://cloud.google.com/storage/do
   - Volume attributes:
     - `metadataStatCacheCapacity`: Use the default value of `32Mi` if your workload involves up to 20,000 files. If your workload reads more than 20,000 files, increase the size by values of 10 MiB for every additional 6,000 files, an average of ~1,500 bytes per file. Alternatively, you can set the value to `"-1"` to let the stat cache use as much memory as needed.
     - `metadataTypeCacheCapacity`: Use the default value of `4Mi` if the maximum number of files within a single directory from the bucket you're mounting contains 20,000 files or less. If the maximum number of files within a single directory that you're mounting contains more than 20,000 files, increase the size by 1 MiB for every 5,000 files, an average of ~200 bytes per file.  Alternatively, you can set the value to `"-1"` to let the type cache use as much memory as needed.
-    - `metadataCacheTtlSeconds`: Set the value to `"-1"` to bypass a TTL expiration and serve the file from the cache whenever it's available.
+    - `metadataCacheTTLSeconds`: Set the value to `"-1"` to bypass a TTL expiration and serve the file from the cache whenever it's available.
     - For example:
       - Inline ephemeral volume
 
@@ -273,7 +273,7 @@ The Cloud Storage FUSE [stat metadata cache](https://cloud.google.com/storage/do
               bucketName: <bucket-name>
               metadataStatCacheCapacity: 512Mi
               metadataTypeCacheCapacity: 64Mi
-              metadataCacheTtlSeconds: "-1"
+              metadataCacheTTLSeconds: "-1"
       ```
 
       - PersistentVolume
@@ -289,7 +289,7 @@ The Cloud Storage FUSE [stat metadata cache](https://cloud.google.com/storage/do
           volumeAttributes:
             metadataStatCacheCapacity: 512Mi
             metadataTypeCacheCapacity: 64Mi
-            metadataCacheTtlSeconds: "-1"
+            metadataCacheTTLSeconds: "-1"
       ```
 
   - Mount options:
