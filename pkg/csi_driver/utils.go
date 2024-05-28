@@ -162,7 +162,6 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 	VolumeContextKeyMetadataTypeCacheCapacity: "metadata-cache:type-cache-max-size-mb:",
 	VolumeContextKeyMetadataCacheTTLSeconds:   "metadata-cache:ttl-secs:",
 	VolumeContextKeyGcsfuseLoggingSeverity:    "logging:severity:",
-	VolumeContextKeySkipCSIBucketAccessCheck:  "skip-csi-bucket-access-check",
 }
 
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
@@ -220,17 +219,22 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
 			}
 
-		case VolumeContextKeySkipCSIBucketAccessCheck:
-			if boolVal, err := strconv.ParseBool(value); err == nil {
-				skipCSIBucketAccessCheck = boolVal
-			} else {
-				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
-			}
 		default:
 			mountOptionWithValue = mountOption + value
 		}
 
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{mountOptionWithValue})
+	}
+
+	value, ok := volumeContext[VolumeContextKeySkipCSIBucketAccessCheck]
+	if !ok {
+		return fuseMountOptions, skipCSIBucketAccessCheck, nil
+	}
+
+	if boolVal, err := strconv.ParseBool(value); err == nil {
+		skipCSIBucketAccessCheck = boolVal
+	} else {
+		return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", VolumeContextKeySkipCSIBucketAccessCheck, value)
 	}
 
 	return fuseMountOptions, skipCSIBucketAccessCheck, nil

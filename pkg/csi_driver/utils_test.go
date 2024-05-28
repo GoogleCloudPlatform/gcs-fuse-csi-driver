@@ -331,6 +331,16 @@ func TestParseVolumeAttributes(t *testing.T) {
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
 				},
 			},
+			{
+				name:          "unexpected value for VolumeContextKeySkipCSIBucketAccessCheck",
+				volumeContext: map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: "blah"},
+				expectedErr:   true,
+			},
+			{
+				name:                 "value set to false for VolumeContextKeySkipCSIBucketAccessCheck",
+				volumeContext:        map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: "false"},
+				expectedMountOptions: []string{},
+			},
 		}
 
 		for _, tc := range testCases {
