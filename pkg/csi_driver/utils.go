@@ -47,6 +47,7 @@ const (
 	VolumeContextKeyMetadataTypeCacheCapacity = "metadataTypeCacheCapacity"
 	VolumeContextKeyMetadataCacheTTLSeconds   = "metadataCacheTTLSeconds"
 	VolumeContextKeyGcsfuseLoggingSeverity    = "gcsfuseLoggingSeverity"
+	VolumeContextKeySkipCSIBucketAccessCheck  = "skipCSIBucketAccessCheck"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -164,11 +165,11 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 }
 
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
-func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) ([]string, error) {
+func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) ([]string, bool, error) {
 	if mountOptions, ok := volumeContext[VolumeContextKeyMountOptions]; ok {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
 	}
-
+	skipCSIBucketAccessCheck := false
 	for volumeAttribute, mountOption := range volumeAttributesToMountOptionsMapping {
 		value, ok := volumeContext[volumeAttribute]
 		if !ok {
@@ -183,7 +184,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		case VolumeContextKeyFileCacheCapacity, VolumeContextKeyMetadataStatCacheCapacity, VolumeContextKeyMetadataTypeCacheCapacity:
 			quantity, err := resource.ParseQuantity(value)
 			if err != nil {
-				return nil, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
+				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
 			}
 
 			megabytes := quantity.Value()
@@ -203,7 +204,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 			if boolVal, err := strconv.ParseBool(value); err == nil {
 				mountOptionWithValue = mountOption + strconv.FormatBool(boolVal)
 			} else {
-				return nil, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
+				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
 			}
 
 		// parse int volume attributes
@@ -215,7 +216,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 
 				mountOptionWithValue = mountOption + strconv.Itoa(intVal)
 			} else {
-				return nil, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
+				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
 			}
 
 		default:
@@ -225,7 +226,18 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{mountOptionWithValue})
 	}
 
-	return fuseMountOptions, nil
+	value, ok := volumeContext[VolumeContextKeySkipCSIBucketAccessCheck]
+	if !ok {
+		return fuseMountOptions, skipCSIBucketAccessCheck, nil
+	}
+
+	if boolVal, err := strconv.ParseBool(value); err == nil {
+		skipCSIBucketAccessCheck = boolVal
+	} else {
+		return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", VolumeContextKeySkipCSIBucketAccessCheck, value)
+	}
+
+	return fuseMountOptions, skipCSIBucketAccessCheck, nil
 }
 
 func putExitFile(pod *corev1.Pod, emptyDirBasePath string) error {
