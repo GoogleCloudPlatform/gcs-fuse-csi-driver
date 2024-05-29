@@ -221,12 +221,16 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	// TODO(songjiaxun) remove this logic after the next CSI driver release.
-	// TODO(saikatroyc) remove the skip bucket access checks when managed driver created with skip bucket access check support
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container", "istio", "csi-skip-bucket-access-check")
+		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container", "istio")
 
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.29") && testParams.SupportsNativeSidecar {
 			skipTests = append(skipTests, "autoTermination", "custom.sidecar.container")
+		}
+
+		// Starting 1.30, GKE managed CSI driver supports the 'skipCSIBucketAccessCheck' PV volume attribute.
+		if !strings.HasPrefix(testParams.GkeClusterVersion, "1.3") {
+			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
 	}
 
