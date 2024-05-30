@@ -48,6 +48,9 @@ const (
 	VolumeContextKeyMetadataCacheTTLSeconds   = "metadataCacheTTLSeconds"
 	VolumeContextKeyGcsfuseLoggingSeverity    = "gcsfuseLoggingSeverity"
 	VolumeContextKeySkipCSIBucketAccessCheck  = "skipCSIBucketAccessCheck"
+
+	//nolint:revive,stylecheck
+	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -161,6 +164,7 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 	VolumeContextKeyMetadataStatCacheCapacity: "metadata-cache:stat-cache-max-size-mb:",
 	VolumeContextKeyMetadataTypeCacheCapacity: "metadata-cache:type-cache-max-size-mb:",
 	VolumeContextKeyMetadataCacheTTLSeconds:   "metadata-cache:ttl-secs:",
+	VolumeContextKeyMetadataCacheTtlSeconds:   "metadata-cache:ttl-secs:",
 	VolumeContextKeyGcsfuseLoggingSeverity:    "logging:severity:",
 }
 
@@ -208,7 +212,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 			}
 
 		// parse int volume attributes
-		case VolumeContextKeyMetadataCacheTTLSeconds:
+		case VolumeContextKeyMetadataCacheTTLSeconds, VolumeContextKeyMetadataCacheTtlSeconds:
 			if intVal, err := strconv.Atoi(value); err == nil {
 				if intVal < 0 {
 					intVal = -1
