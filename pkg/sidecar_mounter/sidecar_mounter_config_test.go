@@ -211,6 +211,23 @@ func TestPrepareMountArgs(t *testing.T) {
 				"file-cache:max-size-mb": "100",
 			},
 		},
+		{
+			name: "should return valid args when config file field is configured using equal sign",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"file-cache:max-size-mb=100"},
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":      "/dev/fd/1",
+				"logging:format":         "json",
+				"cache-dir":              "test-cache-dir",
+				"file-cache:max-size-mb": "100",
+			},
+		},
 	}
 
 	for _, tc := range testCases {
