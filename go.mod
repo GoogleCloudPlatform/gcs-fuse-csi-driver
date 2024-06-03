@@ -12,7 +12,7 @@ require (
 	github.com/go-logr/logr v1.4.1
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
-	github.com/kubernetes-csi/csi-lib-utils v0.17.0
+	github.com/kubernetes-csi/csi-lib-utils v0.18.1
 	github.com/kubernetes-csi/csi-test/v5 v5.2.0
 	github.com/onsi/ginkgo/v2 v2.17.1
 	github.com/onsi/gomega v1.33.0
@@ -22,8 +22,8 @@ require (
 	google.golang.org/api v0.176.1
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.29.4
-	k8s.io/apimachinery v0.29.4
+	k8s.io/api v0.30.1
+	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v1.5.2
 	k8s.io/klog/v2 v2.120.1
 	k8s.io/kubernetes v1.29.4
@@ -31,7 +31,7 @@ require (
 	k8s.io/pod-security-admission v0.29.4
 	k8s.io/utils v0.0.0-20240423183400-0849a56e8f22
 	sigs.k8s.io/boskos v0.0.0-20240416041523-59dbd6c27f19
-	sigs.k8s.io/controller-runtime v0.17.3
+	sigs.k8s.io/controller-runtime v0.18.3
 )
 
 require (
@@ -64,7 +64,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/cel-go v0.17.7 // indirect
+	github.com/google/cel-go v0.17.8 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
 	github.com/google/pprof v0.0.0-20240416155748-26353dc0451f // indirect
@@ -142,10 +142,10 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	k8s.io/apiextensions-apiserver v0.29.4 // indirect
-	k8s.io/apiserver v0.29.4 // indirect
+	k8s.io/apiextensions-apiserver v0.30.1 // indirect
+	k8s.io/apiserver v0.30.1 // indirect
 	k8s.io/cloud-provider v0.29.4 // indirect
-	k8s.io/component-base v0.29.4 // indirect
+	k8s.io/component-base v0.30.1 // indirect
 	k8s.io/component-helpers v0.29.4 // indirect
 	k8s.io/controller-manager v0.29.4 // indirect
 	k8s.io/kms v0.29.4 // indirect
@@ -153,7 +153,7 @@ require (
 	k8s.io/kubectl v0.29.4 // indirect
 	k8s.io/kubelet v0.29.4 // indirect
 	k8s.io/test-infra v0.0.0-20240310231845-bac0a3c10573 // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.2 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
