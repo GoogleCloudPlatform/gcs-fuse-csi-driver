@@ -281,6 +281,36 @@ func TestParseVolumeAttributes(t *testing.T) {
 				expectedErr:   true,
 			},
 			{
+				name:                 "should return correct metadataCacheTtlSeconds 1",
+				volumeContext:        map[string]string{VolumeContextKeyMetadataCacheTtlSeconds: "100"},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTtlSeconds] + "100"},
+			},
+			{
+				name:                 "should return correct metadataCacheTtlSeconds 2",
+				volumeContext:        map[string]string{VolumeContextKeyMetadataCacheTtlSeconds: "0"},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTtlSeconds] + "0"},
+			},
+			{
+				name:                 "should return correct metadataCacheTtlSeconds 3",
+				volumeContext:        map[string]string{VolumeContextKeyMetadataCacheTtlSeconds: "-1"},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTtlSeconds] + "-1"},
+			},
+			{
+				name:                 "should return correct metadataCacheTtlSeconds 4",
+				volumeContext:        map[string]string{VolumeContextKeyMetadataCacheTtlSeconds: "-100"},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTtlSeconds] + "-1"},
+			},
+			{
+				name:          "should throw error for invalid metadataCacheTtlSeconds 1",
+				volumeContext: map[string]string{VolumeContextKeyMetadataCacheTtlSeconds: "abc"},
+				expectedErr:   true,
+			},
+			{
+				name:          "should throw error for invalid metadataCacheTtlSeconds 2",
+				volumeContext: map[string]string{VolumeContextKeyMetadataCacheTtlSeconds: "0.01"},
+				expectedErr:   true,
+			},
+			{
 				name:                 "should return correct gcsfuseLoggingSeverity",
 				volumeContext:        map[string]string{VolumeContextKeyGcsfuseLoggingSeverity: "trace"},
 				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + TraceStr},
