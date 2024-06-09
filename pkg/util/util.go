@@ -151,3 +151,8 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 
 	return emptyDirBasePath, nil
 }
+
+func IsRetriableErr(_ string) bool {
+	// TODO: implement details
+	return true
+}

@@ -28,6 +28,8 @@ import (
 type stderrWriterInterface interface {
 	io.Writer
 	WriteMsg(errMsg string)
+	GetFullMsg() string
+	EmptyErrorFile()
 }
 
 type stderrWriter struct {
@@ -60,5 +62,20 @@ func (w *stderrWriter) WriteMsg(errMsg string) {
 	klog.Errorf(errMsg)
 	if _, e := w.Write([]byte(errMsg)); e != nil {
 		klog.Errorf("failed to write the error message %q: %v", errMsg, e)
+	}
+}
+
+func (w *stderrWriter) GetFullMsg() string {
+	errMsg, err := os.ReadFile(w.errorFile)
+	if err != nil {
+		return ""
+	}
+
+	return string(errMsg)
+}
+
+func (w *stderrWriter) EmptyErrorFile() {
+	if e := os.Truncate(w.errorFile, 0); e != nil {
+		klog.Errorf("failed to empty the error file %q: %v", w.errorFile, e)
 	}
 }

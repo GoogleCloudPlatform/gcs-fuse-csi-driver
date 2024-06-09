@@ -56,10 +56,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	for _, sp := range socketPaths {
-		// sleep 1.5 seconds before launch the next gcsfuse to avoid
-		// 1. different gcsfuse logs mixed together.
-		// 2. memory usage peak.
-		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp)
 		if mc != nil {
 			if err := mounter.Mount(ctx, mc); err != nil {
