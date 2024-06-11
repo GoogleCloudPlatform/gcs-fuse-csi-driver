@@ -41,6 +41,8 @@ const (
 	memoryRequestAnnotation           = "gke-gcsfuse/memory-request"
 	ephemeralStorageLimitAnnotation   = "gke-gcsfuse/ephemeral-storage-limit"
 	ephemeralStorageRequestAnnotation = "gke-gcsfuse/ephemeral-storage-request"
+	//nolint:gosec
+	GCPServiceAccountSecretNameAnnotation = "gke-gcsfuse/gcp-sa-secret-name"
 )
 
 type SidecarInjector struct {
@@ -102,6 +104,18 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	supportsNativeSidecar, err := si.supportsNativeSidecar()
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to verify native sidecar support: %w", err))
+	}
+
+	// Inject GCP SA secret.
+	if config.GCPServiceAccountSecretName != "" {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: SidecarContainerSAVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: config.GCPServiceAccountSecretName,
+				},
+			},
+		})
 	}
 
 	// Inject container.

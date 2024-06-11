@@ -59,7 +59,6 @@ var disallowedFlags = map[string]bool{
 	"foreground":                           true,
 	"log-file":                             true,
 	"log-format":                           true,
-	"key-file":                             true,
 	"token-url":                            true,
 	"reuse-token-from-url":                 true,
 	"o":                                    true,

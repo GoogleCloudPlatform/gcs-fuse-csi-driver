@@ -183,6 +183,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
 	}
 
+	if pod.Annotations[webhook.GCPServiceAccountSecretNameAnnotation] != "" {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"key-file=" + webhook.SidecarContainerSAVolumeMountPath + "/sa.json"})
+	}
+
 	// Prepare the emptyDir path for the mounter to pass the file descriptor
 	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
 	if err != nil {

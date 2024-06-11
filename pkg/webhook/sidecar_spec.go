@@ -31,6 +31,8 @@ const (
 	SidecarContainerBufferVolumeMountPath = "/gcsfuse-buffer"
 	SidecarContainerCacheVolumeName       = "gke-gcsfuse-cache"
 	SidecarContainerCacheVolumeMountPath  = "/gcsfuse-cache"
+	SidecarContainerSAVolumeName          = "gke-gcsfuse-sa"
+	SidecarContainerSAVolumeMountPath     = "/gcsfuse-sa"
 
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID = 65534
@@ -73,6 +75,12 @@ var (
 		Name:      SidecarContainerCacheVolumeName,
 		MountPath: SidecarContainerCacheVolumeMountPath,
 	}
+
+	saVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerSAVolumeName,
+		MountPath: SidecarContainerSAVolumeMountPath,
+		ReadOnly:  true,
+	}
 )
 
 func GetNativeSidecarContainerSpec(c *Config) corev1.Container {
@@ -113,6 +121,10 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 			Requests: requests,
 		},
 		VolumeMounts: []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount},
+	}
+
+	if c.GCPServiceAccountSecretName != "" {
+		container.VolumeMounts = append(container.VolumeMounts, saVolumeMount)
 	}
 
 	return container

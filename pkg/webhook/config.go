@@ -41,6 +41,8 @@ type Config struct {
 	EphemeralStorageRequest resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
 	//nolint:tagliatelle
 	EphemeralStorageLimit resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
+	//nolint:tagliatelle
+	GCPServiceAccountSecretName string `json:"gke-gcsfuse/gcp-sa-secret-name,omitempty"`
 }
 
 func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {

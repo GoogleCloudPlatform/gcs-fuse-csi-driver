@@ -227,6 +227,25 @@ func TestPrepareConfig(t *testing.T) {
 			wantConfig: nil,
 			expectErr:  true,
 		},
+		{
+			name: "use default values with GCP SA secret",
+			annotations: map[string]string{
+				GcsFuseVolumeEnableAnnotation:         "true",
+				GCPServiceAccountSecretNameAnnotation: "test-secret-name",
+			},
+			wantConfig: &Config{
+				ContainerImage:              FakeConfig().ContainerImage,
+				ImagePullPolicy:             FakeConfig().ImagePullPolicy,
+				CPULimit:                    FakeConfig().CPULimit,
+				CPURequest:                  FakeConfig().CPURequest,
+				MemoryLimit:                 FakeConfig().MemoryLimit,
+				MemoryRequest:               FakeConfig().MemoryRequest,
+				EphemeralStorageLimit:       FakeConfig().EphemeralStorageLimit,
+				EphemeralStorageRequest:     FakeConfig().EphemeralStorageRequest,
+				GCPServiceAccountSecretName: "test-secret-name",
+			},
+			expectErr: false,
+		},
 	}
 
 	for _, tc := range testCases {
