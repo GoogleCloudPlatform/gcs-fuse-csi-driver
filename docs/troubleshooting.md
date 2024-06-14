@@ -61,6 +61,10 @@ To use the Cloud Storage FUSE CSI driver and specific feature or enhancement, yo
   
   Double check your service account setup. See [Configure access to Cloud Storage buckets using GKE Workload Identity](./authentication.md) for more details.
 
+- Error `gcs.PreconditionError: googleapi: Error 412: The type of authentication token used for this request requires that Uniform Bucket Level Access be enabled` during writes to the bucket
+
+If using [Workload Identity Federation](https://cloud.devsite.corp.google.com/kubernetes-engine/docs/concepts/workload-identity), gcsfuse may complain when performing writes. A sample error `CreateObject(\"foo\") (117.594269ms): gcs.PreconditionError: googleapi: Error 412: The type of authentication token used for this request requires that Uniform Bucket Level Access be enabled., conditionNotMet"}`. To fix this, [enable uniform bucket-level-access](https://cloud.google.com/storage/docs/using-uniform-bucket-level-access#set) on the given bucket.
+
 ## Pod event warnings
 
 If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name> -n <your-namespace>` to check the Pod events. Find the troubleshooting guide below according to the Pod event.
