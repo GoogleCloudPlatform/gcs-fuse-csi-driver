@@ -35,14 +35,16 @@ import (
 )
 
 var (
-	endpoint         = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID           = flag.String("nodeid", "", "node id")
-	runController    = flag.Bool("controller", false, "run controller service")
-	runNode          = flag.Bool("node", false, "run node service")
-	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
-	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
-	enableProfiling  = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
+	endpoint                 = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID                   = flag.String("nodeid", "", "node id")
+	runController            = flag.Bool("controller", false, "run controller service")
+	runNode                  = flag.Bool("node", false, "run node service")
+	kubeconfigPath           = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	identityPool             = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider         = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	enableProfiling          = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
+	tokenStoreTTLSec         = flag.Int("token-store-ttl-sec", 120, "time-to-live for service account token sources")
+	tokenStoreCleanupFreqSec = flag.Int("token-store-cleanup-freq-sec", 30, "cleanup frequency to remove stale service account token sources")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -83,7 +85,8 @@ func main() {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}
 
-	tm := auth.NewTokenManager(meta, clientset)
+	tm := auth.NewTokenManager(meta, clientset,
+		time.Duration(*tokenStoreTTLSec)*time.Second, time.Duration(*tokenStoreCleanupFreqSec)*time.Second)
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		klog.Fatalf("Failed to set up storage service manager: %v", err)

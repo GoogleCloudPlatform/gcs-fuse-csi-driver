@@ -18,6 +18,8 @@ limitations under the License.
 package auth
 
 import (
+	"time"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"golang.org/x/oauth2"
@@ -34,25 +36,37 @@ type TokenManager interface {
 }
 
 type tokenManager struct {
-	meta       metadata.Service
-	k8sClients clientset.Interface
+	meta             metadata.Service
+	k8sClients       clientset.Interface
+	tokenSourceStore *TokenSourceStore
 }
 
-func NewTokenManager(meta metadata.Service, clientset clientset.Interface) TokenManager {
+func NewTokenManager(meta metadata.Service, clientset clientset.Interface, ttl, cleanupFreq time.Duration) TokenManager {
 	tm := tokenManager{
-		meta:       meta,
-		k8sClients: clientset,
+		meta:             meta,
+		k8sClients:       clientset,
+		tokenSourceStore: NewTokenSourceStore(ttl, cleanupFreq),
 	}
 
 	return &tm
 }
 
-func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource {
-	return &GCPTokenSource{
-		meta:           tm.meta,
-		k8sSAName:      saName,
-		k8sSANamespace: saNamespace,
-		k8sSAToken:     saToken,
-		k8sClients:     tm.k8sClients,
+func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saTokenStr string) oauth2.TokenSource {
+	ts := tm.tokenSourceStore.Get(saNamespace, saName)
+	if ts == nil {
+		ts = &GCPTokenSource{
+			meta:           tm.meta,
+			k8sSAName:      saName,
+			k8sSANamespace: saNamespace,
+			k8sSATokenStr:  saTokenStr,
+			k8sClients:     tm.k8sClients,
+		}
+
+		tm.tokenSourceStore.Set(saNamespace, saName, ts)
 	}
+
+	// always use the latest Kubernetes Service Account token
+	ts.k8sSATokenStr = saTokenStr
+
+	return ts
 }
