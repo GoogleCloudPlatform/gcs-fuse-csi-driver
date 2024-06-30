@@ -20,6 +20,7 @@ package sidecarmounter
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
 )
 
@@ -54,6 +56,78 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		return fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+TempDir, err)
 	}
 
+	errorCh := make(chan interface{})
+	var err error
+
+retryLoop:
+	for i := 0; i < 3; i++ {
+		cmd := m.prepareCmd(ctx, mc)
+
+		m.WaitGroup.Add(1)
+		go func() {
+			defer m.WaitGroup.Done()
+			if err := cmd.Start(); err != nil {
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
+
+				return
+			}
+
+			klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
+
+			if err := cmd.Wait(); err != nil {
+				errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
+				if strings.Contains(errMsg, "signal: terminated") {
+					klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
+				} else {
+					errorCh <- struct{}{}
+					mc.ErrWriter.WriteMsg(errMsg)
+				}
+			} else {
+				klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
+			}
+		}()
+
+		select {
+		case <-errorCh:
+			// check if the gcsfuse error is retriable
+			// if yes, no-ops, and empty the error file
+			// if no, return with the error
+			errStr := mc.ErrWriter.GetFullMsg()
+			if util.IsRetriableErr(errStr) {
+				mc.ErrWriter.EmptyErrorFile()
+			} else {
+				return errors.New(errStr)
+			}
+
+		// sleep 2 seconds to
+		// 1. wait for gcsfuse errors.
+		// 2. avoid different gcsfuse logs mixed together.
+		// 3. avoid memory usage peak.
+		case <-time.After(2 * time.Second):
+			// no errors found in gcsfuse,
+			// lanuch monitoring goroutines,
+			// and break the retry loop.
+
+			loggingSeverity := mc.ConfigFileFlagMap["logging:severity"]
+			if loggingSeverity == "debug" || loggingSeverity == "trace" {
+				go logMemoryUsage(ctx, cmd.Process.Pid)
+				go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
+			}
+
+			go waitAndForceKill(ctx, cmd)
+
+			break retryLoop
+		}
+	}
+
+	// Since the gcsfuse has taken over the file descriptor,
+	// closing the file descriptor to avoid other process forking it.
+	syscall.Close(mc.FileDescriptor)
+
+	return err
+}
+
+func (m *Mounter) prepareCmd(ctx context.Context, mc *MountConfig) *exec.Cmd {
 	args := []string{}
 	for k, v := range mc.FlagMap {
 		args = append(args, "--"+k)
@@ -79,53 +153,20 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	// when the ctx.Done() is closed,
-	// the main workload containers have exited,
-	// so it is safe to force kill the gcsfuse process.
-	go func(cmd *exec.Cmd) {
-		<-ctx.Done()
-		time.Sleep(time.Second * 5)
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
-			if err := cmd.Process.Kill(); err != nil {
-				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
-			}
+	return cmd
+}
+
+// waitAndForceKill waits for ctx.Done() to be closed and
+// force kills the gcsfuse process.
+func waitAndForceKill(ctx context.Context, cmd *exec.Cmd) {
+	<-ctx.Done()
+	time.Sleep(time.Second * 5)
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
+		if err := cmd.Process.Kill(); err != nil {
+			klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
 		}
-	}(cmd)
-
-	m.WaitGroup.Add(1)
-	go func() {
-		defer m.WaitGroup.Done()
-		if err := cmd.Start(); err != nil {
-			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
-
-			return
-		}
-
-		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
-
-		loggingSeverity := mc.ConfigFileFlagMap["logging:severity"]
-		if loggingSeverity == "debug" || loggingSeverity == "trace" {
-			go logMemoryUsage(ctx, cmd.Process.Pid)
-			go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
-		}
-
-		// Since the gcsfuse has taken over the file descriptor,
-		// closing the file descriptor to avoid other process forking it.
-		syscall.Close(mc.FileDescriptor)
-		if err := cmd.Wait(); err != nil {
-			errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
-			if strings.Contains(errMsg, "signal: terminated") {
-				klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
-			} else {
-				mc.ErrWriter.WriteMsg(errMsg)
-			}
-		} else {
-			klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
-		}
-	}()
-
-	return nil
+	}
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.
