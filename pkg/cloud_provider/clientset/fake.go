@@ -28,7 +28,9 @@ import (
 
 type FakeClientset struct{}
 
-func (c *FakeClientset) GetPod(_ context.Context, namespace, name string) (*corev1.Pod, error) {
+func (c *FakeClientset) ConfigurePodLister(_ string) {}
+
+func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	config := webhook.FakeConfig()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

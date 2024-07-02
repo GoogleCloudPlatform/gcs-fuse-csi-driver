@@ -19,19 +19,24 @@ package clientset
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
 
 type Interface interface {
-	GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error)
+	ConfigurePodLister(nodeName string)
+	GetPod(namespace, name string) (*corev1.Pod, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -42,10 +47,12 @@ type PodInfo struct {
 }
 
 type Clientset struct {
-	k8sClients kubernetes.Interface
+	k8sClients                kubernetes.Interface
+	podLister                 listersv1.PodLister
+	informerResyncDurationSec int
 }
 
-func New(kubeconfigPath string) (Interface, error) {
+func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {
@@ -56,19 +63,40 @@ func New(kubeconfigPath string) (Interface, error) {
 		rc, err = rest.InClusterConfig()
 	}
 	if err != nil {
-		klog.Fatalf("Failed to read kubeconfig: %v", err)
+		return nil, fmt.Errorf("failed to read kubeconfig: %w", err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
-		klog.Fatal("failed to configure k8s client")
+		return nil, fmt.Errorf("failed to configure k8s client: %w", err)
 	}
 
-	return &Clientset{k8sClients: clientset}, nil
+	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec}, nil
 }
 
-func (c *Clientset) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
-	return c.k8sClients.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+func (c *Clientset) ConfigurePodLister(nodeName string) {
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.FieldSelector = "spec.nodeName=" + nodeName
+		}),
+	)
+	podLister := informerFactory.Core().V1().Pods().Lister()
+
+	ctx := context.Background()
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.podLister = podLister
+}
+
+func (c *Clientset) GetPod(namespace, name string) (*corev1.Pod, error) {
+	if c.podLister == nil {
+		return nil, errors.New("pod informer is not ready")
+	}
+
+	return c.podLister.Pods(namespace).Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

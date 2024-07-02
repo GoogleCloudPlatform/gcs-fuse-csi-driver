@@ -35,14 +35,15 @@ import (
 )
 
 var (
-	endpoint         = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID           = flag.String("nodeid", "", "node id")
-	runController    = flag.Bool("controller", false, "run controller service")
-	runNode          = flag.Bool("node", false, "run node service")
-	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
-	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
-	enableProfiling  = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
+	endpoint                  = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID                    = flag.String("nodeid", "", "node id")
+	runController             = flag.Bool("controller", false, "run controller service")
+	runNode                   = flag.Bool("node", false, "run node service")
+	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
+	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -73,9 +74,9 @@ func main() {
 		}()
 	}
 
-	clientset, err := clientset.New(*kubeconfigPath)
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec)
 	if err != nil {
-		klog.Fatal("Failed to configure k8s client")
+		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
 	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
@@ -94,6 +95,8 @@ func main() {
 		if *nodeID == "" {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
+
+		clientset.ConfigurePodLister(*nodeID)
 
 		mounter, err = csimounter.New("")
 		if err != nil {
