@@ -51,6 +51,14 @@ const (
 
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
+
+	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
+	//nolint:gosec
+	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
+	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
+	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
+	VolumeContextKeyBucketName          = "bucketName"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -242,6 +250,45 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 	}
 
 	return fuseMountOptions, skipCSIBucketAccessCheck, nil
+}
+
+// parseRequestArguments parses arguments from given NodePublishVolumeRequest.
+func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, []string, bool, error) {
+	targetPath := req.GetTargetPath()
+	if len(targetPath) == 0 {
+		return "", "", nil, false, errors.New("NodePublishVolume target path must be provided")
+	}
+
+	vc := req.GetVolumeContext()
+	bucketName := req.GetVolumeId()
+	if vc[VolumeContextKeyEphemeral] == TrueStr {
+		bucketName = vc[VolumeContextKeyBucketName]
+		if len(bucketName) == 0 {
+			return "", "", nil, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+		}
+	}
+
+	fuseMountOptions := []string{}
+	if req.GetReadonly() {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
+	}
+
+	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
+		// Delegate fsGroup to CSI Driver
+		// Set gid, file-mode, and dir-mode for gcsfuse.
+		// Allow users to overwrite these flags.
+		if capMount.GetVolumeMountGroup() != "" {
+			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"gid=" + capMount.GetVolumeMountGroup(), "file-mode=664", "dir-mode=775"})
+		}
+		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
+	}
+
+	fuseMountOptions, skipCSIBucketAccessCheck, err := parseVolumeAttributes(fuseMountOptions, vc)
+	if err != nil {
+		return "", "", nil, false, err
+	}
+
+	return targetPath, bucketName, fuseMountOptions, skipCSIBucketAccessCheck, nil
 }
 
 func putExitFile(pod *corev1.Pod, emptyDirBasePath string) error {

@@ -37,16 +37,7 @@ import (
 	mount "k8s.io/mount-utils"
 )
 
-// NodePublishVolume VolumeContext parameters.
 const (
-	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
-	//nolint:gosec
-	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
-	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
-	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
-	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
-	VolumeContextKeyBucketName          = "bucketName"
-
 	UmountTimeout = time.Second * 5
 
 	FuseMountType = "fuse"
@@ -94,40 +85,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	bucketName := req.GetVolumeId()
-	vc := req.GetVolumeContext()
-
-	fuseMountOptions := []string{}
-	if req.GetReadonly() {
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
-	}
-	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
-		// Delegate fsGroup to CSI Driver
-		// Set gid, file-mode, and dir-mode for gcsfuse.
-		// Allow users to overwrite these flags.
-		if capMount.GetVolumeMountGroup() != "" {
-			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"gid=" + capMount.GetVolumeMountGroup(), "file-mode=664", "dir-mode=775"})
-		}
-		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
-	}
-
-	fuseMountOptions, skipBucketAccessCheck, err := parseVolumeAttributes(fuseMountOptions, vc)
+	targetPath, bucketName, fuseMountOptions, skipBucketAccessCheck, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	klog.V(6).Infof("NodePublishVolume on volume %q has skipBucketAccessCheck %t", bucketName, skipBucketAccessCheck)
-
-	if vc[VolumeContextKeyEphemeral] == TrueStr {
-		bucketName = vc[VolumeContextKeyBucketName]
-		if len(bucketName) == 0 {
-			return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
-		}
-	}
-
-	targetPath := req.GetTargetPath()
-	if len(targetPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume target path must be provided")
-	}
 
 	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -139,9 +101,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	defer s.volumeLocks.Release(targetPath)
 
+	vc := req.GetVolumeContext()
+
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	if bucketName != "_" && !skipBucketAccessCheck {
-		storageService, err := s.prepareStorageService(ctx, req.GetVolumeContext())
+		storageService, err := s.prepareStorageService(ctx, vc)
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 		}
