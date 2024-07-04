@@ -29,6 +29,7 @@ import (
 	"golang.org/x/oauth2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
@@ -235,10 +236,28 @@ func IsNotExistErr(err error) bool {
 	return errors.Is(err, storage.ErrBucketNotExist)
 }
 
-func IsPermissionDeniedErr(err error) bool {
+func isPermissionDeniedErr(err error) bool {
 	return strings.Contains(err.Error(), "googleapi: Error 403")
 }
 
-func IsCanceledErr(err error) bool {
+func isCanceledErr(err error) bool {
 	return strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")
+}
+
+// ParseErrCode parses error and returns a gRPC code.
+func ParseErrCode(err error) codes.Code {
+	code := codes.Internal
+	if IsNotExistErr(err) {
+		code = codes.NotFound
+	}
+
+	if isPermissionDeniedErr(err) {
+		code = codes.PermissionDenied
+	}
+
+	if isCanceledErr(err) {
+		code = codes.Aborted
+	}
+
+	return code
 }

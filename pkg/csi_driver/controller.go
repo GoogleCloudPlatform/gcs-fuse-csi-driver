@@ -87,14 +87,11 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
+	defer storageService.Close()
 
 	// Check that the volume exists
-	newBucket, err := storageService.GetBucket(ctx, &storage.ServiceBucket{Name: volumeID})
-	if err != nil && !storage.IsNotExistErr(err) {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	if newBucket == nil {
-		return nil, status.Error(codes.NotFound, fmt.Sprintf("volume %v doesn't exist", volumeID))
+	if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: volumeID}); !exist {
+		return nil, status.Errorf(storage.ParseErrCode(err), "volume %v doesn't exist: %v", volumeID, err)
 	}
 
 	// Validate that the volume matches the capabilities
@@ -154,6 +151,7 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
+	defer storageService.Close()
 
 	// Check if the bucket already exists
 	bucket, err := storageService.GetBucket(ctx, newBucket)

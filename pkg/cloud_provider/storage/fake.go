@@ -74,8 +74,12 @@ func (service *fakeService) SetIAMPolicy(_ context.Context, _ *ServiceBucket, _,
 	return nil
 }
 
-func (service *fakeService) CheckBucketExists(_ context.Context, _ *ServiceBucket) (bool, error) {
-	return true, nil
+func (service *fakeService) CheckBucketExists(_ context.Context, obj *ServiceBucket) (bool, error) {
+	if _, ok := service.sm.createdBuckets[obj.Name]; ok {
+		return true, nil
+	}
+
+	return false, storage.ErrBucketNotExist
 }
 
 func (service *fakeService) Close() {

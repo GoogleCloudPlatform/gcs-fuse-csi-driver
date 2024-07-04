@@ -112,20 +112,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		defer storageService.Close()
 
 		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-			code := codes.Internal
-			if storage.IsNotExistErr(err) {
-				code = codes.NotFound
-			}
-
-			if storage.IsPermissionDeniedErr(err) {
-				code = codes.PermissionDenied
-			}
-
-			if storage.IsCanceledErr(err) {
-				code = codes.Aborted
-			}
-
-			return nil, status.Errorf(code, "failed to get GCS bucket %q: %v", bucketName, err)
+			return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", bucketName, err)
 		}
 	}
 
