@@ -26,6 +26,7 @@ import (
 
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
 	"cloud.google.com/go/iam/credentials/apiv1/credentialspb"
+	"cloud.google.com/go/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"golang.org/x/oauth2"
@@ -141,15 +142,6 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSATo
 
 // fetch GCP service account token by calling the IAM credentials endpoint using an IdentityBindingToken.
 func (ts *GCPTokenSource) fetchGCPSAToken(ctx context.Context, identityBindingToken *oauth2.Token) (*oauth2.Token, error) {
-	gcpSAClient, err := credentials.NewIamCredentialsClient(
-		ctx,
-		option.WithTokenSource(oauth2.StaticTokenSource(identityBindingToken)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create credentials client error: %w", err)
-	}
-	defer gcpSAClient.Close()
-
 	gcpSAName, err := ts.k8sClients.GetGCPServiceAccountName(ctx, ts.k8sSANamespace, ts.k8sSAName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get GCP SA from Kubernetes SA [%s/%s] annotation: %w", ts.k8sSANamespace, ts.k8sSAName, err)
@@ -160,12 +152,21 @@ func (ts *GCPTokenSource) fetchGCPSAToken(ctx context.Context, identityBindingTo
 		return identityBindingToken, nil
 	}
 
+	gcpSAClient, err := credentials.NewIamCredentialsClient(
+		ctx,
+		option.WithTokenSource(oauth2.StaticTokenSource(identityBindingToken)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create credentials client error: %w", err)
+	}
+	defer gcpSAClient.Close()
+
 	resp, err := gcpSAClient.GenerateAccessToken(
 		ctx,
 		&credentialspb.GenerateAccessTokenRequest{
 			Name: "projects/-/serviceAccounts/" + gcpSAName,
 			Scope: []string{
-				"https://www.googleapis.com/auth/devstorage.full_control",
+				storage.ScopeFullControl,
 			},
 		},
 	)
