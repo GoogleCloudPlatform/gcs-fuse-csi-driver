@@ -18,6 +18,7 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,10 +26,12 @@ import (
 	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -291,7 +294,7 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, [
 	return targetPath, bucketName, fuseMountOptions, skipCSIBucketAccessCheck, nil
 }
 
-func putExitFile(pod *corev1.Pod, emptyDirBasePath string) error {
+func putExitFile(pod *corev1.Pod, targetPath string) error {
 	podIsTerminating := pod.DeletionTimestamp != nil
 	podRestartPolicyIsNever := pod.Spec.RestartPolicy == corev1.RestartPolicyNever
 	podRestartPolicyIsOnFailure := pod.Spec.RestartPolicy == corev1.RestartPolicyOnFailure
@@ -333,6 +336,11 @@ func putExitFile(pod *corev1.Pod, emptyDirBasePath string) error {
 		}
 
 		klog.V(4).Infof("[Pod %v/%v, UID %v] all the other containers terminated in the Pod, put the exit file.", pod.Namespace, pod.Name, pod.UID)
+		emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
+		if err != nil {
+			return fmt.Errorf("failed to get emptyDir path: %w", err)
+		}
+
 		exitFilePath := filepath.Dir(emptyDirBasePath) + "/exit"
 		f, err := os.Create(exitFilePath)
 		if err != nil {
@@ -347,4 +355,102 @@ func putExitFile(pod *corev1.Pod, emptyDirBasePath string) error {
 	}
 
 	return nil
+}
+
+func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (codes.Code, error) {
+	code := codes.Internal
+	cs, err := getSidecarContainerStatus(isInitContainer, pod)
+	if err != nil {
+		return code, err
+	}
+
+	// the sidecar container has not started, skip the check
+	if cs.State.Waiting != nil {
+		return codes.OK, nil
+	}
+
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
+	if err != nil {
+		return code, fmt.Errorf("failed to get emptyDir path: %w", err)
+	}
+
+	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
+	if err != nil && !os.IsNotExist(err) {
+		return code, fmt.Errorf("failed to open error file %q: %w", emptyDirBasePath+"/error", err)
+	}
+	if err == nil && len(errMsg) > 0 {
+		errMsgStr := string(errMsg)
+		code := codes.Internal
+		if strings.Contains(errMsgStr, "Incorrect Usage") {
+			code = codes.InvalidArgument
+		}
+
+		if strings.Contains(errMsgStr, "signal: killed") {
+			code = codes.ResourceExhausted
+		}
+
+		if strings.Contains(errMsgStr, "signal: terminated") {
+			code = codes.Canceled
+		}
+
+		if strings.Contains(errMsgStr, "googleapi: Error 403") ||
+			strings.Contains(errMsgStr, "IAM returned 403 Forbidden: Permission") ||
+			strings.Contains(errMsgStr, "google: could not find default credentials") {
+			code = codes.PermissionDenied
+		}
+
+		if strings.Contains(errMsgStr, "bucket doesn't exist") {
+			code = codes.NotFound
+		}
+
+		return code, fmt.Errorf("gcsfuse failed with error: %v", errMsgStr)
+	}
+
+	return codes.OK, nil
+}
+
+func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code, error) {
+	code := codes.Internal
+	cs, err := getSidecarContainerStatus(isInitContainer, pod)
+	if err != nil {
+		return code, err
+	}
+
+	var reason string
+	var exitCode int32
+	if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
+		reason = cs.LastTerminationState.Terminated.Reason
+		exitCode = cs.LastTerminationState.Terminated.ExitCode
+	} else if cs.State.Terminated != nil {
+		reason = cs.State.Terminated.Reason
+		exitCode = cs.State.Terminated.ExitCode
+	}
+
+	if exitCode != 0 {
+		if reason == "OOMKilled" || exitCode == 137 {
+			code = codes.ResourceExhausted
+		}
+
+		return code, fmt.Errorf("the sidecar container terminated due to %v, exit code: %v", reason, exitCode)
+	}
+
+	return codes.OK, nil
+}
+
+func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	var containerStatusList []corev1.ContainerStatus
+	// Use ContainerStatuses or InitContainerStatuses
+	if isInitContainer {
+		containerStatusList = pod.Status.InitContainerStatuses
+	} else {
+		containerStatusList = pod.Status.ContainerStatuses
+	}
+
+	for _, cs := range containerStatusList {
+		if cs.Name == webhook.SidecarContainerName {
+			return &cs, nil
+		}
+	}
+
+	return nil, errors.New("the sidecar container was not found")
 }

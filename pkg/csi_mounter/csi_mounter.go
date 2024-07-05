@@ -79,7 +79,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 
 	// Prepare the temp emptyDir path
-	emptyDirBasePath, err := util.PrepareEmptyDir(target, false)
+	emptyDirBasePath, err := util.PrepareEmptyDir(target, true)
 	if err != nil {
 		return fmt.Errorf("failed to prepare emptyDir path: %w", err)
 	}

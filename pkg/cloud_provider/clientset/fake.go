@@ -43,6 +43,16 @@ func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 			},
 			Volumes: webhook.GetSidecarContainerVolumeSpec(),
 		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: webhook.SidecarContainerName,
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{},
+					},
+				},
+			},
+		},
 	}
 
 	return pod, nil

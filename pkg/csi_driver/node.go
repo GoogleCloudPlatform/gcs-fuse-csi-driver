@@ -32,7 +32,6 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -134,88 +133,31 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
 	}
 
-	// Prepare the emptyDir path for the mounter to pass the file descriptor
-	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to prepare emptyDir path: %v", err)
-	}
-
 	// Check if the sidecar container is still required,
 	// if not, put an exit file to the emptyDir path to
 	// notify the sidecar container to exit.
 	if !isInitContainer {
-		if err := putExitFile(pod, emptyDirBasePath); err != nil {
+		if err := putExitFile(pod, targetPath); err != nil {
 			return nil, status.Errorf(codes.Internal, err.Error())
 		}
 	}
 
-	// Check if there is any error from the sidecar container
-	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
-	if err != nil && !os.IsNotExist(err) {
-		return nil, status.Errorf(codes.Internal, "failed to open error file %q: %v", emptyDirBasePath+"/error", err)
-	}
-	if err == nil && len(errMsg) > 0 {
-		errMsgStr := string(errMsg)
-		code := codes.Internal
-		if strings.Contains(errMsgStr, "Incorrect Usage") {
-			code = codes.InvalidArgument
-		}
-
-		if strings.Contains(errMsgStr, "signal: killed") {
-			code = codes.ResourceExhausted
-		}
-
-		if strings.Contains(errMsgStr, "signal: terminated") {
-			klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the sidecar container has terminated.", bucketName, targetPath)
+	// Check if there is any error from the gcsfuse
+	code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
+	if code != codes.OK {
+		if code == codes.Canceled {
+			klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the gcsfuse has terminated.", bucketName, targetPath)
 
 			return &csi.NodePublishVolumeResponse{}, nil
 		}
 
-		if strings.Contains(errMsgStr, "googleapi: Error 403") ||
-			strings.Contains(errMsgStr, "IAM returned 403 Forbidden: Permission") ||
-			strings.Contains(errMsgStr, "google: could not find default credentials") {
-			code = codes.PermissionDenied
-		}
-
-		if strings.Contains(errMsgStr, "bucket doesn't exist") {
-			code = codes.NotFound
-		}
-
-		return nil, status.Errorf(code, "the sidecar container failed with error: %v", errMsgStr)
+		return nil, status.Errorf(code, err.Error())
 	}
 
-	var containerStatusList []corev1.ContainerStatus
-	// Use ContainerStatuses or InitContainerStatuses
-	if isInitContainer {
-		containerStatusList = pod.Status.InitContainerStatuses
-	} else {
-		containerStatusList = pod.Status.ContainerStatuses
-	}
-
-	// Check if the sidecar container terminated
-	for _, cs := range containerStatusList {
-		if cs.Name != webhook.SidecarContainerName {
-			continue
-		}
-
-		var reason string
-		var exitCode int32
-		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
-			reason = cs.LastTerminationState.Terminated.Reason
-			exitCode = cs.LastTerminationState.Terminated.ExitCode
-		} else if cs.State.Terminated != nil {
-			reason = cs.State.Terminated.Reason
-			exitCode = cs.State.Terminated.ExitCode
-		}
-
-		if exitCode != 0 {
-			code := codes.Internal
-			if reason == "OOMKilled" || exitCode == 137 {
-				code = codes.ResourceExhausted
-			}
-
-			return nil, status.Errorf(code, "the sidecar container terminated due to %v, exit code: %v", reason, exitCode)
-		}
+	// Check if there is any error from the sidecar container
+	code, err = checkSidecarContainerErr(isInitContainer, pod)
+	if code != codes.OK {
+		return nil, status.Errorf(code, err.Error())
 	}
 
 	// TODO: Check if the socket listener timed out
@@ -227,11 +169,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	if mounted {
-		// Already mounted
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", bucketName, targetPath)
 
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
+
 	klog.V(4).Infof("NodePublishVolume attempting mkdir for path %q", targetPath)
 	if err := os.MkdirAll(targetPath, 0o750); err != nil {
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
