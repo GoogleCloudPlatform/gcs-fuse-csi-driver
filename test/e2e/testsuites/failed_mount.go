@@ -19,7 +19,9 @@ package testsuites
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	"google.golang.org/grpc/codes"
@@ -76,6 +78,24 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 			l.config.Prefix = configPrefix[0]
 		}
 		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+	}
+
+	setupIAMPolicy := func(bucketName, namespace, saName string) {
+		gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+		if !ok {
+			framework.Failf("Failed to cast driver to GCSFuseCSITestDriver")
+		}
+
+		gcsfuseCSITestDriver.SetIAMPolicy(ctx, &storage.ServiceBucket{Name: bucketName}, namespace, saName)
+	}
+
+	removeIAMPolicy := func(bucketName, namespace, saName string) {
+		gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+		if !ok {
+			framework.Failf("Failed to cast driver to GCSFuseCSITestDriver")
+		}
+
+		gcsfuseCSITestDriver.RemoveIAMPolicy(ctx, &storage.ServiceBucket{Name: bucketName}, namespace, saName)
 	}
 
 	cleanup := func() {
@@ -190,6 +210,48 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified service account does not have access to the GCS bucket", func() {
 		testCaseSAInsufficientAccess(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+
+	ginkgo.It("should respond to service account permission changes", func() {
+		init()
+		defer cleanup()
+
+		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
+		bucketName := l.config.Prefix
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying a Kubernetes service account without access to the GCS bucket")
+		saName := "sa-without-access"
+		testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, saName, "")
+		testK8sSA.Create(ctx)
+		tPod.SetServiceAccount(saName)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
+		tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
+		tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
+
+		ginkgo.By("Setting up SA IAM policy")
+		setupIAMPolicy(bucketName, f.Namespace.Name, saName)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+
+		ginkgo.By("Removing SA IAM policy")
+		removeIAMPolicy(bucketName, f.Namespace.Name, saName)
+
+		ginkgo.By("Expecting error when write to the volume with permission removed")
+		tPod.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data", mountPath), 1)
 	})
 
 	testCaseSidecarNotInjected := func(configPrefix string) {

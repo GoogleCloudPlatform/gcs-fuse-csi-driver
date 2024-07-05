@@ -27,6 +27,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/testsuites"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -110,7 +111,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIIstioTestSuite,
 	}
 
-	testDriver := InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest)
+	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
