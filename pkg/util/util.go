@@ -30,6 +30,9 @@ import (
 
 const (
 	Mb = 1024 * 1024
+
+	TrueStr  = "true"
+	FalseStr = "false"
 )
 
 var (

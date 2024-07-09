@@ -200,7 +200,7 @@ func (mc *MountConfig) prepareMountArgs() {
 		switch {
 		case boolFlags[flag] && value != "":
 			flag = flag + "=" + value
-			if value == "true" || value == "false" {
+			if value == util.TrueStr || value == util.FalseStr {
 				value = ""
 			} else {
 				invalidArgs = append(invalidArgs, flag)

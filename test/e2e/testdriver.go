@@ -27,6 +27,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -257,7 +258,7 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 	}
 
 	if gv.skipBucketAccessCheck {
-		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = "true"
+		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = util.TrueStr
 	}
 
 	return &corev1.PersistentVolumeSource{
@@ -284,7 +285,7 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 	}
 
 	if gv.skipBucketAccessCheck {
-		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = "true"
+		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = util.TrueStr
 	}
 
 	return va, gv.shared, gv.readOnly

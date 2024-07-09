@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 )
 
 const (
@@ -217,33 +218,33 @@ func TestParseVolumeAttributes(t *testing.T) {
 			},
 			{
 				name:                 "should return correct fileCacheForRangeRead 1",
-				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: "true"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + TrueStr},
+				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: util.TrueStr},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.TrueStr},
 			},
 			{
 				name:                 "should return correct fileCacheForRangeRead 2",
 				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: "True"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + TrueStr},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.TrueStr},
 			},
 			{
 				name:                 "should return correct fileCacheForRangeRead 3",
-				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: "false"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + FalseStr},
+				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: util.FalseStr},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.FalseStr},
 			},
 			{
 				name:                 "should return correct fileCacheForRangeRead 4",
 				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: "False"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + FalseStr},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.FalseStr},
 			},
 			{
 				name:                 "should return correct fileCacheForRangeRead 5",
 				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: "1"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + TrueStr},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.TrueStr},
 			},
 			{
 				name:                 "should return correct fileCacheForRangeRead 6",
 				volumeContext:        map[string]string{VolumeContextKeyFileCacheForRangeRead: "0"},
-				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + FalseStr},
+				expectedMountOptions: []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.FalseStr},
 			},
 			{
 				name:          "should throw error for invalid fileCacheForRangeRead",
@@ -321,7 +322,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 					VolumeContextKeyMountOptions:              "implicit-dirs,uid=1001",
 					VolumeContextKeyGcsfuseLoggingSeverity:    "trace",
 					VolumeContextKeyFileCacheCapacity:         "500Gi",
-					VolumeContextKeyFileCacheForRangeRead:     "true",
+					VolumeContextKeyFileCacheForRangeRead:     util.TrueStr,
 					VolumeContextKeyMetadataStatCacheCapacity: "-100",
 					VolumeContextKeyMetadataTypeCacheCapacity: "0",
 					VolumeContextKeyMetadataCacheTTLSeconds:   "3600",
@@ -331,7 +332,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 					"uid=1001",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + "trace",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheCapacity] + "512000",
-					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + "true",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.TrueStr,
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataStatCacheCapacity] + "-1",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataTypeCacheCapacity] + "0",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
@@ -344,18 +345,18 @@ func TestParseVolumeAttributes(t *testing.T) {
 					VolumeContextKeyMountOptions:              "implicit-dirs,uid=1001",
 					VolumeContextKeyGcsfuseLoggingSeverity:    "trace",
 					VolumeContextKeyFileCacheCapacity:         "500Gi",
-					VolumeContextKeyFileCacheForRangeRead:     "true",
+					VolumeContextKeyFileCacheForRangeRead:     util.TrueStr,
 					VolumeContextKeyMetadataStatCacheCapacity: "-100",
 					VolumeContextKeyMetadataTypeCacheCapacity: "0",
 					VolumeContextKeyMetadataCacheTTLSeconds:   "3600",
-					VolumeContextKeySkipCSIBucketAccessCheck:  "true",
+					VolumeContextKeySkipCSIBucketAccessCheck:  util.TrueStr,
 				},
 				expectedMountOptions: []string{
 					"implicit-dirs",
 					"uid=1001",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyGcsfuseLoggingSeverity] + "trace",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheCapacity] + "512000",
-					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + "true",
+					volumeAttributesToMountOptionsMapping[VolumeContextKeyFileCacheForRangeRead] + util.TrueStr,
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataStatCacheCapacity] + "-1",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataTypeCacheCapacity] + "0",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
@@ -368,7 +369,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 			},
 			{
 				name:                 "value set to false for VolumeContextKeySkipCSIBucketAccessCheck",
-				volumeContext:        map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: "false"},
+				volumeContext:        map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.FalseStr},
 				expectedMountOptions: []string{},
 			},
 		}

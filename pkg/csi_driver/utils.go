@@ -264,7 +264,7 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, [
 
 	vc := req.GetVolumeContext()
 	bucketName := req.GetVolumeId()
-	if vc[VolumeContextKeyEphemeral] == TrueStr {
+	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
 			return "", "", nil, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
