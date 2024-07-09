@@ -98,7 +98,9 @@ endif
 
 else
 	gsutil cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
+ifeq (${BUILD_ARM}, true)
 	gsutil cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
+endif
 endif
 
 	chmod +x ${BINDIR}/linux/amd64/gcsfuse
