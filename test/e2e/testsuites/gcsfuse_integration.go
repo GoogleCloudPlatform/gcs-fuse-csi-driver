@@ -298,7 +298,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true")
+		gcsfuseIntegrationTest("list_large_dir", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
 	})
 
 	ginkgo.It("should succeed in read_large_files test 1", func() {
