@@ -228,6 +228,11 @@ func generateTestSkip(testParams *TestParameters) string {
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.29") && testParams.SupportsNativeSidecar {
 			skipTests = append(skipTests, "autoTermination", "custom.sidecar.container")
 		}
+
+		// TODO(songjiaxun) remove this skip when gcsfuse v2.3.1 is back-ported to the below GKE versions.
+		if strings.HasPrefix(testParams.GkeClusterVersion, "1.26") || strings.HasPrefix(testParams.GkeClusterVersion, "1.27") || strings.HasPrefix(testParams.GkeClusterVersion, "1.28") {
+			skipTests = append(skipTests, "list_large_dir")
+		}
 	}
 
 	skipString := strings.Join(skipTests, "|")
