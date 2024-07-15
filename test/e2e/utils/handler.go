@@ -223,7 +223,7 @@ func generateTestSkip(testParams *TestParameters) string {
 	// TODO(songjiaxun) remove this logic after the next CSI driver release.
 	// TODO(saikatroyc) remove the skip bucket access checks when managed driver created with skip bucket access check support
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container", "istio", "csi-skip-bucket-access-check")
+		skipTests = append(skipTests, "Pod.RestartPolicy.is.OnFailure$", "Job.with.RestartPolicy.OnFailure.eventually.succeed", "fast.termination", "fileCache", "gcsfuseIntegrationFileCache", "init.container", "istio", "csi-skip-bucket-access-check", "concurrent_operations", "kernel-list-cache")
 
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.29") && testParams.SupportsNativeSidecar {
 			skipTests = append(skipTests, "autoTermination", "custom.sidecar.container")
@@ -231,7 +231,7 @@ func generateTestSkip(testParams *TestParameters) string {
 
 		// TODO(songjiaxun) remove this skip when gcsfuse v2.3.1 is back-ported to the below GKE versions.
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.26") || strings.HasPrefix(testParams.GkeClusterVersion, "1.27") || strings.HasPrefix(testParams.GkeClusterVersion, "1.28") {
-			skipTests = append(skipTests, "list_large_dir")
+			skipTests = append(skipTests, "list_large_dir", "concurrent_operations", "kernel-list-cache")
 		}
 	}
 

@@ -93,6 +93,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetImage(specs.GolangImage)
 		tPod.SetResource("1", "1Gi", "5Gi")
 		sidecarMemoryLimit := "256Mi"
+
+		testCase := ""
+		if strings.HasPrefix(testName, "kernel-list-cache") {
+			testCase = strings.Split(testName, ":")[1]
+			testName = "kernel-list-cache"
+		}
+
 		if testName == "write_large_files" || testName == "read_large_files" {
 			tPod.SetResource("1", "6Gi", "5Gi")
 			sidecarMemoryLimit = "1Gi"
@@ -154,8 +161,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
 			}
-		case "explicit_dir", "implicit_dir", "gzip", "local_file", "operations":
+		case "explicit_dir", "implicit_dir", "gzip", "local_file", "operations", "concurrent_operations":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
+		case "kernel-list-cache":
+			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -run "+testCase)
 		case "list_large_dir", "write_large_files":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 80m")
 		case "read_large_files":
@@ -327,5 +336,82 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest("local_file", false, "implicit-dirs=true", "rename-dir-limit=3")
+	})
+
+	ginkgo.It("should succeed in concurrent_operations test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("concurrent_operations", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 1", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_AlwaysCacheHit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 2", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 3", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 4", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnFileRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 5", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_EvictCacheEntryOfOnlyDirectParent", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 6", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 7", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 8", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDirectoryRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 9", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+	})
+
+	ginkgo.It("should succeed in kernel-list-cache test 10", func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest("kernel-list-cache:TestDisabledKernelListCacheTest/TestKernelListCache_AlwaysCacheMiss", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=0")
 	})
 }
