@@ -95,9 +95,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		sidecarMemoryLimit := "256Mi"
 
 		testCase := ""
-		if strings.HasPrefix(testName, "kernel-list-cache") {
+		if strings.HasPrefix(testName, "kernel_list_cache") {
 			testCase = strings.Split(testName, ":")[1]
-			testName = "kernel-list-cache"
+			testName = "kernel_list_cache"
 		}
 
 		if testName == "write_large_files" || testName == "read_large_files" {
