@@ -163,7 +163,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			}
 		case "explicit_dir", "implicit_dir", "gzip", "local_file", "operations", "concurrent_operations":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
-		case "kernel-list-cache":
+		case "kernel_list_cache":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -run "+testCase)
 		case "list_large_dir", "write_large_files":
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 80m")
