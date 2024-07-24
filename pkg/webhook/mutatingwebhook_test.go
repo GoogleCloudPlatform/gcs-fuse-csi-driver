@@ -302,7 +302,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: admission.Allowed(fmt.Sprintf("The annotation key %q is not found, no injection required.", GcsFuseVolumeEnableAnnotation)),
 		},
 		{
-			name:      "Sidecar already injected test.",
+			name:      "Sidecar already injected test first index.",
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
@@ -316,6 +316,46 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 				},
 			},
 			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
+		},
+		{
+			name:      "Sidecar already injected test other index.",
+			operation: admissionv1.Create,
+			inputPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{getWorkloadSpec("workload"), GetSidecarContainerSpec(FakeConfig())},
+					Volumes:    GetSidecarContainerVolumeSpec(),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+				},
+			},
+			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
+		},
+		{
+			name:      "Sidecar already injected in initContainer list test.",
+			operation: admissionv1.Create,
+			inputPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{getWorkloadSpec("init-workload"), GetSidecarContainerSpec(FakeConfig())},
+					Containers:     []corev1.Container{getWorkloadSpec("workload")},
+					Volumes:        GetSidecarContainerVolumeSpec(),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+				},
+			},
+			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
+		},
+		{
+			name:         "container injection successful test with multiple sidecar entries present",
+			operation:    admissionv1.Create,
+			inputPod:     getDuplicateDeclarationPodSpec(),
+			wantResponse: generatePatch(t, getDuplicateDeclarationPodSpec(), getDuplicateDeclarationPodSpecResponse()),
+			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "regular container injection successful test.",
@@ -441,6 +481,51 @@ func compareResponses(wantResponse, gotResponse admission.Response) error {
 	return nil
 }
 
+func getDuplicateDeclarationPodSpec() *corev1.Pod {
+	return &corev1.Pod{
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{
+					Name:  SidecarContainerName,
+					Image: "private-repo/fake-sidecar-image:v999.999.999",
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "FakeContainer1",
+				},
+				{
+					Name: "FakeContainer2",
+				},
+				{
+					Name:  SidecarContainerName,
+					Image: "private-repo/fake-sidecar-image:v999.999.999",
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "FakeVolume1",
+				},
+				{
+					Name: "FakeVolume2",
+				},
+			},
+			TerminationGracePeriodSeconds: ptr.To[int64](60),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				GcsFuseVolumeEnableAnnotation: "true",
+			},
+		},
+	}
+}
+
+func getDuplicateDeclarationPodSpecResponse() *corev1.Pod {
+	result := modifySpec(*validInputPod(true), true, true)
+
+	return result
+}
+
 func validInputPod(customImage bool) *corev1.Pod {
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
@@ -479,6 +564,13 @@ func validInputPod(customImage bool) *corev1.Pod {
 	return pod
 }
 
+func getWorkloadSpec(name string) corev1.Container {
+	return corev1.Container{
+		Name:  name,
+		Image: "busybox",
+	}
+}
+
 func validInputPodWithIstio(customImage, nativeIstio bool) *corev1.Pod {
 	pod := validInputPod(customImage)
 
@@ -493,7 +585,13 @@ func validInputPodWithIstio(customImage, nativeIstio bool) *corev1.Pod {
 
 func wantResponse(t *testing.T, customImage bool, native bool) admission.Response {
 	t.Helper()
-	newPod := validInputPod(customImage)
+	pod := *validInputPod(customImage)
+	newPod := *modifySpec(*validInputPod(customImage), customImage, native)
+
+	return generatePatch(t, &pod, &newPod)
+}
+
+func modifySpec(newPod corev1.Pod, customImage bool, native bool) *corev1.Pod {
 	config := FakeConfig()
 	if customImage {
 		config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image
@@ -507,7 +605,13 @@ func wantResponse(t *testing.T, customImage bool, native bool) admission.Respons
 	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
-	return admission.PatchResponseFromRaw(serialize(t, validInputPod(customImage)), serialize(t, newPod))
+	return &newPod
+}
+
+func generatePatch(t *testing.T, originalPod *corev1.Pod, newPod *corev1.Pod) admission.Response {
+	t.Helper()
+
+	return admission.PatchResponseFromRaw(serialize(t, originalPod), serialize(t, newPod))
 }
 
 func wantResponseWithIstio(t *testing.T, customImage bool, native bool) admission.Response {
