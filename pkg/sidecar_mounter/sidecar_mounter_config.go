@@ -161,8 +161,16 @@ func (mc *MountConfig) prepareMountArgs() {
 	invalidArgs := []string{}
 
 	for _, arg := range mc.Options {
+		// The GCSFuse configuration file can be configured via mount options,
+		// for example, mount option file-cache:max-size-mb:100, or file-cache:max-size-mb=100
+		// will be translated to yaml file
+		// file-cache:
+		//   max-size-mb:100
 		if strings.Contains(arg, ":") {
-			i := strings.LastIndex(arg, ":")
+			i := strings.LastIndex(arg, "=")
+			if i == -1 {
+				i = strings.LastIndex(arg, ":")
+			}
 			f, v := arg[:i], arg[i+1:]
 
 			if disallowedFlags[f] {
