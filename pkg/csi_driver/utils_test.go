@@ -70,11 +70,12 @@ func TestParseVolumeAttributes(t *testing.T) {
 	t.Run("parsing volume attributes into mount options", func(t *testing.T) {
 		t.Parallel()
 		testCases := []struct {
-			name                          string
-			volumeContext                 map[string]string
-			expectedMountOptions          []string
-			expectedSkipBucketAccessCheck bool
-			expectedErr                   bool
+			name                            string
+			volumeContext                   map[string]string
+			expectedMountOptions            []string
+			expectedSkipBucketAccessCheck   bool
+			expectedEnableMetricsCollection bool
+			expectedErr                     bool
 		}{
 			{
 				name:                 "should return correct fileCacheCapacity 1",
@@ -372,11 +373,22 @@ func TestParseVolumeAttributes(t *testing.T) {
 				volumeContext:        map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.FalseStr},
 				expectedMountOptions: []string{},
 			},
+			{
+				name:          "unexpected value for VolumeContextKeyEnableMetrics",
+				volumeContext: map[string]string{VolumeContextKeyEnableMetrics: "blah"},
+				expectedErr:   true,
+			},
+			{
+				name:                            "value set to true for VolumeContextKeyEnableMetrics",
+				volumeContext:                   map[string]string{VolumeContextKeyEnableMetrics: util.TrueStr},
+				expectedMountOptions:            []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyEnableMetrics] + util.TrueStr},
+				expectedEnableMetricsCollection: true,
+			},
 		}
 
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			output, skipCSIBucketAccessCheck, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+			output, skipCSIBucketAccessCheck, enableMetricsCollection, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 			if (err != nil) != tc.expectedErr {
 				t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 			}
@@ -386,6 +398,9 @@ func TestParseVolumeAttributes(t *testing.T) {
 			}
 			if tc.expectedSkipBucketAccessCheck != skipCSIBucketAccessCheck {
 				t.Errorf("Got skipBucketAccessCheck %v, but expected %v", skipCSIBucketAccessCheck, tc.expectedSkipBucketAccessCheck)
+			}
+			if tc.expectedEnableMetricsCollection != enableMetricsCollection {
+				t.Errorf("Got enableMetricsCollection %v, but expected %v", enableMetricsCollection, tc.expectedEnableMetricsCollection)
 			}
 
 			less := func(a, b string) bool { return a > b }

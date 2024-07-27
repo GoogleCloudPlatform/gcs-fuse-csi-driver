@@ -51,6 +51,7 @@ const (
 	VolumeContextKeyMetadataCacheTTLSeconds   = "metadataCacheTTLSeconds"
 	VolumeContextKeyGcsfuseLoggingSeverity    = "gcsfuseLoggingSeverity"
 	VolumeContextKeySkipCSIBucketAccessCheck  = "skipCSIBucketAccessCheck"
+	VolumeContextKeyEnableMetrics             = "enableMetrics"
 
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
@@ -178,14 +179,16 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 	VolumeContextKeyMetadataCacheTtlSeconds:   "metadata-cache:ttl-secs:",
 	VolumeContextKeyGcsfuseLoggingSeverity:    "logging:severity:",
 	VolumeContextKeySkipCSIBucketAccessCheck:  "",
+	VolumeContextKeyEnableMetrics:             util.EnableMetricsForGKE + ":",
 }
 
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
-func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) ([]string, bool, error) {
+func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) ([]string, bool, bool, error) {
 	if mountOptions, ok := volumeContext[VolumeContextKeyMountOptions]; ok {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
 	}
 	skipCSIBucketAccessCheck := false
+	enableMetricsCollection := false
 	for volumeAttribute, mountOption := range volumeAttributesToMountOptionsMapping {
 		value, ok := volumeContext[volumeAttribute]
 		if !ok {
@@ -200,7 +203,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		case VolumeContextKeyFileCacheCapacity, VolumeContextKeyMetadataStatCacheCapacity, VolumeContextKeyMetadataTypeCacheCapacity:
 			quantity, err := resource.ParseQuantity(value)
 			if err != nil {
-				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
+				return nil, skipCSIBucketAccessCheck, enableMetricsCollection, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
 			}
 
 			megabytes := quantity.Value()
@@ -216,7 +219,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 			mountOptionWithValue = mountOption + value
 
 		// parse bool volume attributes
-		case VolumeContextKeyFileCacheForRangeRead, VolumeContextKeySkipCSIBucketAccessCheck:
+		case VolumeContextKeyFileCacheForRangeRead, VolumeContextKeySkipCSIBucketAccessCheck, VolumeContextKeyEnableMetrics:
 			if boolVal, err := strconv.ParseBool(value); err == nil {
 				if volumeAttribute == VolumeContextKeySkipCSIBucketAccessCheck {
 					skipCSIBucketAccessCheck = boolVal
@@ -226,9 +229,13 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 					continue
 				}
 
+				if volumeAttribute == VolumeContextKeyEnableMetrics {
+					enableMetricsCollection = boolVal
+				}
+
 				mountOptionWithValue = mountOption + strconv.FormatBool(boolVal)
 			} else {
-				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
+				return nil, skipCSIBucketAccessCheck, enableMetricsCollection, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
 			}
 
 		// parse int volume attributes
@@ -240,7 +247,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 
 				mountOptionWithValue = mountOption + strconv.Itoa(intVal)
 			} else {
-				return nil, skipCSIBucketAccessCheck, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
+				return nil, skipCSIBucketAccessCheck, enableMetricsCollection, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
 			}
 
 		default:
@@ -250,14 +257,14 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{mountOptionWithValue})
 	}
 
-	return fuseMountOptions, skipCSIBucketAccessCheck, nil
+	return fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, nil
 }
 
 // parseRequestArguments parses arguments from given NodePublishVolumeRequest.
-func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, []string, bool, error) {
+func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, []string, bool, bool, error) {
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
-		return "", "", nil, false, errors.New("NodePublishVolume target path must be provided")
+		return "", "", nil, false, false, errors.New("NodePublishVolume target path must be provided")
 	}
 
 	vc := req.GetVolumeContext()
@@ -265,7 +272,7 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, [
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
-			return "", "", nil, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+			return "", "", nil, false, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
 		}
 	}
 
@@ -284,12 +291,12 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, [
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
 
-	fuseMountOptions, skipCSIBucketAccessCheck, err := parseVolumeAttributes(fuseMountOptions, vc)
+	fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, err := parseVolumeAttributes(fuseMountOptions, vc)
 	if err != nil {
-		return "", "", nil, false, err
+		return "", "", nil, false, false, err
 	}
 
-	return targetPath, bucketName, fuseMountOptions, skipCSIBucketAccessCheck, nil
+	return targetPath, bucketName, fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, nil
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {
