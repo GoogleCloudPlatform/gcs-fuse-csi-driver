@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package specs
 
 import (
 	"context"
@@ -28,7 +28,6 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -106,14 +105,14 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.Framework) *storageframework.PerTestConfig {
-	testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, "")
-	var testGcpSA *specs.TestGCPServiceAccount
+	testK8sSA := NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, "")
+	var testGcpSA *TestGCPServiceAccount
 	if !n.skipGcpSaTest {
-		testGcpSA = specs.NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
+		testGcpSA = NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
 		testGcpSA.Create(ctx)
 		testGcpSA.AddIAMPolicyBinding(ctx, f.Namespace)
 
-		testK8sSA = specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, specs.K8sServiceAccountName, testGcpSA.GetEmail())
+		testK8sSA = NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, testGcpSA.GetEmail())
 	}
 	testK8sSA.Create(ctx)
 
@@ -146,13 +145,13 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		isMultipleBucketsPrefix := false
 
 		switch config.Prefix {
-		case specs.FakeVolumePrefix, specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix:
+		case FakeVolumePrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix:
 			bucketName = uuid.NewString()
-		case specs.InvalidVolumePrefix, specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
-			bucketName = specs.InvalidVolume
-		case specs.ForceNewBucketPrefix:
+		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
+			bucketName = InvalidVolume
+		case ForceNewBucketPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
-		case specs.MultipleBucketsPrefix:
+		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
 			l := []string{}
 			for i := 0; i < 2; i++ {
@@ -169,7 +168,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = strings.Join(l, ",")
-		case specs.SubfolderInBucketPrefix:
+		case SubfolderInBucketPrefix:
 			if len(n.volumeStore) == 0 {
 				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			} else {
@@ -192,31 +191,31 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		mountOptions := "logging:severity:info"
 
 		switch config.Prefix {
-		case specs.NonRootVolumePrefix:
+		case NonRootVolumePrefix:
 			mountOptions += ",uid=1001"
-		case specs.InvalidMountOptionsVolumePrefix:
+		case InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
-		case specs.ImplicitDirsVolumePrefix:
-			specs.CreateImplicitDirInBucket(specs.ImplicitDirsPath, bucketName)
+		case ImplicitDirsVolumePrefix:
+			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
-		case specs.SubfolderInBucketPrefix:
+		case SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
-			specs.CreateImplicitDirInBucket(dirPath, bucketName)
+			CreateImplicitDirInBucket(dirPath, bucketName)
 			mountOptions += ",only-dir=" + dirPath
-		case specs.EnableFileCachePrefix:
+		case EnableFileCachePrefix:
 			v.fileCacheCapacity = "100Mi"
-		case specs.EnableFileCacheWithLargeCapacityPrefix:
+		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
-		case specs.SkipCSIBucketAccessCheckPrefix, specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix, specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
+		case SkipCSIBucketAccessCheckPrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			v.skipBucketAccessCheck = true
-		case specs.SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix:
+		case SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 			v.skipBucketAccessCheck = true
-		case specs.SkipCSIBucketAccessCheckAndNonRootVolumePrefix:
+		case SkipCSIBucketAccessCheckAndNonRootVolumePrefix:
 			mountOptions += ",uid=1001"
 			v.skipBucketAccessCheck = true
-		case specs.SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix:
-			specs.CreateImplicitDirInBucket(specs.ImplicitDirsPath, bucketName)
+		case SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix:
+			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
 			v.skipBucketAccessCheck = true
 		}
@@ -228,7 +227,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", specs.EnableFileCachePrefix, specs.EnableFileCacheWithLargeCapacityPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
@@ -297,16 +296,16 @@ func (n *GCSFuseCSITestDriver) GetCSIDriverName(_ *storageframework.PerTestConfi
 
 func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Context, config *storageframework.PerTestConfig, _ string) *storagev1.StorageClass {
 	// Set up the GCP Project IAM Policy
-	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), config.Framework.Namespace.Name, specs.K8sServiceAccountName)
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), config.Framework.Namespace.Name, K8sServiceAccountName)
 	if !n.skipGcpSaTest {
 		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(config.Framework.Namespace.Name), n.meta.GetProjectID())
 	}
-	testGCPProjectIAMPolicyBinding := specs.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/storage.admin", "")
+	testGCPProjectIAMPolicyBinding := NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/storage.admin", "")
 	testGCPProjectIAMPolicyBinding.Create(ctx)
 
-	testSecret := specs.NewTestSecret(config.Framework.ClientSet, config.Framework.Namespace, specs.K8sSecretName, map[string]string{
+	testSecret := NewTestSecret(config.Framework.ClientSet, config.Framework.Namespace, K8sSecretName, map[string]string{
 		"projectID":               n.meta.GetProjectID(),
-		"serviceAccountName":      specs.K8sServiceAccountName,
+		"serviceAccountName":      K8sServiceAccountName,
 		"serviceAccountNamespace": config.Framework.Namespace.Name,
 	})
 	testSecret.Create(ctx)
@@ -317,7 +316,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 	})
 
 	parameters := map[string]string{
-		"csi.storage.k8s.io/provisioner-secret-name":      specs.K8sSecretName,
+		"csi.storage.k8s.io/provisioner-secret-name":      K8sSecretName,
 		"csi.storage.k8s.io/provisioner-secret-namespace": "${pvc.namespace}",
 	}
 	generateName := "gcsfuse-csi-dynamic-test-sc-"
@@ -325,9 +324,9 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
 	switch config.Prefix {
-	case specs.NonRootVolumePrefix:
+	case NonRootVolumePrefix:
 		mountOptions = append(mountOptions, "uid=1001")
-	case specs.InvalidMountOptionsVolumePrefix:
+	case InvalidMountOptionsVolumePrefix:
 		mountOptions = append(mountOptions, "invalid-option")
 	}
 
@@ -352,6 +351,38 @@ func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (stora
 	return storageService, nil
 }
 
+// SetIAMPolicy sets IAM policy for the GCS bucket.
+func (n *GCSFuseCSITestDriver) SetIAMPolicy(ctx context.Context, bucket *storage.ServiceBucket, serviceAccountNamespace, serviceAccountName string) {
+	storageService, err := n.prepareStorageService(ctx)
+	if err != nil {
+		e2eframework.Failf("Failed to prepare storage service: %v", err)
+	}
+
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
+	}
+	if err := storageService.SetIAMPolicy(ctx, bucket, member, "roles/storage.admin"); err != nil {
+		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
+	}
+}
+
+// RemoveIAMPolicy removes IAM policy from the GCS bucket.
+func (n *GCSFuseCSITestDriver) RemoveIAMPolicy(ctx context.Context, bucket *storage.ServiceBucket, serviceAccountNamespace, serviceAccountName string) {
+	storageService, err := n.prepareStorageService(ctx)
+	if err != nil {
+		e2eframework.Failf("Failed to prepare storage service: %v", err)
+	}
+
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
+	}
+	if err := storageService.RemoveIAMPolicy(ctx, bucket, member, "roles/storage.admin"); err != nil {
+		e2eframework.Failf("Failed to remove the IAM policy from the GCS bucket: %v", err)
+	}
+}
+
 // createBucket creates a GCS bucket.
 func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountNamespace string) string {
 	storageService, err := n.prepareStorageService(ctx)
@@ -373,20 +404,14 @@ func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountN
 		e2eframework.Failf("Failed to create a new GCS bucket: %v", err)
 	}
 
-	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, specs.K8sServiceAccountName)
-	if !n.skipGcpSaTest {
-		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
-	}
-	if err := storageService.SetIAMPolicy(ctx, bucket, member, "roles/storage.admin"); err != nil {
-		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
-	}
+	n.SetIAMPolicy(ctx, bucket, serviceAccountNamespace, K8sServiceAccountName)
 
 	return bucket.Name
 }
 
 // deleteBucket deletes the GCS bucket.
 func (n *GCSFuseCSITestDriver) deleteBucket(ctx context.Context, bucketName string) error {
-	if bucketName == specs.InvalidVolume {
+	if bucketName == InvalidVolume {
 		return nil
 	}
 

@@ -50,6 +50,11 @@ type nodeServer struct {
 	volumeLocks           *util.VolumeLocks
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
+	volumeStateStore      map[string]*volumeState
+}
+
+type volumeState struct {
+	bucketAccessCheckPassed bool
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -60,6 +65,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		volumeLocks:           util.NewVolumeLocks(),
 		k8sClients:            driver.config.K8sClients,
 		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
+		volumeStateStore:      make(map[string]*volumeState),
 	}
 }
 
@@ -101,15 +107,28 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	vc := req.GetVolumeContext()
 
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
+	// skip check if it has ever succeeded
 	if bucketName != "_" && !skipBucketAccessCheck {
-		storageService, err := s.prepareStorageService(ctx, vc)
-		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
+		// Use target path as an volume identifier because it corresponds to Pods and volumes.
+		// Pods may belong to different namespaces and would need their own access check.
+		vs, ok := s.volumeStateStore[targetPath]
+		if !ok {
+			s.volumeStateStore[targetPath] = &volumeState{}
+			vs = s.volumeStateStore[targetPath]
 		}
-		defer storageService.Close()
 
-		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-			return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", bucketName, err)
+		if !vs.bucketAccessCheckPassed {
+			storageService, err := s.prepareStorageService(ctx, vc)
+			if err != nil {
+				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
+			}
+			defer storageService.Close()
+
+			if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
+				return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", bucketName, err)
+			}
+
+			vs.bucketAccessCheckPassed = true
 		}
 	}
 
@@ -199,6 +218,8 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
+
+	delete(s.volumeStateStore, targetPath)
 
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {
