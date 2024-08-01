@@ -46,6 +46,7 @@ const (
 	testNameGzip                 = "gzip"
 	testNameLocalFile            = "local_file"
 	testNameListLargeDir         = "list_large_dir"
+	testNameManagedFolders       = "managed_folders"
 	testNameConcurrentOperations = "concurrent_operations"
 	testNameKernelListCache      = "kernel_list_cache"
 
@@ -133,9 +134,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
 		testCase := ""
-		if strings.HasPrefix(testName, testNameKernelListCache) {
-			testCase = strings.Split(testName, ":")[1]
-			testName = testNameKernelListCache
+		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) {
+			l := strings.Split(testName, ":")
+			testCase = l[1]
+			testName = l[0]
 		}
 
 		gcsfuseTestBranch := ""
@@ -223,7 +225,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			}
 		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameConcurrentOperations:
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
-		case testNameKernelListCache:
+		case testNameKernelListCache, testNameManagedFolders:
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -run "+testCase)
 		case testNameListLargeDir, testNameWriteLargeFiles:
 			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 80m")
@@ -477,5 +479,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest(testNameKernelListCache+":TestDisabledKernelListCacheTest/TestKernelListCache_AlwaysCacheMiss", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=0")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameManagedFolders+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameManagedFolders+":TestEnableEmptyManagedFoldersTrue", false, "implicit-dirs=true")
 	})
 }
