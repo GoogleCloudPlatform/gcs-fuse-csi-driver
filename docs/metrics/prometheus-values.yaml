@@ -1,0 +1,49 @@
+# Copyright 2018 The Kubernetes Authors.
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+server:
+  persistentVolume:
+    size: 20Gi
+prometheus-pushgateway:
+  enabled: false
+alertmanager:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+serverFiles:
+  prometheus.yml:
+    scrape_configs:
+      - job_name: 'gcsfuse-csi-node-pods'
+        
+        scrape_interval: 10s
+        scrape_timeout: 2s
+        
+        kubernetes_sd_configs:
+          - role: pod
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_k8s_app]
+          action: keep
+          regex: gcs-fuse-csi-driver
+        - source_labels: [__meta_kubernetes_pod_ip]
+          action: replace
+          regex: ((([0-9]+?)(\.|$)){4})
+          replacement: $1:9920
+          target_label: __address__
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          action: replace
+          target_label: node
