@@ -87,7 +87,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
-
 		// When the gcsfuse binary is built using the head commit in the test pipeline,
 		// the version format does not obey the syntax and semantics of the "Semantic Versioning".
 		// Always use master branch if the gcsfuse binary is built using the head commit.
