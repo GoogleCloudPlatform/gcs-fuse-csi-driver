@@ -56,6 +56,7 @@ type gcsVolume struct {
 	shared                  bool
 	readOnly                bool
 	skipBucketAccessCheck   bool
+	enableMetricsCollection bool
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
@@ -206,6 +207,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			v.fileCacheCapacity = "100Mi"
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
+		case EnableFileCacheWithMetricsEnabledPrefix:
+			v.fileCacheCapacity = "100Mi"
+			v.enableMetricsCollection = true
 		case SkipCSIBucketAccessCheckPrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			v.skipBucketAccessCheck = true
 		case SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix:
@@ -227,7 +231,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheWithMetricsEnabledPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
@@ -260,6 +264,10 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = util.TrueStr
 	}
 
+	if gv.enableMetricsCollection {
+		va[driver.VolumeContextKeyEnableMetrics] = util.TrueStr
+	}
+
 	return &corev1.PersistentVolumeSource{
 		CSI: &corev1.CSIPersistentVolumeSource{
 			Driver:           n.driverInfo.Name,
@@ -285,6 +293,10 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 
 	if gv.skipBucketAccessCheck {
 		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = util.TrueStr
+	}
+
+	if gv.enableMetricsCollection {
+		va[driver.VolumeContextKeyEnableMetrics] = util.TrueStr
 	}
 
 	return va, gv.shared, gv.readOnly

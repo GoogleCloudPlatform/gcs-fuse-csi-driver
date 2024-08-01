@@ -88,7 +88,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, fuseMountOptions, skipBucketAccessCheck, err := parseRequestArguments(req)
+	targetPath, bucketName, fuseMountOptions, skipBucketAccessCheck, enableMetricsCollection, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -148,6 +148,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 
 		return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
+	}
+
+	// Register metrics collecter.
+	// It is idempotent to register the same collector in node republish calls.
+	if s.driver.config.MetricsManager != nil && enableMetricsCollection {
+		klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+		s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, bucketName)
 	}
 
 	// Check if the sidecar container is still required,
@@ -218,6 +225,9 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
+
+	// Unregister metrics collecter.
+	s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
 
 	delete(s.volumeStateStore, targetPath)
 

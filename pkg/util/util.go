@@ -33,6 +33,9 @@ const (
 
 	TrueStr  = "true"
 	FalseStr = "false"
+
+	// mount options that both CSI mounter and sidecar mounter should understand.
+	EnableMetricsForGKE = "enable-metrics-for-gke"
 )
 
 var (

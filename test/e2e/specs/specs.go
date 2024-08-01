@@ -71,6 +71,7 @@ const (
 	SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix = "gcsfuse-csi-skip-bucket-access-check-invalid-mount-options-volume"
 	SkipCSIBucketAccessCheckAndNonRootVolumePrefix             = "gcsfuse-csi-skip-bucket-access-check-non-root-volume"
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
+	EnableFileCacheWithMetricsEnabledPrefix                    = "gcsfuse-csi-enable-file-cache-metrics"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.1"
@@ -157,6 +158,10 @@ func (t *TestPod) Create(ctx context.Context) {
 	var err error
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) GetPodName() string {
+	return t.pod.Name
 }
 
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed.
@@ -342,6 +347,23 @@ func (t *TestPod) SetName(name string) {
 
 func (t *TestPod) GetNode() string {
 	return t.pod.Spec.NodeName
+}
+
+func (t *TestPod) GetCISDriverNodePodIP(ctx context.Context) string {
+	node := t.GetNode()
+	daemonSetLabelSelector := "k8s-app=gcs-fuse-csi-driver"
+
+	pods, err := t.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + node,
+		LabelSelector: daemonSetLabelSelector,
+	})
+	framework.ExpectNoError(err)
+	gomega.Expect(pods.Items).To(gomega.HaveLen(1))
+
+	pod := pods.Items[0]
+	gomega.Expect(pod.Status).ToNot(gomega.BeNil())
+
+	return pod.Status.PodIP
 }
 
 func (t *TestPod) SetNodeAffinity(nodeName string, sameNode bool) {
