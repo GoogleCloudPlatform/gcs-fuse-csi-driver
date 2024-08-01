@@ -30,6 +30,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
@@ -44,6 +45,7 @@ var (
 	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -91,6 +93,7 @@ func main() {
 	}
 
 	var mounter mount.Interface
+	var mm metrics.Manager
 	if *runNode {
 		if *nodeID == "" {
 			klog.Fatalf("NodeID cannot be empty for node service")
@@ -101,6 +104,11 @@ func main() {
 		mounter, err = csimounter.New("")
 		if err != nil {
 			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
+		}
+
+		if *metricsEndpoint != "" {
+			mm = metrics.NewMetricsManager(*metricsEndpoint)
+			mm.InitializeHTTPHandler()
 		}
 	}
 
@@ -114,6 +122,7 @@ func main() {
 		TokenManager:          tm,
 		Mounter:               mounter,
 		K8sClients:            clientset,
+		MetricsManager:        mm,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

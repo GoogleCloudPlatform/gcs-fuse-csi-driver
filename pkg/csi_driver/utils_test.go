@@ -70,11 +70,12 @@ func TestParseVolumeAttributes(t *testing.T) {
 	t.Run("parsing volume attributes into mount options", func(t *testing.T) {
 		t.Parallel()
 		testCases := []struct {
-			name                          string
-			volumeContext                 map[string]string
-			expectedMountOptions          []string
-			expectedSkipBucketAccessCheck bool
-			expectedErr                   bool
+			name                             string
+			volumeContext                    map[string]string
+			expectedMountOptions             []string
+			expectedSkipBucketAccessCheck    bool
+			expectedDisableMetricsCollection bool
+			expectedErr                      bool
 		}{
 			{
 				name:                 "should return correct fileCacheCapacity 1",
@@ -372,11 +373,28 @@ func TestParseVolumeAttributes(t *testing.T) {
 				volumeContext:        map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.FalseStr},
 				expectedMountOptions: []string{},
 			},
+			{
+				name:          "unexpected value for VolumeContextKeyDisableMetrics",
+				volumeContext: map[string]string{VolumeContextKeyDisableMetrics: "blah"},
+				expectedErr:   true,
+			},
+			{
+				name:                             "value set to true for VolumeContextKeyDisableMetrics",
+				volumeContext:                    map[string]string{VolumeContextKeyDisableMetrics: util.TrueStr},
+				expectedMountOptions:             []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyDisableMetrics] + util.TrueStr},
+				expectedDisableMetricsCollection: true,
+			},
+			{
+				name:                             "value set to false for VolumeContextKeyDisableMetrics",
+				volumeContext:                    map[string]string{VolumeContextKeyDisableMetrics: util.FalseStr},
+				expectedMountOptions:             []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyDisableMetrics] + util.FalseStr},
+				expectedDisableMetricsCollection: false,
+			},
 		}
 
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			output, skipCSIBucketAccessCheck, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+			output, skipCSIBucketAccessCheck, disableMetricsCollection, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 			if (err != nil) != tc.expectedErr {
 				t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 			}
@@ -386,6 +404,9 @@ func TestParseVolumeAttributes(t *testing.T) {
 			}
 			if tc.expectedSkipBucketAccessCheck != skipCSIBucketAccessCheck {
 				t.Errorf("Got skipBucketAccessCheck %v, but expected %v", skipCSIBucketAccessCheck, tc.expectedSkipBucketAccessCheck)
+			}
+			if tc.expectedDisableMetricsCollection != disableMetricsCollection {
+				t.Errorf("Got disableMetricsCollection %v, but expected %v", disableMetricsCollection, tc.expectedDisableMetricsCollection)
 			}
 
 			less := func(a, b string) bool { return a > b }
