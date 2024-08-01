@@ -25,6 +25,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -43,6 +44,7 @@ type GCSDriverConfig struct {
 	TokenManager          auth.TokenManager
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
+	MetricsManager        metrics.Manager
 }
 
 type GCSDriver struct {
