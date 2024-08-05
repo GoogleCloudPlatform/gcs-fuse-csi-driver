@@ -53,6 +53,7 @@ const (
 
 // controllerServer handles volume provisioning.
 type controllerServer struct {
+	csi.UnimplementedControllerServer
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
 	volumeLocks           *util.VolumeLocks

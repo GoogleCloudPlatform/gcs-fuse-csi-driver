@@ -154,7 +154,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
 			l := []string{}
-			for i := 0; i < 2; i++ {
+			for range 2 {
 				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 				n.volumeStore = append(n.volumeStore, &gcsVolume{
 					bucketName:              bucketName,

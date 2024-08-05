@@ -44,6 +44,7 @@ const (
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
 type nodeServer struct {
+	csi.UnimplementedNodeServer
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
 	mounter               mount.Interface
