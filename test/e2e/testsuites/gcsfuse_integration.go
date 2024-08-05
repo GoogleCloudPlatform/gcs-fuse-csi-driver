@@ -140,13 +140,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			testName = l[0]
 		}
 
-		gcsfuseTestBranch := ""
-		if gcsfuseVersionStr != "" {
-			ginkgo.By("Checking GCSFuse version and skip test if needed")
-			ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
-			gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
-			ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
+		ginkgo.By("Checking GCSFuse version and skip test if needed")
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
 		}
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
 
 		ginkgo.By("Configuring the test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -190,14 +190,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		ginkgo.By("Checking that the test pod is running")
 		tPod.WaitForRunning(ctx)
-
-		if gcsfuseTestBranch == "" {
-			ginkgo.By("Checking GCSFuse version and skip test if needed")
-			gcsfuseVersionStr = tPod.GetGCSFuseVersion(f)
-			ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
-			gcsfuseTestBranch = skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
-			ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
-		}
 
 		ginkgo.By("Checking that the test pod command exits with no error")
 		if readOnly {

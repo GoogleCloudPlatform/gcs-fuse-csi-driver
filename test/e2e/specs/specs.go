@@ -517,19 +517,6 @@ func (t *TestPod) SetInitContainerWithCommand(cmd string) {
 	}
 }
 
-func (t *TestPod) GetGCSFuseVersion(f *framework.Framework) string {
-	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, webhook.SidecarContainerName, "/gcsfuse", "--version")
-	framework.ExpectNoError(err,
-		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
-		err, stdout, stderr)
-
-	l := strings.Split(stderr, " ")
-
-	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
-
-	return l[2]
-}
-
 func (t *TestPod) Cleanup(ctx context.Context) {
 	e2epod.DeletePodOrFail(ctx, t.client, t.namespace.Name, t.pod.Name)
 }
@@ -1129,4 +1116,35 @@ func createTestFileInBucket(fileName, bucketName string, fileContent []byte) {
 	if output, err := exec.Command("gsutil", "cp", fileName, fmt.Sprintf("gs://%v", bucketName)).CombinedOutput(); err != nil {
 		framework.Failf("Failed to create a test file in GCS bucket: %v, output: %s", err, output)
 	}
+}
+
+func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
+	configMaps, err := client.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
+		FieldSelector: "metadata.name=gcsfusecsi-image-config",
+	})
+	framework.ExpectNoError(err)
+	gomega.Expect(configMaps.Items).To(gomega.HaveLen(1))
+
+	sidecarImageConfig := configMaps.Items[0]
+	image := sidecarImageConfig.Data["sidecar-image"]
+	gomega.Expect(image).ToNot(gomega.BeEmpty())
+
+	containerName := "gcsfuse-version"
+
+	err = exec.Command("docker", "pull", image).Run()
+	framework.ExpectNoError(err)
+	defer func() {
+		err := exec.Command("docker", "rm", containerName).Run()
+		framework.ExpectNoError(err)
+		err = exec.Command("docker", "rmi", image, "--force").Run()
+		framework.ExpectNoError(err)
+	}()
+
+	output, err := exec.Command("docker", "run", "--name", containerName, "--entrypoint", "/gcsfuse", image, "--version").CombinedOutput()
+	framework.ExpectNoError(err, fmt.Sprintf("Failed to get GCSFuse version from the image: %q, error: %v", image, err))
+
+	l := strings.Split(string(output), " ")
+	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
+
+	return l[2]
 }
