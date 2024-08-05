@@ -1129,21 +1129,37 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 	image := sidecarImageConfig.Data["sidecar-image"]
 	gomega.Expect(image).ToNot(gomega.BeEmpty())
 
-	containerName := "gcsfuse-version"
+	f := &framework.Framework{
+		ClientSet: client,
+		Namespace: &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+	}
+	tPod := NewTestPod(client, f.Namespace)
+	tPod.pod = &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "gcsfuse-version-fetcher-",
+		},
+		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: ptr.To(int64(0)),
+			Containers: []corev1.Container{
+				{
+					Name:  webhook.SidecarContainerName,
+					Image: image,
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
 
-	pullOutput, err := exec.Command("docker", "pull", image).CombinedOutput()
-	framework.ExpectNoError(err, fmt.Sprintf("Failed to pull gcsfuse sidecar image, output: %v, error: %v", pullOutput, err))
-	defer func() {
-		rmOutput, err := exec.Command("docker", "rm", containerName).CombinedOutput()
-		framework.ExpectNoError(err, fmt.Sprintf("Failed to remove gcsfuse sidecar container, output: %v, error: %v", rmOutput, err))
-		rmiOutput, err := exec.Command("docker", "rmi", image, "--force").CombinedOutput()
-		framework.ExpectNoError(err, fmt.Sprintf("Failed to remove gcsfuse sidecar container image, output: %v, error: %v", rmiOutput, err))
-	}()
+	tPod.Create(ctx)
+	tPod.WaitForRunning(ctx)
+	defer tPod.Cleanup(ctx)
 
-	versionOutput, err := exec.Command("docker", "run", "--name", containerName, "--entrypoint", "/gcsfuse", image, "--version").CombinedOutput()
-	framework.ExpectNoError(err, fmt.Sprintf("Failed to get GCSFuse version from the image: %q, output: %v, error: %v", image, versionOutput, err))
+	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, tPod.pod.Name, webhook.SidecarContainerName, "/gcsfuse", "--version")
+	framework.ExpectNoError(err,
+		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
+		err, stdout, stderr)
 
-	l := strings.Split(string(versionOutput), " ")
+	l := strings.Split(stderr, " ")
 	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
 
 	return l[2]
