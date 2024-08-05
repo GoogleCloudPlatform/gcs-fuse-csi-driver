@@ -425,8 +425,9 @@ func compareResponses(wantResponse, gotResponse admission.Response) error {
 	if len(wantResponse.Patches) != len(gotResponse.Patches) {
 		return fmt.Errorf("expecting %d patches, got %d patches", len(wantResponse.Patches), len(gotResponse.Patches))
 	}
-	var wantPaths, gotPaths []string
-	for i := 0; i < len(wantResponse.Patches); i++ {
+	wantPaths := []string{}
+	gotPaths := []string{}
+	for i := range len(wantResponse.Patches) {
 		wantPaths = append(wantPaths, wantResponse.Patches[i].Path)
 		gotPaths = append(gotPaths, gotResponse.Patches[i].Path)
 	}

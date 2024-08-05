@@ -78,7 +78,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		}
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
-		for i := 0; i < volumeNumber; i++ {
+		for range volumeNumber {
 			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
 		}
 	}
