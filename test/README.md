@@ -91,7 +91,7 @@ You can control the test through the following parameters:
 - `E2E_TEST_FOCUS`: default value is an empty string. The value will be passed to `ginkgo run --focus` flag.
 - `E2E_TEST_SKIP`: default value is `should.succeed.in.performance.test`. The value will be passed to `ginkgo run --skip` flag.
 - `E2E_TEST_GINKGO_PROCS`: default value is `5`. The value will be passed to `ginkgo run --procs` flag.
-- `E2E_TEST_GINKGO_TIMEOUT`: default value is `1h`. The value will be passed to `ginkgo run --timeout` flag.
+- `E2E_TEST_GINKGO_TIMEOUT`: default value is `2h`. The value will be passed to `ginkgo run --timeout` flag.
 - `E2E_TEST_GINKGO_FLAKE_ATTEMPTS`: default value is `2`. The value will be passed to `ginkgo run --flake-attempts` flag.
 
 ```bash
