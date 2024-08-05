@@ -1131,19 +1131,19 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 
 	containerName := "gcsfuse-version"
 
-	err = exec.Command("docker", "pull", image).Run()
-	framework.ExpectNoError(err)
+	pullOutput, err := exec.Command("docker", "pull", image).CombinedOutput()
+	framework.ExpectNoError(err, fmt.Sprintf("Failed to pull gcsfuse sidecar image, output: %v, error: %v", pullOutput, err))
 	defer func() {
-		err := exec.Command("docker", "rm", containerName).Run()
-		framework.ExpectNoError(err)
-		err = exec.Command("docker", "rmi", image, "--force").Run()
-		framework.ExpectNoError(err)
+		rmOutput, err := exec.Command("docker", "rm", containerName).CombinedOutput()
+		framework.ExpectNoError(err, fmt.Sprintf("Failed to remove gcsfuse sidecar container, output: %v, error: %v", rmOutput, err))
+		rmiOutput, err := exec.Command("docker", "rmi", image, "--force").CombinedOutput()
+		framework.ExpectNoError(err, fmt.Sprintf("Failed to remove gcsfuse sidecar container image, output: %v, error: %v", rmiOutput, err))
 	}()
 
-	output, err := exec.Command("docker", "run", "--name", containerName, "--entrypoint", "/gcsfuse", image, "--version").CombinedOutput()
-	framework.ExpectNoError(err, fmt.Sprintf("Failed to get GCSFuse version from the image: %q, error: %v", image, err))
+	versionOutput, err := exec.Command("docker", "run", "--name", containerName, "--entrypoint", "/gcsfuse", image, "--version").CombinedOutput()
+	framework.ExpectNoError(err, fmt.Sprintf("Failed to get GCSFuse version from the image: %q, output: %v, error: %v", image, versionOutput, err))
 
-	l := strings.Split(string(output), " ")
+	l := strings.Split(string(versionOutput), " ")
 	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
 
 	return l[2]
