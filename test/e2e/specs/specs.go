@@ -1147,6 +1147,9 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
+			Tolerations: []corev1.Toleration{
+				{Operator: corev1.TolerationOpExists},
+			},
 		},
 	}
 
