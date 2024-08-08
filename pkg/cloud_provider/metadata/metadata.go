@@ -18,6 +18,7 @@ limitations under the License.
 package metadata
 
 import (
+	"context"
 	"fmt"
 
 	"cloud.google.com/go/compute/metadata"
@@ -39,7 +40,7 @@ type metadataServiceManager struct {
 var _ Service = &metadataServiceManager{}
 
 func NewMetadataService(identityPool, identityProvider string) (Service, error) {
-	projectID, err := metadata.ProjectID()
+	projectID, err := metadata.ProjectIDWithContext(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}

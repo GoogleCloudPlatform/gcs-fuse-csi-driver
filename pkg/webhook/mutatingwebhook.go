@@ -47,7 +47,7 @@ type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
 	Config        *Config
-	Decoder       *admission.Decoder
+	Decoder       admission.Decoder
 	NodeLister    listersv1.NodeLister
 	ServerVersion *version.Version
 }

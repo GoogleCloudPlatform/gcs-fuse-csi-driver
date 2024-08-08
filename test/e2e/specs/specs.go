@@ -1117,3 +1117,53 @@ func createTestFileInBucket(fileName, bucketName string, fileContent []byte) {
 		framework.Failf("Failed to create a test file in GCS bucket: %v, output: %s", err, output)
 	}
 }
+
+func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
+	configMaps, err := client.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
+		FieldSelector: "metadata.name=gcsfusecsi-image-config",
+	})
+	framework.ExpectNoError(err)
+	gomega.Expect(configMaps.Items).To(gomega.HaveLen(1))
+
+	sidecarImageConfig := configMaps.Items[0]
+	image := sidecarImageConfig.Data["sidecar-image"]
+	gomega.Expect(image).ToNot(gomega.BeEmpty())
+
+	f := &framework.Framework{
+		ClientSet: client,
+		Namespace: &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+	}
+	tPod := NewTestPod(client, f.Namespace)
+	tPod.pod = &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "gcsfuse-version-fetcher-",
+		},
+		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: ptr.To(int64(0)),
+			Containers: []corev1.Container{
+				{
+					Name:  webhook.SidecarContainerName,
+					Image: image,
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+			Tolerations: []corev1.Toleration{
+				{Operator: corev1.TolerationOpExists},
+			},
+		},
+	}
+
+	tPod.Create(ctx)
+	tPod.WaitForRunning(ctx)
+	defer tPod.Cleanup(ctx)
+
+	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, tPod.pod.Name, webhook.SidecarContainerName, "/gcsfuse", "--version")
+	framework.ExpectNoError(err,
+		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
+		err, stdout, stderr)
+
+	l := strings.Split(stderr, " ")
+	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
+
+	return l[2]
+}

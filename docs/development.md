@@ -20,10 +20,12 @@ limitations under the License.
 ## Prerequisite
 
 The following software are required for local development.
+
 - [Go Programming Language](https://go.dev/doc/install)
 - [Docker](https://docs.docker.com/get-docker/)
 - [Python](https://docs.python-guide.org/starting/installation/)
 - Run the following command to install GCC Compiler on Linux:
+
     ```bash
     sudo apt-get update && sudo apt-get install build-essential -y
     ```
@@ -32,7 +34,7 @@ The following software are required for local development.
 
 Run the following command to build and push the images.
 
-``` bash
+```bash
 # BUILD_GCSFUSE_FROM_SOURCE=true: Required. You have to build the gcsfuse binary from source code as well.
 # REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
 # STAGINGVERSION=<staging-version>: Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.

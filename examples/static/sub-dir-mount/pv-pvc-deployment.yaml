@@ -32,7 +32,7 @@ spec:
     - only-dir=dir1 # sub-directory mount
   csi:
     driver: gcsfuse.csi.storage.gke.io
-    volumeHandle: test-wi # unique bucket name
+    volumeHandle: <your-bucket-name> # unique bucket name
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

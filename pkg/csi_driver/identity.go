@@ -23,6 +23,7 @@ import (
 )
 
 type identityServer struct {
+	csi.UnimplementedIdentityServer
 	driver *GCSDriver
 }
 

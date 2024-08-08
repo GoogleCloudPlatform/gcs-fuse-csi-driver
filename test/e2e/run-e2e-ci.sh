@@ -29,6 +29,7 @@ readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERR
 readonly use_gke_managed_driver="${USE_GKE_MANAGED_DRIVER:-true}"
 readonly ginkgo_focus="${TEST_FOCUS:-}"
 readonly ginkgo_skip="${TEST_SKIP:-}"
+readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-3h}"
 readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
@@ -43,7 +44,7 @@ export PATH=$PATH:/usr/local/go/bin && go version && rm go_tar.tar.gz
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.17.1
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.1
 
 # Build e2e-test CLI
 go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
@@ -61,6 +62,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --use-gke-managed-driver=${use_gke_managed_driver} \
             --ginkgo-focus=${ginkgo_focus} \
             --ginkgo-skip=${ginkgo_skip} \
+            --ginkgo-timeout=${ginkgo_timeout} \
             --boskos-resource-type=${boskos_resource_type} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \

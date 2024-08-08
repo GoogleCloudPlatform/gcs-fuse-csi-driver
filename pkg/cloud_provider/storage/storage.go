@@ -48,6 +48,7 @@ type Service interface {
 	GetBucket(ctx context.Context, b *ServiceBucket) (*ServiceBucket, error)
 	DeleteBucket(ctx context.Context, b *ServiceBucket) error
 	SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
+	RemoveIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error)
 	Close()
 }
@@ -191,6 +192,21 @@ func (service *gcsService) SetIAMPolicy(ctx context.Context, obj *ServiceBucket,
 	}
 
 	policy.Add(member, iam.RoleName(roleName))
+	if err := bkt.IAM().SetPolicy(ctx, policy); err != nil {
+		return fmt.Errorf("failed to set bucket %q IAM policy: %w", obj.Name, err)
+	}
+
+	return nil
+}
+
+func (service *gcsService) RemoveIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error {
+	bkt := service.storageClient.Bucket(obj.Name)
+	policy, err := bkt.IAM().Policy(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get bucket %q IAM policy: %w", obj.Name, err)
+	}
+
+	policy.Remove(member, iam.RoleName(roleName))
 	if err := bkt.IAM().SetPolicy(ctx, policy); err != nil {
 		return fmt.Errorf("failed to set bucket %q IAM policy: %w", obj.Name, err)
 	}

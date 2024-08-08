@@ -25,7 +25,9 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -83,7 +85,33 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
+	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		// When the gcsfuse binary is built using the head commit in the test pipeline,
+		// the version format does not obey the syntax and semantics of the "Semantic Versioning".
+		// Always use master branch if the gcsfuse binary is built using the head commit.
+		if err != nil {
+			return "master"
+		}
+
+		// check if the given gcsfuse version supports the test case
+		if !v.AtLeast(version.MustParseSemantic("v2.0.0")) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testName, v.String())
+		}
+
+		// By default, use the test code in the same release tag branch
+		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
+	}
+
 	gcsfuseIntegrationFileCacheTest := func(testName string, readOnly bool, fileCacheCapacity, fileCacheForRangeRead, metadataCacheTTLSeconds string, mountOptions ...string) {
+		ginkgo.By("Checking GCSFuse version and skip test if needed")
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+		}
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
+
 		ginkgo.By("Configuring the test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GolangImage)
@@ -125,7 +153,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		}
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "git clone https://github.com/GoogleCloudPlatform/gcsfuse.git")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
 
 		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go1.22.4 && export PATH=$PATH:/usr/local/go/bin && cd %v/read_cache && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v --testbucket=%v -run %v", gcsfuseIntegrationTestsBasePath, mountPath, bucketName, testName)
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
