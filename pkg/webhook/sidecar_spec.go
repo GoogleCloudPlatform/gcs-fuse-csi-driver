@@ -154,40 +154,19 @@ func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Vo
 // Returns two booleans:
 //  1. True when either native or regular sidecar is present.
 //  2. True iff the sidecar present is a native sidecar container.
-func ValidatePodHasSidecarContainerInjected(pod *corev1.Pod, shouldInjectedByWebhook bool) (bool, bool) {
-	return validatePodHasSidecarContainerInjected(SidecarContainerName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount}, shouldInjectedByWebhook)
+func ValidatePodHasSidecarContainerInjected(pod *corev1.Pod) (bool, bool) {
+	return validatePodHasSidecarContainerInjected(SidecarContainerName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount})
 }
 
-func sidecarContainerPresent(containerName string, containers []corev1.Container, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) bool {
+func sidecarContainerPresent(containerName string, containers []corev1.Container, volumeMounts []corev1.VolumeMount) bool {
 	containerInjected := false
 	volumeMountMap := map[string]string{}
 	for _, vm := range volumeMounts {
 		volumeMountMap[vm.Name] = vm.MountPath
 	}
 
-	for i, c := range containers {
+	for _, c := range containers {
 		if c.Name == containerName {
-			// If the sidecar container is injected by the webhook,
-			// the sidecar container needs to be at 0 index,
-			// unless the istio-proxy is present, then we check
-			// the container is present immediately after istio-proxy.
-			if shouldInjectedByWebhook {
-				containerAtValidIndex := false
-
-				idx, present := containerPresent(containers, IstioSidecarName)
-				if i == 0 && !present {
-					containerAtValidIndex = true
-				}
-
-				if i == idx+1 && present {
-					containerAtValidIndex = true
-				}
-
-				if !containerAtValidIndex {
-					break
-				}
-			}
-
 			if c.SecurityContext != nil &&
 				c.SecurityContext.RunAsUser != nil &&
 				c.SecurityContext.RunAsGroup != nil &&
@@ -215,7 +194,7 @@ func sidecarContainerPresent(containerName string, containers []corev1.Container
 	return false
 }
 
-func validatePodHasSidecarContainerInjected(containerName string, pod *corev1.Pod, volumes []corev1.Volume, volumeMounts []corev1.VolumeMount, shouldInjectedByWebhook bool) (bool, bool) {
+func validatePodHasSidecarContainerInjected(containerName string, pod *corev1.Pod, volumes []corev1.Volume, volumeMounts []corev1.VolumeMount) (bool, bool) {
 	// Checks that the default emptyDir volumes are present in pod, skipping the custom volumes.
 	volumesInjected := func(pod *corev1.Pod) bool {
 		volumeMap := map[string]corev1.EmptyDirVolumeSource{}
@@ -236,8 +215,8 @@ func validatePodHasSidecarContainerInjected(containerName string, pod *corev1.Po
 	}
 
 	// Check the sidecar container is present in regular or init container list.
-	containerAndVolumeMountPresentInContainers := sidecarContainerPresent(containerName, pod.Spec.Containers, volumeMounts, shouldInjectedByWebhook)
-	containerAndVolumeMountPresentInInitContainers := sidecarContainerPresent(containerName, pod.Spec.InitContainers, volumeMounts, shouldInjectedByWebhook)
+	containerAndVolumeMountPresentInContainers := sidecarContainerPresent(containerName, pod.Spec.Containers, volumeMounts)
+	containerAndVolumeMountPresentInInitContainers := sidecarContainerPresent(containerName, pod.Spec.InitContainers, volumeMounts)
 
 	if containerAndVolumeMountPresentInContainers && containerAndVolumeMountPresentInInitContainers {
 		klog.Errorf("sidecar present in containers and init containers... make sure only one sidecar is present.")
