@@ -290,7 +290,7 @@ func TestPrepareConfigFile(t *testing.T) {
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
 
-		err := tc.mc.prepareConfigFile()
+		err := tc.mc.PrepareConfigFile(map[string]interface{}{})
 
 		if (err != nil) != tc.expectedErr {
 			t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)

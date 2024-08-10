@@ -54,6 +54,10 @@ sidecar-mounter:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${SIDECAR_BINARY} cmd/sidecar_mounter/main.go
 
+gcsfuse-config-reloader:
+	mkdir -p ${BINDIR}
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/gcsfuse-config-reloader cmd/gcsfuse_config_reloader/main.go
+
 webhook:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go

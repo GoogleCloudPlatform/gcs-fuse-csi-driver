@@ -21,6 +21,7 @@ ARG STAGINGVERSION
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
 RUN make sidecar-mounter BINDIR=/bin
+RUN make gcsfuse-config-reloader BINDIR=/bin
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
@@ -30,5 +31,6 @@ ARG TARGETPLATFORM
 # Copy the binaries
 COPY ./bin/${TARGETPLATFORM}/gcsfuse /gcsfuse
 COPY --from=sidecar-mounter-builder /bin/gcs-fuse-csi-driver-sidecar-mounter /gcs-fuse-csi-driver-sidecar-mounter
+COPY --from=sidecar-mounter-builder /bin/gcsfuse-config-reloader /gcsfuse-config-reloader
 
 ENTRYPOINT ["/gcs-fuse-csi-driver-sidecar-mounter"]

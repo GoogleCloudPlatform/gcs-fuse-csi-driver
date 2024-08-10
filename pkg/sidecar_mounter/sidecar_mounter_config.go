@@ -133,7 +133,7 @@ func NewMountConfig(sp string) *MountConfig {
 	}
 
 	mc.prepareMountArgs()
-	if err := mc.prepareConfigFile(); err != nil {
+	if err := mc.PrepareConfigFile(map[string]interface{}{}); err != nil {
 		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to create config file %q: %v", mc.ConfigFile, err))
 
 		return nil
@@ -222,12 +222,10 @@ func (mc *MountConfig) prepareMountArgs() {
 	mc.FlagMap, mc.ConfigFileFlagMap = flagMap, configFileFlagMap
 }
 
-func (mc *MountConfig) prepareConfigFile() error {
+func (mc *MountConfig) PrepareConfigFile(configMap map[string]interface{}) error {
 	if mc.ConfigFileFlagMap == nil {
 		return errors.New("got empty config file flag map")
 	}
-
-	configMap := map[string]interface{}{}
 
 	for f, v := range mc.ConfigFileFlagMap {
 		curLevel := configMap
@@ -268,5 +266,5 @@ func (mc *MountConfig) prepareConfigFile() error {
 
 	klog.Infof("gcsfuse config file content: %v", configMap)
 
-	return os.WriteFile(mc.ConfigFile, yamlData, 0o400)
+	return os.WriteFile(mc.ConfigFile, yamlData, 0o600)
 }
