@@ -34,6 +34,6 @@ golangci-lint run --no-config --timeout=10m --sort-results \
 --enable-all  \
 --max-same-issues 100 \
 --disable exhaustruct,gomnd,lll,gochecknoglobals,funlen,varnamelen,wsl,testpackage,wrapcheck,err113,ireturn,gocyclo,cyclop,godox,gocognit,nestif,gomoddirectives,maintidx,depguard,mnd,execinquery \
---go 1.22.5 # the builder version
+--go 1.22.6 # the builder version
 
 echo "Congratulations! Lint check completed for all Go source files."
