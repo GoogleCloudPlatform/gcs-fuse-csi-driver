@@ -25,38 +25,58 @@ import (
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+var UnsupportedVersion = version.MustParseGeneric("1.28.0")
 
 func TestSupportsNativeSidecar(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
 		testName      string
+		cpVersion     *version.Version
 		nodes         []corev1.Node
 		expect        bool
 		expectedError error
 	}{
 		{
-			testName: "test should support native sidecar",
-			nodes:    nativeSupportNodes(),
-			expect:   true,
+			testName:  "test should support native sidecar",
+			cpVersion: minimumSupportedVersion,
+			nodes:     nativeSupportNodes(),
+			expect:    true,
 		},
 		{
-			testName: "test should not support native sidecar, skew",
-			nodes:    skewVersionNodes(),
-			expect:   false,
+			testName:  "test should not support native sidecar, skew",
+			cpVersion: minimumSupportedVersion,
+			nodes:     skewVersionNodes(),
+			expect:    false,
 		},
 		{
-			testName: "test should not support native sidecar, all under 1.29",
-			nodes:    regularSidecarSupportNodes(),
-			expect:   false,
+			testName:  "test should not support native sidecar, all under 1.29",
+			cpVersion: minimumSupportedVersion,
+			nodes:     regularSidecarSupportNodes(),
+			expect:    false,
 		},
 		{
-			testName: "test no nodes present, supports native sidecar support",
-			nodes:    []corev1.Node{},
-			expect:   false,
+			testName:  "test should not support native sidecar, all nodes are 1.29, cp is 1.28",
+			cpVersion: UnsupportedVersion,
+			nodes:     nativeSupportNodes(),
+			expect:    false,
+		},
+		{
+			testName:  "test no nodes present, supports native sidecar support false",
+			cpVersion: UnsupportedVersion,
+			nodes:     []corev1.Node{},
+			expect:    false,
+		},
+		{
+			testName:  "test no nodes present, supports native sidecar support true",
+			cpVersion: minimumSupportedVersion,
+			nodes:     []corev1.Node{},
+			expect:    true,
 		},
 	}
 	for _, tc := range testCases {
@@ -73,7 +93,8 @@ func TestSupportsNativeSidecar(t *testing.T) {
 		informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
 		lister := informerFactory.Core().V1().Nodes().Lister()
 		si := &SidecarInjector{
-			NodeLister: lister,
+			NodeLister:    lister,
+			ServerVersion: tc.cpVersion,
 		}
 
 		stopCh := make(<-chan struct{})
