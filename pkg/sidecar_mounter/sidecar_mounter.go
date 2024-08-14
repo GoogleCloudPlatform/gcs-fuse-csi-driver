@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 )
 
@@ -214,8 +215,8 @@ func logVolumeTotalSize(dirPath string) {
 
 // collectMetrics collects metrics from the gcsfuse instance every 10 seconds.
 func collectMetrics(ctx context.Context, port, dirPath string) {
+	genNumber := 0
 	metricEndpoint := "http://localhost:" + port + "/metrics"
-	outputPath := dirPath + "/metrics.prom"
 	ticker := time.NewTicker(10 * time.Second)
 
 	for {
@@ -224,14 +225,18 @@ func collectMetrics(ctx context.Context, port, dirPath string) {
 			return
 		case <-ticker.C:
 			newCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			scrapeMetrics(newCtx, metricEndpoint, outputPath)
+			scrapeMetrics(newCtx, metricEndpoint, dirPath, genNumber)
+			deleteOutdatedFile(dirPath, genNumber-2)
 			cancel()
+			genNumber++
 		}
 	}
 }
 
 // scrapeMetrics connects to the metrics endpoint, scrapes metrics, and save the metrics to the given file path.
-func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
+func scrapeMetrics(ctx context.Context, metricEndpoint, dirPath string, genNumber int) {
+	outputPath := dirPath + metrics.GetMetricsFileName(genNumber)
+
 	// Make the HTTP GET request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
 	if err != nil {
@@ -262,7 +267,6 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
 
 		return
 	}
-	defer out.Close() // Ensure closure of output file
 
 	// Copy the response body (file content) to our output file
 	_, err = io.Copy(out, resp.Body)
@@ -270,5 +274,40 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
 		klog.Errorf("error writing to output file: %v", err)
 
 		return
+	}
+
+	// Ensure closure of output file.
+	out.Close()
+
+	// Update generation number.
+	generationFilePath := dirPath + metrics.GetGenerationFileName()
+	genFile, err := os.Create(generationFilePath)
+	if err != nil {
+		klog.Errorf("error getting file descriptor for metrics generation file: %v", err)
+
+		return
+	}
+	defer genFile.Close()
+
+	_, err = fmt.Fprintf(genFile, "%d\n", genNumber)
+	if err != nil {
+		klog.Infof("Error writing to file: %v", err)
+
+		return
+	}
+}
+
+func deleteOutdatedFile(dirPath string, genNumber int) {
+	if genNumber < 0 {
+		return
+	}
+
+	// Create path for file to delete.
+	outputPath := dirPath + metrics.GetMetricsFileName(genNumber)
+
+	// Delete the output file.
+	err := os.Remove(outputPath)
+	if err != nil {
+		klog.Errorf(`error deleting obsolete metrics file "%s": %v`, outputPath, err)
 	}
 }
