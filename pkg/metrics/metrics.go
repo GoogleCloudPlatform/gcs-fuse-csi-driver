@@ -18,9 +18,11 @@ limitations under the License.
 package metrics
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,8 +35,9 @@ import (
 )
 
 const (
-	metricsPath     = "/metrics"
-	metricsFileName = "/metrics.prom"
+	metricsPath             = "/metrics"
+	metricsFileNameTemplate = `/metrics_%d.prom`
+	generationFileName      = "/generation.txt"
 )
 
 type Manager interface {
@@ -89,8 +92,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	}
 
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	promFilePath := emptyDirBasePath + metricsFileName
-	c := NewTextFileCollector(promFilePath, podUID, volumeName, map[string]string{
+	c := NewTextFileCollector(emptyDirBasePath, podUID, volumeName, map[string]string{
 		"pod_name":       podName,
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
@@ -154,20 +156,63 @@ func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
 
 // ProcessMetricsFile processes a metrics file that follows Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,
 // returning its MetricFamily.
-func ProcessMetricsFile(path string) (map[string]*dto.MetricFamily, error) {
-	f, err := os.Open(path)
+func ProcessMetricsFile(directoryPath string) (map[string]*dto.MetricFamily, error) {
+	// Find latest file generation.
+	generationFilePath := directoryPath + generationFileName
+	genNumber, err := getGenerationNumber(generationFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open metrics file %q: %w", path, err)
+		return nil, fmt.Errorf("could not get generation number from %s: %w", generationFilePath, err)
 	}
-	defer f.Close()
+
+	// Find latest metrics file name and open.
+	metricsFilePath := directoryPath + GetMetricsFileName(genNumber)
+	metricsFile, err := os.Open(metricsFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open metrics file %q: %w", metricsFilePath, err)
+	}
+	defer metricsFile.Close()
 
 	var parser expfmt.TextParser
-	metricFamilies, err := parser.TextToMetricFamilies(f)
+	metricFamilies, err := parser.TextToMetricFamilies(metricsFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse metrics file %q: %w", path, err)
+		return nil, fmt.Errorf("failed to parse metrics file %q: %w", metricsFilePath, err)
 	}
 
 	return metricFamilies, nil
+}
+
+// GetMetricsFilePath creates the expected name for the latest metrics file.
+func GetMetricsFileName(genNumber int) string {
+	return fmt.Sprintf(metricsFileNameTemplate, genNumber)
+}
+
+func GetGenerationFileName() string {
+	return generationFileName
+}
+
+// getGenerationNumber opens the generation.txt file and parses the payload into
+// an integer. This integer represents the current generation of the metrics file.
+func getGenerationNumber(filePath string) (int, error) {
+	genFile, err := os.Open(filePath)
+	if err != nil {
+		return -1, fmt.Errorf("failed to open generation file %q: %w", filePath, err)
+	}
+	defer genFile.Close()
+
+	// Create file reader
+	reader := bufio.NewReader(genFile)
+
+	// Read the first line.
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input) // Remove leading/trailing whitespace
+
+	// Convert to integer
+	num, err := strconv.Atoi(input)
+	if err != nil {
+		return -1, fmt.Errorf(`invalid input "%s" must be an integer: %w`, input, err)
+	}
+
+	return num, nil
 }
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
