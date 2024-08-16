@@ -184,9 +184,11 @@ install:
 	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
 	./deploy/base/webhook/create-cert.sh --namespace gcs-fuse-csi-driver --service gcs-fuse-csi-driver-webhook --secret gcs-fuse-csi-driver-webhook-secret
+	./deploy/base/webhook/manage-validating_admission_policy.sh --install
 
 uninstall:
 	kubectl delete -k deploy/overlays/${OVERLAY} --wait
+	./deploy/base/webhook/manage-validating_admission_policy.sh --uninstall
 
 generate-spec-yaml:
 	mkdir -p ${BINDIR}
