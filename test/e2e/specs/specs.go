@@ -41,6 +41,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
 	e2ejob "k8s.io/kubernetes/test/e2e/framework/job"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodooutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
@@ -109,6 +110,7 @@ func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 					"gke-gcsfuse/memory-request":            "100Mi",
 					"gke-gcsfuse/ephemeral-storage-request": "100Mi",
 				},
+				Labels: map[string]string{},
 			},
 			Spec: corev1.PodSpec{
 				TerminationGracePeriodSeconds: ptr.To(int64(5)),
@@ -213,6 +215,17 @@ func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
 		t.client,
 		t.namespace.Name,
 		fields.Set{"reason": events.FailedMountVolume}.AsSelector().String(),
+		msg,
+		pollTimeoutSlow)
+	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) WaitForFailedContainerError(ctx context.Context, msg string) {
+	err := e2eevents.WaitTimeoutForEvent(
+		ctx,
+		t.client,
+		t.namespace.Name,
+		fields.Set{"reason": events.FailedToStartContainer}.AsSelector().String(),
 		msg,
 		pollTimeoutSlow)
 	framework.ExpectNoError(err)
@@ -366,6 +379,12 @@ func (t *TestPod) SetAnnotations(annotations map[string]string) {
 	}
 }
 
+func (t *TestPod) SetLabels(labels map[string]string) {
+	for k, v := range labels {
+		t.pod.Labels[k] = v
+	}
+}
+
 func (t *TestPod) SetServiceAccount(sa string) {
 	t.pod.Spec.ServiceAccountName = sa
 }
@@ -388,55 +407,6 @@ func (t *TestPod) SetNonRootSecurityContext(uid, gid, fsgroup int) {
 
 func (t *TestPod) SetCommand(cmd string) {
 	t.pod.Spec.Containers[0].Args = []string{"-c", cmd}
-}
-
-func (t *TestPod) SetIstioSidecar(isNativeSidecar bool) {
-	istioSidecar := []corev1.Container{{
-		Name:  webhook.IstioSidecarName,
-		Image: imageutils.GetE2EImage(imageutils.BusyBox),
-	}}
-	if isNativeSidecar {
-		t.pod.Spec.InitContainers = append(istioSidecar, t.pod.Spec.InitContainers...)
-	} else {
-		t.pod.Spec.Containers = append(istioSidecar, t.pod.Spec.Containers...)
-	}
-}
-
-func (t *TestPod) VerifyInjectionOrder(gcsFuseNativeSidecar, istioNativeSidecar bool) {
-	if gcsFuseNativeSidecar {
-		// Expect the gcsfuse sidecar to be native.
-		if istioNativeSidecar {
-			// Expect both gcsfuse and istio to be native sidecar.
-			gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(2))
-
-			// Verify ordering of sidecars.
-			gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.BeEquivalentTo(webhook.IstioSidecarName))
-			gomega.Expect(t.pod.Spec.InitContainers[1].Name).To(gomega.BeEquivalentTo(webhook.SidecarContainerName))
-
-			// Verify workload is present
-			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(1))
-		} else {
-			gomega.Panic().FailureMessage("container istio-proxy is not supported with native GCSFuse sidecar")
-		}
-	} else {
-		// Expect gcsfuse sidecar to be regular container.
-		if istioNativeSidecar {
-			// Verify istio-proxy is first in native containers.
-			gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(1))
-			gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.BeEquivalentTo(webhook.IstioSidecarName))
-
-			// Verify gcsfuse is first in regular containers.
-			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
-			gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.BeEquivalentTo(webhook.SidecarContainerName))
-		} else {
-			// Expect both gcsfuse and istio to be regular containers.
-			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(3))
-
-			// Verify ordering of sidecars.
-			gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.BeEquivalentTo(webhook.IstioSidecarName))
-			gomega.Expect(t.pod.Spec.Containers[1].Name).To(gomega.BeEquivalentTo(webhook.SidecarContainerName))
-		}
-	}
 }
 
 func (t *TestPod) SetGracePeriod(s int) {
@@ -1166,4 +1136,12 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
 
 	return l[2]
+}
+
+func DeployIstioSidecar(namespace string) {
+	e2ekubectl.RunKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-sidecar.yaml")
+}
+
+func DeployIstioServiceEntry(namespace string) {
+	e2ekubectl.RunKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-service-entry.yaml")
 }
