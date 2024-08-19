@@ -27,6 +27,7 @@ spec:
             - --endpoint=unix:/csi/csi.sock
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
+            - --identity-provider=$(IDENTITY_PROVIDER)
             - --enable-profiling=true
           ports:
             - containerPort: 6060
