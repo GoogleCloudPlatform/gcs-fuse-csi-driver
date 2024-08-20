@@ -73,7 +73,7 @@ const (
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
-	GolangImage         = "golang:1.22.1"
+	GolangImage         = "golang:1.23.0"
 	UbuntuImage         = "ubuntu:20.04"
 
 	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:c83609ecf50d05a141167b8c6cf4dfe14ff07f01cd96a9790921db6748d40902"
