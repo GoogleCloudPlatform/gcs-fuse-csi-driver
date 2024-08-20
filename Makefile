@@ -21,7 +21,8 @@ export BUILD_ARM ?= false
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
-PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2) # assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
+# assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
+PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
 CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
 IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
 
