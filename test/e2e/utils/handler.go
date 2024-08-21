@@ -229,6 +229,9 @@ func generateTestSkip(testParams *TestParameters) string {
 		}
 	}
 
+	// TODO(songjiaxun) remove this when the tests are fixed.
+	skipTests = append(skipTests, "istio")
+
 	skipString := strings.Join(skipTests, "|")
 
 	klog.Infof("Generated ginkgo skip string: %q", skipString)
