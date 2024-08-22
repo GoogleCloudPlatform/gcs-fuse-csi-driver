@@ -97,6 +97,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
+		"pod_uid":        podUID,
 	})
 	if err := mm.registry.Register(c); err != nil && !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
 		klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
