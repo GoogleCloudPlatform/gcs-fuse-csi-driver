@@ -51,6 +51,8 @@ const (
 	testNameKernelListCache      = "kernel_list_cache"
 
 	testNamePrefixSucceed = "should succeed in "
+
+	masterBranchName = "master"
 )
 
 var gcsfuseVersionStr = ""
@@ -113,7 +115,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// the version format does not obey the syntax and semantics of the "Semantic Versioning".
 		// Always use master branch if the gcsfuse binary is built using the head commit.
 		if err != nil {
-			return "master"
+			return masterBranchName
 		}
 
 		// check if the given gcsfuse version supports the test case
@@ -463,10 +465,24 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(12), func() {
 		init()
 		defer cleanup()
 
