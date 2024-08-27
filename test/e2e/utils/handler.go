@@ -215,7 +215,7 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	if testParams.UseGKEAutopilot {
-		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
+		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration", "istio")
 	}
 
 	if !testParams.SupportsNativeSidecar {
@@ -228,9 +228,6 @@ func generateTestSkip(testParams *TestParameters) string {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
 	}
-
-	// TODO(songjiaxun) remove this when the tests are fixed.
-	skipTests = append(skipTests, "istio")
 
 	skipString := strings.Join(skipTests, "|")
 
