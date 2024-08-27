@@ -44,10 +44,10 @@ done
 [ -z ${install} ] && install=false
 [ -z ${uninstall} ] && uninstall=false
 
-versionStr=$(kubectl version | head -n 1 | cut -d " " -f 3)
+versionStr=$(kubectl version | sed -n '3p' | cut -d " " -f 3)
 
 # Extract the version number
-versionRegex="^v([0-9]+)\.([0-9]+)\.([0-9]+)$"
+versionRegex="^v([0-9]+)\.([0-9]+)\.([0-9]+).*$"
 if [[ $versionStr =~ $versionRegex ]]; then
     majorVersion=${BASH_REMATCH[1]}
     minorVersion=${BASH_REMATCH[2]}
