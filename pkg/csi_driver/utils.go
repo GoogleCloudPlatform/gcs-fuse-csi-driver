@@ -306,7 +306,7 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 
 	// Check if all the containers besides the sidecar container exited
 	if podRestartPolicyIsOnFailure || podRestartPolicyIsNever || podIsTerminating {
-		if pod.Status.ContainerStatuses == nil || len(pod.Status.ContainerStatuses) == 0 {
+		if len(pod.Status.ContainerStatuses) == 0 {
 			return nil
 		}
 
