@@ -18,10 +18,12 @@ limitations under the License.
 package metrics
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,8 +38,9 @@ import (
 
 const (
 	metricsPath             = "/metrics"
-	metricsFileNameTemplate = `/metrics_%d.prom`
-	generationFileName      = "/generation.txt"
+	metricsFileRegex        = `metrics_(\d+)\.prom`
+	metricsFileNameTemplate = `metrics_%d.prom`
+	metricsTempFileName     = "temp.prom"
 )
 
 type Manager interface {
@@ -159,14 +162,13 @@ func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
 // returning its MetricFamily.
 func ProcessMetricsFile(directoryPath string) (map[string]*dto.MetricFamily, error) {
 	// Find latest file generation.
-	generationFilePath := directoryPath + generationFileName
-	genNumber, err := getGenerationNumber(generationFilePath)
+	genNumber, err := getGenerationNumber(directoryPath)
 	if err != nil {
-		return nil, fmt.Errorf("could not get generation number from %s: %w", generationFilePath, err)
+		return nil, fmt.Errorf("could not get generation number from %s: %w", directoryPath, err)
 	}
 
 	// Find latest metrics file name and open.
-	metricsFilePath := directoryPath + GetMetricsFileName(genNumber)
+	metricsFilePath := filepath.Join(directoryPath, GetMetricsFileName(genNumber))
 	metricsFile, err := os.Open(metricsFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open metrics file %q: %w", metricsFilePath, err)
@@ -187,33 +189,42 @@ func GetMetricsFileName(genNumber int) string {
 	return fmt.Sprintf(metricsFileNameTemplate, genNumber)
 }
 
-func GetGenerationFileName() string {
-	return generationFileName
+// GetMetricsTempFileName gets the file name used to temporarily store new metrics.
+func GetMetricsTempFileName() string {
+	return metricsTempFileName
 }
 
-// getGenerationNumber opens the generation.txt file and parses the payload into
-// an integer. This integer represents the current generation of the metrics file.
-func getGenerationNumber(filePath string) (int, error) {
-	genFile, err := os.Open(filePath)
+// getGenerationNumber lists the files in the directory and matches all files
+// that follow the metricsFileRegex format. We then extract the generation number
+// from all the filenames and return the highest/latest generation number.
+func getGenerationNumber(dirPath string) (int, error) {
+	pattern := regexp.MustCompile(metricsFileRegex)
+	dirContents, err := os.ReadDir(dirPath)
 	if err != nil {
-		return -1, fmt.Errorf("failed to open generation file %q: %w", filePath, err)
-	}
-	defer genFile.Close()
-
-	// Create file reader
-	reader := bufio.NewReader(genFile)
-
-	// Read the first line.
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input) // Remove leading/trailing whitespace
-
-	// Convert to integer
-	num, err := strconv.Atoi(input)
-	if err != nil {
-		return -1, fmt.Errorf(`invalid input "%s" must be an integer: %w`, input, err)
+		return -1, fmt.Errorf(`failed to list items in directory "%q": %w`, dirPath, err)
 	}
 
-	return num, nil
+	highestGeneration := 0
+	for _, item := range dirContents {
+		if item.IsDir() {
+			continue
+		}
+
+		matches := pattern.FindStringSubmatch(item.Name())
+		if len(matches) > 1 {
+			x, err := strconv.Atoi(matches[1])
+			if err != nil {
+				return -1, fmt.Errorf("failed to convert generation number in metrics file name %q: %w", matches[1], err)
+			}
+			highestGeneration = max(highestGeneration, x)
+		}
+	}
+
+	if highestGeneration == 0 {
+		return -1, errors.New("failed to get latest generation: directory does not contain any metric files")
+	}
+
+	return highestGeneration, nil
 }
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
