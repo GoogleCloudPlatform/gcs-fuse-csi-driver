@@ -37,7 +37,7 @@ readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
 readonly number_nodes=${NUMBER_NODES:-1}
 
 # Install golang
-version=1.23.0
+version=1.22.3
 wget -O go_tar.tar.gz https://go.dev/dl/go${version}.linux-amd64.tar.gz -q
 rm -rf /usr/local/go && tar -xzf go_tar.tar.gz -C /usr/local
 export PATH=$PATH:/usr/local/go/bin && go version && rm go_tar.tar.gz

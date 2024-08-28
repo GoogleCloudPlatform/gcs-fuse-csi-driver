@@ -57,7 +57,7 @@ func (w *stderrWriter) Write(msg []byte) (int, error) {
 
 // WriteMsg calls Write func and handles errors.
 func (w *stderrWriter) WriteMsg(errMsg string) {
-	klog.Error(errMsg)
+	klog.Errorf(errMsg)
 	if _, e := w.Write([]byte(errMsg)); e != nil {
 		klog.Errorf("failed to write the error message %q: %v", errMsg, e)
 	}

@@ -18,7 +18,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-TOOL_VERSION="v1.60.1"
+TOOL_VERSION="v1.59.1"
 
 export PATH=$PATH:$(go env GOPATH)/bin
 go install "github.com/golangci/golangci-lint/cmd/golangci-lint@${TOOL_VERSION}"
@@ -34,6 +34,6 @@ golangci-lint run --no-config --timeout=10m --sort-results \
 --enable-all  \
 --max-same-issues 100 \
 --disable exhaustruct,gomnd,lll,gochecknoglobals,funlen,varnamelen,wsl,testpackage,wrapcheck,err113,ireturn,gocyclo,cyclop,godox,gocognit,nestif,gomoddirectives,maintidx,depguard,mnd,execinquery \
---go 1.23.0 # the builder version
+--go 1.22.6 # the builder version
 
 echo "Congratulations! Lint check completed for all Go source files."
