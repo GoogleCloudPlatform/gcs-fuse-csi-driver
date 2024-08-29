@@ -298,9 +298,9 @@ The Cloud Storage FUSE [stat metadata cache](https://cloud.google.com/storage/do
 
   - Mount options:
     > Note: The following mount options are being deprecated, and you cannot configure type cache capacity using mount options. We recommand upgrading your GKE clusters to a newer version, and using volume attributes to configure metadata caches.
-    - `stat-cache-capacity`: Set the value to `"-1"` to let the stat cache use as much memory as needed.
-    - `stat-cache-ttl`: Set the value to `"-1"` to bypass a TTL expiration and serve the file from the cache whenever it's available.
-    - `type-cache-ttl`: Set the value to `"-1"` to bypass a TTL expiration and serve the file from the cache whenever it's available.
+    - `stat-cache-capacity`: Specifies the number of entries that the stat cache can hold. This impacts memory consumption. The default value is 4096.
+    - `stat-cache-ttl`: Specifies how long to cache StatObject results and inode attributes. The default value is 60s.
+    - `type-cache-ttl`: Specifies how long to cache the mapping between names and files or directories in directory inodes. The default value is 60s.
     - For example:
       - Inline ephemeral volume
 
@@ -315,7 +315,7 @@ The Cloud Storage FUSE [stat metadata cache](https://cloud.google.com/storage/do
             driver: gcsfuse.csi.storage.gke.io
             volumeAttributes:
               bucketName: <bucket-name>
-              mountOptions: "stat-cache-capacity=-1,stat-cache-ttl=-1,type-cache-ttl=-1"
+              mountOptions: "stat-cache-capacity=102400,stat-cache-ttl=3600s,type-cache-ttl=3600s"
       ```
 
       - PersistentVolume
@@ -326,9 +326,9 @@ The Cloud Storage FUSE [stat metadata cache](https://cloud.google.com/storage/do
       spec:
         ...
         mountOptions:
-          - stat-cache-capacity=-1
-          - stat-cache-ttl=-1
-          - type-cache-ttl=-1
+          - stat-cache-capacity=102400
+          - stat-cache-ttl=3600s
+          - type-cache-ttl=3600s
         csi:
           driver: gcsfuse.csi.storage.gke.io
           volumeHandle: <bucket-name>

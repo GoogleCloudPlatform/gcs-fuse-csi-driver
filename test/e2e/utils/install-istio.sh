@@ -35,4 +35,7 @@ curl -L https://istio.io/downloadIstio | sh -
 cd istio-${ISTIO_VERSION}
 export PATH=$PWD/bin:$PATH
 
-istioctl install --set profile="default" -y
+istioctl install \
+--set profile="minimal" \
+--set values.pilot.tolerations[0].operator=Exists \
+--skip-confirmation

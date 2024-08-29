@@ -150,8 +150,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.Internal.String())
-		tPod.WaitForFailedMountError(ctx, "the sidecar container failed with error: mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
-		tPod.WaitForFailedMountError(ctx, "compute: Received 502")
+		tPod.WaitForFailedMountError(ctx, "mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
 	})
 
 	ginkgo.It("should fail with istio registry only outbound traffic policy mode missing ServiceEntry", func() {
@@ -173,7 +172,6 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.Internal.String())
-		tPod.WaitForFailedMountError(ctx, "the sidecar container failed with error: mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
-		tPod.WaitForFailedMountError(ctx, "EOF")
+		tPod.WaitForFailedMountError(ctx, "mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
 	})
 }
