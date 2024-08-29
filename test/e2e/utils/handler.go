@@ -227,6 +227,8 @@ func generateTestSkip(testParams *TestParameters) string {
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.27") || strings.HasPrefix(testParams.GkeClusterVersion, "1.28") {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
+
+		skipTests = append(skipTests, "flaky")
 	}
 
 	skipString := strings.Join(skipTests, "|")

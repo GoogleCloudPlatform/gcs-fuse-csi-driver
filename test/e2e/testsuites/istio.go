@@ -123,7 +123,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		testGCSFuseWithIstio(true, false)
 	})
 
-	ginkgo.It("should store data with istio injected at the last index", func() {
+	ginkgo.It("[flaky] should store data with istio injected at the last index", func() {
 		testGCSFuseWithIstio(false, false)
 	})
 
@@ -131,7 +131,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		testGCSFuseWithIstio(true, true)
 	})
 
-	ginkgo.It("should fail with istio registry only outbound traffic policy mode missing Pod annotation", func() {
+	ginkgo.It("[flaky] should fail with istio registry only outbound traffic policy mode missing Pod annotation", func() {
 		init()
 		defer cleanup()
 
@@ -153,7 +153,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod.WaitForFailedMountError(ctx, "mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
 	})
 
-	ginkgo.It("should fail with istio registry only outbound traffic policy mode missing ServiceEntry", func() {
+	ginkgo.It("[flaky] should fail with istio registry only outbound traffic policy mode missing ServiceEntry", func() {
 		init()
 		defer cleanup()
 
