@@ -18,9 +18,13 @@ limitations under the License.
 package metrics
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,8 +37,10 @@ import (
 )
 
 const (
-	metricsPath     = "/metrics"
-	metricsFileName = "/metrics.prom"
+	metricsPath             = "/metrics"
+	metricsFileRegex        = `metrics_(\d+)\.prom`
+	metricsFileNameTemplate = `metrics_%d.prom`
+	metricsTempFileName     = "temp.prom"
 )
 
 type Manager interface {
@@ -89,12 +95,12 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	}
 
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	promFilePath := emptyDirBasePath + metricsFileName
-	c := NewTextFileCollector(promFilePath, podUID, volumeName, map[string]string{
+	c := NewTextFileCollector(emptyDirBasePath, podUID, volumeName, map[string]string{
 		"pod_name":       podName,
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
+		"pod_uid":        podUID,
 	})
 	if err := mm.registry.Register(c); err != nil && !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
 		klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
@@ -140,9 +146,16 @@ func (c *textFileCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect emits metrics.
 func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
-	families, err := ProcessMetricsFile(c.path)
+	metricsFilePath, err := GetMetricsFilePath(c.path)
 	if err != nil {
-		klog.Errorf("failed to process metrics from metrics file: %v", err)
+		klog.Warningf("failed to get metrics file: %s", err.Error())
+
+		return
+	}
+
+	families, err := ProcessMetricsFile(metricsFilePath)
+	if err != nil {
+		klog.Errorf("failed to process metrics file: %v", err)
 
 		return
 	}
@@ -154,20 +167,76 @@ func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
 
 // ProcessMetricsFile processes a metrics file that follows Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,
 // returning its MetricFamily.
-func ProcessMetricsFile(path string) (map[string]*dto.MetricFamily, error) {
-	f, err := os.Open(path)
+func ProcessMetricsFile(metricsFilePath string) (map[string]*dto.MetricFamily, error) {
+	metricsFile, err := os.Open(metricsFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open metrics file %q: %w", path, err)
+		return nil, fmt.Errorf("failed to open metrics file %q: %w", metricsFilePath, err)
 	}
-	defer f.Close()
+	defer metricsFile.Close()
 
 	var parser expfmt.TextParser
-	metricFamilies, err := parser.TextToMetricFamilies(f)
+	metricFamilies, err := parser.TextToMetricFamilies(metricsFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse metrics file %q: %w", path, err)
+		return nil, fmt.Errorf("failed to parse metrics file %q: %w", metricsFilePath, err)
 	}
 
 	return metricFamilies, nil
+}
+
+func GetMetricsFilePath(directoryPath string) (string, error) {
+	// Find latest file generation.
+	genNumber, err := getGenerationNumber(directoryPath)
+	if err != nil {
+		return "", fmt.Errorf("could not get generation number from %s: %w", directoryPath, err)
+	}
+
+	// Find latest metrics file name and open.
+	metricsFilePath := filepath.Join(directoryPath, GetMetricsFileName(genNumber))
+
+	return metricsFilePath, nil
+}
+
+// GetMetricsFilePath creates the expected name for the latest metrics file.
+func GetMetricsFileName(genNumber int) string {
+	return fmt.Sprintf(metricsFileNameTemplate, genNumber)
+}
+
+// GetMetricsTempFileName gets the file name used to temporarily store new metrics.
+func GetMetricsTempFileName() string {
+	return metricsTempFileName
+}
+
+// getGenerationNumber lists the files in the directory and matches all files
+// that follow the metricsFileRegex format. We then extract the generation number
+// from all the filenames and return the highest/latest generation number.
+func getGenerationNumber(dirPath string) (int, error) {
+	pattern := regexp.MustCompile(metricsFileRegex)
+	dirContents, err := os.ReadDir(dirPath)
+	if err != nil {
+		return -1, fmt.Errorf(`failed to list items in directory "%q": %w`, dirPath, err)
+	}
+
+	highestGeneration := 0
+	for _, item := range dirContents {
+		if item.IsDir() {
+			continue
+		}
+
+		matches := pattern.FindStringSubmatch(item.Name())
+		if len(matches) > 1 {
+			x, err := strconv.Atoi(matches[1])
+			if err != nil {
+				return -1, fmt.Errorf("failed to convert generation number in metrics file name %q: %w", matches[1], err)
+			}
+			highestGeneration = max(highestGeneration, x)
+		}
+	}
+
+	if highestGeneration == 0 {
+		return -1, errors.New("failed to get latest generation: directory does not contain any metric files")
+	}
+
+	return highestGeneration, nil
 }
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.

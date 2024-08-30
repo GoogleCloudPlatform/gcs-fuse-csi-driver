@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 )
 
@@ -114,7 +115,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		promPort := mc.FlagMap["prometheus-port"]
 		if promPort != "0" {
 			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
-			go collectMetrics(ctx, promPort, mc.TempDir)
+			go collectMetrics(ctx, promPort, mc.TempDir, 10)
 		}
 
 		// Since the gcsfuse has taken over the file descriptor,
@@ -213,10 +214,10 @@ func logVolumeTotalSize(dirPath string) {
 }
 
 // collectMetrics collects metrics from the gcsfuse instance every 10 seconds.
-func collectMetrics(ctx context.Context, port, dirPath string) {
+func collectMetrics(ctx context.Context, port, dirPath string, scrapeInterval int) {
+	genNumber := 1
 	metricEndpoint := "http://localhost:" + port + "/metrics"
-	outputPath := dirPath + "/metrics.prom"
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(time.Duration(scrapeInterval) * time.Second)
 
 	for {
 		select {
@@ -224,14 +225,23 @@ func collectMetrics(ctx context.Context, port, dirPath string) {
 			return
 		case <-ticker.C:
 			newCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			scrapeMetrics(newCtx, metricEndpoint, outputPath)
+			scrapeMetrics(newCtx, metricEndpoint, dirPath, genNumber)
+			// If x is the current generation of the metrics snapshot/file, we are leaving some buffer where the outdated (x-1)
+			// file exists so that the reader has time to finish reading the complete data.
+			// The -2 means we are deleting file generations up to x - 2.
+			deleteOutdatedFile(dirPath, genNumber-2)
 			cancel()
+			genNumber++
 		}
 	}
 }
 
-// scrapeMetrics connects to the metrics endpoint, scrapes metrics, and save the metrics to the given file path.
-func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
+// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
+// We write the metrics to a temporary file while we finalize scrape, and then rename
+// the file to match format of metrics_x.prom, where x is the latest sample/generation.
+func scrapeMetrics(ctx context.Context, metricEndpoint, dirPath string, genNumber int) {
+	tempPath := filepath.Join(dirPath, metrics.GetMetricsTempFileName())
+
 	// Make the HTTP GET request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
 	if err != nil {
@@ -256,13 +266,12 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
 	}
 
 	// Create the output file
-	out, err := os.Create(outputPath)
+	out, err := os.Create(tempPath)
 	if err != nil {
 		klog.Errorf("error creating output file: %v", err)
 
 		return
 	}
-	defer out.Close() // Ensure closure of output file
 
 	// Copy the response body (file content) to our output file
 	_, err = io.Copy(out, resp.Body)
@@ -270,5 +279,34 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
 		klog.Errorf("error writing to output file: %v", err)
 
 		return
+	}
+
+	// Ensure closure of output file.
+	out.Close()
+
+	// Get final filename.
+	outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(genNumber))
+
+	// Update file name with metrics, atomic operation.
+	err = os.Rename(tempPath, outputPath)
+	if err != nil {
+		klog.Errorf("error renaming metrics file from temp to %s format: %v", outputPath, err)
+
+		return
+	}
+}
+
+func deleteOutdatedFile(dirPath string, genNumber int) {
+	if genNumber < 1 {
+		return
+	}
+
+	// Create path for file to delete.
+	outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(genNumber))
+
+	// Delete the output file.
+	err := os.Remove(outputPath)
+	if err != nil {
+		klog.Errorf(`error deleting obsolete metrics file "%s": %v`, outputPath, err)
 	}
 }
