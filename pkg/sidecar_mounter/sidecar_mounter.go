@@ -115,7 +115,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		promPort := mc.FlagMap["prometheus-port"]
 		if promPort != "0" {
 			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
-			go collectMetrics(ctx, promPort, mc.TempDir)
+			go collectMetrics(ctx, promPort, mc.TempDir, 10)
 		}
 
 		// Since the gcsfuse has taken over the file descriptor,
@@ -214,11 +214,10 @@ func logVolumeTotalSize(dirPath string) {
 }
 
 // collectMetrics collects metrics from the gcsfuse instance every 10 seconds.
-func collectMetrics(ctx context.Context, port, dirPath string) {
+func collectMetrics(ctx context.Context, port, dirPath string, scrapeInterval int) {
 	genNumber := 1
-	scrapeInterval := 10 * time.Second
 	metricEndpoint := "http://localhost:" + port + "/metrics"
-	ticker := time.NewTicker(scrapeInterval)
+	ticker := time.NewTicker(time.Duration(scrapeInterval) * time.Second)
 
 	for {
 		select {
@@ -303,7 +302,7 @@ func deleteOutdatedFile(dirPath string, genNumber int) {
 	}
 
 	// Create path for file to delete.
-	outputPath := dirPath + metrics.GetMetricsFileName(genNumber)
+	outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(genNumber))
 
 	// Delete the output file.
 	err := os.Remove(outputPath)

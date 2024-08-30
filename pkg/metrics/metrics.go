@@ -146,9 +146,16 @@ func (c *textFileCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect emits metrics.
 func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
-	families, err := ProcessMetricsFile(c.path)
+	metricsFilePath, err := GetMetricsFilePath(c.path)
 	if err != nil {
-		klog.Errorf("failed to process metrics from metrics file: %v", err)
+		klog.Warningf("failed to get metrics file: %s", err.Error())
+
+		return
+	}
+
+	families, err := ProcessMetricsFile(metricsFilePath)
+	if err != nil {
+		klog.Errorf("failed to process metrics file: %v", err)
 
 		return
 	}
@@ -160,15 +167,7 @@ func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
 
 // ProcessMetricsFile processes a metrics file that follows Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,
 // returning its MetricFamily.
-func ProcessMetricsFile(directoryPath string) (map[string]*dto.MetricFamily, error) {
-	// Find latest file generation.
-	genNumber, err := getGenerationNumber(directoryPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not get generation number from %s: %w", directoryPath, err)
-	}
-
-	// Find latest metrics file name and open.
-	metricsFilePath := filepath.Join(directoryPath, GetMetricsFileName(genNumber))
+func ProcessMetricsFile(metricsFilePath string) (map[string]*dto.MetricFamily, error) {
 	metricsFile, err := os.Open(metricsFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open metrics file %q: %w", metricsFilePath, err)
@@ -182,6 +181,19 @@ func ProcessMetricsFile(directoryPath string) (map[string]*dto.MetricFamily, err
 	}
 
 	return metricFamilies, nil
+}
+
+func GetMetricsFilePath(directoryPath string) (string, error) {
+	// Find latest file generation.
+	genNumber, err := getGenerationNumber(directoryPath)
+	if err != nil {
+		return "", fmt.Errorf("could not get generation number from %s: %w", directoryPath, err)
+	}
+
+	// Find latest metrics file name and open.
+	metricsFilePath := filepath.Join(directoryPath, GetMetricsFileName(genNumber))
+
+	return metricsFilePath, nil
 }
 
 // GetMetricsFilePath creates the expected name for the latest metrics file.
