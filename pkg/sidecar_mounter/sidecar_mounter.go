@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 )
 
@@ -48,7 +49,7 @@ func New(mounterPath string) *Mounter {
 	}
 }
 
-func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+func (m *Mounter) Mount(ctx context.Context, mc *MountConfig, metricsScrapeInterval int) error {
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
 	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
@@ -113,8 +114,8 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 		promPort := mc.FlagMap["prometheus-port"]
 		if promPort != "0" {
-			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
-			go collectMetrics(ctx, promPort, mc.TempDir)
+			klog.Infof("start to collect metrics from port %v for volume %q with scrape interval of %d second(s)", promPort, mc.VolumeName, metricsScrapeInterval)
+			go collectMetrics(ctx, promPort, mc.TempDir, metricsScrapeInterval)
 		}
 
 		// Since the gcsfuse has taken over the file descriptor,
@@ -213,25 +214,41 @@ func logVolumeTotalSize(dirPath string) {
 }
 
 // collectMetrics collects metrics from the gcsfuse instance every 10 seconds.
-func collectMetrics(ctx context.Context, port, dirPath string) {
+func collectMetrics(ctx context.Context, port, dirPath string, scrapeInterval int) {
+	genNumber := 1
+	filesNotDeleted := 0
 	metricEndpoint := "http://localhost:" + port + "/metrics"
-	outputPath := dirPath + "/metrics.prom"
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(time.Duration(scrapeInterval) * time.Second)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Having too many metrics files present can cause memory overflow.
+			// If we have too many files in the directory, we won't write any new metrics files.
 			newCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			scrapeMetrics(newCtx, metricEndpoint, outputPath)
+			if filesNotDeleted <= 5 {
+				scrapeMetrics(newCtx, metricEndpoint, dirPath, genNumber)
+			} else {
+				klog.Errorf(`failed to write metrics to "%s": too many metric files present`, dirPath)
+			}
+			// If x is the current generation of the metrics snapshot/file, we are leaving some buffer where the outdated (x-1)
+			// file exists so that the reader has time to finish reading the complete data.
+			// The -2 means we are deleting file generations up to x - 2.
+			filesNotDeleted = deleteOutdatedFile(dirPath, genNumber-2)
 			cancel()
+			genNumber++
 		}
 	}
 }
 
-// scrapeMetrics connects to the metrics endpoint, scrapes metrics, and save the metrics to the given file path.
-func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
+// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
+// We write the metrics to a temporary file while we finalize scrape, and then rename
+// the file to match format of metrics_x.prom, where x is the latest sample/generation.
+func scrapeMetrics(ctx context.Context, metricEndpoint, dirPath string, genNumber int) {
+	tempPath := filepath.Join(dirPath, metrics.GetMetricsTempFileName())
+
 	// Make the HTTP GET request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
 	if err != nil {
@@ -256,13 +273,12 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
 	}
 
 	// Create the output file
-	out, err := os.Create(outputPath)
+	out, err := os.Create(tempPath)
 	if err != nil {
 		klog.Errorf("error creating output file: %v", err)
 
 		return
 	}
-	defer out.Close() // Ensure closure of output file
 
 	// Copy the response body (file content) to our output file
 	_, err = io.Copy(out, resp.Body)
@@ -271,4 +287,49 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, outputPath string) {
 
 		return
 	}
+
+	// Ensure closure of output file.
+	out.Close()
+
+	// Get final filename.
+	outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(genNumber))
+
+	// Update file name with metrics, atomic operation.
+	err = os.Rename(tempPath, outputPath)
+	if err != nil {
+		klog.Errorf("error renaming metrics file from temp to %s format: %v", outputPath, err)
+
+		return
+	}
+}
+
+// deleteOutdatedFile deletes all outdated metrics files.
+// Returns the number of metric files that were unable to be deleted.
+func deleteOutdatedFile(dirPath string, genNumber int) int {
+	generationsPresent, err := metrics.GetGenerationsPresent(dirPath)
+	if err != nil {
+		klog.Errorf("error getting metrics file generations to delete: %v", err)
+
+		return len(generationsPresent)
+	}
+
+	filesNotDeleted := 0
+	for _, generation := range generationsPresent {
+		if generation > genNumber {
+			// If the file present is recent, we do not delete.
+			continue
+		}
+
+		// Create path for file to delete.
+		outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(generation))
+
+		// Delete the output file.
+		err := os.Remove(outputPath)
+		if err != nil {
+			klog.Errorf(`error deleting obsolete metrics file "%s": %v`, outputPath, err)
+			filesNotDeleted++
+		}
+	}
+
+	return filesNotDeleted
 }

@@ -46,7 +46,7 @@ var (
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
 	fuseSocketDir             = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
-	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
 
 	// These are set at compile time.
 	version = "unknown"
