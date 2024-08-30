@@ -361,7 +361,7 @@ func (t *TestPod) GetNode() string {
 	return t.pod.Spec.NodeName
 }
 
-func (t *TestPod) GetCISDriverNodePodIP(ctx context.Context) string {
+func (t *TestPod) GetCSIDriverNodePodIP(ctx context.Context) string {
 	node := t.GetNode()
 	daemonSetLabelSelector := "k8s-app=gcs-fuse-csi-driver"
 

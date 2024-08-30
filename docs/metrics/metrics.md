@@ -116,6 +116,7 @@ In the CSI driver, each metric record includes the following extra labels so tha
 - namespace_name
 - volume_name
 - bucket_name
+- pod_uid
 
 The Prometheus UI provides an easy interface to query and visualize metrics. See [Querying Prometheus documentation](https://prometheus.io/docs/prometheus/latest/querying/basics/) for details.
 
