@@ -126,7 +126,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		l.volumeResource.VolSource.CSI.VolumeAttributes["metadataCacheTTLSeconds"] = metadataCacheTTLSeconds
 
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
-		tPod.SetupCacheVolumeMount("/tmp/cache-dir", ".volumes/"+volumeName)
+		tPod.SetupCacheVolumeMount("/tmp/cache-dir-read-cache-hns-false", ".volumes/"+volumeName)
 		mountOptions = append(mountOptions, "logging:file-path:/gcsfuse-tmp/log.json", "logging:format:json", "logging:severity:trace")
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
