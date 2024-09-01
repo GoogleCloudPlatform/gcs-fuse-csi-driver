@@ -232,7 +232,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		case testNameListLargeDir, testNameWriteLargeFiles:
 			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 80m"
 		case testNameReadLargeFiles:
-			finalTestCommand = baseTestCommand + " -timeout 60m"
+			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
+				finalTestCommand = baseTestCommandWithTestBucket + " -timeout 60m"
+			} else {
+				finalTestCommand = baseTestCommand + " -timeout 60m"
+			}
 		default:
 			finalTestCommand = baseTestCommand
 		}
