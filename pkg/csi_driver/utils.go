@@ -379,7 +379,8 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 	if err == nil && len(errMsg) > 0 {
 		errMsgStr := string(errMsg)
 		code := codes.Internal
-		if strings.Contains(errMsgStr, "Incorrect Usage") {
+		if strings.Contains(errMsgStr, "Incorrect Usage") ||
+			strings.Contains(errMsgStr, "unknown flag") {
 			code = codes.InvalidArgument
 		}
 

@@ -1132,7 +1132,8 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
 		err, stdout, stderr)
 
-	l := strings.Split(stderr, " ")
+	// Before GCSFuse v2.4.1, the output of is saved in stderr
+	l := strings.Split(stdout+stderr, " ")
 	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
 
 	return l[2]
