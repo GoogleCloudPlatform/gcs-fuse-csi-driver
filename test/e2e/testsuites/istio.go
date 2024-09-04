@@ -20,14 +20,11 @@ package testsuites
 import (
 	"context"
 	"fmt"
-	"os"
-	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
+	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
@@ -60,12 +57,6 @@ func (t *gcsFuseCSIIstioTestSuite) SkipUnsupportedTests(_ storageframework.TestD
 }
 
 func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
-	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
-	gcsFuseSupportsNativeSidecar, err := strconv.ParseBool(envVar)
-	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
-	}
-
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -92,42 +83,95 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	testSidecarStoreDataSupportScenario := func(setGcsFuseNativeSidecar bool, setIstioNativeSidecar bool) {
+	testGCSFuseWithIstio := func(holdApplicationUntilProxyStarts, registryOnly bool) {
 		init()
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-		tPod.SetIstioSidecar(setIstioNativeSidecar)
+		tPod.SetLabels(map[string]string{"sidecar.istio.io/inject": "true"})
+
+		if holdApplicationUntilProxyStarts {
+			tPod.SetAnnotations(map[string]string{"proxy.istio.io/config": "{ \"holdApplicationUntilProxyStarts\": true }"})
+		}
+
+		if registryOnly {
+			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32"})
+			specs.DeployIstioSidecar(f.Namespace.Name)
+			specs.DeployIstioServiceEntry(f.Namespace.Name)
+		}
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
 
+		if !holdApplicationUntilProxyStarts {
+			ginkgo.By("Checking that the pod has failed container error")
+			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+		}
+
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
-
-		ginkgo.By("Checking injection ordering")
-		tPod.VerifyInjectionOrder(setGcsFuseNativeSidecar, setIstioNativeSidecar)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 	}
 
-	// We do not support the case where:
-	// - GCSFuse is native sidecar.
-	// - Istio is a regular container.
-	ginkgo.It("should store data with istio regular container present", func() {
-		if gcsFuseSupportsNativeSidecar {
-			ginkgo.Skip("Unsupported case: istio-proxy is regular container while GCSFuse is an native sidecar")
-		} else {
-			testSidecarStoreDataSupportScenario(gcsFuseSupportsNativeSidecar, false /* setIstioNativeSidecar */)
-		}
+	ginkgo.It("should store data with istio injected at index 0", func() {
+		testGCSFuseWithIstio(true, false)
 	})
 
-	ginkgo.It("should store data with istio native container present", func() {
-		testSidecarStoreDataSupportScenario(gcsFuseSupportsNativeSidecar, true /* setIstioNativeSidecar */)
+	ginkgo.It("[flaky] should store data with istio injected at the last index", func() {
+		testGCSFuseWithIstio(false, false)
+	})
+
+	ginkgo.It("should store data with istio registry only outbound traffic policy mode", func() {
+		testGCSFuseWithIstio(true, true)
+	})
+
+	ginkgo.It("[flaky] should fail with istio registry only outbound traffic policy mode missing Pod annotation", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		tPod.SetLabels(map[string]string{"sidecar.istio.io/inject": "true"})
+		tPod.SetAnnotations(map[string]string{"proxy.istio.io/config": "{ \"holdApplicationUntilProxyStarts\": true }"})
+
+		specs.DeployIstioSidecar(f.Namespace.Name)
+		specs.DeployIstioServiceEntry(f.Namespace.Name)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(ctx, codes.Internal.String())
+		tPod.WaitForFailedMountError(ctx, "mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
+	})
+
+	ginkgo.It("[flaky] should fail with istio registry only outbound traffic policy mode missing ServiceEntry", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		tPod.SetLabels(map[string]string{"sidecar.istio.io/inject": "true"})
+		tPod.SetAnnotations(map[string]string{"proxy.istio.io/config": "{ \"holdApplicationUntilProxyStarts\": true }"})
+		tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32"})
+
+		specs.DeployIstioSidecar(f.Namespace.Name)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod has failed mount error")
+		tPod.WaitForFailedMountError(ctx, codes.Internal.String())
+		tPod.WaitForFailedMountError(ctx, "mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: Get")
 	})
 }

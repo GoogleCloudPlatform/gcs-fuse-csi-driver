@@ -158,6 +158,7 @@ func (mc *MountConfig) prepareMountArgs() {
 		"gid":             "0",
 		"prometheus-port": strconv.Itoa(prometheusPort),
 	}
+	// Use a new port each gcsfuse instance that we start.
 	prometheusPort++
 
 	configFileFlagMap := map[string]string{

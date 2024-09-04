@@ -51,6 +51,8 @@ const (
 	testNameKernelListCache      = "kernel_list_cache"
 
 	testNamePrefixSucceed = "should succeed in "
+
+	masterBranchName = "master"
 )
 
 var gcsfuseVersionStr = ""
@@ -113,7 +115,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// the version format does not obey the syntax and semantics of the "Semantic Versioning".
 		// Always use master branch if the gcsfuse binary is built using the head commit.
 		if err != nil {
-			return "master"
+			return masterBranchName
 		}
 
 		// check if the given gcsfuse version supports the test case
@@ -206,26 +208,40 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install -y google-cloud-cli")
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go1.22.4 && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
+		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go1.23.0 && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
+
+		var finalTestCommand string
 		switch testName {
 		case testNameReadonly:
 			if readOnly {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
+				finalTestCommand = baseTestCommandWithTestBucket
 			} else {
-				tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket))
+				finalTestCommand = fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket)
 			}
 		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameConcurrentOperations:
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket)
+			finalTestCommand = baseTestCommandWithTestBucket
+		case testNameRenameDirLimit:
+			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
+				finalTestCommand = baseTestCommandWithTestBucket
+			} else {
+				finalTestCommand = baseTestCommand
+			}
 		case testNameKernelListCache, testNameManagedFolders:
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -run "+testCase)
+			finalTestCommand = baseTestCommandWithTestBucket + " -run " + testCase
 		case testNameListLargeDir, testNameWriteLargeFiles:
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommandWithTestBucket+" -timeout 80m")
+			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 80m"
 		case testNameReadLargeFiles:
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand+" -timeout 60m")
+			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
+				finalTestCommand = baseTestCommandWithTestBucket + " -timeout 60m"
+			} else {
+				finalTestCommand = baseTestCommand + " -timeout 60m"
+			}
 		default:
-			tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
+			finalTestCommand = baseTestCommand
 		}
+
+		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, finalTestCommand)
 	}
 
 	testNameSuffix := func(i int) string {
@@ -463,10 +479,24 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(12), func() {
 		init()
 		defer cleanup()
 

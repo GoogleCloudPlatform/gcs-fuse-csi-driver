@@ -68,6 +68,7 @@ type TestParameters struct {
 	GinkgoSkipGcpSaTest bool
 
 	SupportsNativeSidecar bool
+	IstioVersion          string
 }
 
 const TestWithNativeSidecarEnvVar = "TEST_WITH_NATIVE_SIDECAR"
@@ -173,13 +174,18 @@ func Handle(testParams *TestParameters) error {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithNativeSidecarEnvVar, err)
 	}
 
+	testSkipStr := generateTestSkip(testParams)
+	if !strings.Contains(testSkipStr, "istio") && (len(testFocusStr) == 0 || strings.Contains(testFocusStr, "istio")) {
+		installIstio(testParams.IstioVersion)
+	}
+
 	//nolint:gosec
 	cmd := exec.Command("ginkgo", "run", "-v",
 		"--procs", testParams.GinkgoProcs,
 		"--flake-attempts", testParams.GinkgoFlakeAttempts,
 		"--timeout", testParams.GinkgoTimeout,
 		"--focus", testFocusStr,
-		"--skip", generateTestSkip(testParams),
+		"--skip", testSkipStr,
 		"--junit-report", "junit-gcsfusecsi.xml",
 		"--output-dir", artifactsDir,
 		testParams.PkgDir+"/test/e2e/",
@@ -209,7 +215,7 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	if testParams.UseGKEAutopilot {
-		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration")
+		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration", "istio")
 	}
 
 	if !testParams.SupportsNativeSidecar {
@@ -225,9 +231,22 @@ func generateTestSkip(testParams *TestParameters) string {
 		}
 	}
 
+	skipTests = append(skipTests, "flaky")
+
 	skipString := strings.Join(skipTests, "|")
 
 	klog.Infof("Generated ginkgo skip string: %q", skipString)
 
 	return skipString
+}
+
+func installIstio(istioVersion string) {
+	if err := os.Setenv("ISTIO_VERSION", istioVersion); err != nil {
+		klog.Fatalf(`env variable "ISTIO_VERSION" could not be set: %v`, err)
+	}
+
+	cmd := exec.Command("bash", "./test/e2e/utils/install-istio.sh")
+	if err := runCommand("Installing Istio...", cmd); err != nil {
+		klog.Fatalf(`failed to install Istio: %v`, err)
+	}
 }

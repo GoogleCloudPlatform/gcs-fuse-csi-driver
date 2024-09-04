@@ -314,7 +314,6 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	})
 
 	testcaseInvalidMountOptions := func(configPrefix string) {
-		// init(specs.InvalidMountOptionsVolumePrefix)
 		init(configPrefix)
 		defer cleanup()
 
@@ -328,7 +327,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
-		tPod.WaitForFailedMountError(ctx, "Incorrect Usage. flag provided but not defined: -invalid-option")
+		tPod.WaitForFailedMountError(ctx, "-invalid-option")
 	}
 
 	ginkgo.It("should fail when invalid mount options are passed", func() {

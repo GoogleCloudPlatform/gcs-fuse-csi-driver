@@ -49,7 +49,7 @@ func New(mounterPath string) *Mounter {
 	}
 }
 
-func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+func (m *Mounter) Mount(ctx context.Context, mc *MountConfig, metricsScrapeInterval int) error {
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
 	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
@@ -114,8 +114,8 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 		promPort := mc.FlagMap["prometheus-port"]
 		if promPort != "0" {
-			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
-			go collectMetrics(ctx, promPort, mc.TempDir)
+			klog.Infof("start to collect metrics from port %v for volume %q with scrape interval of %d second(s)", promPort, mc.VolumeName, metricsScrapeInterval)
+			go collectMetrics(ctx, promPort, mc.TempDir, metricsScrapeInterval)
 		}
 
 		// Since the gcsfuse has taken over the file descriptor,
@@ -214,10 +214,10 @@ func logVolumeTotalSize(dirPath string) {
 }
 
 // collectMetrics collects metrics from the gcsfuse instance every 10 seconds.
-func collectMetrics(ctx context.Context, port, dirPath string) {
-	genNumber := 0
+func collectMetrics(ctx context.Context, port, dirPath string, scrapeInterval int) {
+	genNumber := 1
 	metricEndpoint := "http://localhost:" + port + "/metrics"
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(time.Duration(scrapeInterval) * time.Second)
 
 	for {
 		select {
@@ -226,6 +226,9 @@ func collectMetrics(ctx context.Context, port, dirPath string) {
 		case <-ticker.C:
 			newCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			scrapeMetrics(newCtx, metricEndpoint, dirPath, genNumber)
+			// If x is the current generation of the metrics snapshot/file, we are leaving some buffer where the outdated (x-1)
+			// file exists so that the reader has time to finish reading the complete data.
+			// The -2 means we are deleting file generations up to x - 2.
 			deleteOutdatedFile(dirPath, genNumber-2)
 			cancel()
 			genNumber++
@@ -233,9 +236,11 @@ func collectMetrics(ctx context.Context, port, dirPath string) {
 	}
 }
 
-// scrapeMetrics connects to the metrics endpoint, scrapes metrics, and save the metrics to the given file path.
+// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
+// We write the metrics to a temporary file while we finalize scrape, and then rename
+// the file to match format of metrics_x.prom, where x is the latest sample/generation.
 func scrapeMetrics(ctx context.Context, metricEndpoint, dirPath string, genNumber int) {
-	outputPath := dirPath + metrics.GetMetricsFileName(genNumber)
+	tempPath := filepath.Join(dirPath, metrics.GetMetricsTempFileName())
 
 	// Make the HTTP GET request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
@@ -261,7 +266,7 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, dirPath string, genNumbe
 	}
 
 	// Create the output file
-	out, err := os.Create(outputPath)
+	out, err := os.Create(tempPath)
 	if err != nil {
 		klog.Errorf("error creating output file: %v", err)
 
@@ -279,31 +284,25 @@ func scrapeMetrics(ctx context.Context, metricEndpoint, dirPath string, genNumbe
 	// Ensure closure of output file.
 	out.Close()
 
-	// Update generation number.
-	generationFilePath := dirPath + metrics.GetGenerationFileName()
-	genFile, err := os.Create(generationFilePath)
-	if err != nil {
-		klog.Errorf("error getting file descriptor for metrics generation file: %v", err)
+	// Get final filename.
+	outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(genNumber))
 
-		return
-	}
-	defer genFile.Close()
-
-	_, err = fmt.Fprintf(genFile, "%d\n", genNumber)
+	// Update file name with metrics, atomic operation.
+	err = os.Rename(tempPath, outputPath)
 	if err != nil {
-		klog.Infof("Error writing to file: %v", err)
+		klog.Errorf("error renaming metrics file from temp to %s format: %v", outputPath, err)
 
 		return
 	}
 }
 
 func deleteOutdatedFile(dirPath string, genNumber int) {
-	if genNumber < 0 {
+	if genNumber < 1 {
 		return
 	}
 
 	// Create path for file to delete.
-	outputPath := dirPath + metrics.GetMetricsFileName(genNumber)
+	outputPath := filepath.Join(dirPath, metrics.GetMetricsFileName(genNumber))
 
 	// Delete the output file.
 	err := os.Remove(outputPath)
