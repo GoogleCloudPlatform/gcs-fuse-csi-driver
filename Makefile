@@ -21,7 +21,8 @@ export BUILD_ARM ?= false
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
-PROJECT ?= $(shell gcloud config get-value project 2>&1 | head -n 1)
+# assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
+PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
 CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
 IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
 
@@ -38,6 +39,7 @@ ifneq ("$(shell docker buildx build --help | grep 'provenance')", "")
 DOCKER_BUILDX_ARGS += --provenance=false
 endif
 
+$(info PROJECT is ${PROJECT})
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
@@ -183,9 +185,11 @@ install:
 	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
 	./deploy/base/webhook/create-cert.sh --namespace gcs-fuse-csi-driver --service gcs-fuse-csi-driver-webhook --secret gcs-fuse-csi-driver-webhook-secret
+	./deploy/base/webhook/manage-validating_admission_policy.sh --install
 
 uninstall:
 	kubectl delete -k deploy/overlays/${OVERLAY} --wait
+	./deploy/base/webhook/manage-validating_admission_policy.sh --uninstall
 
 generate-spec-yaml:
 	mkdir -p ${BINDIR}

@@ -38,15 +38,15 @@ import (
 )
 
 var expectedMetricNames = map[string]int{
-	"fs_ops_count":                15,
+	"fs_ops_count":                20,
 	"fs_ops_error_count":          2,
-	"fs_ops_latency":              15,
+	"fs_ops_latency":              20,
 	"gcs_download_bytes_count":    1,
 	"gcs_read_count":              1,
 	"gcs_read_bytes_count":        1,
 	"gcs_reader_count":            2,
-	"gcs_request_count":           6,
-	"gcs_request_latencies":       6,
+	"gcs_request_count":           7,
+	"gcs_request_latencies":       7,
 	"file_cache_read_count":       1,
 	"file_cache_read_bytes_count": 1,
 	"file_cache_read_latencies":   1,
@@ -120,7 +120,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create a new file A outside of the gcsfuse, using gsutil.
 		fileName := uuid.NewString()
 		specs.CreateTestFileInBucket(fileName, bucketName)
 
@@ -137,19 +137,65 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+
+		// Read file A.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
+
+		// Read file A again.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
+
+		// Create a new file B using gcsfuse.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/testfile", mountPath))
+
+		// List the volume.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls %v", mountPath))
+
+		// Write content to file B.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world!' > %v/testfile", mountPath))
+
+		// Read file B.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/testfile", mountPath))
+
+		// Remove file B.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("rm %v/testfile", mountPath))
+
+		// Delete directory A with files in it.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir %v/dir-to-delete/", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/dir-to-delete/my-file", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("rm -r %v/dir-to-delete/", mountPath))
+
+		// Copy a file A from dir1 to dir2.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir %v/my-dir/", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/my-dir/my-file", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir %v/my-other-dir/", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mv %v/my-dir/my-file %v/my-other-dir/", mountPath, mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("rmdir %v/my-dir/", mountPath))
+
+		// Mkdir dir A.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir %v/my-new-dir/", mountPath))
+
+		// Rename a file A to file B.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/my-file", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mv %v/my-file %v/my-renamed-file", mountPath, mountPath))
+
+		// Rename a directory A to directory B (set –rename-dir-limit flag to avoid i/o errors)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir %v/my-dir-to-rename/", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mv %v/my-dir-to-rename/ %v/my-renamed-dir/", mountPath, mountPath))
+
+		// Create symlink.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir %v/my-dir/", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/my-dir/my-file", mountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ln -s %v/my-dir/my-file %v/my-symlink", mountPath, mountPath))
+
+		// Read symlink.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls -l %v/my-symlink", mountPath))
 
 		ginkgo.By("Sleeping 20 seconds for metrics to be collected")
 		time.Sleep(20 * time.Second)
 
 		ginkgo.By("Collecting Prometheus metrics from the CSI driver node server")
-		csiPodIP := tPod.GetCISDriverNodePodIP(ctx)
+		csiPodIP := tPod.GetCSIDriverNodePodIP(ctx)
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("wget -O %v/metrics.prom http://%v:9920/metrics", mountPath, csiPodIP))
 		promFile := fmt.Sprintf("%v/%v/metrics.prom", l.artifactsDir, f.Namespace.Name)
 

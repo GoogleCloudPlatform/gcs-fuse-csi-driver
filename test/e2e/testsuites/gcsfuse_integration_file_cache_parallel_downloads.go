@@ -33,15 +33,15 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
-type gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite struct {
+type gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
 
-// InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite returns gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite that implements TestSuite interface.
-func InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite() storageframework.TestSuite {
-	return &gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite{
+// InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite returns gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite that implements TestSuite interface.
+func InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite() storageframework.TestSuite {
+	return &gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite{
 		tsInfo: storageframework.TestSuiteInfo{
-			Name: "gcsfuseIntegrationFileCache",
+			Name: "gcsfuseIntegrationFileCacheParallelDownloads",
 			TestPatterns: []storageframework.TestPattern{
 				storageframework.DefaultFsCSIEphemeralVolume,
 			},
@@ -49,14 +49,14 @@ func InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite() storageframework.TestS
 	}
 }
 
-func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) GetTestSuiteInfo() storageframework.TestSuiteInfo {
+func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) GetTestSuiteInfo() storageframework.TestSuiteInfo {
 	return t.tsInfo
 }
 
-func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) SkipUnsupportedTests(_ storageframework.TestDriver, _ storageframework.TestPattern) {
+func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) SkipUnsupportedTests(_ storageframework.TestDriver, _ storageframework.TestPattern) {
 }
 
-func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -66,7 +66,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 
 	// Beware that it also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
-	f := framework.NewFrameworkWithCustomTimeouts("gcsfuse-integration-file-cache", storageframework.GetDriverTimeouts(driver))
+	f := framework.NewFrameworkWithCustomTimeouts("gcsfuse-integration-file-cache-parallel", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	init := func(configPrefix ...string) {
@@ -95,7 +95,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		}
 
 		// check if the given gcsfuse version supports the test case
-		if !v.AtLeast(version.MustParseSemantic("v2.0.0")) {
+		if !v.AtLeast(version.MustParseSemantic("v2.4.0-gke.0")) {
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testName, v.String())
 		}
 
@@ -132,6 +132,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		}
 		tPod.SetupCacheVolumeMount("/tmp/"+cacheDir, ".volumes/"+volumeName)
 		mountOptions = append(mountOptions, "logging:file-path:/gcsfuse-tmp/log.json", "logging:format:json", "logging:severity:trace")
+		mountOptions = append(mountOptions,
+			"file-cache:enable-parallel-downloads:true",
+			"file-cache:parallel-downloads-per-file:4",
+			"file-cache:max-parallel-downloads:-1",
+			"file-cache:download-chunk-size-mb:3",
+			"file-cache:enable-crc:true")
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
@@ -204,24 +210,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsWithinReadChunkSize", false, "500Mi", "false", "3600")
-	})
-
-	ginkgo.It("should succeed in TestRangeReadTest 2", func() {
-		init()
-		defer cleanup()
-
 		gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsBeyondReadChunkSizeWithChunkDownloaded", false, "500Mi", "false", "3600")
 	})
 
-	ginkgo.It("should succeed in TestRangeReadTest 3", func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsWithinReadChunkSize", false, "500Mi", "true", "3600")
-	})
-
-	ginkgo.It("should succeed in TestRangeReadTest 4", func() {
+	ginkgo.It("should succeed in TestRangeReadTest 2", func() {
 		init()
 		defer cleanup()
 

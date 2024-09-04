@@ -306,7 +306,7 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 
 	// Check if all the containers besides the sidecar container exited
 	if podRestartPolicyIsOnFailure || podRestartPolicyIsNever || podIsTerminating {
-		if pod.Status.ContainerStatuses == nil || len(pod.Status.ContainerStatuses) == 0 {
+		if len(pod.Status.ContainerStatuses) == 0 {
 			return nil
 		}
 
@@ -386,7 +386,8 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 	if err == nil && len(errMsg) > 0 {
 		errMsgStr := string(errMsg)
 		code := codes.Internal
-		if strings.Contains(errMsgStr, "Incorrect Usage") {
+		if strings.Contains(errMsgStr, "Incorrect Usage") ||
+			strings.Contains(errMsgStr, "unknown flag") {
 			code = codes.InvalidArgument
 		}
 

@@ -163,7 +163,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// notify the sidecar container to exit.
 	if !isInitContainer {
 		if err := putExitFile(pod, targetPath); err != nil {
-			return nil, status.Errorf(codes.Internal, err.Error())
+			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}
 
@@ -176,13 +176,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return &csi.NodePublishVolumeResponse{}, nil
 		}
 
-		return nil, status.Errorf(code, err.Error())
+		return nil, status.Error(code, err.Error())
 	}
 
 	// Check if there is any error from the sidecar container
 	code, err = checkSidecarContainerErr(isInitContainer, pod)
 	if code != codes.OK {
-		return nil, status.Errorf(code, err.Error())
+		return nil, status.Error(code, err.Error())
 	}
 
 	// TODO: Check if the socket listener timed out
