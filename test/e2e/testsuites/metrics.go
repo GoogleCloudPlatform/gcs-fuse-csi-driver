@@ -205,7 +205,13 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 		ginkgo.By("Parsing Prometheus metrics")
-		families, err := metricspkg.ProcessMetricsFile(promFile)
+		metricsFile, err := os.Open(promFile)
+		if err != nil {
+			framework.Failf("Failed to open the metrics file %q: %v", promFile, err)
+		}
+		defer metricsFile.Close()
+
+		families, err := metricspkg.ProcessMetricsData(metricsFile)
 		framework.ExpectNoError(err)
 
 		volume := volumeName

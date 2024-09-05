@@ -34,10 +34,9 @@ import (
 )
 
 var (
-	gcsfusePath           = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath        = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	metricsScrapeInterval = flag.Int("metrics-scrape-interval", 10, "Scrape interval in seconds for gcsfuse metrics endpoint.")
-	_                     = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
+	_              = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -63,7 +62,7 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp)
 		if mc != nil {
-			if err := mounter.Mount(ctx, mc, *metricsScrapeInterval); err != nil {
+			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
 		}

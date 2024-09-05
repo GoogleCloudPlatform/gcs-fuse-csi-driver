@@ -18,13 +18,13 @@ limitations under the License.
 package metrics
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,10 +37,10 @@ import (
 )
 
 const (
-	metricsPath             = "/metrics"
-	metricsFileRegex        = `metrics_(\d+)\.prom`
-	metricsFileNameTemplate = `metrics_%d.prom`
-	metricsTempFileName     = "temp.prom"
+	SocketName = "metrics.sock"
+
+	metricsPath = "/metrics"
+	unixURL     = "http://unix/"
 )
 
 type Manager interface {
@@ -52,12 +52,14 @@ type Manager interface {
 type manager struct {
 	registry        *prometheus.Registry
 	metricsEndpoint string
+	fuseSocketDir   string
 }
 
-func NewMetricsManager(metricsEndpoint string) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string) Manager {
 	mm := &manager{
 		registry:        prometheus.NewRegistry(),
 		metricsEndpoint: metricsEndpoint,
+		fuseSocketDir:   fuseSocketDir,
 	}
 
 	return mm
@@ -94,8 +96,15 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		return
 	}
 
+	socketBasePath := util.GetSocketBasePath(targetPath, mm.fuseSocketDir)
+	if err := os.Symlink(emptyDirBasePath, socketBasePath); err != nil && !os.IsExist(err) {
+		klog.Errorf("failed to create symbolic link to path %q: %v", socketBasePath, err)
+
+		return
+	}
+
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	c := NewTextFileCollector(emptyDirBasePath, podUID, volumeName, map[string]string{
+	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podUID, volumeName, map[string]string{
 		"pod_name":       podName,
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
@@ -111,27 +120,38 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
 
-	// textFileCollector uses a hash of pod UID and volume name as an identifier.
-	c := NewTextFileCollector("", podUID, volumeName, nil)
+	// metricsCollector uses a hash of pod UID and volume name as an identifier.
+	c := NewMetricsCollector("", "", podUID, volumeName, nil)
 	if ok := mm.registry.Unregister(c); !ok {
 		klog.Infof("Unregister metrics collector for targetPath %q is not needed since the collector is not registered", targetPath)
 	}
 }
 
-type textFileCollector struct {
-	path        string
-	constLabels map[string]string
-	podUID      string
-	volumeName  string
+type metricsCollector struct {
+	emptyDirBasePath string
+	constLabels      map[string]string
+	podUID           string
+	volumeName       string
+	httpClient       *http.Client
 }
 
-// NewTextFileCollector returns a new Collector exposing metrics read from the give path.
-func NewTextFileCollector(path, podUID, volumeName string, labels map[string]string) prometheus.Collector {
-	c := &textFileCollector{
-		path:        path,
-		constLabels: labels,
-		podUID:      podUID,
-		volumeName:  volumeName,
+// NewMetricsCollector returns a new Collector exposing metrics read from the give path.
+func NewMetricsCollector(socketBasePath, emptyDirBasePath, podUID, volumeName string, labels map[string]string) prometheus.Collector {
+	c := &metricsCollector{
+		emptyDirBasePath: emptyDirBasePath,
+		constLabels:      labels,
+		podUID:           podUID,
+		volumeName:       volumeName,
+	}
+
+	// Creating a new HTTP client that is configured to make HTTP requests over a unix domain socket.
+	c.httpClient = &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", filepath.Join(socketBasePath, SocketName))
+			},
+		},
 	}
 
 	return c
@@ -139,23 +159,40 @@ func NewTextFileCollector(path, podUID, volumeName string, labels map[string]str
 
 // Describe emits the description of metrics.
 // Prometheus Registry relies on this func to identify collectors.
-func (c *textFileCollector) Describe(ch chan<- *prometheus.Desc) {
+func (c *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	// Collector id is a hash of the values of the ConstLabels and fqName.
 	ch <- prometheus.NewDesc("gke_gcsfuse_csi_metric", "GKE GCSFuse CSI metric.", nil, map[string]string{"pod_uid": c.podUID, "volume_name": c.volumeName})
 }
 
-// Collect emits metrics.
-func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
-	metricsFilePath, err := GetMetricsFilePath(c.path)
+// Collect scrapes metrics from the sidecar and emits metrics.
+func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, unixURL, nil)
 	if err != nil {
-		klog.Warningf("failed to get metrics file: %s", err.Error())
+		klog.Errorf("failed to create scrape metrics request: %v", err)
 
 		return
 	}
 
-	families, err := ProcessMetricsFile(metricsFilePath)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		klog.Errorf("failed to process metrics file: %v", err)
+		klog.Errorf("failed to scrape metrics: %v", err)
+
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		klog.Errorf("unexpected HTTP status: %v", resp.Status)
+
+		return
+	}
+
+	families, err := ProcessMetricsData(resp.Body)
+	if err != nil {
+		klog.Errorf("failed to process metrics data: %v", err)
 
 		return
 	}
@@ -165,115 +202,20 @@ func (c *textFileCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// ProcessMetricsFile processes a metrics file that follows Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,
+// ProcessMetricsData processes metrics that follow Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,
 // returning its MetricFamily.
-func ProcessMetricsFile(metricsFilePath string) (map[string]*dto.MetricFamily, error) {
-	metricsFile, err := os.Open(metricsFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open metrics file %q: %w", metricsFilePath, err)
-	}
-	defer metricsFile.Close()
-
+func ProcessMetricsData(metricsReader io.Reader) (map[string]*dto.MetricFamily, error) {
 	var parser expfmt.TextParser
-	metricFamilies, err := parser.TextToMetricFamilies(metricsFile)
+	metricFamilies, err := parser.TextToMetricFamilies(metricsReader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse metrics file %q: %w", metricsFilePath, err)
+		return nil, fmt.Errorf("failed to parse metrics: %w", err)
 	}
 
 	return metricFamilies, nil
 }
 
-func GetMetricsFilePath(directoryPath string) (string, error) {
-	// Find latest file generation.
-	genNumber, err := getGenerationNumber(directoryPath)
-	if err != nil {
-		return "", fmt.Errorf("could not get generation number from %s: %w", directoryPath, err)
-	}
-
-	// Find latest metrics file name and open.
-	metricsFilePath := filepath.Join(directoryPath, GetMetricsFileName(genNumber))
-
-	return metricsFilePath, nil
-}
-
-// GetMetricsFileName creates the expected name for the latest metrics file.
-func GetMetricsFileName(genNumber int) string {
-	return fmt.Sprintf(metricsFileNameTemplate, genNumber)
-}
-
-// GetMetricsTempFileName gets the file name used to temporarily store new metrics.
-func GetMetricsTempFileName() string {
-	return metricsTempFileName
-}
-
-// GetGenerationsPresent uses the dirPath parameter to get all the metric files present
-// in the directory, and extracts all the generation numbers.
-//
-// Returns:
-//  1. List with all valid generations present.
-//  2. Number of entries that matched regex.
-//  3. Error
-func GetGenerationsPresent(dirPath string) ([]int, error) {
-	pattern := regexp.MustCompile(metricsFileRegex)
-	dirContents, err := os.ReadDir(dirPath)
-	if err != nil {
-		return []int{}, fmt.Errorf(`failed to list items in directory "%q": %w`, dirPath, err)
-	}
-
-	generationsPresent := []int{}
-	errArr := []error{}
-	for _, item := range dirContents {
-		if item.IsDir() {
-			continue
-		}
-
-		matches := pattern.FindStringSubmatch(item.Name())
-		if len(matches) > 1 {
-			x, err := strconv.Atoi(matches[1])
-			if err != nil {
-				errArr = append(errArr, fmt.Errorf("failed to convert generation number from string to integer %q: %w", matches[1], err))
-
-				continue
-			}
-
-			generationsPresent = append(generationsPresent, x)
-		}
-	}
-
-	if len(errArr) > 0 {
-		return generationsPresent, fmt.Errorf("errors when parsing some generation files: %v", errArr)
-	}
-
-	return generationsPresent, nil
-}
-
-// getGenerationNumber lists the files in the directory and matches all files
-// that follow the metricsFileRegex format. We then extract the generation number
-// from all the filenames and return the highest/latest generation number.
-func getGenerationNumber(dirPath string) (int, error) {
-	// Returns error if the array is empty or parses an invalid generation file.
-	generationsPresent, err := GetGenerationsPresent(dirPath)
-	if err != nil {
-		return -1, fmt.Errorf("failed to get latest generation: %w", err)
-	}
-
-	if len(generationsPresent) == 0 {
-		return -1, errors.New("failed to get latest generation: directory is empty")
-	}
-
-	highestGeneration := -1
-	for _, x := range generationsPresent {
-		highestGeneration = max(highestGeneration, x)
-	}
-	if highestGeneration < 0 {
-		return -1, fmt.Errorf("latest generation is invalid: %d", highestGeneration)
-	}
-
-	return highestGeneration, nil
-}
-
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
-func (c *textFileCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
+func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
 	var valType prometheus.ValueType
 	var val float64
 
