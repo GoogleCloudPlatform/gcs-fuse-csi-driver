@@ -38,19 +38,20 @@ import (
 	"k8s.io/mount-utils"
 )
 
-const socketPath = "./socket"
+const socketName = "socket"
 
 // Mounter provides the Cloud Storage FUSE CSI implementation of mount.Interface
 // for the linux platform.
 type Mounter struct {
 	mount.MounterForceUnmounter
-	mux sync.Mutex
+	mux           sync.Mutex
+	fuseSocketDir string
 }
 
 // New returns a mount.MounterForceUnmounter for the current system.
 // It provides options to override the default mounter behavior.
 // mounterPath allows using an alternative to `/bin/mount` for mounting.
-func New(mounterPath string) (mount.Interface, error) {
+func New(mounterPath, fuseSocketDir string) (mount.Interface, error) {
 	m, ok := mount.New(mounterPath).(mount.MounterForceUnmounter)
 	if !ok {
 		return nil, errors.New("failed to cast mounter to MounterForceUnmounter")
@@ -59,6 +60,7 @@ func New(mounterPath string) (mount.Interface, error) {
 	return &Mounter{
 		m,
 		sync.Mutex{},
+		fuseSocketDir,
 	}, nil
 }
 
@@ -78,12 +80,6 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %w", mc, err)
 	}
 
-	// Prepare the temp emptyDir path
-	emptyDirBasePath, err := util.PrepareEmptyDir(target, true)
-	if err != nil {
-		return fmt.Errorf("failed to prepare emptyDir path: %w", err)
-	}
-
 	podID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(target)
 	logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podID, volumeName, source)
 
@@ -100,7 +96,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
-	listener, err := createSocket(emptyDirBasePath, logPrefix)
+	listener, err := m.createSocket(target, logPrefix)
 	if err != nil {
 		// If mount failed at this step,
 		// cleanup the mount point and allow the CSI driver NodePublishVolume to retry.
@@ -129,48 +125,75 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	return nil
 }
 
-func createSocket(emptyDirBasePath string, logPrefix string) (net.Listener, error) {
+func (m *Mounter) UnmountWithForce(target string, umountTimeout time.Duration) error {
+	m.cleanupSocket(target)
+
+	return m.MounterForceUnmounter.UnmountWithForce(target, umountTimeout)
+}
+
+func (m *Mounter) Unmount(target string) error {
+	m.cleanupSocket(target)
+
+	return m.MounterForceUnmounter.Unmount(target)
+}
+
+func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, error) {
 	klog.V(4).Infof("%v passing the descriptor", logPrefix)
-	// Need to change the current working directory to the temp volume base path,
+
+	// Prepare the temp emptyDir path
+	emptyDirBasePath, err := util.PrepareEmptyDir(target, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare emptyDir path: %w", err)
+	}
+
+	// Create socket base path.
+	// Need to create symbolic link of emptyDirBasePath to socketBasePath,
 	// because the socket absolute path is longer than 104 characters,
 	// which will cause "bind: invalid argument" errors.
-	exPwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get the current directory: %w", err)
+	socketBasePath := util.GetSocketBasePath(target, m.fuseSocketDir)
+	if err := os.Symlink(emptyDirBasePath, socketBasePath); err != nil && !os.IsExist(err) {
+		return nil, fmt.Errorf("failed to create symbolic link to path %q: %w", socketBasePath, err)
 	}
-
-	if err = os.Chdir(emptyDirBasePath); err != nil {
-		return nil, fmt.Errorf("failed to change directory to %q: %w", emptyDirBasePath, err)
-	}
-
-	defer func() {
-		if err := os.Chdir(exPwd); err != nil {
-			klog.Errorf("%v failed to change directory back to %q: %v", logPrefix, exPwd, err)
-		}
-	}()
 
 	klog.V(4).Infof("%v create a listener using the socket", logPrefix)
-	l, err := net.Listen("unix", socketPath)
+	l, err := net.Listen("unix", filepath.Join(socketBasePath, socketName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a listener using the socket: %w", err)
 	}
 
 	// Change the socket ownership
+	targetSocketPath := filepath.Join(emptyDirBasePath, socketName)
 	if err = os.Chown(filepath.Dir(emptyDirBasePath), webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %w", err)
 	}
 	if err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on emptyDirBasePath: %w", err)
 	}
-	if err = os.Chown(socketPath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
-		return nil, fmt.Errorf("failed to change ownership on socket: %w", err)
+	if err = os.Chown(targetSocketPath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
+		return nil, fmt.Errorf("failed to change ownership on targetSocketPath: %w", err)
 	}
 
-	if _, err = os.Stat(socketPath); err != nil {
-		return nil, fmt.Errorf("failed to verify the socket: %w", err)
+	if _, err = os.Stat(targetSocketPath); err != nil {
+		return nil, fmt.Errorf("failed to verify the targetSocketPath: %w", err)
 	}
 
 	return l, nil
+}
+
+func (m *Mounter) cleanupSocket(target string) {
+	socketBasePath := util.GetSocketBasePath(target, m.fuseSocketDir)
+	socketPath := filepath.Join(socketBasePath, socketName)
+	if err := syscall.Unlink(socketPath); err != nil {
+		if !os.IsNotExist(err) {
+			klog.Errorf("failed to clean up socket %q: %v", socketPath, err)
+		}
+	}
+
+	if err := os.Remove(socketBasePath); err != nil {
+		if !os.IsNotExist(err) {
+			klog.Errorf("failed to clean up socket base path %q: %v", socketBasePath, err)
+		}
+	}
 }
 
 func startAcceptConn(l net.Listener, logPrefix string, msg []byte, fd int, cancel context.CancelFunc) {

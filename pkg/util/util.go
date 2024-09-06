@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -153,4 +154,10 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 	}
 
 	return emptyDirBasePath, nil
+}
+
+func GetSocketBasePath(targetPath, fuseSocketDir string) string {
+	podID, volumeName, _ := ParsePodIDVolumeFromTargetpath(targetPath)
+
+	return filepath.Join(fuseSocketDir, podID+"_"+volumeName)
 }

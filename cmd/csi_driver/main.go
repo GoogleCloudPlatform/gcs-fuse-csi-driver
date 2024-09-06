@@ -44,6 +44,7 @@ var (
 	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	fuseSocketDir             = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -98,7 +99,7 @@ func main() {
 
 		clientset.ConfigurePodLister(*nodeID)
 
-		mounter, err = csimounter.New("")
+		mounter, err = csimounter.New("", *fuseSocketDir)
 		if err != nil {
 			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
 		}
