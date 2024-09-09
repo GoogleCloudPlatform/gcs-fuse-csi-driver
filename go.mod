@@ -1,6 +1,6 @@
 module github.com/googlecloudplatform/gcs-fuse-csi-driver
 
-go 1.23.0
+go 1.22.7
 
 require (
 	cloud.google.com/go/compute/metadata v0.5.0
