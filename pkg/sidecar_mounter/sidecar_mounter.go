@@ -22,6 +22,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,8 +32,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 )
+
+const metricEndpointFmt = "http://localhost:%v/metrics"
 
 // Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
@@ -108,6 +113,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		if loggingSeverity == "debug" || loggingSeverity == "trace" {
 			go logMemoryUsage(ctx, cmd.Process.Pid)
 			go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
+		}
+
+		promPort := mc.FlagMap["prometheus-port"]
+		if promPort != "0" {
+			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
+			go collectMetrics(ctx, promPort, mc.TempDir)
 		}
 
 		// Since the gcsfuse has taken over the file descriptor,
@@ -203,4 +214,64 @@ func logVolumeTotalSize(dirPath string) {
 	} else {
 		klog.Infof("total volume size of %v: %v bytes", dirPath, totalSize)
 	}
+}
+
+// collectMetrics collects metrics from the gcsfuse instance.
+// Meanwhile, a server is created for each gcsfuse instance,
+// exposing a unix domain socket for CSI driver to connect.
+func collectMetrics(ctx context.Context, port, tempDir string) {
+	metricEndpoint := fmt.Sprintf(metricEndpointFmt, port)
+
+	// Create a unix domain socket and listen for incoming connections.
+	socketPath := filepath.Join(tempDir, metrics.SocketName)
+	socket, err := net.Listen("unix", socketPath)
+	if err != nil {
+		klog.Errorf("failed to create socket %q: %v", socketPath, err)
+
+		return
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		if err := scrapeMetrics(timeoutCtx, metricEndpoint, w); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+
+	server := http.Server{
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	if err := server.Serve(socket); err != nil {
+		klog.Errorf("failed to start the metrics server for %q: %v", socketPath, err)
+	}
+}
+
+// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
+// The response is written to a new http.ResponseWriter.
+func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWriter) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make HTTP request to %q: %w", metricEndpoint, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected HTTP status: %v", resp.Status)
+	}
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("failed to copy response: %w", err)
+	}
+
+	return nil
 }

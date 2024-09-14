@@ -161,6 +161,10 @@ func (t *TestPod) Create(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestPod) GetPodName() string {
+	return t.pod.Name
+}
+
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed.
 func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, shExec string) {
 	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
@@ -355,6 +359,23 @@ func (t *TestPod) SetName(name string) {
 
 func (t *TestPod) GetNode() string {
 	return t.pod.Spec.NodeName
+}
+
+func (t *TestPod) GetCSIDriverNodePodIP(ctx context.Context) string {
+	node := t.GetNode()
+	daemonSetLabelSelector := "k8s-app=gcs-fuse-csi-driver"
+
+	pods, err := t.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + node,
+		LabelSelector: daemonSetLabelSelector,
+	})
+	framework.ExpectNoError(err)
+	gomega.Expect(pods.Items).To(gomega.HaveLen(1))
+
+	pod := pods.Items[0]
+	gomega.Expect(pod.Status).ToNot(gomega.BeNil())
+
+	return pod.Status.PodIP
 }
 
 func (t *TestPod) SetNodeAffinity(nodeName string, sameNode bool) {

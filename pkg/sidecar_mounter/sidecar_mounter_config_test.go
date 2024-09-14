@@ -20,8 +20,10 @@ package sidecarmounter
 import (
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -211,10 +213,45 @@ func TestPrepareMountArgs(t *testing.T) {
 				"file-cache:max-size-mb": "100",
 			},
 		},
+		{
+			name: "should return valid args when metrics is disabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{util.DisableMetricsForGKE + ":true"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":        GCSFuseAppName,
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"prometheus-port": "0",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
 	}
 
+	prometheusPort := 8080
 	for _, tc := range testCases {
 		t.Logf("test case: %s", tc.name)
+
+		found := false
+		for _, o := range tc.mc.Options {
+			if o == util.DisableMetricsForGKE+":true" {
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			tc.expectedArgs["prometheus-port"] = strconv.Itoa(prometheusPort)
+			prometheusPort++
+		}
 
 		tc.mc.prepareMountArgs()
 		if !reflect.DeepEqual(tc.mc.FlagMap, tc.expectedArgs) {

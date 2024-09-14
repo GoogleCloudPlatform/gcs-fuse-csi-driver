@@ -223,6 +223,8 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	if testParams.UseGKEManagedDriver {
+		skipTests = append(skipTests, "metrics")
+
 		// TODO(saikatroyc) remove this skip when GCSFuse CSI v1.4.3 is back-ported to the below GKE versions.
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.27") || strings.HasPrefix(testParams.GkeClusterVersion, "1.28") {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
