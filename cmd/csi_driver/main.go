@@ -108,7 +108,7 @@ func main() {
 		}
 
 		if *metricsEndpoint != "" {
-			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir)
+			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, clientset)
 			mm.InitializeHTTPHandler()
 		}
 	}

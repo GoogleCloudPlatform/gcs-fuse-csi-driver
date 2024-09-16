@@ -28,11 +28,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -53,13 +55,15 @@ type manager struct {
 	registry        *prometheus.Registry
 	metricsEndpoint string
 	fuseSocketDir   string
+	clientset       clientset.Interface
 }
 
-func NewMetricsManager(metricsEndpoint, fuseSocketDir string) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string, clientset clientset.Interface) Manager {
 	mm := &manager{
 		registry:        prometheus.NewRegistry(),
 		metricsEndpoint: metricsEndpoint,
 		fuseSocketDir:   fuseSocketDir,
+		clientset:       clientset,
 	}
 
 	return mm
@@ -104,13 +108,13 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	}
 
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podUID, volumeName, map[string]string{
+	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, map[string]string{
 		"pod_name":       podName,
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
 		"pod_uid":        podUID,
-	})
+	}, mm.clientset)
 	if err := mm.registry.Register(c); err != nil && !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
 		klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
 	}
@@ -121,7 +125,7 @@ func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
 
 	// metricsCollector uses a hash of pod UID and volume name as an identifier.
-	c := NewMetricsCollector("", "", podUID, volumeName, nil)
+	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil)
 	if ok := mm.registry.Unregister(c); !ok {
 		klog.Infof("Unregister metrics collector for targetPath %q is not needed since the collector is not registered", targetPath)
 	}
@@ -130,18 +134,24 @@ func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 type metricsCollector struct {
 	emptyDirBasePath string
 	constLabels      map[string]string
+	namespace        string
+	podName          string
 	podUID           string
 	volumeName       string
 	httpClient       *http.Client
+	clientset        clientset.Interface
 }
 
 // NewMetricsCollector returns a new Collector exposing metrics read from the give path.
-func NewMetricsCollector(socketBasePath, emptyDirBasePath, podUID, volumeName string, labels map[string]string) prometheus.Collector {
+func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface) prometheus.Collector {
 	c := &metricsCollector{
 		emptyDirBasePath: emptyDirBasePath,
 		constLabels:      labels,
+		namespace:        namespace,
+		podName:          podName,
 		podUID:           podUID,
 		volumeName:       volumeName,
+		clientset:        clientset,
 	}
 
 	// Creating a new HTTP client that is configured to make HTTP requests over a unix domain socket.
@@ -166,6 +176,13 @@ func (c *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect scrapes metrics from the sidecar and emits metrics.
 func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
+	pod, err := c.clientset.GetPod(c.namespace, c.podName)
+	if err != nil || pod == nil || pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
+		klog.V(6).Infof("pod %v/%v does not exist, skip metrics scraping", c.namespace, c.podName)
+
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
