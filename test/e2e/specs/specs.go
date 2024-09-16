@@ -62,6 +62,7 @@ const (
 	ForceNewBucketPrefix                                       = "gcsfuse-csi-force-new-bucket"
 	SubfolderInBucketPrefix                                    = "gcsfuse-csi-subfolder-in-bucket"
 	MultipleBucketsPrefix                                      = "gcsfuse-csi-multiple-buckets"
+	EnableFileCacheForceNewBucketPrefix                        = "gcsfuse-csi-enable-file-cache-force-new-bucket"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
 	ImplicitDirsPath                                           = "implicit-dir"

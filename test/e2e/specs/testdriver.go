@@ -149,7 +149,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			bucketName = uuid.NewString()
 		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			bucketName = InvalidVolume
-		case ForceNewBucketPrefix:
+		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
@@ -202,7 +202,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			dirPath := uuid.NewString()
 			CreateImplicitDirInBucket(dirPath, bucketName)
 			mountOptions += ",only-dir=" + dirPath
-		case EnableFileCachePrefix:
+		case EnableFileCachePrefix, EnableFileCacheForceNewBucketPrefix:
 			v.fileCacheCapacity = "100Mi"
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"

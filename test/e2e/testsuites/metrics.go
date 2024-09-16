@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/google/uuid"
+	csidriver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	metricspkg "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
@@ -80,9 +80,9 @@ func (t *gcsFuseCSIMetricsTestSuite) SkipUnsupportedTests(_ storageframework.Tes
 //nolint:maintidx
 func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
 	type local struct {
-		config         *storageframework.PerTestConfig
-		volumeResource *storageframework.VolumeResource
-		artifactsDir   string
+		config             *storageframework.PerTestConfig
+		volumeResourceList []*storageframework.VolumeResource
+		artifactsDir       string
 	}
 	var l local
 	ctx := context.Background()
@@ -92,13 +92,17 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 	f := framework.NewFrameworkWithCustomTimeouts("metrics", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
-	init := func(configPrefix ...string) {
+	init := func(volumeNumber int, configPrefix ...string) {
 		l = local{}
 		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+
+		l.volumeResourceList = []*storageframework.VolumeResource{}
+		for range volumeNumber {
+			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
+		}
 
 		l.artifactsDir = "../../_artifacts"
 		if dir, ok := os.LookupEnv("ARTIFACTS"); ok {
@@ -108,35 +112,27 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 	cleanup := func() {
 		var cleanUpErrs []error
-		cleanUpErrs = append(cleanUpErrs, l.volumeResource.CleanupResource(ctx))
+		for _, vr := range l.volumeResourceList {
+			cleanUpErrs = append(cleanUpErrs, vr.CleanupResource(ctx))
+		}
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	ginkgo.It("should emit metrics", func() {
-		init(specs.EnableFileCachePrefix)
-		defer cleanup()
-
-		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
-		bucketName := l.config.Prefix
+	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string) {
+		ginkgo.By("Running file operations on the volume")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 
 		// Create a new file A outside of the gcsfuse, using gsutil.
+		var bucketName string
+		if volumeResource.Pv != nil {
+			bucketName = volumeResource.Pv.Spec.CSI.VolumeHandle
+		} else {
+			bucketName = volumeResource.VolSource.CSI.VolumeAttributes[csidriver.VolumeContextKeyBucketName]
+		}
+
 		fileName := uuid.NewString()
 		specs.CreateTestFileInBucket(fileName, bucketName)
-
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
-
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the pod command exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 
 		// Read file A.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
@@ -191,9 +187,6 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		// Read symlink.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls -l %v/my-symlink", mountPath))
 
-		ginkgo.By("Sleeping 20 seconds for metrics to be collected")
-		time.Sleep(20 * time.Second)
-
 		ginkgo.By("Collecting Prometheus metrics from the CSI driver node server")
 		csiPodIP := tPod.GetCSIDriverNodePodIP(ctx)
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("wget -O %v/metrics.prom http://%v:9920/metrics", mountPath, csiPodIP))
@@ -215,8 +208,8 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		framework.ExpectNoError(err)
 
 		volume := volumeName
-		if l.volumeResource.Pv != nil {
-			volume = l.volumeResource.Pv.Name
+		if volumeResource.Pv != nil {
+			volume = volumeResource.Pv.Name
 		}
 		podName := tPod.GetPodName()
 
@@ -254,6 +247,59 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 			gomega.Expect(metricsList).To(gomega.HaveLen(metricCount), fmt.Sprintf("Found metric %q count: %v, expected count: %v", metricName, len(metricsList), metricCount))
 			ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
+		}
+	}
+
+	// This tests below configuration:
+	//    [pod1]
+	//       |
+	//   [volume1]
+	//       |
+	//   [bucket1]
+	ginkgo.It("should emit metrics", func() {
+		init(1, specs.EnableFileCachePrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
+	})
+
+	// This tests below configuration:
+	//          [pod1]
+	//          /    \
+	//   [volume1]  [volume2]
+	//       |          |
+	//   [bucket1]  [bucket2]
+	ginkgo.It("should emit metrics from multiple volumes", func() {
+		init(2, specs.EnableFileCacheForceNewBucketPrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		for i, vr := range l.volumeResourceList {
+			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
+		}
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		for i, vr := range l.volumeResourceList {
+			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
+			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i))
 		}
 	})
 }
