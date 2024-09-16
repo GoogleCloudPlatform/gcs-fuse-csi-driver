@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -77,7 +78,9 @@ func main() {
 	kubeConfig := config.GetConfigOrDie()
 
 	// Setup client
-	client, err := kubernetes.NewForConfig(kubeConfig)
+	coreKubeConfig := rest.CopyConfig(kubeConfig)
+	coreKubeConfig.ContentType = runtime.ContentTypeProtobuf
+	client, err := kubernetes.NewForConfig(coreKubeConfig)
 	if err != nil {
 		klog.Warningf("Unable to get clientset: %v", err)
 	}

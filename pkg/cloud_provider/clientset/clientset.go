@@ -26,6 +26,7 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
@@ -65,6 +66,7 @@ func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to read kubeconfig: %w", err)
 	}
+	rc.ContentType = runtime.ContentTypeProtobuf
 
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
