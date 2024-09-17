@@ -75,6 +75,7 @@ func main() {
 
 	// Load config for manager, informers, listers
 	kubeConfig := config.GetConfigOrDie()
+	kubeConfig.ContentType = runtime.ContentTypeProtobuf
 
 	// Setup client
 	client, err := kubernetes.NewForConfig(kubeConfig)
