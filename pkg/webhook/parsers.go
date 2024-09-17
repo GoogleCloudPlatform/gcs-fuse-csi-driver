@@ -27,6 +27,17 @@ import (
 
 var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
 
+func ParseBool(str string) (bool, error) {
+	switch str {
+	case "True", "true":
+		return true, nil
+	case "False", "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("could not parse string to bool: the acceptable values for %q are 'True', 'true', 'false' or 'False'", str)
+	}
+}
+
 // parseSidecarContainerImage supports our Privately Hosted Sidecar Image option
 // by iterating the container list and finding a container named "gke-gcsfuse-sidecar"
 // If we find "gke-gcsfuse-sidecar":
