@@ -188,7 +188,8 @@ install:
 	./deploy/base/webhook/manage-validating_admission_policy.sh --install
 
 uninstall:
-	kubectl delete -k deploy/overlays/${OVERLAY} --wait
+	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
+	kubectl delete -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml --wait
 	./deploy/base/webhook/manage-validating_admission_policy.sh --uninstall
 
 generate-spec-yaml:
