@@ -39,13 +39,14 @@ import (
 )
 
 type GCSFuseCSITestDriver struct {
-	driverInfo            storageframework.DriverInfo
-	clientset             clientset.Interface
-	meta                  metadata.Service
-	storageServiceManager storage.ServiceManager
-	volumeStore           []*gcsVolume
-	bucketLocation        string
-	skipGcpSaTest         bool
+	driverInfo                  storageframework.DriverInfo
+	clientset                   clientset.Interface
+	meta                        metadata.Service
+	storageServiceManager       storage.ServiceManager
+	volumeStore                 []*gcsVolume
+	bucketLocation              string
+	skipGcpSaTest               bool
+	EnableHierarchicalNamespace bool
 }
 
 type gcsVolume struct {
@@ -59,7 +60,7 @@ type gcsVolume struct {
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
-func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest bool) storageframework.TestDriver {
+func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
@@ -77,12 +78,13 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 				storageframework.CapExec:        true,
 			},
 		},
-		clientset:             c,
-		meta:                  m,
-		storageServiceManager: ssm,
-		volumeStore:           []*gcsVolume{},
-		bucketLocation:        bl,
-		skipGcpSaTest:         skipGcpSaTest,
+		clientset:                   c,
+		meta:                        m,
+		storageServiceManager:       ssm,
+		volumeStore:                 []*gcsVolume{},
+		bucketLocation:              bl,
+		skipGcpSaTest:               skipGcpSaTest,
+		EnableHierarchicalNamespace: enableHierarchicalNamespace,
 	}
 }
 
@@ -396,6 +398,7 @@ func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountN
 		Name:                           uuid.NewString(),
 		Location:                       n.bucketLocation,
 		EnableUniformBucketLevelAccess: true,
+		EnableHierarchicalNamespace:    n.EnableHierarchicalNamespace,
 	}
 
 	ginkgo.By(fmt.Sprintf("Creating bucket %q", newBucket.Name))

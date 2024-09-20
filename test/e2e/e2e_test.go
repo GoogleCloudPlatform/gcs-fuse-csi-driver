@@ -113,9 +113,21 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIMetricsTestSuite,
 	}
 
-	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest)
+	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
+	})
+
+	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
+		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
+		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
+		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
+	}
+
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true)
+
+	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
+		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
 	})
 })

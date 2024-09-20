@@ -99,6 +99,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testName, v.String())
 		}
 
+		// HNS is supported after v2.5.0
+		if !v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0")) && hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration HNS tests on gcsfuse version %v", v.String())
+		}
+
 		// By default, use the test code in the same release tag branch
 		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
 	}
@@ -128,14 +133,18 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
 		cacheDir := "cache-dir"
 		if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
-			cacheDir = "cache-dir-read-cache-hns-false"
+			if hnsEnabled(driver) {
+				cacheDir = "cache-dir-read-cache-hns-true"
+			} else {
+				cacheDir = "cache-dir-read-cache-hns-false"
+			}
 		}
 		tPod.SetupCacheVolumeMount("/tmp/"+cacheDir, ".volumes/"+volumeName)
 		mountOptions = append(mountOptions, "logging:file-path:/gcsfuse-tmp/log.json", "logging:format:json", "logging:severity:trace")
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/cpu-limit":               "250m",
+			"gke-gcsfuse/cpu-limit":               "1",
 			"gke-gcsfuse/memory-limit":            "256Mi",
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})

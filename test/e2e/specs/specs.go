@@ -83,7 +83,7 @@ const (
 	pollInterval     = 1 * time.Second
 	pollTimeout      = 1 * time.Minute
 	pollIntervalSlow = 10 * time.Second
-	pollTimeoutSlow  = 10 * time.Minute
+	pollTimeoutSlow  = 20 * time.Minute
 )
 
 type TestPod struct {
@@ -276,6 +276,27 @@ func (t *TestPod) CheckSidecarNeverTerminatedAfterAWhile(ctx context.Context, is
 
 func (t *TestPod) SetupVolumeForInitContainer(name, mountPath string, readOnly bool, subPath string) {
 	t.setupVolumeMount(name, mountPath, readOnly, subPath, true)
+}
+
+func (t *TestPod) SetupVolumeForHNS(name string) {
+	// Remove the --rename-dir-limit and --implicit-dirs flags from the mount options.
+	for _, volume := range t.pod.Spec.Volumes {
+		if volume.Name == name && volume.VolumeSource.CSI != nil {
+			mountOptions := volume.VolumeSource.CSI.VolumeAttributes["mountOptions"]
+			mountOptionsList := strings.Split(mountOptions, ",")
+
+			newMountOptions := []string{}
+			for _, mo := range mountOptionsList {
+				if !strings.Contains(mo, "rename-dir-limit") && !strings.Contains(mo, "implicit-dirs") {
+					newMountOptions = append(newMountOptions, mo)
+				}
+			}
+
+			volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] = strings.Join(newMountOptions, ",")
+
+			break
+		}
+	}
 }
 
 func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {

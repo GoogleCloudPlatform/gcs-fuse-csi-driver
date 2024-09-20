@@ -41,6 +41,7 @@ type ServiceBucket struct {
 	SizeBytes                      int64
 	Labels                         map[string]string
 	EnableUniformBucketLevelAccess bool
+	EnableHierarchicalNamespace    bool
 }
 
 type Service interface {
@@ -107,6 +108,7 @@ func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket)
 		Location:                 obj.Location,
 		Labels:                   obj.Labels,
 		UniformBucketLevelAccess: storage.UniformBucketLevelAccess{Enabled: obj.EnableUniformBucketLevelAccess},
+		HierarchicalNamespace:    &storage.HierarchicalNamespace{Enabled: obj.EnableHierarchicalNamespace},
 	}
 	if err := bkt.Create(ctx, obj.Project, bktAttrs); err != nil {
 		return nil, fmt.Errorf("CreateBucket operation failed for bucket %q: %w", obj.Name, err)

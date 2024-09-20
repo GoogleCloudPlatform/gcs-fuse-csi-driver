@@ -24,6 +24,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -56,6 +57,13 @@ const (
 )
 
 var gcsfuseVersionStr = ""
+
+func hnsEnabled(driver storageframework.TestDriver) bool {
+	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
+
+	return gcsfuseCSITestDriver.EnableHierarchicalNamespace
+}
 
 type gcsFuseCSIGCSFuseIntegrationTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
@@ -130,6 +138,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			return "v2.4.0"
 		}
 
+		// HNS is supported after v2.5.0
+		if !v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0")) && hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration HNS tests on gcsfuse version %v", v.String())
+		}
+
 		// By default, use the test code in the same release tag branch
 		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
 	}
@@ -169,7 +182,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/cpu-limit":               "250m",
+			"gke-gcsfuse/cpu-limit":               "1",
 			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})
@@ -183,7 +196,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			}
 		}
 		if dirPath != "" {
-			bucketName += "/" + dirPath
+			if !(testName == testNameRenameDirLimit && hnsEnabled(driver)) {
+				bucketName += "/" + dirPath
+			}
+		}
+
+		if hnsEnabled(driver) {
+			tPod.SetupVolumeForHNS(volumeName)
 		}
 
 		ginkgo.By("Deploying the test pod")
@@ -251,6 +270,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
 
 	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(1), func() {
+		if hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+		}
+
 		init()
 		defer cleanup()
 
@@ -265,6 +288,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(3), func() {
+		if hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+		}
+
 		// passing only-dir flags
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
@@ -318,6 +345,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(1), func() {
+		if hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
+		}
+
 		init()
 		defer cleanup()
 
@@ -332,6 +363,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(3), func() {
+		if hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
+		}
+
 		// passing only-dir flags
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()
@@ -363,6 +398,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(1), func() {
+		if hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
+		}
+
 		init()
 		defer cleanup()
 
@@ -370,6 +409,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(2), func() {
+		if hnsEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
+		}
+
 		// passing only-dir flags
 		init(specs.SubfolderInBucketPrefix)
 		defer cleanup()

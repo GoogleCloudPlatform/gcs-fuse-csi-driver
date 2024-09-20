@@ -30,8 +30,8 @@ readonly build_gcs_fuse_csi_driver="${E2E_TEST_BUILD_DRIVER:-false}"
 
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
 readonly ginkgo_skip="${E2E_TEST_SKIP:-should.succeed.in.performance.test}"
-readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-5}"
-readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-2h}"
+readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-10}"
+readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
 readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"
 
 # Initialize ginkgo.
