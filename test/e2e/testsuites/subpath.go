@@ -92,9 +92,6 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod1.SetAnnotations(map[string]string{
-			"gke-gcsfuse/memory-limit": "100Mi",
-		})
 		tPod1.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", false, "subpath1", false /* add the first volume */)
 		tPod1.SetupVolumeWithSubPath(nil, volumeName, mountPath+"2", false, "subpath2", true /* reuse the first volume */)
 
@@ -115,9 +112,6 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the second pod")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod2.SetAnnotations(map[string]string{
-			"gke-gcsfuse/memory-limit": "100Mi",
-		})
 		tPod2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the second pod")
@@ -146,9 +140,6 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/memory-limit": "100Mi",
-		})
 		tPod.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", false, "subpath1", false /* add the first volume */)
 		tPod.SetupVolumeWithSubPath(nil, volumeName, mountPath+"2", false, "subpath2", true /* reuse the first volume */)
 
