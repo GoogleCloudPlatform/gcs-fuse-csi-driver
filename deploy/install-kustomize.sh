@@ -59,7 +59,7 @@ fi
 # versions, we just point directly at the version we want. See
 # github.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh.
 
-version=v5.0.3
+version=v5.4.3
 url_base=https://api.github.com/repos/kubernetes-sigs/kustomize/releases/tags/kustomize%2F
 curl -s ${url_base}${version} |\
   grep browser_download.*${opsys}_${arch} |\
