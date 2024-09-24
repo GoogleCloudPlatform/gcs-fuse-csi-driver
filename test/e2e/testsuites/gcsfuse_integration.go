@@ -133,14 +133,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			}
 		}
 
-		// tests are added or modified after v2.3.1 release and before v2.4.0 release
-		if !v.AtLeast(version.MustParseSemantic("v2.4.0")) && (testName == testNameListLargeDir || testName == testNameConcurrentOperations || testName == testNameKernelListCache || testName == testNameLocalFile) {
-			return "v2.4.0"
-		}
-
 		// HNS is supported after v2.5.0
 		if !v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0")) && hnsEnabled(driver) {
 			e2eskipper.Skipf("skip gcsfuse integration HNS tests on gcsfuse version %v", v.String())
+		}
+
+		// tests are added or modified after v2.3.1 release and before v2.4.0 release
+		if !v.AtLeast(version.MustParseSemantic("v2.4.0")) && (testName == testNameListLargeDir || testName == testNameConcurrentOperations || testName == testNameKernelListCache || testName == testNameLocalFile) {
+			return "v2.4.0"
 		}
 
 		// By default, use the test code in the same release tag branch
