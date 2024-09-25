@@ -34,7 +34,7 @@ readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-proje
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
-readonly number_nodes=${NUMBER_NODES:-1}
+readonly number_nodes=${NUMBER_NODES:-3}
 
 # Install golang
 version=1.22.7
