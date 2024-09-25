@@ -62,6 +62,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 	cmdParams := []string{
 		"container", "clusters", createCmd, testParams.GkeClusterName,
 		"--region", testParams.GkeClusterRegion, "--quiet",
+		"--release-channel", "rapid",
 	}
 
 	if isVariableSet(testParams.GkeClusterVersion) {
@@ -80,13 +81,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 
 	if isVariableSet(testParams.GkeNodeVersion) {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", testParams.GkeNodeVersion)
-	}
-
-	// TODO: change the cluster version to the new version in the rapid channel.
-	if strings.Contains(testParams.GkeClusterVersion, "1.30") {
-		cmdParams = append(cmdParams, "--release-channel", "rapid")
-	} else {
-		standardClusterFlags = append(standardClusterFlags, "--no-enable-autoupgrade")
 	}
 
 	// For supported regions/zones for ARM nodes, see https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke#arm-requirements-limitations
