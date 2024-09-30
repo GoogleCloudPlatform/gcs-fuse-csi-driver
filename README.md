@@ -16,6 +16,7 @@ limitations under the License.
 -->
 
 # Google Cloud Storage FUSE CSI Driver
+
 The Google Cloud Storage FUSE Container Storage Interface (CSI) Plugin.
 
 > WARNING: Manual deployment of this driver to your GKE cluster is not recommended. Instead users should use GKE to automatically deploy and manage the CSI driver as an add-on feature. See the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver).
@@ -24,7 +25,7 @@ The Google Cloud Storage FUSE Container Storage Interface (CSI) Plugin.
 
 ## Project Overview
 
-[Filesystem in Userspace (FUSE)](https://www.kernel.org/doc/html/next/filesystems/fuse.html) is an interface used to export a filesystem to the Linux kernel. [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse) allows you to mount Cloud Storage buckets as a file system so that applications can access the objects in a bucket using common File IO operations (e.g. open, read, write, close) rather than using cloud-specific APIs. 
+[Filesystem in Userspace (FUSE)](https://www.kernel.org/doc/html/next/filesystems/fuse.html) is an interface used to export a filesystem to the Linux kernel. [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse) allows you to mount Cloud Storage buckets as a file system so that applications can access the objects in a bucket using common File IO operations (e.g. open, read, write, close) rather than using cloud-specific APIs.
 
 The Google Cloud Storage FUSE CSI Driver lets you use the Kubernetes API to mount pre-existing Cloud Storage buckets as volumes which are consumable from a Pod. Your applications can upload and download objects using [Cloud Storage FUSE file system semantics](https://github.com/googlecloudplatform/gcsfuse/blob/master/docs/semantics.md).
 
@@ -59,27 +60,31 @@ Status: General Availability
 Refer to the [Google Cloud Storage FUSE CSI Driver Release Notes](./docs/releases.md).
 
 ## Get Started
-- GKE documentation: [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver)
-- [Configure access to Cloud Storage buckets using GKE Workload Identity](./docs/authentication.md)
-- [Cloud Storage FUSE CSI Driver Enablement in Terraform](./docs/terraform.md)
-- [Cloud Storage FUSE CSI Driver Manual Installation](./docs/installation.md)
-- [Example Applications](./examples/README.md)
-- [Troubleshooting](./docs/troubleshooting.md)
-- [Known Issues](./docs/known-issues.md)
+
+* GKE documentation: [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver)
+* [Configure access to Cloud Storage buckets using GKE Workload Identity](./docs/authentication.md)
+* [Cloud Storage FUSE CSI Driver Enablement in Terraform](./docs/terraform.md)
+* [Cloud Storage FUSE CSI Driver Manual Installation](./docs/installation.md)
+* [Release Notes](./docs/releases.md)
+* [Example Applications](./examples/README.md)
+* [Troubleshooting](./docs/troubleshooting.md)
+* [Known Issues](./docs/known-issues.md)
+* [Istio Compatibility](./docs/istio.md)
 
 ## Development and Contribution
+
 Refer to the [Cloud Storage FUSE CSI Driver Development Guide](./docs/development.md).
 
 ## Attribution
 
 This project is inspired by the following open source projects:
 
-- [Google Cloud Filestore CSI Driver](https://github.com/kubernetes-sigs/gcp-filestore-csi-driver) by the Kubernetes authors
-- [Azure Blob Storage CSI Driver](https://github.com/kubernetes-sigs/blob-csi-driver) by the Kubernetes authors
-- [Kubernetes CSI driver for Google Cloud Storage](https://github.com/ofek/csi-gcs) by [Ofek Lev](https://github.com/ofek)
+* [Google Cloud Filestore CSI Driver](https://github.com/kubernetes-sigs/gcp-filestore-csi-driver) by the Kubernetes authors
+* [Azure Blob Storage CSI Driver](https://github.com/kubernetes-sigs/blob-csi-driver) by the Kubernetes authors
+* [Kubernetes CSI driver for Google Cloud Storage](https://github.com/ofek/csi-gcs) by [Ofek Lev](https://github.com/ofek)
 
 ## References
 
-- [Kubernetes CSI Documentation](https://kubernetes-csi.github.io/docs/)
-- [Container Storage Interface (CSI) Specification](https://github.com/container-storage-interface/spec)
-- [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse)
+* [Kubernetes CSI Documentation](https://kubernetes-csi.github.io/docs/)
+* [Container Storage Interface (CSI) Specification](https://github.com/container-storage-interface/spec)
+* [Cloud Storage FUSE](https://cloud.google.com/storage/docs/gcs-fuse)

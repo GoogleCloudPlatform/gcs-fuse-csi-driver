@@ -159,6 +159,16 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
   The volume mount operation was aborted due to rate limit or existing operations. This warning is normal and should be transient.
 
+#### Istio
+
+- Pod event warning examples:
+
+  - > MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = ... mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: Error in iterating through objects: ...
+
+- Solutions:
+
+  If you are using Istio and see the above error, see [Istio Compatibility](./istio.md) to check if your workload is missing proper Pod annotations or `ServiceEntry`.
+
 #### Internal
 
 - Pod event warning examples:
