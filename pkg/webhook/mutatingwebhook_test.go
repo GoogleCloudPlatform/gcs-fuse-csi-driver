@@ -365,6 +365,41 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			nodes:        skewVersionNodes(),
 		},
 		{
+			name:         "native container set via annotation injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithNativeAnnotation(false, "true"),
+			wantResponse: wantResponse(t, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "native container set via annotation injection successful with custom image test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithNativeAnnotation(true, "true"),
+			wantResponse: wantResponse(t, true, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "regular container set via annotation injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithNativeAnnotation(false, "false"),
+			wantResponse: wantResponse(t, false, false),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "native container set via invalid annotation injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithNativeAnnotation(false, "maybe"),
+			wantResponse: wantResponse(t, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "native container set via annotation injection unsupported test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithNativeAnnotation(false, "true"),
+			wantResponse: wantResponse(t, false, false),
+			nodes:        skewVersionNodes(),
+		},
+		{
 			name:         "Injection with custom sidecar container image successful test.",
 			operation:    admissionv1.Create,
 			inputPod:     validInputPod(true),
@@ -525,6 +560,13 @@ func getDuplicateDeclarationPodSpecResponse() *corev1.Pod {
 	result := modifySpec(*validInputPod(true), true, true)
 
 	return result
+}
+
+func validInputPodWithNativeAnnotation(customImage bool, enableNativeSidecarAnnotation string) *corev1.Pod {
+	pod := validInputPod(customImage)
+	pod.ObjectMeta.Annotations[GcsFuseNativeSidecarEnableAnnotation] = enableNativeSidecarAnnotation
+
+	return pod
 }
 
 func validInputPod(customImage bool) *corev1.Pod {

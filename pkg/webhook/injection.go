@@ -64,7 +64,16 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 }
 
 func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
-	if supportsNativeSidecar {
+	nativeSidecarEnabled := true
+	if enable, ok := pod.Annotations[GcsFuseNativeSidecarEnableAnnotation]; ok {
+		parsedAnnotation, err := ParseBool(enable)
+		if err != nil {
+			klog.Errorf("failed to parse enableNativeSidecar annotation... ignoring annotation: %v", err)
+		} else {
+			nativeSidecarEnabled = parsedAnnotation
+		}
+	}
+	if supportsNativeSidecar && nativeSidecarEnabled {
 		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, GetNativeSidecarContainerSpec(config), getInjectIndex(pod.Spec.InitContainers))
 	} else {
 		pod.Spec.Containers = insert(pod.Spec.Containers, GetSidecarContainerSpec(config), getInjectIndex(pod.Spec.Containers))
