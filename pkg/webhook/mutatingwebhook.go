@@ -111,6 +111,9 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 	// Log pod mutation.
 	LogPodMutation(pod, config)
 
+	// inject metadata prefetch sidecar
+	injectMetadataPrefetchSidecarContainer(pod, config, supportsNativeSidecar)
+
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))

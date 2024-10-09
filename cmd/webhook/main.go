@@ -52,6 +52,7 @@ var (
 	ephemeralStorageRequest = flag.String("sidecar-ephemeral-storage-request", "5Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
 	ephemeralStorageLimit   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImage            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
+	metadataSidecarImage    = flag.String("metadata-sidecar-image", "", "The gcsfuse sidecar container image.")
 
 	// These are set at compile time.
 	webhookVersion = "unknown"
@@ -72,7 +73,7 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", webhookVersion, *sidecarImage)
 
 	// Load webhook config
-	c := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
+	c := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit, *metadataSidecarImage)
 
 	// Load config for manager, informers, listers
 	kubeConfig := config.GetConfigOrDie()
