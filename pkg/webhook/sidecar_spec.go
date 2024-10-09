@@ -18,6 +18,8 @@ limitations under the License.
 package webhook
 
 import (
+	"path/filepath"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -25,6 +27,7 @@ import (
 
 const (
 	SidecarContainerName                  = "gke-gcsfuse-sidecar"
+	SidecarMetadataPrefetchName           = "gke-gcsfuse-metadata-prefetch"
 	SidecarContainerTmpVolumeName         = "gke-gcsfuse-tmp"
 	SidecarContainerTmpVolumeMountPath    = "/gcsfuse-tmp"
 	SidecarContainerBufferVolumeName      = "gke-gcsfuse-buffer"
@@ -113,6 +116,68 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 			Requests: requests,
 		},
 		VolumeMounts: []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount},
+	}
+
+	return container
+}
+
+func GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
+	container := GetMetadataPrefetchSidecarContainerSpec(pod, c)
+	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
+	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+
+	return container
+}
+
+func GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
+	limits, requests := prepareResourceList(c)
+
+	// The sidecar container follows Restricted Pod Security Standard,
+	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+	container := corev1.Container{
+		Name:            SidecarMetadataPrefetchName,
+		Image:           c.MetadataContainerImage,
+		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+			ReadOnlyRootFilesystem:   ptr.To(true),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{
+					corev1.Capability("ALL"),
+				},
+			},
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			RunAsNonRoot:   ptr.To(true),
+			RunAsUser:      ptr.To(int64(NobodyUID)),
+			RunAsGroup:     ptr.To(int64(NobodyGID)),
+		},
+		Args: []string{
+			"--v=5",
+		},
+		Resources: corev1.ResourceRequirements{
+			// We should change these resources.
+			Limits:   limits,
+			Requests: requests,
+		},
+		VolumeMounts: []corev1.VolumeMount{},
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		if v.CSI == nil {
+			// We don't log because it can generate lots of trash.
+			continue
+		}
+		if v.CSI.Driver == "gcsfuse.csi.storage.gke.io" {
+			enableMetaPrefetch, err := ParseBool(v.CSI.VolumeAttributes["gcsfuseMetadataPrefetchOnMount"])
+			if err != nil {
+				klog.Errorf("failed to parse bool %v", enableMetaPrefetch)
+
+				continue
+			}
+			if enableMetaPrefetch {
+				container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: v.Name, MountPath: filepath.Join("/volumes/", v.Name), ReadOnly: true})
+			}
+		}
 	}
 
 	return container
