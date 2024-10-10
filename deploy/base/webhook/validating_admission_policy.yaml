@@ -18,7 +18,6 @@ kind: ValidatingAdmissionPolicy
 metadata:
   name: "gcsfuse-sidecar-validator.csi.storage.gke.io"
 spec:
-  failurePolicy: Ignore # will not block other Pod requests
   matchConstraints:
     resourceRules:
     - apiGroups: [""]
@@ -27,7 +26,7 @@ spec:
       operations: ["CREATE"]
   matchConditions:
   - name: "include-pods-with-gcsfuse-volumes"
-    expression: 'has(object.metadata.annotations) && "gke-gcsfuse/volumes" in object.metadata.annotations && object.metadata.annotations["gke-gcsfuse/volumes"] == "true"'
+    expression: 'object.metadata.?annotations["gke-gcsfuse/volumes"].orValue("") == "true"'
   - name: "include-pods-with-native-sidecar"
     expression: 'has(object.spec.initContainers) && object.spec.initContainers.exists(c, c.name == "gke-gcsfuse-sidecar")'
   variables:
@@ -52,9 +51,3 @@ metadata:
 spec:
   policyName: "gcsfuse-sidecar-validator.csi.storage.gke.io"
   validationActions: [Deny]
-  matchResources:
-    resourceRules:
-    - apiGroups: [""]
-      apiVersions: ["v1"]
-      resources: ["pods"]
-      operations: ["CREATE"]
