@@ -81,39 +81,33 @@ func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidec
 }
 
 func injectMetadataPrefetchSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
-	// TODO(hime): Simplify this logic, this is very repetitive at first glance.
+	var containerSpec corev1.Container
+	var index int
+
 	if supportsNativeSidecar {
-		spec := GetNativeMetadataPrefetchSidecarContainerSpec(pod, config)
-		index := getInjectIndexAfterContainer(pod.Spec.InitContainers, SidecarContainerName)
-		if len(spec.VolumeMounts) == 0 {
-			klog.Info("no volumes are requesting metadata prefetch, skipping metadata prefetch sidecar injection...")
-
-			return
-		}
-
-		if index == 0 {
-			klog.Warning("gke-gcsfuse-sidecar not found when attempting to inject metadata prefetch sidecar... skipping injection")
-
-			return
-		}
-
-		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, spec, index)
+		containerSpec = GetNativeMetadataPrefetchSidecarContainerSpec(pod, config)
+		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, SidecarContainerName)
 	} else {
-		spec := GetMetadataPrefetchSidecarContainerSpec(pod, config)
-		index := getInjectIndexAfterContainer(pod.Spec.Containers, SidecarContainerName)
-		if len(spec.VolumeMounts) == 0 {
-			klog.Info("no volumes are requesting metadata prefetch, skipping metadata prefetch sidecar injection...")
+		containerSpec = GetMetadataPrefetchSidecarContainerSpec(pod, config)
+		index = getInjectIndexAfterContainer(pod.Spec.Containers, SidecarContainerName)
+	}
 
-			return
-		}
+	if len(containerSpec.VolumeMounts) == 0 {
+		klog.Info("no volumes are requesting metadata prefetch, skipping metadata prefetch sidecar injection...")
 
-		if index == 0 {
-			klog.Warning("gke-gcsfuse-sidecar not found when attempting to inject metadata prefetch sidecar... skipping injection")
+		return
+	}
 
-			return
-		}
-		// Inject sidecar.
-		pod.Spec.Containers = insert(pod.Spec.Containers, spec, index)
+	if index == 0 {
+		klog.Warning("gke-gcsfuse-sidecar not found when attempting to inject metadata prefetch sidecar... skipping injection")
+
+		return
+	}
+
+	if supportsNativeSidecar {
+		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, containerSpec, index)
+	} else {
+		pod.Spec.Containers = insert(pod.Spec.Containers, containerSpec, index)
 	}
 }
 
