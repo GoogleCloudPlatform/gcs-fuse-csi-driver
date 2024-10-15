@@ -174,7 +174,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
 
-		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go1.23.2 && export PATH=$PATH:/usr/local/go/bin && cd %v/read_cache && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v --testbucket=%v -run %v", gcsfuseIntegrationTestsBasePath, mountPath, bucketName, testName)
+		baseTestCommand := fmt.Sprintf("alias python=python3 && export GOTOOLCHAIN=go1.23.2 && export PATH=$PATH:/usr/local/go/bin && cd %v/read_cache && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v --testbucket=%v -run %v", gcsfuseIntegrationTestsBasePath, mountPath, bucketName, testName)
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
 
