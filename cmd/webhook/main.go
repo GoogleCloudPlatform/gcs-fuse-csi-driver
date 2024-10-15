@@ -104,6 +104,8 @@ func main() {
 	// Setup Informer
 	informerFactory := informers.NewSharedInformerFactory(client, resyncDuration)
 	nodeLister := informerFactory.Core().V1().Nodes().Lister()
+	pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
+	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
 
 	informerFactory.Start(context.Done())
 	informerFactory.WaitForCacheSync(context.Done())
@@ -141,6 +143,8 @@ func main() {
 			Config:        c,
 			Decoder:       admission.NewDecoder(runtime.NewScheme()),
 			NodeLister:    nodeLister,
+			PvLister:      pvLister,
+			PvcLister:     pvcLister,
 			ServerVersion: serverVersion,
 		},
 	})

@@ -80,15 +80,15 @@ func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidec
 	}
 }
 
-func injectMetadataPrefetchSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
+func (si *SidecarInjector) injectMetadataPrefetchSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
 	var containerSpec corev1.Container
 	var index int
 
 	if supportsNativeSidecar {
-		containerSpec = GetNativeMetadataPrefetchSidecarContainerSpec(pod, config)
+		containerSpec = si.GetNativeMetadataPrefetchSidecarContainerSpec(pod, config)
 		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, SidecarContainerName)
 	} else {
-		containerSpec = GetMetadataPrefetchSidecarContainerSpec(pod, config)
+		containerSpec = si.GetMetadataPrefetchSidecarContainerSpec(pod, config)
 		index = getInjectIndexAfterContainer(pod.Spec.Containers, SidecarContainerName)
 	}
 

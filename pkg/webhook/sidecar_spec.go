@@ -121,15 +121,15 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 	return container
 }
 
-func GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
-	container := GetMetadataPrefetchSidecarContainerSpec(pod, c)
+func (si *SidecarInjector) GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
+	container := si.GetMetadataPrefetchSidecarContainerSpec(pod, c)
 	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
 	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
 
 	return container
 }
 
-func GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
+func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
 	limits, requests := prepareResourceList(c)
 
 	// The sidecar container follows Restricted Pod Security Standard,
@@ -163,17 +163,19 @@ func GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.
 	}
 
 	for _, v := range pod.Spec.Volumes {
-		if v.CSI == nil {
-			// We don't log because it can generate lots of trash.
-			continue
-		}
-		if v.CSI.Driver == "gcsfuse.csi.storage.gke.io" {
-			enableMetaPrefetch, err := ParseBool(v.CSI.VolumeAttributes["gcsfuseMetadataPrefetchOnMount"])
-			if err != nil {
-				klog.Errorf("failed to parse bool %v", enableMetaPrefetch)
-
+		if b, volumeAttributes, _ := si.isGcsFuseCSIVolume(v, pod.Namespace); b {
+			enableMetaPrefetchRaw, ok := volumeAttributes["gcsfuseMetadataPrefetchOnMount"]
+			// We disable metadata prefetch by default, so we
+			// skip injection of volume mount when not set.
+			if !ok {
 				continue
 			}
+
+			enableMetaPrefetch, err := ParseBool(enableMetaPrefetchRaw)
+			if err != nil {
+				klog.Errorf(`failed to determine if metadata prefetch is needed for volume "%s": %v`, v.Name, err)
+			}
+
 			if enableMetaPrefetch {
 				container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: v.Name, MountPath: filepath.Join("/volumes/", v.Name), ReadOnly: true})
 			}
