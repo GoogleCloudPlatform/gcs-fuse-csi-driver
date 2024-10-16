@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
@@ -129,8 +130,21 @@ func (si *SidecarInjector) GetNativeMetadataPrefetchSidecarContainerSpec(pod *co
 	return container
 }
 
+func getMetadataPrefetchContainerResources() (corev1.ResourceList, corev1.ResourceList) {
+	c := &Config{
+		CPURequest:              resource.MustParse("10m"),
+		CPULimit:                resource.MustParse("50m"),
+		MemoryRequest:           resource.MustParse("10Mi"),
+		MemoryLimit:             resource.MustParse("100Mi"),
+		EphemeralStorageRequest: resource.MustParse("10Mi"),
+		EphemeralStorageLimit:   resource.MustParse("10Mi"),
+	}
+
+	return prepareResourceList(c)
+}
+
 func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
-	limits, requests := prepareResourceList(c)
+	limits, requests := getMetadataPrefetchContainerResources()
 
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
@@ -155,7 +169,6 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 			"--v=5",
 		},
 		Resources: corev1.ResourceRequirements{
-			// We should change these resources.
 			Limits:   limits,
 			Requests: requests,
 		},

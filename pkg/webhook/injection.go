@@ -84,6 +84,16 @@ func (si *SidecarInjector) injectMetadataPrefetchSidecarContainer(pod *corev1.Po
 	var containerSpec corev1.Container
 	var index int
 
+	// Let's check our sidecar is not present anywhere before injecting.
+	// This means we wont support the privately hosted sidecar image feature for this sidecar.
+	_, presentInContainerList := containerPresent(pod.Spec.Containers, SidecarMetadataPrefetchName)
+	_, presentInInitContainerList := containerPresent(pod.Spec.InitContainers, SidecarMetadataPrefetchName)
+	if presentInContainerList || presentInInitContainerList {
+		klog.Infof(`%s sidecar is already injected in pod "%s", skipping injection...`, SidecarMetadataPrefetchName, pod.Name)
+
+		return
+	}
+
 	if supportsNativeSidecar {
 		containerSpec = si.GetNativeMetadataPrefetchSidecarContainerSpec(pod, config)
 		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, SidecarContainerName)
