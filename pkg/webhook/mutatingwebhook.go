@@ -49,6 +49,8 @@ type SidecarInjector struct {
 	Config        *Config
 	Decoder       admission.Decoder
 	NodeLister    listersv1.NodeLister
+	PvcLister     listersv1.PersistentVolumeClaimLister
+	PvLister      listersv1.PersistentVolumeLister
 	ServerVersion *version.Version
 }
 
@@ -112,6 +114,9 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	// Log pod mutation.
 	LogPodMutation(pod, config)
+
+	// Inject metadata prefetch sidecar.
+	si.injectMetadataPrefetchSidecarContainer(pod, config, supportsNativeSidecar)
 
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {

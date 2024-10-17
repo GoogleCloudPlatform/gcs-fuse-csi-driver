@@ -59,6 +59,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                FakeConfig().CPULimit,
 				CPURequest:              FakeConfig().CPURequest,
@@ -79,6 +80,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("500m"),
@@ -99,6 +101,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("500m"),
@@ -119,6 +122,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              FakeConfig().CPURequest,
@@ -139,6 +143,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              resource.Quantity{},
@@ -162,6 +167,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("100m"),
@@ -185,6 +191,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              resource.MustParse("100m"),
@@ -208,6 +215,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.Quantity{},

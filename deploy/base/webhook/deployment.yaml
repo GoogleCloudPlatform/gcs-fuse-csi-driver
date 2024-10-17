@@ -54,6 +54,7 @@ spec:
             - --sidecar-ephemeral-storage-limit=0
             - --sidecar-ephemeral-storage-request=5Gi
             - --sidecar-image=$(SIDECAR_IMAGE)
+            - --metadata-sidecar-image=$(METADATA_SIDECAR_IMAGE)
             - --sidecar-image-pull-policy=$(SIDECAR_IMAGE_PULL_POLICY)
             - --cert-dir=/etc/tls-certs
             - --port=22030
@@ -66,6 +67,11 @@ spec:
                 configMapKeyRef:
                   name: gcsfusecsi-image-config
                   key: sidecar-image
+            - name: METADATA_SIDECAR_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: gcsfusecsi-image-config
+                  key: metadata-sidecar-image
           resources:
             limits:
               cpu: 200m
