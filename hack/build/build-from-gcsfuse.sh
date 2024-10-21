@@ -25,19 +25,23 @@ PROJECT_ID=$(gcloud config get project)  # e.g. jaimebz-gke-dev
 # Make a bucket to temporarily store binary.
 gsutil mb -l $BUCKET_LOCATION -p $PROJECT_ID gs://$BUCKET_NAME
 
+echo "GCSFUSE path is ${GCSFUSE_PATH}"
 if [[ $GCSFUSE_PATH == "" ]]; then
     echo "Please point to the location of gcsfuse repository by setting GCSFUSE_PATH"
 fi
 
 # Build binary.
-GOOS=linux GOARCH=amd64 go run $GCSFUSE_PATH/tools/build_gcsfuse/main.go . . v3
+echo "Building gcsfuse binary..."
+mkdir ./bin/gcsfuse_bin/
+GOOS=linux GOARCH=amd64 go run $GCSFUSE_PATH/tools/build_gcsfuse/main.go . ./bin/gcsfuse_bin/ v3
 
 # Push binary to bucket.
-gsutil cp $GCSFUSE_PATH/bin/gcsfuse gs://$BUCKET_NAME/linux/amd64/
+echo "Pushing gcsfuse binary to bucket."
+gsutil cp ./bin/gcsfuse_bin/gcsfuse gs://$BUCKET_NAME/linux/amd64/
 
+cd 
 # Build sidecar image.# Build sidecar image.# Build sidecar image.
-make build-sidecar-and-push-multi-arch REGISTRY=gcr.io/$PROJECT_ID \ 
-GCSFUSE_PATH=gs://$BUCKET_NAME 
+make build-sidecar-and-push-multi-arch GCSFUSE_PATH=gs://$BUCKET_NAME 
 
 # Delete bucket.
 gsutil rm -r gs://$BUCKET_NAME
