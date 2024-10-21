@@ -18,6 +18,8 @@ export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
 export BUILD_ARM ?= false
+export CUSTOM_GCSFUSE_PATH ?= ~/gcsfuse
+
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
@@ -140,6 +142,30 @@ endif
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
+build-sidecar-and-push-multi-arch: init-buildx download-gcsfuse build-sidecar-linux-amd64
+ifeq (${BUILD_ARM}, true)
+	make build-sidecar-linux-arm64
+	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
+else
+	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64
+endif
+	
+	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
+
+build-sidecar-linux-amd64:
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/sidecar_mounter/Dockerfile \
+		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 .
+
+build-sidecar-linux-arm64:
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/sidecar_mounter/Dockerfile \
+		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 .
+
 build-image-linux-amd64:
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
@@ -221,3 +247,6 @@ e2e-test:
 
 perf-test:
 	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=3h E2E_TEST_SKIP= E2E_TEST_FOCUS=should.succeed.in.performance.test E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
+
+custom-gcsfuse-sidecar:
+	./hack/build/build-from-gcsfuse.sh
