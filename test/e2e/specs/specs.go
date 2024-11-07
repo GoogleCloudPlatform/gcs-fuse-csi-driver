@@ -65,6 +65,8 @@ const (
 	EnableFileCacheForceNewBucketPrefix                        = "gcsfuse-csi-enable-file-cache-force-new-bucket"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
+	EnableMetadataPrefetchPrefix                               = "gcsfuse-csi-enable-metadata-prefetch"
+	EnableMetadataPrefetchPrefixForceNewBucketPrefix           = "gcsfuse-csi-enable-metadata-prefetch-and-force-new-bucket"
 	ImplicitDirsPath                                           = "implicit-dir"
 	InvalidVolume                                              = "<invalid-name>"
 	SkipCSIBucketAccessCheckPrefix                             = "gcsfuse-csi-skip-bucket-access-check"
@@ -262,7 +264,7 @@ func (t *TestPod) CheckSidecarNeverTerminatedAfterAWhile(ctx context.Context, is
 
 	var sidecarContainerStatus corev1.ContainerStatus
 	for _, cs := range containerStatusList {
-		if cs.Name == webhook.SidecarContainerName {
+		if cs.Name == webhook.GcsFuseSidecarName {
 			sidecarContainerStatus = cs
 
 			break
@@ -488,7 +490,7 @@ func (t *TestPod) SetResource(cpuLimit, memoryLimit, storageLimit string) {
 
 func (t *TestPod) SetCustomSidecarContainerImage() {
 	t.pod.Spec.Containers = append(t.pod.Spec.Containers, corev1.Container{
-		Name:  webhook.SidecarContainerName,
+		Name:  webhook.GcsFuseSidecarName,
 		Image: LastPublishedSidecarContainerImage,
 	})
 }
@@ -496,13 +498,24 @@ func (t *TestPod) SetCustomSidecarContainerImage() {
 func (t *TestPod) VerifyCustomSidecarContainerImage(isNativeSidecar bool) {
 	if isNativeSidecar {
 		gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(1))
-		gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.Equal(webhook.SidecarContainerName))
+		gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.Equal(webhook.GcsFuseSidecarName))
 		gomega.Expect(t.pod.Spec.InitContainers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
 	} else {
 		gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
-		gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.Equal(webhook.SidecarContainerName))
+		gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.Equal(webhook.GcsFuseSidecarName))
 		gomega.Expect(t.pod.Spec.Containers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
 	}
+}
+
+func (t *TestPod) VerifyMetadataPrefetchPresence() {
+	gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(2))
+	gomega.Expect(t.pod.Spec.InitContainers[1].Name).To(gomega.Equal(webhook.MetadataPrefetchSidecarName))
+	gomega.Expect(t.pod.Spec.Containers).ToNot(gomega.ContainElement(gomega.HaveField("Name", webhook.MetadataPrefetchSidecarName)))
+}
+
+func (t *TestPod) VerifyMetadataPrefetchNotPresent() {
+	gomega.Expect(t.pod.Spec.InitContainers).ToNot(gomega.ContainElement(gomega.HaveField("Name", webhook.MetadataPrefetchSidecarName)))
+	gomega.Expect(t.pod.Spec.Containers).ToNot(gomega.ContainElement(gomega.HaveField("Name", webhook.MetadataPrefetchSidecarName)))
 }
 
 func (t *TestPod) SetInitContainerWithCommand(cmd string) {
@@ -1136,7 +1149,7 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 		FieldSelector: "metadata.name=gcsfusecsi-image-config",
 	})
 	framework.ExpectNoError(err)
-	gomega.Expect(configMaps.Items).To(gomega.HaveLen(1))
+	gomega.Expect(configMaps.Items).To(gomega.HaveLen(2))
 
 	sidecarImageConfig := configMaps.Items[0]
 	image := sidecarImageConfig.Data["sidecar-image"]
@@ -1155,7 +1168,7 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 			TerminationGracePeriodSeconds: ptr.To(int64(0)),
 			Containers: []corev1.Container{
 				{
-					Name:  webhook.SidecarContainerName,
+					Name:  webhook.GcsFuseSidecarName,
 					Image: image,
 				},
 			},
@@ -1170,7 +1183,7 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 	tPod.WaitForRunning(ctx)
 	defer tPod.Cleanup(ctx)
 
-	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, tPod.pod.Name, webhook.SidecarContainerName, "/gcsfuse", "--version")
+	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, tPod.pod.Name, webhook.GcsFuseSidecarName, "/gcsfuse", "--version")
 	framework.ExpectNoError(err,
 		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
 		err, stdout, stderr)
