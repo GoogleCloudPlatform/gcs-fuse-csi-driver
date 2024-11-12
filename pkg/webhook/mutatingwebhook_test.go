@@ -59,6 +59,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                FakeConfig().CPULimit,
 				CPURequest:              FakeConfig().CPURequest,
@@ -79,6 +80,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("500m"),
@@ -99,6 +101,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("500m"),
@@ -119,6 +122,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              FakeConfig().CPURequest,
@@ -139,6 +143,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              resource.Quantity{},
@@ -162,6 +167,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("100m"),
@@ -185,6 +191,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              resource.MustParse("100m"),
@@ -208,6 +215,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.Quantity{},
@@ -351,133 +359,172 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: admission.Allowed("The sidecar container was injected, no injection required."),
 		},
 		{
+			name:         "native container injection successful test with multiple sidecar entries present",
+			operation:    admissionv1.Create,
+			inputPod:     getDuplicateDeclarationPodSpec(),
+			wantResponse: generatePatch(t, getDuplicateDeclarationPodSpec(), getDuplicateDeclarationPodSpecResponse(false)),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "regular container injection successful test with custom image",
+			operation:    admissionv1.Create,
+			inputPod:     getDuplicateDeclarationPodSpec(),
+			wantResponse: generatePatch(t, getDuplicateDeclarationPodSpec(), getDuplicateDeclarationPodSpecResponse(false)),
+			nodes:        nativeSupportNodes(),
+		},
+		{
 			name:         "container injection successful test with multiple sidecar entries present",
 			operation:    admissionv1.Create,
 			inputPod:     getDuplicateDeclarationPodSpec(),
-			wantResponse: generatePatch(t, getDuplicateDeclarationPodSpec(), getDuplicateDeclarationPodSpecResponse()),
+			wantResponse: generatePatch(t, getDuplicateDeclarationPodSpec(), getDuplicateDeclarationPodSpecResponse(false)),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "regular container injection successful test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPod(false),
-			wantResponse: wantResponse(t, false, false),
+			inputPod:     validInputPod(),
+			wantResponse: wantResponse(t, false, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
 			name:         "native container set via annotation injection successful test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithNativeAnnotation(false, "true"),
-			wantResponse: wantResponse(t, false, true),
+			inputPod:     validInputPodWithNativeAnnotation(false, false, "true"),
+			wantResponse: wantResponse(t, false, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "native container set via annotation injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithNativeAnnotation(true, true, "true"),
+			wantResponse: wantResponse(t, true, true, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "native container set via annotation injection successful with custom image test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithNativeAnnotation(true, "true"),
-			wantResponse: wantResponse(t, true, true),
+			inputPod:     validInputPodWithNativeAnnotation(true, false, "true"),
+			wantResponse: wantResponse(t, true, false, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "regular container set via annotation injection successful test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithNativeAnnotation(false, "false"),
-			wantResponse: wantResponse(t, false, false),
+			inputPod:     validInputPodWithNativeAnnotation(false, false, "false"),
+			wantResponse: wantResponse(t, false, false, false),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "native container set via invalid annotation injection successful test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithNativeAnnotation(false, "maybe"),
-			wantResponse: wantResponse(t, false, true),
+			inputPod:     validInputPodWithNativeAnnotation(false, false, "maybe"),
+			wantResponse: wantResponse(t, false, false, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "native container set via annotation injection unsupported test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithNativeAnnotation(false, "true"),
-			wantResponse: wantResponse(t, false, false),
+			inputPod:     validInputPodWithNativeAnnotation(false, false, "true"),
+			wantResponse: wantResponse(t, false, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
-			name:         "Injection with custom sidecar container image successful test.",
+			name:         "Injection with custom sidecar container image successful test with regular nodes.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPod(true),
-			wantResponse: wantResponse(t, true, false),
+			inputPod:     validInputPodWithCustomImage(false),
+			wantResponse: wantResponse(t, true, false, false),
+			nodes:        regularSidecarSupportNodes(),
+		},
+		{
+			name:         "Injection with custom native sidecar container image successful as regular container.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithSettings(true, true),
+			wantResponse: wantResponse(t, true, true, false),
 			nodes:        regularSidecarSupportNodes(),
 		},
 		{
 			name:         "native container injection successful test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPod(false),
-			wantResponse: wantResponse(t, false, true),
+			inputPod:     validInputPod(),
+			wantResponse: wantResponse(t, false, false, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
-			name:         "Injection with custom sidecar container image successful test.",
+			name:         "Injection with custom sidecar container image successful test with native nodes.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPod(true),
-			wantResponse: wantResponse(t, true, true),
+			inputPod:     validInputPodWithCustomImage(false),
+			wantResponse: wantResponse(t, true, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "Injection with custom native sidecar container image successful test as native sidecar.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithCustomImage(true),
+			wantResponse: wantResponse(t, true, true, true),
 			nodes:        nativeSupportNodes(),
 		},
 		{
 			name:         "regular container injection with istio present success test.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithIstio(false, false),
-			wantResponse: wantResponseWithIstio(t, false, false),
+			inputPod:     validInputPodWithIstio(false, false, false),
+			wantResponse: wantResponseWithIstio(t, false, false, false),
 			nodes:        skewVersionNodes(),
 		},
 		{
-			name:         "Injection with custom sidecar container image successful test.",
+			name:         "Injection with custom sidecar container image successful test with istio.",
 			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithIstio(true, true),
-			wantResponse: wantResponseWithIstio(t, true, true),
+			inputPod:     validInputPodWithIstio(true, false, true),
+			wantResponse: wantResponseWithIstio(t, true, false, true),
 			nodes:        nativeSupportNodes(),
 		},
 	}
 
 	for _, tc := range testCases {
-		fakeClient := fake.NewSimpleClientset()
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		// Create the nodes.
-		for _, node := range tc.nodes {
-			n := node
-			_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), &n, metav1.CreateOptions{})
-			if err != nil {
-				t.Error("failed to setup/create nodes")
+			fakeClient := fake.NewSimpleClientset()
+
+			// Create the nodes.
+			for _, node := range tc.nodes {
+				n := node
+				_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), &n, metav1.CreateOptions{})
+				if err != nil {
+					t.Error("failed to setup/create nodes")
+				}
 			}
-		}
 
-		informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
-		lister := informerFactory.Core().V1().Nodes().Lister()
+			informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
+			lister := informerFactory.Core().V1().Nodes().Lister()
 
-		si := SidecarInjector{
-			Client:     nil,
-			Config:     FakeConfig(),
-			Decoder:    admission.NewDecoder(runtime.NewScheme()),
-			NodeLister: lister,
-		}
-
-		stopCh := make(<-chan struct{})
-		informerFactory.Start(stopCh)
-		informerFactory.WaitForCacheSync(stopCh)
-
-		request := &admission.Request{
-			AdmissionRequest: admissionv1.AdmissionRequest{
-				Operation: tc.operation,
-			},
-		}
-		if tc.inputPod != nil {
-			request.Object = runtime.RawExtension{
-				Raw: serialize(t, tc.inputPod),
+			si := SidecarInjector{
+				Client:     nil,
+				Config:     FakeConfig(),
+				Decoder:    admission.NewDecoder(runtime.NewScheme()),
+				NodeLister: lister,
 			}
-		}
 
-		gotResponse := si.Handle(context.Background(), *request)
+			stopCh := make(<-chan struct{})
+			informerFactory.Start(stopCh)
+			informerFactory.WaitForCacheSync(stopCh)
 
-		if err := compareResponses(tc.wantResponse, gotResponse); err != nil {
-			t.Errorf("for test: %s\nGot injection result: %v, but want: %v. details: %v", tc.name, gotResponse, tc.wantResponse, err)
-		}
+			request := &admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: tc.operation,
+				},
+			}
+			if tc.inputPod != nil {
+				request.Object = runtime.RawExtension{
+					Raw: serialize(t, tc.inputPod),
+				}
+			}
+
+			gotResponse := si.Handle(context.Background(), *request)
+
+			if err := compareResponses(tc.wantResponse, gotResponse); err != nil {
+				t.Errorf("for test: %s\nGot injection result: %v, but want: %v. details: %v", tc.name, gotResponse, tc.wantResponse, err)
+			}
+		})
 	}
 }
 
@@ -522,7 +569,7 @@ func getDuplicateDeclarationPodSpec() *corev1.Pod {
 		Spec: corev1.PodSpec{
 			InitContainers: []corev1.Container{
 				{
-					Name:  SidecarContainerName,
+					Name:  GcsFuseSidecarName,
 					Image: "private-repo/fake-sidecar-image:v999.999.999",
 				},
 			},
@@ -534,7 +581,7 @@ func getDuplicateDeclarationPodSpec() *corev1.Pod {
 					Name: "FakeContainer2",
 				},
 				{
-					Name:  SidecarContainerName,
+					Name:  GcsFuseSidecarName,
 					Image: "private-repo/fake-sidecar-image:v999.999.999",
 				},
 			},
@@ -556,20 +603,20 @@ func getDuplicateDeclarationPodSpec() *corev1.Pod {
 	}
 }
 
-func getDuplicateDeclarationPodSpecResponse() *corev1.Pod {
-	result := modifySpec(*validInputPod(true), true, true)
+func getDuplicateDeclarationPodSpecResponse(nativeCustomImage bool) *corev1.Pod {
+	result := modifySpec(*validInputPodWithCustomImage(nativeCustomImage), true, nativeCustomImage, true)
 
 	return result
 }
 
-func validInputPodWithNativeAnnotation(customImage bool, enableNativeSidecarAnnotation string) *corev1.Pod {
-	pod := validInputPod(customImage)
+func validInputPodWithNativeAnnotation(customImage, customNativeImage bool, enableNativeSidecarAnnotation string) *corev1.Pod {
+	pod := validInputPodWithSettings(customImage, customNativeImage)
 	pod.ObjectMeta.Annotations[GcsFuseNativeSidecarEnableAnnotation] = enableNativeSidecarAnnotation
 
 	return pod
 }
 
-func validInputPod(customImage bool) *corev1.Pod {
+func validInputPodWithSettings(customImage, native bool) *corev1.Pod {
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -597,14 +644,28 @@ func validInputPod(customImage bool) *corev1.Pod {
 		},
 	}
 
+	userProvidedSidecar := corev1.Container{
+		Name:  GcsFuseSidecarName,
+		Image: "private-repo/fake-sidecar-image:v999.999.999",
+	}
+
 	if customImage {
-		pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
-			Name:  SidecarContainerName,
-			Image: "private-repo/fake-sidecar-image:v999.999.999",
-		})
+		if native {
+			pod.Spec.InitContainers = append(pod.Spec.InitContainers, userProvidedSidecar)
+		} else {
+			pod.Spec.Containers = append(pod.Spec.Containers, userProvidedSidecar)
+		}
 	}
 
 	return pod
+}
+
+func validInputPodWithCustomImage(native bool) *corev1.Pod {
+	return validInputPodWithSettings(true, native)
+}
+
+func validInputPod() *corev1.Pod {
+	return validInputPodWithSettings(false, false)
 }
 
 func getWorkloadSpec(name string) corev1.Container {
@@ -614,8 +675,8 @@ func getWorkloadSpec(name string) corev1.Container {
 	}
 }
 
-func validInputPodWithIstio(customImage, nativeIstio bool) *corev1.Pod {
-	pod := validInputPod(customImage)
+func validInputPodWithIstio(customImage, nativeCustomImage, nativeIstio bool) *corev1.Pod {
+	pod := validInputPodWithSettings(customImage, nativeCustomImage)
 
 	if nativeIstio {
 		pod.Spec.InitContainers = append([]corev1.Container{istioContainer}, pod.Spec.InitContainers...)
@@ -626,19 +687,24 @@ func validInputPodWithIstio(customImage, nativeIstio bool) *corev1.Pod {
 	return pod
 }
 
-func wantResponse(t *testing.T, customImage bool, native bool) admission.Response {
+func wantResponse(t *testing.T, customImage bool, nativeCustomImage bool, native bool) admission.Response {
 	t.Helper()
-	pod := *validInputPod(customImage)
-	newPod := *modifySpec(*validInputPod(customImage), customImage, native)
+	pod := validInputPodWithSettings(customImage, nativeCustomImage)
+	newPod := *modifySpec(*validInputPodWithSettings(customImage, nativeCustomImage), customImage, nativeCustomImage, native)
 
-	return generatePatch(t, &pod, &newPod)
+	return generatePatch(t, pod, &newPod)
 }
 
-func modifySpec(newPod corev1.Pod, customImage bool, native bool) *corev1.Pod {
+func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native bool) *corev1.Pod {
 	config := FakeConfig()
 	if customImage {
-		config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image
-		newPod.Spec.Containers = newPod.Spec.Containers[:len(newPod.Spec.Containers)-1]
+		if nativeCustomImage {
+			config.ContainerImage = newPod.Spec.InitContainers[len(newPod.Spec.InitContainers)-1].Image
+			newPod.Spec.InitContainers = newPod.Spec.InitContainers[:len(newPod.Spec.InitContainers)-1]
+		} else {
+			config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image
+			newPod.Spec.Containers = newPod.Spec.Containers[:len(newPod.Spec.Containers)-1]
+		}
 	}
 
 	if native {
@@ -657,17 +723,17 @@ func generatePatch(t *testing.T, originalPod *corev1.Pod, newPod *corev1.Pod) ad
 	return admission.PatchResponseFromRaw(serialize(t, originalPod), serialize(t, newPod))
 }
 
-func wantResponseWithIstio(t *testing.T, customImage bool, native bool) admission.Response {
+func wantResponseWithIstio(t *testing.T, customImage bool, nativeCustomImage, native bool) admission.Response {
 	t.Helper()
 
-	originalPod := validInputPod(customImage)
+	originalPod := validInputPodWithSettings(customImage, nativeCustomImage)
 	if native {
 		originalPod.Spec.InitContainers = append([]corev1.Container{istioContainer}, originalPod.Spec.InitContainers...)
 	} else {
 		originalPod.Spec.Containers = append([]corev1.Container{istioContainer}, originalPod.Spec.Containers...)
 	}
 
-	newPod := validInputPod(customImage)
+	newPod := validInputPodWithSettings(customImage, nativeCustomImage)
 	config := FakeConfig()
 	if customImage {
 		config.ContainerImage = newPod.Spec.Containers[len(newPod.Spec.Containers)-1].Image

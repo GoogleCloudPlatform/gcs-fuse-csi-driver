@@ -20,12 +20,16 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -59,6 +63,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) SkipUnsupportedTests(_ storageframework
 }
 
 func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
+	supportsNativeSidecar, err := strconv.ParseBool(envVar)
+	if err != nil {
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
+	}
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -127,6 +136,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
 		testCaseNonExistentBucket(specs.FakeVolumePrefix)
+	})
+	ginkgo.It("[metadata prefetch]should fail when the specified GCS bucket does not exist", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseNonExistentBucket(specs.EnableMetadataPrefetchPrefix) // FakeVolumePrefix
 	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified GCS bucket does not exist", func() {
@@ -207,6 +222,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
 		testCaseSAInsufficientAccess("")
 	})
+	ginkgo.It("[metadata prefetch] should fail when the specified service account does not have access to the GCS bucket", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseSAInsufficientAccess(specs.EnableMetadataPrefetchPrefix)
+	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified service account does not have access to the GCS bucket", func() {
 		testCaseSAInsufficientAccess(specs.SkipCSIBucketAccessCheckPrefix)
@@ -278,6 +299,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	ginkgo.It("should fail when the sidecar container is not injected", func() {
 		testCaseSidecarNotInjected("")
 	})
+	ginkgo.It("[metadata prefetch] should fail when the sidecar container is not injected", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseSidecarNotInjected(specs.EnableMetadataPrefetchPrefix)
+	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the sidecar container is not injected", func() {
 		testCaseSidecarNotInjected(specs.SkipCSIBucketAccessCheckPrefix)
@@ -308,6 +335,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	ginkgo.It("should fail when the gcsfuse processes got killed due to OOM", func() {
 		testCaseGCSFuseOOM("")
 	})
+	ginkgo.It("[metadata prefetch] should fail when the gcsfuse processes got killed due to OOM", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseGCSFuseOOM(specs.EnableMetadataPrefetchPrefix)
+	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the gcsfuse processes got killed due to OOM", func() {
 		testCaseGCSFuseOOM(specs.SkipCSIBucketAccessCheckPrefix)
@@ -332,6 +365,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 	ginkgo.It("should fail when invalid mount options are passed", func() {
 		testcaseInvalidMountOptions(specs.InvalidMountOptionsVolumePrefix)
+	})
+
+	ginkgo.It("[metadata prefetch] should fail when invalid mount options are passed", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testcaseInvalidMountOptions(specs.EnableMetadataPrefetchPrefix) // InvalidMountOptionsVolumePrefix
 	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when invalid mount options are passed", func() {
