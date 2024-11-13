@@ -263,7 +263,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v > /dev/null", mountPath, fileName))
 
-		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "while inserting into the cache: size of the entry is more than the cache's maxSize")
+		tPod.WaitForLog(ctx, webhook.SidecarContainerName, "while inserting into the cache: size of the entry is more than the cache's maxSize")
 	})
 
 	ginkgo.It("should have cache miss when the fileCacheCapacity is larger than underlying storage", func() {
@@ -300,6 +300,6 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v > /dev/null", mountPath, fileName))
 
-		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "no space left on device")
+		tPod.WaitForLog(ctx, webhook.SidecarContainerName, "no space left on device")
 	})
 }

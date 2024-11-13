@@ -20,17 +20,12 @@ package testsuites
 import (
 	"context"
 	"fmt"
-	"os"
-	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -62,11 +57,6 @@ func (t *gcsFuseCSIIstioTestSuite) SkipUnsupportedTests(_ storageframework.TestD
 }
 
 func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
-	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
-	supportsNativeSidecar, err := strconv.ParseBool(envVar)
-	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
-	}
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -93,8 +83,8 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	testGCSFuseWithIstio := func(configPrefix string, holdApplicationUntilProxyStarts, registryOnly bool) {
-		init(configPrefix)
+	testGCSFuseWithIstio := func(holdApplicationUntilProxyStarts, registryOnly bool) {
+		init()
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -130,27 +120,15 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 	}
 
 	ginkgo.It("should store data with istio injected at index 0", func() {
-		testGCSFuseWithIstio("", true, false)
-	})
-	ginkgo.It("[metadata prefetch] should store data with istio injected at index 0", func() {
-		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
-		}
-		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, false)
+		testGCSFuseWithIstio(true, false)
 	})
 
 	ginkgo.It("[flaky] should store data with istio injected at the last index", func() {
-		testGCSFuseWithIstio("", false, false)
+		testGCSFuseWithIstio(false, false)
 	})
 
 	ginkgo.It("should store data with istio registry only outbound traffic policy mode", func() {
-		testGCSFuseWithIstio("", true, true)
-	})
-	ginkgo.It("[metadata prefetch] should store data with istio registry only outbound traffic policy mode", func() {
-		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
-		}
-		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, true)
+		testGCSFuseWithIstio(true, true)
 	})
 
 	ginkgo.It("[flaky] should fail with istio registry only outbound traffic policy mode missing Pod annotation", func() {

@@ -20,16 +20,12 @@ package testsuites
 import (
 	"context"
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -62,11 +58,6 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) SkipUnsupportedTests(_ storageframework
 }
 
 func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
-	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
-	supportsNativeSidecar, err := strconv.ParseBool(envVar)
-	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
-	}
 	type local struct {
 		config             *storageframework.PerTestConfig
 		volumeResourceList []*storageframework.VolumeResource
@@ -253,15 +244,6 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 	//   [bucket1]  [bucket2]
 	ginkgo.It("should access multiple volumes backed by different buckets from the same Pod", func() {
 		init(2, specs.ForceNewBucketPrefix)
-		defer cleanup()
-
-		testOnePodTwoVols()
-	})
-	ginkgo.It("[metadata prefetch] should access multiple volumes backed by different buckets from the same Pod", func() {
-		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
-		}
-		init(2, specs.EnableMetadataPrefetchPrefixForceNewBucketPrefix)
 		defer cleanup()
 
 		testOnePodTwoVols()
