@@ -18,13 +18,17 @@ limitations under the License.
 package webhook
 
 import (
+	"path/filepath"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
 
 const (
-	SidecarContainerName                  = "gke-gcsfuse-sidecar"
+	GcsFuseSidecarName                    = "gke-gcsfuse-sidecar"
+	MetadataPrefetchSidecarName           = "gke-gcsfuse-metadata-prefetch"
 	SidecarContainerTmpVolumeName         = "gke-gcsfuse-tmp"
 	SidecarContainerTmpVolumeMountPath    = "/gcsfuse-tmp"
 	SidecarContainerBufferVolumeName      = "gke-gcsfuse-buffer"
@@ -32,12 +36,24 @@ const (
 	SidecarContainerCacheVolumeName       = "gke-gcsfuse-cache"
 	SidecarContainerCacheVolumeMountPath  = "/gcsfuse-cache"
 
+	// Webhook relevant volume attributes.
+	gcsFuseMetadataPrefetchOnMountVolumeAttribute = "gcsfuseMetadataPrefetchOnMount"
+
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID = 65534
 	NobodyGID = 65534
 )
 
 var (
+	// Metadata prefetch container resources.
+	metadataPrefetchCPURequest              = resource.MustParse("10m")
+	metadataPrefetchCPULimit                = resource.MustParse("50m")
+	metadataPrefetchMemoryRequest           = resource.MustParse("10Mi")
+	metadataPrefetchMemoryLimit             = resource.MustParse("10Mi")
+	metadataPrefetchEphemeralStorageRequest = resource.MustParse("10Mi")
+	metadataPrefetchEphemeralStorageLimit   = resource.MustParse("10Mi")
+
+	// gke-gcsfuse-sidecar volumes.
 	tmpVolume = corev1.Volume{
 		Name: SidecarContainerTmpVolumeName,
 		VolumeSource: corev1.VolumeSource{
@@ -59,6 +75,7 @@ var (
 		},
 	}
 
+	// gke-gcsfuse-sidecar volumeMounts.
 	TmpVolumeMount = corev1.VolumeMount{
 		Name:      SidecarContainerTmpVolumeName,
 		MountPath: SidecarContainerTmpVolumeMountPath,
@@ -89,22 +106,10 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 	container := corev1.Container{
-		Name:            SidecarContainerName,
+		Name:            GcsFuseSidecarName,
 		Image:           c.ContainerImage,
 		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: ptr.To(false),
-			ReadOnlyRootFilesystem:   ptr.To(true),
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{
-					corev1.Capability("ALL"),
-				},
-			},
-			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-			RunAsNonRoot:   ptr.To(true),
-			RunAsUser:      ptr.To(int64(NobodyUID)),
-			RunAsGroup:     ptr.To(int64(NobodyGID)),
-		},
+		SecurityContext: GetSecurityContext(),
 		Args: []string{
 			"--v=5",
 		},
@@ -113,6 +118,101 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 			Requests: requests,
 		},
 		VolumeMounts: []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount},
+	}
+
+	return container
+}
+
+// GetSecurityContext ensures the sidecar that uses it follows Restricted Pod Security Standard.
+// See https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+func GetSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		ReadOnlyRootFilesystem:   ptr.To(true),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{
+				corev1.Capability("ALL"),
+			},
+		},
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		RunAsNonRoot:   ptr.To(true),
+		RunAsUser:      ptr.To(int64(NobodyUID)),
+		RunAsGroup:     ptr.To(int64(NobodyGID)),
+	}
+}
+
+func (si *SidecarInjector) GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, image string) corev1.Container {
+	container := si.GetMetadataPrefetchSidecarContainerSpec(pod, image)
+	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
+	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+
+	return container
+}
+
+func getMetadataPrefetchConfig(image string) *Config {
+	return &Config{
+		CPURequest:              metadataPrefetchCPURequest,
+		CPULimit:                metadataPrefetchCPULimit,
+		MemoryRequest:           metadataPrefetchMemoryRequest,
+		MemoryLimit:             metadataPrefetchMemoryLimit,
+		EphemeralStorageRequest: metadataPrefetchEphemeralStorageRequest,
+		EphemeralStorageLimit:   metadataPrefetchEphemeralStorageLimit,
+		MetadataContainerImage:  image,
+	}
+}
+
+func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, image string) corev1.Container {
+	if pod == nil {
+		klog.Warning("failed to get metadata prefetch container spec: pod is nil")
+
+		return corev1.Container{}
+	}
+
+	c := getMetadataPrefetchConfig(image)
+	limits, requests := prepareResourceList(c)
+
+	// The sidecar container follows Restricted Pod Security Standard,
+	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+	container := corev1.Container{
+		Name:            MetadataPrefetchSidecarName,
+		Image:           c.MetadataContainerImage,
+		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
+		SecurityContext: GetSecurityContext(),
+		Resources: corev1.ResourceRequirements{
+			Limits:   limits,
+			Requests: requests,
+		},
+		VolumeMounts: []corev1.VolumeMount{},
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		isGcsFuseCSIVolume, isDynamicMount, volumeAttributes, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
+		if err != nil {
+			klog.Errorf("failed to determine if %s is a GcsFuseCSI backed volume: %v", v.Name, err)
+		}
+
+		if isDynamicMount {
+			klog.Warningf("dynamic mount set for %s, this is not supported for metadata prefetch. skipping volume", v.Name)
+
+			continue
+		}
+
+		if isGcsFuseCSIVolume {
+			enableMetaPrefetchRaw, ok := volumeAttributes[gcsFuseMetadataPrefetchOnMountVolumeAttribute]
+			// We disable metadata prefetch by default, so we skip injection of volume mount when not set.
+			if !ok {
+				continue
+			}
+
+			enableMetaPrefetch, err := ParseBool(enableMetaPrefetchRaw)
+			if err != nil {
+				klog.Errorf(`failed to determine if metadata prefetch is needed for volume "%s": %v`, v.Name, err)
+			}
+
+			if enableMetaPrefetch {
+				container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: v.Name, MountPath: filepath.Join("/volumes/", v.Name), ReadOnly: true})
+			}
+		}
 	}
 
 	return container
@@ -155,7 +255,7 @@ func GetSidecarContainerVolumeSpec(existingVolumes ...corev1.Volume) []corev1.Vo
 //  1. True when either native or regular sidecar is present.
 //  2. True iff the sidecar present is a native sidecar container.
 func ValidatePodHasSidecarContainerInjected(pod *corev1.Pod) (bool, bool) {
-	return validatePodHasSidecarContainerInjected(SidecarContainerName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount})
+	return validatePodHasSidecarContainerInjected(GcsFuseSidecarName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount})
 }
 
 func sidecarContainerPresent(containerName string, containers []corev1.Container, volumeMounts []corev1.VolumeMount) bool {

@@ -52,6 +52,7 @@ var (
 	ephemeralStorageRequest = flag.String("sidecar-ephemeral-storage-request", "5Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
 	ephemeralStorageLimit   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImage            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
+	metadataSidecarImage    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
 
 	// These are set at compile time.
 	webhookVersion = "unknown"
@@ -72,7 +73,7 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", webhookVersion, *sidecarImage)
 
 	// Load webhook config
-	c := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
+	c := wh.LoadConfig(*sidecarImage, *metadataSidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
 
 	// Load config for manager, informers, listers
 	kubeConfig := config.GetConfigOrDie()
@@ -103,6 +104,8 @@ func main() {
 	// Setup Informer
 	informerFactory := informers.NewSharedInformerFactory(client, resyncDuration)
 	nodeLister := informerFactory.Core().V1().Nodes().Lister()
+	pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
+	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
 
 	informerFactory.Start(context.Done())
 	informerFactory.WaitForCacheSync(context.Done())
@@ -140,6 +143,8 @@ func main() {
 			Config:        c,
 			Decoder:       admission.NewDecoder(runtime.NewScheme()),
 			NodeLister:    nodeLister,
+			PvLister:      pvLister,
+			PvcLister:     pvcLister,
 			ServerVersion: serverVersion,
 		},
 	})

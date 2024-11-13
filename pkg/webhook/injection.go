@@ -28,6 +28,29 @@ import (
 
 const IstioSidecarName = "istio-proxy"
 
+func (si *SidecarInjector) injectAsNativeSidecar(pod *corev1.Pod) (bool, error) {
+	supportsNativeSidecar, err := si.supportsNativeSidecar()
+	if err != nil {
+		return false, fmt.Errorf("failed to determine native sidecar injection: %w", err)
+	}
+
+	nativeSidecarEnabled := true
+	if enable, ok := pod.Annotations[GcsFuseNativeSidecarEnableAnnotation]; ok {
+		parsedAnnotation, err := ParseBool(enable)
+		if err != nil {
+			klog.Errorf("failed to parse enableNativeSidecar annotation: %v", err)
+		} else {
+			nativeSidecarEnabled = parsedAnnotation
+			// Warn the user if they used annotation incorrectly.
+			if nativeSidecarEnabled && !supportsNativeSidecar {
+				klog.Errorf("attempting to enable native sidecar on a cluster that does not support it, this is not allowed")
+			}
+		}
+	}
+
+	return nativeSidecarEnabled && supportsNativeSidecar, nil
+}
+
 func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	if si.ServerVersion != nil && !si.ServerVersion.AtLeast(minimumSupportedVersion) {
 		return false, nil
@@ -63,20 +86,62 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	return supportsNativeSidecar, nil
 }
 
-func injectSidecarContainer(pod *corev1.Pod, config *Config, supportsNativeSidecar bool) {
-	nativeSidecarEnabled := true
-	if enable, ok := pod.Annotations[GcsFuseNativeSidecarEnableAnnotation]; ok {
-		parsedAnnotation, err := ParseBool(enable)
-		if err != nil {
-			klog.Errorf("failed to parse enableNativeSidecar annotation... ignoring annotation: %v", err)
-		} else {
-			nativeSidecarEnabled = parsedAnnotation
-		}
-	}
-	if supportsNativeSidecar && nativeSidecarEnabled {
+func injectSidecarContainer(pod *corev1.Pod, config *Config, injectAsNativeSidecar bool) {
+	if injectAsNativeSidecar {
 		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, GetNativeSidecarContainerSpec(config), getInjectIndex(pod.Spec.InitContainers))
 	} else {
 		pod.Spec.Containers = insert(pod.Spec.Containers, GetSidecarContainerSpec(config), getInjectIndex(pod.Spec.Containers))
+	}
+}
+
+func (si *SidecarInjector) injectMetadataPrefetchSidecarContainer(pod *corev1.Pod, config *Config, injectAsNativeSidecar bool) {
+	var containerSpec corev1.Container
+	var index int
+
+	injected, _ := validatePodHasSidecarContainerInjected(MetadataPrefetchSidecarName, pod, []corev1.Volume{}, []corev1.VolumeMount{})
+	if injected {
+		klog.Infof("%s is already injected, skipping injection", MetadataPrefetchSidecarName)
+
+		return
+	}
+
+	// Extract user provided metadata prefetch sidecar image.
+	userProvidedMetadataPrefetchSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, MetadataPrefetchSidecarName)
+	if err != nil {
+		klog.Errorf("failed to get user provided metadata prefetch image. skipping injection")
+
+		return
+	}
+
+	if userProvidedMetadataPrefetchSidecarImage != "" {
+		config.MetadataContainerImage = userProvidedMetadataPrefetchSidecarImage
+	}
+
+	if injectAsNativeSidecar {
+		containerSpec = si.GetNativeMetadataPrefetchSidecarContainerSpec(pod, config.MetadataContainerImage)
+		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, GcsFuseSidecarName)
+	} else {
+		containerSpec = si.GetMetadataPrefetchSidecarContainerSpec(pod, config.MetadataContainerImage)
+		index = getInjectIndexAfterContainer(pod.Spec.Containers, GcsFuseSidecarName)
+	}
+
+	if len(containerSpec.VolumeMounts) == 0 {
+		klog.Info("no volumes are requesting metadata prefetch, skipping metadata prefetch sidecar injection")
+
+		return
+	}
+
+	// This should not happen as we always inject the sidecar after injecting our primary gcsfuse sidecar.
+	if index == 0 {
+		klog.Warningf("%s not found when attempting to inject metadata prefetch sidecar. skipping injection", GcsFuseSidecarName)
+
+		return
+	}
+
+	if injectAsNativeSidecar {
+		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, containerSpec, index)
+	} else {
+		pod.Spec.Containers = insert(pod.Spec.Containers, containerSpec, index)
 	}
 }
 
@@ -94,7 +159,11 @@ func insert(a []corev1.Container, value corev1.Container, index int) []corev1.Co
 }
 
 func getInjectIndex(containers []corev1.Container) int {
-	idx, present := containerPresent(containers, IstioSidecarName)
+	return getInjectIndexAfterContainer(containers, IstioSidecarName)
+}
+
+func getInjectIndexAfterContainer(containers []corev1.Container, containerName string) int {
+	idx, present := containerPresent(containers, containerName)
 	if present {
 		return idx + 1
 	}

@@ -25,18 +25,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestParseSidecarContainerImage(t *testing.T) {
+func TestExtractImageAndDeleteContainer(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		testName      string
+		name          string
 		pod           corev1.Pod
 		expectedPod   corev1.Pod
 		expectedImage string
 		expectedError error
 	}{
 		{
-			testName: "no declarations present",
+			name: "no declarations present",
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -61,12 +61,12 @@ func TestParseSidecarContainerImage(t *testing.T) {
 			expectedError: nil,
 		},
 		{
-			testName: "one declaration present",
+			name: "one declaration present",
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  SidecarContainerName,
+							Name:  GcsFuseSidecarName,
 							Image: "busybox",
 						},
 					},
@@ -81,18 +81,18 @@ func TestParseSidecarContainerImage(t *testing.T) {
 			expectedError: nil,
 		},
 		{
-			testName: "dual declaration present", // This is invalid but we should cover
+			name: "dual declaration present", // This is invalid but we should cover
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
 						{
-							Name:  SidecarContainerName,
-							Image: "other",
+							Name:  GcsFuseSidecarName,
+							Image: "busybox2",
 						},
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  SidecarContainerName,
+							Name:  GcsFuseSidecarName,
 							Image: "busybox",
 						},
 					},
@@ -104,11 +104,11 @@ func TestParseSidecarContainerImage(t *testing.T) {
 					Containers:     []corev1.Container{},
 				},
 			},
-			expectedImage: "busybox",
+			expectedImage: "busybox2",
 			expectedError: nil,
 		},
 		{
-			testName: "one declaration present, many containers",
+			name: "one declaration present, many containers",
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -127,7 +127,7 @@ func TestParseSidecarContainerImage(t *testing.T) {
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  SidecarContainerName,
+							Name:  GcsFuseSidecarName,
 							Image: "our-image",
 						},
 						{
@@ -173,8 +173,7 @@ func TestParseSidecarContainerImage(t *testing.T) {
 			expectedError: nil,
 		},
 		{
-			// We do not extract image as we dont support init container privately hosted sidecar image declaration.
-			testName: "one init declaration present, many containers",
+			name: "one init declaration present, many containers",
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -187,7 +186,7 @@ func TestParseSidecarContainerImage(t *testing.T) {
 							Image: "busybox",
 						},
 						{
-							Name:  SidecarContainerName,
+							Name:  GcsFuseSidecarName,
 							Image: "our-image",
 						},
 						{
@@ -235,11 +234,11 @@ func TestParseSidecarContainerImage(t *testing.T) {
 					},
 				},
 			},
-			expectedImage: "",
+			expectedImage: "our-image",
 			expectedError: nil,
 		},
 		{
-			testName: "dual declaration present, many containers", // This is invalid but we should cover anyway.
+			name: "dual declaration present, many containers", // This is invalid but we should cover anyway.
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -256,8 +255,8 @@ func TestParseSidecarContainerImage(t *testing.T) {
 							Image: "busybox",
 						},
 						{
-							Name:  SidecarContainerName,
-							Image: "other",
+							Name:  GcsFuseSidecarName,
+							Image: "another-one",
 						},
 					},
 					Containers: []corev1.Container{
@@ -270,7 +269,7 @@ func TestParseSidecarContainerImage(t *testing.T) {
 							Image: "busybox",
 						},
 						{
-							Name:  SidecarContainerName,
+							Name:  GcsFuseSidecarName,
 							Image: "custom-image",
 						},
 					},
@@ -304,27 +303,23 @@ func TestParseSidecarContainerImage(t *testing.T) {
 					},
 				},
 			},
-			expectedImage: "custom-image",
+			expectedImage: "another-one",
 			expectedError: nil,
 		},
 		{
-			testName: "no image present",
+			name: "no image present",
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name: SidecarContainerName,
+							Name: GcsFuseSidecarName,
 						},
 					},
 				},
 			},
 			expectedPod: corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name: SidecarContainerName,
-						},
-					},
+					Containers: []corev1.Container{},
 				},
 			},
 			expectedImage: "",
@@ -332,24 +327,28 @@ func TestParseSidecarContainerImage(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		pod := tc.pod
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		image, err := parseSidecarContainerImage(&pod)
-		if image != tc.expectedImage {
-			t.Errorf(`unexpected image: want: "%s" but got: "%s"`, tc.expectedImage, image)
-		}
-		if err != nil && tc.expectedError != nil {
-			if err.Error() != tc.expectedError.Error() {
-				t.Error("for test: ", tc.testName, ", want: ", tc.expectedError.Error(), " but got: ", err.Error())
+			pod := tc.pod
+
+			image, err := ExtractImageAndDeleteContainer(&pod.Spec, GcsFuseSidecarName)
+			if image != tc.expectedImage {
+				t.Errorf(`unexpected image: want: "%s" but got: "%s"`, tc.expectedImage, image)
 			}
-		} else if err != nil || tc.expectedError != nil {
-			// if one of them is nil, both must be nil to pass
-			t.Error("for test: ", tc.testName, ", want: ", tc.expectedError, " but got: ", err)
-		}
+			if err != nil && tc.expectedError != nil {
+				if err.Error() != tc.expectedError.Error() {
+					t.Error("for test: ", tc.name, ", want: ", tc.expectedError.Error(), " but got: ", err.Error())
+				}
+			} else if err != nil || tc.expectedError != nil {
+				// if one of them is nil, both must be nil to pass
+				t.Error("for test: ", tc.name, ", want: ", tc.expectedError, " but got: ", err)
+			}
 
-		// verifyPod
-		if diff := cmp.Diff(pod, tc.expectedPod); diff != "" {
-			t.Errorf(`unexpected pod: diff "%s" want: "%v" but got: "%v"`, diff, tc.expectedPod, pod)
-		}
+			// verifyPod
+			if diff := cmp.Diff(pod, tc.expectedPod); diff != "" {
+				t.Errorf(`unexpected pod: diff "%s" want: "%v" but got: "%v"`, diff, tc.expectedPod, pod)
+			}
+		})
 	}
 }
