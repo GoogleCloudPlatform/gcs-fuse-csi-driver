@@ -29,12 +29,10 @@ IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
 WEBHOOK_BINARY = gcs-fuse-csi-driver-webhook
-PREFETCH_BINARY = gcs-fuse-csi-driver-metadata-prefetch
 
 DRIVER_IMAGE = ${REGISTRY}/${DRIVER_BINARY}
 SIDECAR_IMAGE = ${REGISTRY}/${SIDECAR_BINARY}
 WEBHOOK_IMAGE = ${REGISTRY}/${WEBHOOK_BINARY}
-PREFETCH_IMAGE = ${REGISTRY}/${PREFETCH_BINARY}
 
 DOCKER_BUILDX_ARGS ?= --push --builder multiarch-multiplatform-builder --build-arg STAGINGVERSION=${STAGINGVERSION}
 ifneq ("$(shell docker buildx build --help | grep 'provenance')", "")
@@ -48,7 +46,7 @@ $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
 $(info SIDECAR_IMAGE is ${SIDECAR_IMAGE})
 $(info WEBHOOK_IMAGE is ${WEBHOOK_IMAGE})
 
-all: driver sidecar-mounter webhook metadata-prefetch
+all: driver sidecar-mounter webhook
 
 driver:
 	mkdir -p ${BINDIR}
@@ -57,10 +55,6 @@ driver:
 sidecar-mounter:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${SIDECAR_BINARY} cmd/sidecar_mounter/main.go
-
-metadata-prefetch:
-	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${PREFETCH_BINARY} cmd/metadata_prefetch/main.go
 
 webhook:
 	mkdir -p ${BINDIR}
@@ -135,27 +129,18 @@ ifeq (${BUILD_ARM}, true)
 	make build-image-linux-arm64
 	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
-	docker manifest create ${PREFETCH_IMAGE}:${STAGINGVERSION} ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64
 else
 	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64
 	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64
-	docker manifest create ${PREFETCH_IMAGE}:${STAGINGVERSION} ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64
 endif
 
 	docker manifest create ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
 
 	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
-	docker manifest push --purge ${PREFETCH_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
 build-image-linux-amd64:
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/metadata_prefetch/Dockerfile \
-		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 \
-		--build-arg TARGETPLATFORM=linux/amd64 .
-
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_amd64 \
@@ -179,12 +164,6 @@ build-image-linux-amd64:
 		--platform linux/amd64 .
 
 build-image-linux-arm64:
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/metadata_prefetch/Dockerfile \
-		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 \
-		--build-arg TARGETPLATFORM=linux/arm64 .
-
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_arm64 \
@@ -219,7 +198,6 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
-	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${PROJECT}.svc.id.goog\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json

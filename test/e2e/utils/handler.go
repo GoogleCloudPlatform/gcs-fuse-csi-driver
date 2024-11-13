@@ -220,13 +220,10 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if !testParams.SupportsNativeSidecar {
 		skipTests = append(skipTests, "init.container", "fast.termination")
-		skipTests = append(skipTests, "metadata.prefetch")
 	}
 
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "metrics")
-		// TODO(jaimebz): Skip this test until Managed Driver has changes released.
-		skipTests = append(skipTests, "metadata.prefetch")
 
 		// TODO(saikatroyc) remove this skip when GCSFuse CSI v1.4.3 is back-ported to the below GKE versions.
 		if strings.HasPrefix(testParams.GkeClusterVersion, "1.27") || strings.HasPrefix(testParams.GkeClusterVersion, "1.28") {

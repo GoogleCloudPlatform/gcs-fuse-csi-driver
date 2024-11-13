@@ -313,7 +313,7 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 		for _, cs := range pod.Status.ContainerStatuses {
 			switch {
 			// skip the sidecar container itself
-			case cs.Name == webhook.GcsFuseSidecarName:
+			case cs.Name == webhook.SidecarContainerName:
 				continue
 
 			// If the Pod is terminating, the container status from Kubernetes API is not reliable
@@ -453,7 +453,7 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 	}
 
 	for _, cs := range containerStatusList {
-		if cs.Name == webhook.GcsFuseSidecarName {
+		if cs.Name == webhook.SidecarContainerName {
 			return &cs, nil
 		}
 	}

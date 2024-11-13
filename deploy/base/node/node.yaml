@@ -133,4 +133,3 @@ metadata:
   name: gcsfusecsi-image-config
 data:
   sidecar-image: gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter
-  metadata-sidecar-image: gke.gcr.io/gcs-fuse-csi-driver-metadata-prefetch

@@ -74,7 +74,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: FakeConfig().ContainerImage,
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(NobodyUID)),
@@ -108,7 +108,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: FakeConfig().ContainerImage,
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(NobodyUID)),
@@ -135,7 +135,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: "private-repo/sidecar-image",
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(NobodyUID)),
@@ -164,7 +164,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: "private-repo/sidecar-image",
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(NobodyUID)),
@@ -194,7 +194,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: FakeConfig().ContainerImage,
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(1234)),
@@ -237,7 +237,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: FakeConfig().ContainerImage,
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(NobodyUID)),
@@ -266,7 +266,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  GcsFuseSidecarName,
+							Name:  SidecarContainerName,
 							Image: FakeConfig().ContainerImage,
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(NobodyUID)),

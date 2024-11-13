@@ -40,7 +40,7 @@ import (
 
 func testPod(initContainer bool, annotation map[string]string, restartPolicy *corev1.ContainerRestartPolicy, env []corev1.EnvVar) *corev1.Pod {
 	container := corev1.Container{
-		Name:          GcsFuseSidecarName,
+		Name:          SidecarContainerName,
 		RestartPolicy: restartPolicy,
 		Env:           env,
 	}

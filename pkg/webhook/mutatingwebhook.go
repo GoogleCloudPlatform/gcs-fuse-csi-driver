@@ -49,8 +49,6 @@ type SidecarInjector struct {
 	Config        *Config
 	Decoder       admission.Decoder
 	NodeLister    listersv1.NodeLister
-	PvcLister     listersv1.PersistentVolumeClaimLister
-	PvLister      listersv1.PersistentVolumeLister
 	ServerVersion *version.Version
 }
 
@@ -94,29 +92,26 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	if userProvidedGcsFuseSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, GcsFuseSidecarName); err == nil {
-		if userProvidedGcsFuseSidecarImage != "" {
-			config.ContainerImage = userProvidedGcsFuseSidecarImage
+	if image, err := parseSidecarContainerImage(pod); err == nil {
+		if image != "" {
+			config.ContainerImage = image
 		}
 	} else {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
 	// Check support for native sidecar.
-	injectAsNativeSidecar, err := si.injectAsNativeSidecar(pod)
+	supportsNativeSidecar, err := si.supportsNativeSidecar()
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to verify native sidecar support: %w", err))
 	}
 
 	// Inject container.
-	injectSidecarContainer(pod, config, injectAsNativeSidecar)
+	injectSidecarContainer(pod, config, supportsNativeSidecar)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
 	// Log pod mutation.
 	LogPodMutation(pod, config)
-
-	// Inject metadata prefetch sidecar.
-	si.injectMetadataPrefetchSidecarContainer(pod, config, injectAsNativeSidecar)
 
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
