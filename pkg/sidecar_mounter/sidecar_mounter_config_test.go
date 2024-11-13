@@ -220,7 +220,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BufferDir:  "test-buffer-dir",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
-				Options:    []string{util.DisableMetricsForGKE + ":true"},
+				Options:    []string{util.DisableMetricsForGKE + ":false"},
 			},
 			expectedArgs: map[string]string{
 				"app-name":        GCSFuseAppName,
@@ -237,30 +237,31 @@ func TestPrepareMountArgs(t *testing.T) {
 
 	prometheusPort := 8080
 	for _, tc := range testCases {
-		t.Logf("test case: %s", tc.name)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			found := false
+			for _, o := range tc.mc.Options {
+				if o == util.DisableMetricsForGKE+":false" {
+					found = true
 
-		found := false
-		for _, o := range tc.mc.Options {
-			if o == util.DisableMetricsForGKE+":true" {
-				found = true
-
-				break
+					break
+				}
 			}
-		}
 
-		if !found {
-			tc.expectedArgs["prometheus-port"] = strconv.Itoa(prometheusPort)
-			prometheusPort++
-		}
+			if found {
+				tc.expectedArgs["prometheus-port"] = strconv.Itoa(prometheusPort)
+				prometheusPort++
+			}
 
-		tc.mc.prepareMountArgs()
-		if !reflect.DeepEqual(tc.mc.FlagMap, tc.expectedArgs) {
-			t.Errorf("Got args %v, but expected %v", tc.mc.FlagMap, tc.expectedArgs)
-		}
+			tc.mc.prepareMountArgs()
+			if !reflect.DeepEqual(tc.mc.FlagMap, tc.expectedArgs) {
+				t.Errorf("Got args %v, but expected %v", tc.mc.FlagMap, tc.expectedArgs)
+			}
 
-		if !reflect.DeepEqual(tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs) {
-			t.Errorf("Got config file args %v, but expected %v", tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs)
-		}
+			if !reflect.DeepEqual(tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs) {
+				t.Errorf("Got config file args %v, but expected %v", tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs)
+			}
+		})
 	}
 }
 

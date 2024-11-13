@@ -257,7 +257,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 	//       |
 	//   [bucket1]
 	ginkgo.It("should emit metrics", func() {
-		init(1, specs.EnableFileCachePrefix)
+		init(1, specs.EnableFileCacheAndMetricsPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
@@ -281,7 +281,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 	//       |          |
 	//   [bucket1]  [bucket2]
 	ginkgo.It("should emit metrics from multiple volumes", func() {
-		init(2, specs.EnableFileCacheForceNewBucketPrefix)
+		init(2, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
