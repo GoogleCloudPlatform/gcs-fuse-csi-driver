@@ -27,8 +27,9 @@ import (
 )
 
 type Config struct {
-	ContainerImage  string `json:"-"`
-	ImagePullPolicy string `json:"-"`
+	ContainerImage         string `json:"-"`
+	MetadataContainerImage string `json:"-"`
+	ImagePullPolicy        string `json:"-"`
 	//nolint:tagliatelle
 	CPURequest resource.Quantity `json:"gke-gcsfuse/cpu-request,omitempty"`
 	//nolint:tagliatelle
@@ -43,9 +44,10 @@ type Config struct {
 	EphemeralStorageLimit resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
 }
 
-func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
+func LoadConfig(containerImage, metadataContainerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
 	return &Config{
 		ContainerImage:          containerImage,
+		MetadataContainerImage:  metadataContainerImage,
 		ImagePullPolicy:         imagePullPolicy,
 		CPURequest:              resource.MustParse(cpuRequest),
 		CPULimit:                resource.MustParse(cpuLimit),
@@ -57,7 +59,10 @@ func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryReq
 }
 
 func FakeConfig() *Config {
-	return LoadConfig("fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847", "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
+	fakeImage1 := "fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
+	fakeImage2 := "fake-repo/fake-sidecar-image:v888.888.888-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
+
+	return LoadConfig(fakeImage1, fakeImage2, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
 }
 
 func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {
@@ -112,8 +117,9 @@ func populateResource(requestQuantity, limitQuantity *resource.Quantity, default
 // remaining values that are not specified by user are kept as the default config values.
 func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
 	config := &Config{
-		ContainerImage:  si.Config.ContainerImage,
-		ImagePullPolicy: si.Config.ImagePullPolicy,
+		ContainerImage:         si.Config.ContainerImage,
+		MetadataContainerImage: si.Config.MetadataContainerImage,
+		ImagePullPolicy:        si.Config.ImagePullPolicy,
 	}
 
 	jsonData, err := json.Marshal(annotations)

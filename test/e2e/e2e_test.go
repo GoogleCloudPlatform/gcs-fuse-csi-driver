@@ -111,6 +111,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 		testsuites.InitGcsFuseCSIIstioTestSuite,
 		testsuites.InitGcsFuseCSIMetricsTestSuite,
+		testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
 	}
 
 	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false)

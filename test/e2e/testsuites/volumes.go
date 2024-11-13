@@ -147,6 +147,13 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		testCaseStoreAndRetainData(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
+	ginkgo.It("[metadata prefetch] should store data and retain the data", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseStoreAndRetainData(specs.EnableMetadataPrefetchPrefix)
+	})
+
 	testCaseReadOnlyFailedWrite := func(configPrefix string) {
 		init(configPrefix)
 		defer cleanup()
@@ -197,6 +204,12 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 	})
 	ginkgo.It("[read-only][csi-skip-bucket-access-check] should fail when write", func() {
 		testCaseReadOnlyFailedWrite(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+	ginkgo.It("[read-only][metadata prefetch] should fail when write", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseReadOnlyFailedWrite(specs.EnableMetadataPrefetchPrefix)
 	})
 
 	testCaseStoreRetainData := func(configPrefix string, uid, gid, fsgroup int) {
@@ -250,6 +263,13 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 	ginkgo.It("[fsgroup delegation][csi-skip-bucket-access-check] should store data and retain the data", func() {
 		testCaseStoreRetainData(specs.SkipCSIBucketAccessCheckPrefix, 1001, 2002, 3003)
+	})
+
+	ginkgo.It("[metadata prefetch] should store data and retain the data", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseStoreRetainData(specs.EnableMetadataPrefetchPrefix, 1001, 2002, 3003)
 	})
 
 	testCaseImplicitDir := func(configPrefix string) {
@@ -316,6 +336,12 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 	ginkgo.It("[csi-skip-bucket-access-check] should store data using custom sidecar container image", func() {
 		testCaseStoreDataCustomContainerImage(specs.SkipCSIBucketAccessCheckPrefix)
 	})
+	ginkgo.It("[metadata prefetch] should store data using custom sidecar container image", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseStoreDataCustomContainerImage(specs.EnableMetadataPrefetchPrefix)
+	})
 
 	testCaseCustomBufferVol := func(configPrefix string) {
 		init(configPrefix)
@@ -379,5 +405,11 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 	})
 	ginkgo.It("[csi-skip-bucket-access-check] should store data and retain the data in init container", func() {
 		testCaseStoreDataInitContainer(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+	ginkgo.It("[metadata prefetch] should store data and retain the data in init container", func() {
+		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseStoreDataInitContainer(specs.EnableMetadataPrefetchPrefix)
 	})
 }

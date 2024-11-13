@@ -57,6 +57,7 @@ type gcsVolume struct {
 	shared                  bool
 	readOnly                bool
 	skipBucketAccessCheck   bool
+	metadataPrefetch        bool
 	enableMetrics           bool
 }
 
@@ -152,7 +153,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			bucketName = uuid.NewString()
 		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			bucketName = InvalidVolume
-		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
+		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix, EnableMetadataPrefetchPrefixForceNewBucketPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
@@ -224,6 +225,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
 			v.skipBucketAccessCheck = true
+		case EnableMetadataPrefetchPrefix:
+			mountOptions += ",file-system:kernel-list-cache-ttl-secs:-1"
+			v.metadataPrefetch = true
 		}
 
 		v.mountOptions = mountOptions
@@ -256,6 +260,13 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 	gv, _ := volume.(*gcsVolume)
 	va := map[string]string{
 		driver.VolumeContextKeyMountOptions: gv.mountOptions,
+	}
+
+	if gv.metadataPrefetch {
+		va["gcsfuseMetadataPrefetchOnMount"] = "true"
+		va["metadataStatCacheCapacity"] = "-1"
+		va["metadataTypeCacheCapacity"] = "-1"
+		va["metadataCacheTtlSeconds"] = "-1"
 	}
 
 	if gv.fileCacheCapacity != "" {
@@ -295,6 +306,13 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 
 	if gv.skipBucketAccessCheck {
 		va[driver.VolumeContextKeySkipCSIBucketAccessCheck] = util.TrueStr
+	}
+
+	if gv.metadataPrefetch {
+		va["gcsfuseMetadataPrefetchOnMount"] = "true"
+		va["metadataStatCacheCapacity"] = "-1"
+		va["metadataTypeCacheCapacity"] = "-1"
+		va["metadataCacheTtlSeconds"] = "-1"
 	}
 
 	if gv.enableMetrics {

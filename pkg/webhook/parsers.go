@@ -38,34 +38,44 @@ func ParseBool(str string) (bool, error) {
 	}
 }
 
-// parseSidecarContainerImage supports our Privately Hosted Sidecar Image option
-// by iterating the container list and finding a container named "gke-gcsfuse-sidecar"
-// If we find "gke-gcsfuse-sidecar":
-//   - extract the container image and check if the image is valid
+// ExtractImageAndDeleteContainer supports the injection of custom sidecar images.
+// We iterate the container list and find a container named "containerName"
+// If we find "containerName":
+//   - extract the container image
 //   - removes the container definition from the container list.
-//   - remove any mentions of "gke-gcsfuse-sidecar" from initContainer list.
+//   - verifies if the image is valid
 //   - return image
-func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
+//
+// We support custom sidecar images because:
+//   - Requirement for Privately Hosted Sidecar Image feature, for clusters running with limited internet access.
+//   - Allow fast testing of new sidecar image on a production environment, usually related to a new gcsfuse binary.
+func ExtractImageAndDeleteContainer(podSpec *corev1.PodSpec, containerName string) (string, error) {
 	var image string
 
-	// Find container named "gke-gcsfuse-sidecar" (SidecarContainerName), extract its image, and remove from list.
-	if index, present := containerPresent(pod.Spec.Containers, SidecarContainerName); present {
-		image = pod.Spec.Containers[index].Image
+	// Find Container named containerName, extract its image, and remove from list.
+	if index, present := containerPresent(podSpec.Containers, containerName); present {
+		image = podSpec.Containers[index].Image
+
+		// The next webhook step is to reinject the sidecar, removing user declaration to prevent dual injection creation failures.
+		copy(podSpec.Containers[index:], podSpec.Containers[index+1:])
+		podSpec.Containers = podSpec.Containers[:len(podSpec.Containers)-1]
 
 		if _, _, _, err := parsers.ParseImageName(image); err != nil {
 			return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
 		}
-
-		if image != "" {
-			copy(pod.Spec.Containers[index:], pod.Spec.Containers[index+1:])
-			pod.Spec.Containers = pod.Spec.Containers[:len(pod.Spec.Containers)-1]
-		}
 	}
 
-	// Remove any mention of gke-gcsfuse-sidecar from init container list.
-	if index, present := containerPresent(pod.Spec.InitContainers, SidecarContainerName); present {
-		copy(pod.Spec.InitContainers[index:], pod.Spec.InitContainers[index+1:])
-		pod.Spec.InitContainers = pod.Spec.InitContainers[:len(pod.Spec.InitContainers)-1]
+	// Find initContainer named containerName, extract its image, and remove from list.
+	if index, present := containerPresent(podSpec.InitContainers, containerName); present {
+		image = podSpec.InitContainers[index].Image
+
+		// The next webhook step is to reinject the sidecar, removing user declaration to prevent dual injection creation failures.
+		copy(podSpec.InitContainers[index:], podSpec.InitContainers[index+1:])
+		podSpec.InitContainers = podSpec.InitContainers[:len(podSpec.InitContainers)-1]
+
+		if _, _, _, err := parsers.ParseImageName(image); err != nil {
+			return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
+		}
 	}
 
 	return image, nil
