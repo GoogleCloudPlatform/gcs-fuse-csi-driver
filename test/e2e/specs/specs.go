@@ -1151,7 +1151,7 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 		FieldSelector: "metadata.name=gcsfusecsi-image-config",
 	})
 	framework.ExpectNoError(err)
-	gomega.Expect(configMaps.Items).To(gomega.HaveLen(2))
+	gomega.Expect(configMaps.Items).To(gomega.HaveLen(1))
 
 	sidecarImageConfig := configMaps.Items[0]
 	image := sidecarImageConfig.Data["sidecar-image"]
