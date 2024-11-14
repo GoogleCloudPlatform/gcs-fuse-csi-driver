@@ -1,0 +1,157 @@
+# Copyright 2018 The Kubernetes Authors.
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gcsfuse-csi-memory-webhook
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gcsfuse-csi-memory-webhook
+  template:
+    metadata:
+      labels:
+        app: gcsfuse-csi-memory-webhook
+    spec:
+      containers:
+        - name: gcsfuse-csi-memory-webhook
+          image: python:3.12.3-slim
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TARGET_CONTAINERS
+              value: "gcs-fuse-csi-driver"
+            - name: TARGET_CONTAINER_MEMORY_LIMIT
+              value: "200Mi"
+          command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              pip3 install flask jsonpatch kubernetes jsonify
+
+              cat > /webhook.py << EOF
+              from flask import Flask, request, jsonify
+              import jsonpatch
+              from kubernetes import config
+              import ssl, base64
+              import os
+
+              app = Flask(__name__)
+              context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+              context.load_cert_chain('/etc/tls-certs/cert.pem', '/etc/tls-certs/key.pem')
+
+              # Load Kubernetes configuration
+              config.load_incluster_config()
+
+              def admission_response_patch(uid, message, json_patch):
+                base64_patch = base64.b64encode(json_patch.to_string().encode('utf-8')).decode('utf-8')
+                return jsonify({'response': {'allowed': True,
+                                            'uid': uid,
+                                            'status': {'message': message},
+                                            'patchType': 'JSONPatch',
+                                            'patch': base64_patch},
+                                'apiVersion': 'admission.k8s.io/v1',
+                                'kind': 'AdmissionReview'})
+
+              @app.route('/mutate', methods=['POST'])
+              def mutate():
+                request_data = request.get_json()
+                uid = request_data['request']['uid']
+                pod = request_data['request']['object']
+                json_patch = jsonpatch.JsonPatch([])
+
+                pod_metadata = pod['metadata']
+                if pod_metadata['namespace'] != 'kube-system' or pod_metadata['generateName'] != 'gcsfusecsi-node-': 
+                  return admission_response_patch(uid, "no changes", json_patch)
+                
+                pod_owner_reference = pod_metadata['ownerReferences'][0]
+                if pod_owner_reference['kind'] != 'DaemonSet' or pod_owner_reference['name'] != 'gcsfusecsi-node':
+                  return admission_response_patch(uid, "no changes", json_patch)
+
+                target_containers = os.environ.get("TARGET_CONTAINERS", "").split(",")
+                target_container_memory_limits = os.environ.get("TARGET_CONTAINER_MEMORY_LIMIT", "").split(",")
+                for i, container in enumerate(pod['spec']['containers']):
+                  if container['name'] in target_containers:
+                    try:
+                      memory_limit = target_container_memory_limits[target_containers.index(container['name'])]
+                      json_patch.patch.append({'op': 'replace', 'path': f'/spec/containers/{i}/resources/limits/memory', 'value': memory_limit})
+                    except IndexError:
+                      print(f"Warning: No memory limit specified for container {container['name']}. Using default 100Mi")
+
+                return admission_response_patch(uid, "modified GCSFuse CSI Node server memory limit", json_patch)
+
+              if __name__ == '__main__':
+                  app.run(host='0.0.0.0', port=8080, ssl_context=context)
+              EOF
+              
+              python /webhook.py
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 10Mi
+          ports:
+            - name: mutate
+              containerPort: 8080
+          volumeMounts:
+            - name: gcsfuse-csi-memory-webhook-certs
+              mountPath: /etc/tls-certs
+              readOnly: true
+      volumes:
+        - name: gcsfuse-csi-memory-webhook-certs
+          secret:
+            secretName: gcsfuse-csi-memory-webhook-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gcsfuse-csi-memory-webhook-service
+  namespace: kube-system
+spec:
+  selector:
+    app: gcsfuse-csi-memory-webhook
+  ports:
+    - name: mutate
+      protocol: TCP
+      port: 443
+      targetPort: 8080
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: gcsfuse-csi-memory-webhook
+webhooks:
+  - name: gcsfuse-csi-memory-patcher.csi.storage.gke.io
+    clientConfig:
+      caBundle: "<cabundle>"
+      service:
+        name: gcsfuse-csi-memory-webhook-service
+        namespace: kube-system
+        path: "/mutate"
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        scope: "Namespaced"
+    failurePolicy: Ignore # will not block other Pod requests
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    reinvocationPolicy: Never
+    timeoutSeconds: 3
