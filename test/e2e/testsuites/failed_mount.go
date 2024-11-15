@@ -141,7 +141,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
-		testCaseNonExistentBucket(specs.EnableMetadataPrefetchPrefix) // FakeVolumePrefix
+		testCaseNonExistentBucket(specs.EnableMetadataPrefetchAndFakeVolumePrefix)
 	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified GCS bucket does not exist", func() {
@@ -371,7 +371,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
-		testcaseInvalidMountOptions(specs.EnableMetadataPrefetchPrefix) // InvalidMountOptionsVolumePrefix
+		testcaseInvalidMountOptions(specs.EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix)
 	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when invalid mount options are passed", func() {

@@ -310,6 +310,12 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		init(configPrefix)
 		defer cleanup()
 
+		// Check if test is using metadata prefetch.
+		var hasMetadataPrefetch bool
+		if configPrefix == specs.EnableMetadataPrefetchPrefix {
+			hasMetadataPrefetch = true
+		}
+
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetCustomSidecarContainerImage()
@@ -323,7 +329,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Checking that the sidecar container is using the custom image")
-		tPod.VerifyCustomSidecarContainerImage(supportsNativeSidecar)
+		tPod.VerifyCustomSidecarContainerImage(supportsNativeSidecar, hasMetadataPrefetch)
 
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
