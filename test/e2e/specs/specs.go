@@ -68,7 +68,9 @@ const (
 	EnableFileCacheAndMetricsPrefix                            = "gcsfuse-csi-enable-file-cache-and-metrics"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
 	EnableMetadataPrefetchPrefix                               = "gcsfuse-csi-enable-metadata-prefetch"
+	EnableMetadataPrefetchAndFakeVolumePrefix                  = "gcsfuse-csi-enable-metadata-prefetch-and-fake-volume"
 	EnableMetadataPrefetchPrefixForceNewBucketPrefix           = "gcsfuse-csi-enable-metadata-prefetch-and-force-new-bucket"
+	EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix   = "gcsfuse-csi-enable-metadata-prefetch-and-invalid-mount-options-volume"
 	ImplicitDirsPath                                           = "implicit-dir"
 	InvalidVolume                                              = "<invalid-name>"
 	SkipCSIBucketAccessCheckPrefix                             = "gcsfuse-csi-skip-bucket-access-check"
@@ -82,7 +84,7 @@ const (
 	GolangImage         = "golang:1.22.7"
 	UbuntuImage         = "ubuntu:20.04"
 
-	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:c83609ecf50d05a141167b8c6cf4dfe14ff07f01cd96a9790921db6748d40902"
+	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:380bd2a716b936d9469d09e3a83baf22dddca1586a04a0060d7006ea78930cac"
 
 	pollInterval     = 1 * time.Second
 	pollTimeout      = 1 * time.Minute
@@ -497,13 +499,23 @@ func (t *TestPod) SetCustomSidecarContainerImage() {
 	})
 }
 
-func (t *TestPod) VerifyCustomSidecarContainerImage(isNativeSidecar bool) {
+func (t *TestPod) VerifyCustomSidecarContainerImage(isNativeSidecar, hasMetadataPrefetch bool) {
 	if isNativeSidecar {
-		gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(1))
+		if hasMetadataPrefetch {
+			gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(2))
+			gomega.Expect(t.pod.Spec.InitContainers[1].Name).To(gomega.Equal(webhook.MetadataPrefetchSidecarName))
+		} else {
+			gomega.Expect(t.pod.Spec.InitContainers).To(gomega.HaveLen(1))
+		}
 		gomega.Expect(t.pod.Spec.InitContainers[0].Name).To(gomega.Equal(webhook.GcsFuseSidecarName))
 		gomega.Expect(t.pod.Spec.InitContainers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
 	} else {
-		gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
+		if hasMetadataPrefetch {
+			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(3))
+			gomega.Expect(t.pod.Spec.Containers[1].Name).To(gomega.Equal(webhook.MetadataPrefetchSidecarName))
+		} else {
+			gomega.Expect(t.pod.Spec.Containers).To(gomega.HaveLen(2))
+		}
 		gomega.Expect(t.pod.Spec.Containers[0].Name).To(gomega.Equal(webhook.GcsFuseSidecarName))
 		gomega.Expect(t.pod.Spec.Containers[0].Image).To(gomega.Equal(LastPublishedSidecarContainerImage))
 	}

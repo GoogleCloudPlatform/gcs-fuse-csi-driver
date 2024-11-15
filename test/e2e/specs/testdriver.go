@@ -149,7 +149,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		isMultipleBucketsPrefix := false
 
 		switch config.Prefix {
-		case FakeVolumePrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix:
+		case FakeVolumePrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix, EnableMetadataPrefetchAndFakeVolumePrefix:
 			bucketName = uuid.NewString()
 		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			bucketName = InvalidVolume
@@ -225,8 +225,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
 			v.skipBucketAccessCheck = true
-		case EnableMetadataPrefetchPrefix:
+		case EnableMetadataPrefetchPrefix, EnableMetadataPrefetchAndFakeVolumePrefix:
 			mountOptions += ",file-system:kernel-list-cache-ttl-secs:-1"
+			v.metadataPrefetch = true
+		case EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix:
+			mountOptions += ",file-system:kernel-list-cache-ttl-secs:-1,invalid-option"
 			v.metadataPrefetch = true
 		}
 
