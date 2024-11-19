@@ -10,6 +10,10 @@ updates:
   schedule:
     interval: weekly
 - package-ecosystem: docker
+  directory: "/cmd/metadata_prefetch"
+  schedule:
+    interval: weekly
+- package-ecosystem: docker
   directory: "/cmd/webhook"
   schedule:
     interval: weekly
