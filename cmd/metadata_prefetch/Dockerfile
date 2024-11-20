@@ -23,33 +23,49 @@ WORKDIR /gcs-fuse-csi-driver
 ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make metadata-prefetch BINDIR=/bin
 
-# go/gke-releasing-policies#base-images
-FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.2 AS debian
+# Start from Kubernetes Debian base.
+FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
+# Install necessary dependencies
+RUN clean-install bash
 
 # go/gke-releasing-policies#base-images
-FROM  gcr.io/distroless/base-debian12 AS output-image
+# We use `gcr.io/distroless/base` because it includes glibc.
+FROM gcr.io/distroless/base-debian12 AS distroless-base
 
-# Copy existing binaries.
+# The distroless amd64 image has a target triplet of x86_64
+FROM distroless-base AS distroless-amd64
+ENV LIB_DIR_PREFIX=x86_64
+ENV LD_LINUX_FILE=/lib64/ld-linux-x86-64.so.2
+ENV LIB_DIR=/lib64/
+
+# The distroless arm64 image has a target triplet of aarch64
+FROM distroless-base AS distroless-arm64
+ENV LIB_DIR_PREFIX aarch64
+ENV LD_LINUX_FILE /lib/ld-linux-aarch64.so.1
+ENV LIB_DIR /lib/
+
+FROM distroless-$TARGETARCH AS output-image
+# Copy existing binaries
 COPY --from=debian /bin/ls /bin/ls
 
-# Copy dependencies.
-COPY --from=debian /lib/x86_64-linux-gnu/libselinux.so.1 /lib/x86_64-linux-gnu/libselinux.so.1
-COPY --from=debian /lib/x86_64-linux-gnu/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6
-COPY --from=debian /lib/x86_64-linux-gnu/libpcre2-8.so.0 /lib/x86_64-linux-gnu/libpcre2-8.so.0
-COPY --from=debian /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2 
+# Copy shared libraries into distroless base.
+COPY --from=debian ${LD_LINUX_FILE} ${LIB_DIR}
+
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libselinux.so.1 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libc.so.6 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre2-8.so.0 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 
 # Validate dependencies
 FROM output-image AS validator-image
 COPY --from=debian /bin/bash /bin/bash
-COPY --from=debian /usr/bin/ldd /usr/bin/ldd
 COPY --from=debian /bin/grep /bin/grep
+COPY --from=debian /usr/bin/ldd /usr/bin/ldd
 SHELL ["/bin/bash", "-c"]
 RUN if ldd /bin/ls | grep "not found"; then echo "!!! Missing deps for ls command !!!" && exit 1; fi
 
-# Final image
+# Final build stage, create the real Docker image with ENTRYPOINT
 FROM output-image
 
-# Copy the built binaries
 COPY --from=metadata-prefetch-builder /bin/gcs-fuse-csi-driver-metadata-prefetch /gcs-fuse-csi-driver-metadata-prefetch
 
 ENTRYPOINT ["/gcs-fuse-csi-driver-metadata-prefetch"]
