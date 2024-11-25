@@ -17,10 +17,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.23.3 AS driver-builder
 
 ARG STAGINGVERSION
+ARG TARGETPLATFORM
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
-RUN make driver BINDIR=/bin
+RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
 FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
