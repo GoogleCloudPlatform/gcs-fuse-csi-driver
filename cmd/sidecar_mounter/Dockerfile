@@ -17,10 +17,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.23.3 AS sidecar-mounter-builder
 
 ARG STAGINGVERSION
+ARG TARGETPLATFORM
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
-RUN make sidecar-mounter BINDIR=/bin
+RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make sidecar-mounter BINDIR=/bin
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
