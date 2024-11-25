@@ -17,10 +17,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.23.3 AS webhook-builder
 
 ARG STAGINGVERSION
+ARG TARGETPLATFORM
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
-RUN make webhook BINDIR=/bin
+RUN  GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make webhook BINDIR=/bin
 
 FROM gcr.io/distroless/static
 
