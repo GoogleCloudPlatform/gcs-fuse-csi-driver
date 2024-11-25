@@ -17,10 +17,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.23.3 AS metadata-prefetch-builder
 
 ARG STAGINGVERSION
+ARG TARGETPLATFORM
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
-RUN make metadata-prefetch BINDIR=/bin
+RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make metadata-prefetch BINDIR=/bin
 
 # go/gke-releasing-policies#base-images
 FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.2 AS debian
