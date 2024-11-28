@@ -25,6 +25,7 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -77,12 +78,23 @@ func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error
 }
 
 func (c *Clientset) ConfigurePodLister(nodeName string) {
+	trimManagedFields := func(obj interface{}) (interface{}, error) {
+		if accessor, err := meta.Accessor(obj); err == nil {
+			if accessor.GetManagedFields() != nil {
+				accessor.SetManagedFields(nil)
+			}
+		}
+
+		return obj, nil
+	}
+
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
 		c.k8sClients,
 		time.Duration(c.informerResyncDurationSec)*time.Second,
 		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
 			options.FieldSelector = "spec.nodeName=" + nodeName
 		}),
+		informers.WithTransform(trimManagedFields),
 	)
 	podLister := informerFactory.Core().V1().Pods().Lister()
 
