@@ -51,6 +51,7 @@ var (
 	buildArm               = flag.Bool("build-arm", false, "whether or not to build the image for Arm nodes")
 	deployOverlayName      = flag.String("deploy-overlay-name", "stable", "which kustomize overlay to deploy the driver with")
 	useGKEManagedDriver    = flag.Bool("use-gke-managed-driver", false, "use GKE managed GCS FUSE CSI driver for the tests")
+	gcsfuseClientProtocol  = flag.String("gcsfuse-client-protocol", "http", "type of protocol gcsfuse uses to communicate with gcs")
 
 	// Ginkgo flags.
 	ginkgoFocus         = flag.String("ginkgo-focus", "", "pass to ginkgo run --focus flag")
@@ -103,6 +104,7 @@ func main() {
 		GinkgoFlakeAttempts:    *ginkgoFlakeAttempts,
 		GinkgoSkipGcpSaTest:    *ginkgoSkipGcpSaTest,
 		IstioVersion:           *istioVersion,
+		GcsfuseClientProtocol:  *gcsfuseClientProtocol,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {

@@ -36,6 +36,7 @@ readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
 readonly number_nodes=${NUMBER_NODES:-3}
+readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http}
 
 # Install golang
 version=1.22.7
@@ -69,6 +70,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-node-version=${gke_node_version} \
             --node-machine-type=${node_machine_type} \
+            --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
             --number-nodes=${number_nodes}"
 
 eval "$base_cmd"

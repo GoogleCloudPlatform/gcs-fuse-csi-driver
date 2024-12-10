@@ -41,6 +41,7 @@ var (
 	err            error
 	c              clientset.Interface
 	m              metadata.Service
+	clientProtocol = flag.String("client-protocol", "http", "the test bucket location")
 	bucketLocation = flag.String("test-bucket-location", "us-central1", "the test bucket location")
 	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
 	apiEnv         = flag.String("api-env", "prod", "cluster API env")
@@ -114,7 +115,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
 	}
 
-	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false)
+	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
@@ -126,7 +127,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 	}
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true)
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)

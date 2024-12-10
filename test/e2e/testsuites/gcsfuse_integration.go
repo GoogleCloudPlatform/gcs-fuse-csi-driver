@@ -117,6 +117,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
+	// skipTestOrProceedWithBranch works by skipping tests for gcsfuse versions that do not support them.
+	// These tests run against all non-managed driver versions, and for selected gke managed driver versions. This is because when
+	// we build the non-managed driver, we build gcsfuse from master and assign a tag of 999 to that build. This automatically
+	// qualifies the non-managed driver to run all the tests.
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
 		// When the gcsfuse binary is built using the head commit in the test pipeline,

@@ -69,6 +69,7 @@ type TestParameters struct {
 
 	SupportsNativeSidecar bool
 	IstioVersion          string
+	GcsfuseClientProtocol string
 }
 
 const TestWithNativeSidecarEnvVar = "TEST_WITH_NATIVE_SIDECAR"
@@ -190,6 +191,7 @@ func Handle(testParams *TestParameters) error {
 		"--output-dir", artifactsDir,
 		testParams.PkgDir+"/test/e2e/",
 		"--",
+		"--client-protocol", testParams.GcsfuseClientProtocol,
 		"--provider", "skeleton",
 		"--test-bucket-location", testParams.GkeClusterRegion,
 		"--skip-gcp-sa-test", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest),

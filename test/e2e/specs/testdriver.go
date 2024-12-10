@@ -45,6 +45,7 @@ type GCSFuseCSITestDriver struct {
 	storageServiceManager       storage.ServiceManager
 	volumeStore                 []*gcsVolume
 	bucketLocation              string
+	ClientProtocol              string
 	skipGcpSaTest               bool
 	EnableHierarchicalNamespace bool
 }
@@ -62,7 +63,7 @@ type gcsVolume struct {
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
-func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool) storageframework.TestDriver {
+func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool, clientProtocol string) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
@@ -86,6 +87,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		volumeStore:                 []*gcsVolume{},
 		bucketLocation:              bl,
 		skipGcpSaTest:               skipGcpSaTest,
+		ClientProtocol:              clientProtocol,
 		EnableHierarchicalNamespace: enableHierarchicalNamespace,
 	}
 }
@@ -193,6 +195,10 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			serviceAccountNamespace: config.Framework.Namespace.Name,
 		}
 		mountOptions := "logging:severity:info"
+
+		if n.ClientProtocol == "grpc" {
+			mountOptions += ",client-protocol=grpc"
+		}
 
 		switch config.Prefix {
 		case NonRootVolumePrefix:
