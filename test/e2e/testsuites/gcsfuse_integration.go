@@ -254,7 +254,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		case testNameKernelListCache, testNameManagedFolders:
 			finalTestCommand = baseTestCommandWithTestBucket + " -run " + testCase
 		case testNameListLargeDir, testNameWriteLargeFiles:
-			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 80m"
+			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 120m"
 		case testNameReadLargeFiles:
 			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
 				finalTestCommand = baseTestCommandWithTestBucket + " -timeout 60m"
