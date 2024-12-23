@@ -161,7 +161,8 @@ func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		klog.Errorf("Error executing mountpoint command on target path %s: %v", targetMountPath, err)
-		if exitError, ok := err.(*exec.ExitError); ok {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
 			klog.Errorf("Exit code: %d", exitError.ExitCode())
 		}
 
@@ -178,7 +179,7 @@ func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error 
 		cmd := exec.Command("sh", "-c", sysClassEchoCmd)
 		_, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("failed to execute command %q: %v", sysClassEchoCmd, err)
+			return fmt.Errorf("failed to execute command %q: %w", sysClassEchoCmd, err)
 		}
 
 		// Verify updated value.
@@ -187,14 +188,14 @@ func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error 
 		cmd = exec.Command("sh", "-c", sysClassCatCmd)
 		op, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("failed to execute command %q: %v", sysClassCatCmd, err)
+			return fmt.Errorf("failed to execute command %q: %w", sysClassCatCmd, err)
 		}
 		klog.V(4).Infof("Output of %q : %s", sysClassCatCmd, op)
 
 		opStr := strings.TrimSpace(string(op))
 		updatedVal, err := strconv.ParseInt(opStr, 10, 0)
 		if err != nil {
-			return fmt.Errorf("invalid %s: %v", key, err)
+			return fmt.Errorf("invalid %s: %w", key, err)
 		}
 		if updatedVal != value {
 			return fmt.Errorf("mismatch in %s, expected %d, got %d", key, value, updatedVal)
@@ -298,7 +299,7 @@ func startAcceptConn(l net.Listener, logPrefix string, msg []byte, fd int, cance
 	klog.V(4).Infof("%v exiting the listener goroutine.", logPrefix)
 }
 
-func prepareMountOptions(options []string) (csiMountOptions []string, sidecarMountOptions []string, sysfsBDI map[string]int64, err error) {
+func prepareMountOptions(options []string) ([]string, []string, map[string]int64, error) {
 	allowedOptions := map[string]bool{
 		"exec":    true,
 		"noexec":  true,
@@ -309,7 +310,7 @@ func prepareMountOptions(options []string) (csiMountOptions []string, sidecarMou
 		"dirsync": true,
 	}
 
-	csiMountOptions = []string{
+	csiMountOptions := []string{
 		"nodev",
 		"nosuid",
 		"allow_other",
@@ -330,7 +331,7 @@ func prepareMountOptions(options []string) (csiMountOptions []string, sidecarMou
 		}
 	}
 
-	sysfsBDI = make(map[string]int64)
+	sysfsBDI := make(map[string]int64)
 	for _, o := range optionSet.List() {
 		if strings.HasPrefix(o, "o=") {
 			v := o[2:]
@@ -347,7 +348,7 @@ func prepareMountOptions(options []string) (csiMountOptions []string, sidecarMou
 			// If found, it will be at index 1
 			readAheadKBInt, err := strconv.ParseInt(readAheadKB[1], 10, 0)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid read_ahead_kb mount flag %q: %v", o, err)
+				return nil, nil, nil, fmt.Errorf("invalid read_ahead_kb mount flag %q: %w", o, err)
 			}
 			if readAheadKBInt < 0 {
 				return nil, nil, nil, fmt.Errorf("invalid negative value for read_ahead_kb mount flag: %q", o)
@@ -359,7 +360,7 @@ func prepareMountOptions(options []string) (csiMountOptions []string, sidecarMou
 		if maxRatio := maxRatioMountFlagRegex.FindStringSubmatch(o); len(maxRatio) == 2 {
 			maxRatioInt, err := strconv.ParseInt(maxRatio[1], 10, 0)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid max_ratio mount flag %q: %v", o, err)
+				return nil, nil, nil, fmt.Errorf("invalid max_ratio mount flag %q: %w", o, err)
 			}
 			if maxRatioInt < 0 || maxRatioInt > 100 {
 				return nil, nil, nil, fmt.Errorf("invalid value for max_ratio mount flag: %q", o)
