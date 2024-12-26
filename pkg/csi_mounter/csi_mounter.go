@@ -24,7 +24,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,7 +41,18 @@ import (
 	"k8s.io/mount-utils"
 )
 
-const socketName = "socket"
+const (
+	socketName                       = "socket"
+	readAheadKBMountFlagRegexPattern = "^read_ahead_kb=(.+)$"
+	maxRatioMountFlagRegexPattern    = "^max_ratio=(.+)$"
+	readAheadKBMountFlag             = "read_ahead_kb"
+	maxRatioMountFlag                = "max_ratio"
+)
+
+var (
+	readAheadKBMountFlagRegex = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
+	maxRatioMountFlagRegex    = regexp.MustCompile(maxRatioMountFlagRegexPattern)
+)
 
 // Mounter provides the Cloud Storage FUSE CSI implementation of mount.Interface
 // for the linux platform.
@@ -68,7 +82,10 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	m.mux.Lock()
 	defer m.mux.Unlock()
 
-	csiMountOptions, sidecarMountOptions := prepareMountOptions(options)
+	csiMountOptions, sidecarMountOptions, sysfsBDI, err := prepareMountOptions(options)
+	if err != nil {
+		return err
+	}
 
 	// Prepare sidecar mounter MountConfig
 	mc := sidecarmounter.MountConfig{
@@ -96,6 +113,17 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
+	if len(sysfsBDI) != 0 {
+		go func() {
+			// updateSysfsConfig may hang until the file descriptor (fd) is either consumed or canceled.
+			// It will succeed once dfuse finishes the mount process, or it will fail if dfuse fails
+			// or the mount point is cleaned up due to mounting failures.
+			if err := updateSysfsConfig(target, sysfsBDI); err != nil {
+				klog.Errorf("%v failed to update read_ahead_kb or max_ratio: %v", logPrefix, err)
+			}
+		}()
+	}
+
 	listener, err := m.createSocket(target, logPrefix)
 	if err != nil {
 		// If mount failed at this step,
@@ -121,6 +149,45 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 
 	// Asynchronously waiting for the sidecar container to connect to the listener
 	go startAcceptConn(listener, logPrefix, msg, fd, cancel)
+
+	return nil
+}
+
+// updateSysfsConfig modifies the kernel page cache settings based on the read_ahead_kb or max_ratio provided in the mountOption,
+// and verifies that the values are successfully updated after the operation completes.
+func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error {
+	// Command will hang until mount completes.
+	cmd := exec.Command("mountpoint", "-d", targetMountPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		klog.Errorf("Error executing mountpoint command on target path %s: %v", targetMountPath, err)
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			klog.Errorf("Exit code: %d", exitError.ExitCode())
+		}
+
+		return err
+	}
+
+	targetDevice := strings.TrimSpace(string(output))
+	klog.Infof("Output of mountpoint for target mount path %s: %s", targetMountPath, output)
+
+	for key, value := range sysfsBDI {
+		// Update the target value.
+		sysfsBDIPath := filepath.Join("/sys/class/bdi/", targetDevice, key)
+		file, err := os.OpenFile(sysfsBDIPath, os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("failed to open file %q: %w", sysfsBDIPath, err)
+		}
+		defer file.Close()
+
+		_, err = file.WriteString(fmt.Sprintf("%d\n", value))
+		if err != nil {
+			return fmt.Errorf("failed to write to file %q: %w", "echo", err)
+		}
+
+		klog.Infof("Updated %s to %d", sysfsBDIPath, value)
+	}
 
 	return nil
 }
@@ -216,7 +283,7 @@ func startAcceptConn(l net.Listener, logPrefix string, msg []byte, fd int, cance
 	klog.V(4).Infof("%v exiting the listener goroutine.", logPrefix)
 }
 
-func prepareMountOptions(options []string) ([]string, []string) {
+func prepareMountOptions(options []string) ([]string, []string, map[string]int64, error) {
 	allowedOptions := map[string]bool{
 		"exec":    true,
 		"noexec":  true,
@@ -248,6 +315,7 @@ func prepareMountOptions(options []string) ([]string, []string) {
 		}
 	}
 
+	sysfsBDI := make(map[string]int64)
 	for _, o := range optionSet.List() {
 		if strings.HasPrefix(o, "o=") {
 			v := o[2:]
@@ -258,7 +326,33 @@ func prepareMountOptions(options []string) ([]string, []string) {
 			}
 			optionSet.Delete(o)
 		}
+
+		if readAheadKB := readAheadKBMountFlagRegex.FindStringSubmatch(o); len(readAheadKB) == 2 {
+			// There is only one matching pattern in readAheadKBMountFlagRegex
+			// If found, it will be at index 1
+			readAheadKBInt, err := strconv.ParseInt(readAheadKB[1], 10, 0)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("invalid read_ahead_kb mount flag %q: %w", o, err)
+			}
+			if readAheadKBInt < 0 {
+				return nil, nil, nil, fmt.Errorf("invalid negative value for read_ahead_kb mount flag: %q", o)
+			}
+			sysfsBDI[readAheadKBMountFlag] = readAheadKBInt
+			optionSet.Delete(o)
+		}
+
+		if maxRatio := maxRatioMountFlagRegex.FindStringSubmatch(o); len(maxRatio) == 2 {
+			maxRatioInt, err := strconv.ParseInt(maxRatio[1], 10, 0)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("invalid max_ratio mount flag %q: %w", o, err)
+			}
+			if maxRatioInt < 0 || maxRatioInt > 100 {
+				return nil, nil, nil, fmt.Errorf("invalid value for max_ratio mount flag: %q", o)
+			}
+			sysfsBDI[maxRatioMountFlag] = maxRatioInt
+			optionSet.Delete(o)
+		}
 	}
 
-	return csiMountOptions, optionSet.List()
+	return csiMountOptions, optionSet.List(), sysfsBDI, nil
 }

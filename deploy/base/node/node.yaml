@@ -78,6 +78,8 @@ spec:
               mountPath: /csi
             - name: fuse-socket-dir
               mountPath: /sockets
+            - name: host-sysfs
+              mountPath: /sys
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -121,6 +123,10 @@ spec:
             type: DirectoryOrCreate
         - name: fuse-socket-dir
           emptyDir: {}
+        - name: host-sysfs
+          hostPath:
+            path: /sys
+            type: Directory
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.
