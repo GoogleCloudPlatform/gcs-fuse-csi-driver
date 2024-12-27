@@ -49,6 +49,7 @@ FROM distroless-$TARGETARCH AS output-image
 # Copy the mount/umount binaries
 COPY --from=debian /bin/mount /bin/mount
 COPY --from=debian /bin/umount /bin/umount
+COPY --from=debian /bin/mountpoint /bin/mountpoint
 
 # Copy shared libraries into distroless base.
 COPY --from=debian ${LD_LINUX_FILE} ${LIB_DIR}
@@ -68,6 +69,7 @@ COPY --from=debian /usr/bin/ldd /usr/bin/ldd
 SHELL ["/bin/bash", "-c"]
 RUN if ldd /bin/mount | grep "not found"; then echo "!!! Missing deps for mount command !!!" && exit 1; fi
 RUN if ldd /bin/umount | grep "not found"; then echo "!!! Missing deps for umount command !!!" && exit 1; fi
+RUN if ldd /bin/mountpoint | grep "not found"; then echo "!!! Missing deps for mountpoint command !!!" && exit 1; fi
 
 # Final build stage, create the real Docker image with ENTRYPOINT
 FROM output-image

@@ -68,6 +68,7 @@ const (
 	EnableFileCacheAndMetricsPrefix                            = "gcsfuse-csi-enable-file-cache-and-metrics"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
 	EnableMetadataPrefetchPrefix                               = "gcsfuse-csi-enable-metadata-prefetch"
+	EnableCustomReadAhead                                      = "gcsfuse-csi-enable-custom-read-ahead"
 	EnableMetadataPrefetchAndFakeVolumePrefix                  = "gcsfuse-csi-enable-metadata-prefetch-and-fake-volume"
 	EnableMetadataPrefetchPrefixForceNewBucketPrefix           = "gcsfuse-csi-enable-metadata-prefetch-and-force-new-bucket"
 	EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix   = "gcsfuse-csi-enable-metadata-prefetch-and-invalid-mount-options-volume"
@@ -79,6 +80,10 @@ const (
 	SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix = "gcsfuse-csi-skip-bucket-access-check-invalid-mount-options-volume"
 	SkipCSIBucketAccessCheckAndNonRootVolumePrefix             = "gcsfuse-csi-skip-bucket-access-check-non-root-volume"
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
+
+	// Read ahead config custom settings to verify testing.
+	ReadAheadCustomReadAheadKb = "15360"
+	ReadAheadCustomMaxRatio    = "100"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.7"
@@ -174,10 +179,17 @@ func (t *TestPod) GetPodName() string {
 
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed.
 func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, shExec string) {
+	_ = t.VerifyExecInPodSucceedWithOutput(f, containerName, shExec)
+}
+
+// VerifyExecInPodSucceedWithOutput verifies shell cmd in target pod succeed.
+func (t *TestPod) VerifyExecInPodSucceedWithOutput(f *framework.Framework, containerName, shExec string) string {
 	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	framework.ExpectNoError(err,
 		"%q should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
 		shExec, err, stdout, stderr)
+
+	return stdout
 }
 
 // VerifyExecInPodSucceedWithFullOutput verifies shell cmd in target pod succeed with full output.

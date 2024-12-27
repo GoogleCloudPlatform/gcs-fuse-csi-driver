@@ -227,6 +227,7 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "metrics")
+		skipTests = append(skipTests, "read.ahead")
 		// TODO(jaimebz): Skip this test until Managed Driver has changes released.
 		skipTests = append(skipTests, "metadata.prefetch")
 
