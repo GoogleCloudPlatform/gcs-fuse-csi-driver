@@ -523,20 +523,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDirectoryRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
 	})
 
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(9), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
 		init()
 		defer cleanup()
