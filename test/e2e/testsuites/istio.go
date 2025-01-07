@@ -107,7 +107,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		}
 
 		if registryOnly {
-			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32"})
+			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,209.85.145.95/32"})
 			specs.DeployIstioSidecar(f.Namespace.Name)
 			specs.DeployIstioServiceEntry(f.Namespace.Name)
 		}
