@@ -182,6 +182,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		if testName == testNameExplicitDir && strings.Contains(mo, "only-dir") {
 			mo = strings.ReplaceAll(mo, "implicit-dirs,", "")
 		}
+		mo += ",logging:severity:trace"
 		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
