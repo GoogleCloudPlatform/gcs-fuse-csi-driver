@@ -44,15 +44,10 @@ import (
 const (
 	socketName                       = "socket"
 	readAheadKBMountFlagRegexPattern = "^read_ahead_kb=(.+)$"
-	maxRatioMountFlagRegexPattern    = "^max_ratio=(.+)$"
 	readAheadKBMountFlag             = "read_ahead_kb"
-	maxRatioMountFlag                = "max_ratio"
 )
 
-var (
-	readAheadKBMountFlagRegex = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
-	maxRatioMountFlagRegex    = regexp.MustCompile(maxRatioMountFlagRegexPattern)
-)
+var readAheadKBMountFlagRegex = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
 
 // Mounter provides the Cloud Storage FUSE CSI implementation of mount.Interface
 // for the linux platform.
@@ -119,7 +114,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 			// It will succeed once dfuse finishes the mount process, or it will fail if dfuse fails
 			// or the mount point is cleaned up due to mounting failures.
 			if err := updateSysfsConfig(target, sysfsBDI); err != nil {
-				klog.Errorf("%v failed to update read_ahead_kb or max_ratio: %v", logPrefix, err)
+				klog.Errorf("%v failed to update kernel parameters: %v", logPrefix, err)
 			}
 		}()
 	}
@@ -153,7 +148,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	return nil
 }
 
-// updateSysfsConfig modifies the kernel page cache settings based on the read_ahead_kb or max_ratio provided in the mountOption,
+// updateSysfsConfig modifies the kernel page cache settings based on the read_ahead_kb provided in the mountOption,
 // and verifies that the values are successfully updated after the operation completes.
 func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error {
 	// Command will hang until mount completes.
@@ -338,18 +333,6 @@ func prepareMountOptions(options []string) ([]string, []string, map[string]int64
 				return nil, nil, nil, fmt.Errorf("invalid negative value for read_ahead_kb mount flag: %q", o)
 			}
 			sysfsBDI[readAheadKBMountFlag] = readAheadKBInt
-			optionSet.Delete(o)
-		}
-
-		if maxRatio := maxRatioMountFlagRegex.FindStringSubmatch(o); len(maxRatio) == 2 {
-			maxRatioInt, err := strconv.ParseInt(maxRatio[1], 10, 0)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("invalid max_ratio mount flag %q: %w", o, err)
-			}
-			if maxRatioInt < 0 || maxRatioInt > 100 {
-				return nil, nil, nil, fmt.Errorf("invalid value for max_ratio mount flag: %q", o)
-			}
-			sysfsBDI[maxRatioMountFlag] = maxRatioInt
 			optionSet.Delete(o)
 		}
 	}
