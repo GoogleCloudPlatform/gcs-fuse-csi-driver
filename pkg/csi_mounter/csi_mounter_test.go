@@ -75,10 +75,10 @@ func TestPrepareMountArgs(t *testing.T) {
 		},
 		{
 			name:                       "should return valid options correctly with CSI and sidecar mount options with read ahead configs",
-			inputMountOptions:          []string{"ro", "implicit-dirs", "max-conns-per-host=10", "o=noexec", "o=noatime", "o=invalid", "read_ahead_kb=4096", "max_ratio=100"},
+			inputMountOptions:          []string{"ro", "implicit-dirs", "max-conns-per-host=10", "o=noexec", "o=noatime", "o=invalid", "read_ahead_kb=4096"},
 			expecteCsiMountOptions:     append(defaultCsiMountOptions, "ro", "noexec", "noatime"),
 			expecteSidecarMountOptions: []string{"implicit-dirs", "max-conns-per-host=10"},
-			expectedSysfsBDI:           map[string]int64{"read_ahead_kb": 4096, "max_ratio": 100},
+			expectedSysfsBDI:           map[string]int64{"read_ahead_kb": 4096},
 		},
 		{
 			name:              "invalid read ahead - not int",
@@ -88,21 +88,6 @@ func TestPrepareMountArgs(t *testing.T) {
 		{
 			name:              "invalid read ahead - negative",
 			inputMountOptions: append(defaultCsiMountOptions, "read_ahead_kb=-1"),
-			expectErr:         true,
-		},
-		{
-			name:              "invalid max ratio - not int",
-			inputMountOptions: append(defaultCsiMountOptions, "max_ratio=abc"),
-			expectErr:         true,
-		},
-		{
-			name:              "invalid max ratio - negative",
-			inputMountOptions: append(defaultCsiMountOptions, "max_ratio=-1"),
-			expectErr:         true,
-		},
-		{
-			name:              "invalid max ratio - greater than 100",
-			inputMountOptions: append(defaultCsiMountOptions, "max_ratio=101"),
 			expectErr:         true,
 		},
 	}

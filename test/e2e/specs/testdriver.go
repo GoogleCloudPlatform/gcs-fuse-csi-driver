@@ -236,7 +236,6 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			v.metadataPrefetch = true
 		case EnableCustomReadAhead:
 			mountOptions += ",read_ahead_kb=" + ReadAheadCustomReadAheadKb
-			mountOptions += ",max_ratio=" + ReadAheadCustomMaxRatio
 		case EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix:
 			mountOptions += ",file-system:kernel-list-cache-ttl-secs:-1,invalid-option"
 			v.metadataPrefetch = true

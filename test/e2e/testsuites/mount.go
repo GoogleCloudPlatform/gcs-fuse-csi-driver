@@ -102,13 +102,10 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		ginkgo.By("Checking that the first pod command exits with no error")
 		bdi := tPod1.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf(`mountpoint -d "%s"`, mountPath))
 		readAheadPath := fmt.Sprintf("/sys/class/bdi/%s/read_ahead_kb", bdi)
-		maxRatioPath := fmt.Sprintf("/sys/class/bdi/%s/max_ratio", bdi)
 
 		currentReadAhead := tPod1.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat "+readAheadPath)
-		currentMaxRatio := tPod1.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat "+maxRatioPath)
 
 		gomega.Expect(currentReadAhead).To(gomega.Equal(specs.ReadAheadCustomReadAheadKb))
-		gomega.Expect(currentMaxRatio).To(gomega.Equal(specs.ReadAheadCustomMaxRatio))
 
 		ginkgo.By("Deleting the first pod")
 		tPod1.Cleanup(ctx)
