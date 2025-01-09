@@ -170,7 +170,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		ginkgo.By("Configuring the test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GolangImage)
-		tPod.SetResource("1", "2Gi", "5Gi")
+		tPod.SetResource("1", "5Gi", "5Gi")
 		sidecarMemoryLimit := "256Mi"
 
 		if testName == testNameWriteLargeFiles || testName == testNameReadLargeFiles {
