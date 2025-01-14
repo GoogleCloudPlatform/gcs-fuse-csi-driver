@@ -58,6 +58,8 @@ const (
 
 var gcsfuseVersionStr = ""
 
+const gcsfuseGoVersionCommand = "GO_VERSION=$(grep -o 'go[0-9]\\+\\.[0-9]\\+\\.[0-9]\\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | sed 's/go//')"
+
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
@@ -233,7 +235,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install -y google-cloud-cli")
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go1.23.4 && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseIntegrationTestsBasePath, testName, mountPath)
+
+		baseTestCommand := fmt.Sprintf("%v && export GOTOOLCHAIN=go$GO_VERSION && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseGoVersionCommand, gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 
 		var finalTestCommand string
