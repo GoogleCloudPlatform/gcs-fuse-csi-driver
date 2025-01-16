@@ -35,10 +35,10 @@ The following software are required for local development.
 Run the following command to build and push the images.
 
 ```bash
-# BUILD_GCSFUSE_FROM_SOURCE=true: Required. You have to build the gcsfuse binary from source code as well.
 # REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
 # STAGINGVERSION=<staging-version>: Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.
-make build-image-and-push-multi-arch BUILD_GCSFUSE_FROM_SOURCE=true REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
+# BUILD_GCSFUSE_FROM_SOURCE=true: Optional. You only have to build the gcsfuse binary from source when any CSI change depend on an unreleased GCSFuse enhancement.
+make build-image-and-push-multi-arch REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
 ```
 
 ## Manual installation
