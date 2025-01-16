@@ -171,7 +171,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GolangImage)
 		tPod.SetResource("1", "5Gi", "5Gi")
-		sidecarMemoryLimit := "256Mi"
+		sidecarMemoryLimit := "512Mi"
 
 		if testName == testNameWriteLargeFiles || testName == testNameReadLargeFiles {
 			tPod.SetResource("1", "6Gi", "5Gi")
