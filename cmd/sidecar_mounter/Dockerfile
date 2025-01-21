@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Build sidecar-mounter go binary
-FROM --platform=$BUILDPLATFORM golang:1.23.4 AS sidecar-mounter-builder
+FROM --platform=$BUILDPLATFORM golang:1.23.5 AS sidecar-mounter-builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
