@@ -155,7 +155,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "1",
-			"gke-gcsfuse/memory-limit":            "256Mi",
+			"gke-gcsfuse/memory-request":          defaultSidecarMemoryRequest,
+			"gke-gcsfuse/memory-limit":            defaultSidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})
 

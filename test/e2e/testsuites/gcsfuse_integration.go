@@ -54,6 +54,9 @@ const (
 	testNamePrefixSucceed = "should succeed in "
 
 	masterBranchName = "master"
+
+	defaultSidecarMemoryLimit   = "1Gi"
+	defaultSidecarMemoryRequest = "512Mi"
 )
 
 var gcsfuseVersionStr = ""
@@ -171,7 +174,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GolangImage)
 		tPod.SetResource("1", "5Gi", "5Gi")
-		sidecarMemoryLimit := "512Mi"
+		sidecarMemoryLimit := defaultSidecarMemoryLimit
 
 		if testName == testNameWriteLargeFiles || testName == testNameReadLargeFiles {
 			tPod.SetResource("1", "6Gi", "5Gi")
@@ -188,6 +191,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "1",
+			"gke-gcsfuse/memory-request":          defaultSidecarMemoryRequest,
 			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})
