@@ -61,7 +61,7 @@ const (
 
 var gcsfuseVersionStr = ""
 
-const gcsfuseGoVersionCommand = "GO_VERSION=$(grep -o 'go[0-9]\\+\\.[0-9]\\+\\.[0-9]\\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | sed 's/go//')"
+const gcsfuseGoVersionCommand = "GO_VERSION=$(grep -o 'go[0-9]\\+\\.[0-9]\\+\\.[0-9]\\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-)"
 
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
