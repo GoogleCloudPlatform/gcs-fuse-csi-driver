@@ -37,6 +37,7 @@ readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
 readonly number_nodes=${NUMBER_NODES:-3}
 readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
+readonly build_gcsfuse_from_source=${BUILD_GCSFUSE_FROM_SOURCE:-false}
 
 # Install golang
 version=1.22.7
@@ -60,7 +61,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --use-gke-autopilot=${use_gke_autopilot} \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \
             --build-gcs-fuse-csi-driver=true \
-            --build-gcs-fuse-from-source=false \
+            --build-gcs-fuse-from-source=${build_gcsfuse_from_source} \
             --use-gke-managed-driver=${use_gke_managed_driver} \
             --ginkgo-focus=${ginkgo_focus} \
             --ginkgo-skip=${ginkgo_skip} \
