@@ -61,7 +61,7 @@ const (
 
 var gcsfuseVersionStr = ""
 
-const gcsfuseGoVersionCommand = `GO_VERSION=$(grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-)`
+const gcsfuseGoVersionCommand = `grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-`
 
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
@@ -238,9 +238,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install -y google-cloud-cli")
 
+		ginkgo.By("Getting gcsfuse testsuite go version")
+		gcsfuseTestSuiteVersion := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, gcsfuseGoVersionCommand)
+
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 
-		baseTestCommand := fmt.Sprintf("export %v && export GOTOOLCHAIN=go$GO_VERSION && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseGoVersionCommand, gcsfuseIntegrationTestsBasePath, testName, mountPath)
+		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go%v && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 
 		var finalTestCommand string
