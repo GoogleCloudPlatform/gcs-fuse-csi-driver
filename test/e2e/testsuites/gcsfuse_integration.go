@@ -538,14 +538,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "--metadata-cache-ttl-secs=0")
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "--metadata-cache-ttl-secs=0")
+		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
