@@ -24,6 +24,7 @@ import (
 	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
@@ -128,7 +129,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
-		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix {
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "bucket does not exist")
+		} else {
+			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+		}
 	}
 
 	ginkgo.It("should fail when the specified GCS bucket does not exist", func() {
