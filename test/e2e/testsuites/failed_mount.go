@@ -30,6 +30,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -169,8 +170,24 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
-		tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+		}
+
+		gcsfuseSupportsInvalidResp := true
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		if err == nil && v != nil {
+			gcsfuseSupportsInvalidResp = v.AtLeast(version.MustParseSemantic("v2.9.0"))
+		}
+
+		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && gcsfuseSupportsInvalidResp {
+			tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
+			tPod.WaitForFailedMountError(ctx, "name should be a valid bucket resource name")
+		} else {
+			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
+			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+		}
 	}
 
 	ginkgo.It("should fail when the specified GCS bucket name is invalid", func() {
