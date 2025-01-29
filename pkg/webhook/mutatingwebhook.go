@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"cloud.google.com/go/compute/metadata"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -55,7 +56,7 @@ type SidecarInjector struct {
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
-func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admission.Response {
+func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) admission.Response {
 	pod := &corev1.Pod{}
 
 	if err := si.Decoder.Decode(req, pod); err != nil {
@@ -94,6 +95,8 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
+	config.HostNetwork = pod.Spec.HostNetwork
+
 	if userProvidedGcsFuseSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, GcsFuseSidecarName); err == nil {
 		if userProvidedGcsFuseSidecarImage != "" {
 			config.ContainerImage = userProvidedGcsFuseSidecarImage
@@ -110,6 +113,15 @@ func (si *SidecarInjector) Handle(_ context.Context, req admission.Request) admi
 
 	// Inject container.
 	injectSidecarContainer(pod, config, injectAsNativeSidecar)
+
+	if pod.Spec.HostNetwork {
+		projectID, err := metadata.ProjectIDWithContext(ctx)
+		if err != nil {
+			return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to get project id: %w", err))
+		}
+		pod.Spec.Volumes = append(pod.Spec.Volumes, GetSATokenVolume(projectID))
+	}
+
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
 	// Log pod mutation.
