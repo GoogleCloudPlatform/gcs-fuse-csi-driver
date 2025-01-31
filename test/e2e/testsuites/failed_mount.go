@@ -65,11 +65,18 @@ func (t *gcsFuseCSIFailedMountTestSuite) SkipUnsupportedTests(_ storageframework
 }
 
 func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
-	envVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
-	supportsNativeSidecar, err := strconv.ParseBool(envVar)
+	nativeSidecarEnvVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
+	supportsNativeSidecar, err := strconv.ParseBool(nativeSidecarEnvVar)
 	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, nativeSidecarEnvVar)
 	}
+
+	saVolInjectEnvVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
+	supportSAVolInjection, err := strconv.ParseBool(saVolInjectEnvVar)
+	if err != nil {
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, saVolInjectEnvVar)
+	}
+
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -211,6 +218,9 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		if configPrefix == specs.EnableHostNetworkPrefix {
+			tPod.EnableHostNetwork()
+		}
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying a Kubernetes service account without access to the GCS bucket")
@@ -252,6 +262,14 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified service account does not have access to the GCS bucket", func() {
 		testCaseSAInsufficientAccess(specs.SkipCSIBucketAccessCheckPrefix)
+	})
+
+	ginkgo.It("[hostnetwork] should fail when the specified service account does not have access to the GCS bucket", func() {
+		if supportSAVolInjection {
+			testCaseSAInsufficientAccess(specs.EnableHostNetworkPrefix)
+		} else {
+			ginkgo.By("Skipping the hostnetwork test for cluster version < 1.33.0")
+		}
 	})
 
 	ginkgo.It("should respond to service account permission changes", func() {

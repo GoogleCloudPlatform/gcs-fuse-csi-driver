@@ -28,7 +28,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
-var nativeSidecarMinimumVersion = version.MustParseGeneric("1.29.0")
+var (
+	nativeSidecarMinimumVersion       = version.MustParseGeneric("1.29.0")
+	saTokenVolInjectionMinimumVersion = version.MustParseGeneric("1.33.0")
+)
 
 func clusterDownGKE(testParams *TestParameters) error {
 	//nolint:gosec
@@ -133,14 +136,14 @@ func clusterUpGKE(testParams *TestParameters) error {
 	return nil
 }
 
-func ClusterSupportsNativeSidecar(clusterVersion, nodeVersion string) (bool, error) {
+func ClusterAtLeastMinVersion(clusterVersion, nodeVersion string, minVersion *version.Version) (bool, error) {
 	supportsNativeSidecar := false
 	if clusterVersion != "" {
 		parsedClusterVersion, err := version.ParseGeneric(clusterVersion)
 		if err != nil {
 			return false, err
 		}
-		if parsedClusterVersion.AtLeast(nativeSidecarMinimumVersion) {
+		if parsedClusterVersion.AtLeast(minVersion) {
 			supportsNativeSidecar = true
 
 			if nodeVersion != "" {
@@ -148,7 +151,7 @@ func ClusterSupportsNativeSidecar(clusterVersion, nodeVersion string) (bool, err
 				if err != nil {
 					return false, err
 				}
-				if !parsedNodeVersion.AtLeast(nativeSidecarMinimumVersion) {
+				if !parsedNodeVersion.AtLeast(minVersion) {
 					supportsNativeSidecar = false
 				}
 			}

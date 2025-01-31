@@ -20,11 +20,16 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -57,6 +62,11 @@ func (t *gcsFuseCSIMountTestSuite) SkipUnsupportedTests(_ storageframework.TestD
 }
 
 func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	envVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
+	supportSAVolInjection, err := strconv.ParseBool(envVar)
+	if err != nil {
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
+	}
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -111,10 +121,63 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod1.Cleanup(ctx)
 	}
 
+	testCaseHostNetworkEnabled := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring hostnetwork enabled pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.EnableHostNetwork()
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying hostnetwork enabled pod")
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf(`mountpoint -d "%s"`, mountPath))
+
+		ginkgo.By("Checking that the pod can access bucket")
+		// Create a new file B using gcsfuse.
+		testFile := "testfile"
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/%v", mountPath, testFile))
+
+		// Check mounted volumes on pod
+		projectedSAVolMounted := false
+		for _, vol := range tPod.GetPodVols() {
+			if vol.Name == webhook.SidecarContainerSATokenVolumeName {
+				projectedSAVolMounted = true
+
+				break
+			}
+		}
+		gomega.Expect(projectedSAVolMounted).To(gomega.BeTrue())
+
+		// Check the volume content.
+		volumeContents := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("ls %v", mountPath))
+		gomega.Expect(volumeContents).To(gomega.Equal(testFile))
+
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
 	ginkgo.It("[read ahead config] should update read ahead config knobs", func() {
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
 		testCaseStoreAndRetainData(specs.EnableCustomReadAhead)
+	})
+
+	ginkgo.It("should successfully mount for hostnetwork enabled pods", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		if supportSAVolInjection {
+			testCaseHostNetworkEnabled()
+		} else {
+			ginkgo.By("Skipping the hostnetwork test for cluster version < 1.33.0")
+		}
 	})
 }
