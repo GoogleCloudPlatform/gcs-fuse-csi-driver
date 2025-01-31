@@ -111,10 +111,46 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod1.Cleanup(ctx)
 	}
 
+	testCaseHostNetworkEnabled := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring hostnetwork enabled pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		tPod.EnableHostNetwork()
+
+		ginkgo.By("Deploying hostnetwork enabled pod")
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf(`mountpoint -d "%s"`, mountPath))
+
+		ginkgo.By("Checking that the pod can accessbucket")
+		// Create a new file B using gcsfuse.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/testfile", mountPath))
+
+		// List the volume.
+		volumeContents := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("ls %v", mountPath))
+		ginkgo.By("Volume content: " + volumeContents)
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
 	ginkgo.It("[read ahead config] should update read ahead config knobs", func() {
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
 		testCaseStoreAndRetainData(specs.EnableCustomReadAhead)
+	})
+
+	ginkgo.It("should successfully mount for hostnetwork enabled pods", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseHostNetworkEnabled()
 	})
 }
