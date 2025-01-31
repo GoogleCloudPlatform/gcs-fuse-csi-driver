@@ -486,6 +486,10 @@ func (t *TestPod) SetImage(image string) {
 	t.pod.Spec.Containers[0].Image = image
 }
 
+func (t *TestPod) EnableHostNetwork() {
+	t.pod.Spec.HostNetwork = true
+}
+
 func (t *TestPod) SetResource(cpuLimit, memoryLimit, storageLimit string) {
 	cpu, _ := resource.ParseQuantity(cpuLimit)
 	mem, _ := resource.ParseQuantity(memoryLimit)
