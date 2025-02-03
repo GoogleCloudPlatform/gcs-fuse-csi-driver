@@ -130,7 +130,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
-		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix {
+
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+		}
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		if err == nil && configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && v.AtLeast(version.MustParseSemantic("v2.5.0")) {
 			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "bucket does not exist")
 		} else {
 			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
