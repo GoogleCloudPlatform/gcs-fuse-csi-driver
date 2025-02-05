@@ -20,19 +20,29 @@ package sidecarmounter
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/compute/metadata"
+	credentials "cloud.google.com/go/iam/credentials/apiv1"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"golang.org/x/oauth2"
+	"google.golang.org/api/option"
+	"google.golang.org/api/sts/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -53,6 +63,13 @@ func New(mounterPath string) *Mounter {
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+	// Start the token server for HostNetwork enabled pods.
+	if mc.HostNetwork {
+		tp := filepath.Join(mc.TempDir, TokenFileName)
+		klog.Infof("Pod has hostNetwork enabled. Starting Token Server on %s.", tp)
+		go StartTokenServer(ctx, tp)
+	}
+
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
 	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
@@ -274,4 +291,130 @@ func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWr
 	}
 
 	return nil
+}
+
+func getK8sTokenFromFile(tokenPath string) (string, error) {
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading token file: %w", err)
+	}
+
+	return strings.TrimSpace(string(token)), nil
+}
+
+func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string) (*oauth2.Token, error) {
+	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
+	if err != nil {
+		return nil, fmt.Errorf("new STS service error: %w", err)
+	}
+
+	audience, err := getAudienceFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get audience from the context: %w", err)
+	}
+
+	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
+		Audience:           audience,
+		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
+		Scope:              credentials.DefaultAuthScopes()[0],
+		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
+		SubjectToken:       k8sSAToken,
+	}
+
+	stsResponse, err := stsService.V1.Token(stsRequest).Do()
+	if err != nil {
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w", audience, err)
+	}
+
+	return &oauth2.Token{
+		AccessToken: stsResponse.AccessToken,
+		TokenType:   stsResponse.TokenType,
+		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
+	}, nil
+}
+
+func getAudienceFromContext(ctx context.Context) (string, error) {
+	projectID, err := metadata.ProjectIDWithContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get project ID: %w", err)
+	}
+	// Get all instance metadata attributes
+	clusterLocation, err := metadata.InstanceAttributeValueWithContext(ctx, "cluster-location")
+	if err != nil {
+		return "", fmt.Errorf("failed to get clusterLocation: %w", err)
+	}
+	clusterName, err := metadata.InstanceAttributeValueWithContext(ctx, "cluster-name")
+	if err != nil {
+		return "", fmt.Errorf("failed to get clusterName: %w", err)
+	}
+
+	klog.Infof("projectID: %s, clusterName: %s, clusterLocation: %s", projectID, clusterName, clusterLocation)
+	onePlatformClusterResourceURL := &url.URL{
+		Scheme: "https",
+		Host:   "container.googleapis.com",
+		Path:   path.Join("v1", "projects", projectID, "locations", clusterLocation, "clusters", clusterName),
+	}
+
+	audience := fmt.Sprintf(
+		"identitynamespace:%s.svc.id.goog:%s",
+		projectID,
+		onePlatformClusterResourceURL,
+	)
+	klog.Infof("audience: %s", audience)
+
+	return audience, nil
+}
+
+func StartTokenServer(ctx context.Context, tokenURLSocketPath string) {
+	// Create a unix domain socket and listen for incoming connections.
+	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)
+	if err != nil {
+		klog.Errorf("failed to create socket %q: %v", tokenURLSocketPath, err)
+
+		return
+	}
+	klog.Infof("created a listener using the socket path %s", tokenURLSocketPath)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+		var stsToken *oauth2.Token
+		if err != nil {
+			klog.Errorf("failed to get k8s token from path %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken)
+		if err != nil {
+			klog.Errorf("failed to get sts token from path %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+		// Marshal the oauth2.Token object to JSON
+		jsonToken, err := json.Marshal(stsToken)
+		if err != nil {
+			klog.Errorf("failed to marshal token to JSON: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, string(jsonToken))
+	})
+
+	server := http.Server{
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	if err := server.Serve(tokenSocketListener); !errors.Is(err, http.ErrServerClosed) {
+		klog.Errorf("Server for %q returns unexpected error: %v", tokenURLSocketPath, err)
+	}
 }
