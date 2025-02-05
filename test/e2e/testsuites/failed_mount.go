@@ -179,14 +179,8 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		if gcsfuseVersionStr == "" {
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
 		}
-
-		gcsfuseSupportsInvalidResp := true
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		if err == nil && v != nil {
-			gcsfuseSupportsInvalidResp = v.AtLeast(version.MustParseSemantic("v2.9.0"))
-		}
-
-		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && gcsfuseSupportsInvalidResp {
+		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.5.0"))) {
 			tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
 			tPod.WaitForFailedMountError(ctx, "name should be a valid bucket resource name")
 		} else {
