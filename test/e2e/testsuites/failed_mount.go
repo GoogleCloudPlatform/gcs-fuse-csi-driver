@@ -135,7 +135,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
 		}
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		if err == nil && configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && v.AtLeast(version.MustParseSemantic("v2.5.0")) {
+		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.5.0"))) {
 			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "bucket does not exist")
 		} else {
 			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
