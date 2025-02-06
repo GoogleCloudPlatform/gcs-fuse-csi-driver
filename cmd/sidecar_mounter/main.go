@@ -34,7 +34,6 @@ import (
 )
 
 var (
-	hostNetwork    = flag.Bool("host-network", false, "pod hostNetwork configuration")
 	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
 	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
 	_              = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
@@ -61,7 +60,7 @@ func main() {
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-		mc := sidecarmounter.NewMountConfig(sp, *hostNetwork)
+		mc := sidecarmounter.NewMountConfig(sp)
 		if mc != nil {
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))

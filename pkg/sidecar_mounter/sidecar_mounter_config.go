@@ -35,10 +35,8 @@ import (
 )
 
 const (
-	GCSFuseAppName     = "gke-gcs-fuse-csi"
-	TempDir            = "/temp-dir"
-	unixSocketBasePath = "unix://"
-	TokenFileName      = "token.sock" // #nosec G101
+	GCSFuseAppName = "gke-gcs-fuse-csi"
+	TempDir        = "/temp-dir"
 )
 
 // MountConfig contains the information gcsfuse needs.
@@ -54,7 +52,6 @@ type MountConfig struct {
 	ErrWriter         stderrWriterInterface `json:"-"`
 	FlagMap           map[string]string     `json:"-"`
 	ConfigFileFlagMap map[string]string     `json:"-"`
-	HostNetwork       bool                  `json:"-"`
 }
 
 var prometheusPort = 8080
@@ -94,18 +91,17 @@ var boolFlags = map[string]bool{
 // 2. The file descriptor
 // 3. GCS bucket name
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
-func NewMountConfig(sp string, hnw bool) *MountConfig {
+func NewMountConfig(sp string) *MountConfig {
 	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
 	tempDir := filepath.Dir(sp)
 	volumeName := filepath.Base(tempDir)
 	mc := MountConfig{
-		VolumeName:  volumeName,
-		BufferDir:   filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
-		CacheDir:    filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
-		TempDir:     tempDir,
-		ConfigFile:  filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-		ErrWriter:   NewErrorWriter(filepath.Join(tempDir, "error")),
-		HostNetwork: hnw,
+		VolumeName: volumeName,
+		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		TempDir:    tempDir,
+		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+		ErrWriter:  NewErrorWriter(filepath.Join(tempDir, "error")),
 	}
 
 	klog.Infof("connecting to socket %q", sp)
@@ -238,6 +234,7 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Warningf("got invalid arguments for volume %q: %v. Will discard invalid args and continue to mount.",
 			invalidArgs, mc.VolumeName)
 	}
+
 	mc.FlagMap, mc.ConfigFileFlagMap = flagMap, configFileFlagMap
 }
 
@@ -277,11 +274,6 @@ func (mc *MountConfig) prepareConfigFile() error {
 			} else {
 				return fmt.Errorf("invalid config file flag: %q", f)
 			}
-		}
-	}
-	if mc.HostNetwork {
-		configMap["gcs-auth"] = map[string]interface{}{
-			"token-url": unixSocketBasePath + filepath.Join(mc.TempDir, TokenFileName),
 		}
 	}
 
