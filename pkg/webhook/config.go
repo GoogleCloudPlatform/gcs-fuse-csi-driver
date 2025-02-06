@@ -27,6 +27,8 @@ import (
 )
 
 type Config struct {
+	ShouldInjectSAVolume   bool   `json:"-"`
+	HostNetwork            bool   `json:"-"`
 	ContainerImage         string `json:"-"`
 	MetadataContainerImage string `json:"-"`
 	ImagePullPolicy        string `json:"-"`
@@ -117,6 +119,7 @@ func populateResource(requestQuantity, limitQuantity *resource.Quantity, default
 // remaining values that are not specified by user are kept as the default config values.
 func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
 	config := &Config{
+		ShouldInjectSAVolume:   si.Config.ShouldInjectSAVolume,
 		ContainerImage:         si.Config.ContainerImage,
 		MetadataContainerImage: si.Config.MetadataContainerImage,
 		ImagePullPolicy:        si.Config.ImagePullPolicy,
