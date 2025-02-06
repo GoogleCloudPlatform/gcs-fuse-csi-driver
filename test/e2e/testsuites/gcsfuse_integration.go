@@ -37,19 +37,20 @@ import (
 const (
 	gcsfuseIntegrationTestsBasePath = "gcsfuse/tools/integration_tests"
 
-	testNameOperations           = "operations"
-	testNameReadonly             = "readonly"
-	testNameRenameDirLimit       = "rename_dir_limit"
-	testNameImplicitDir          = "implicit_dir"
-	testNameExplicitDir          = "explicit_dir"
-	testNameReadLargeFiles       = "read_large_files"
-	testNameWriteLargeFiles      = "write_large_files"
-	testNameGzip                 = "gzip"
-	testNameLocalFile            = "local_file"
-	testNameListLargeDir         = "list_large_dir"
-	testNameManagedFolders       = "managed_folders"
-	testNameConcurrentOperations = "concurrent_operations"
-	testNameKernelListCache      = "kernel_list_cache"
+	testNameOperations            = "operations"
+	testNameReadonly              = "readonly"
+	testNameRenameDirLimit        = "rename_dir_limit"
+	testNameImplicitDir           = "implicit_dir"
+	testNameExplicitDir           = "explicit_dir"
+	testNameReadLargeFiles        = "read_large_files"
+	testNameWriteLargeFiles       = "write_large_files"
+	testNameGzip                  = "gzip"
+	testNameLocalFile             = "local_file"
+	testNameListLargeDir          = "list_large_dir"
+	testNameManagedFolders        = "managed_folders"
+	testNameConcurrentOperations  = "concurrent_operations"
+	testNameKernelListCache       = "kernel_list_cache"
+	testNameEnableStreamingWrites = "enable_streaming_writes"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -145,6 +146,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// HNS is supported after v2.5.0
 		if !v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0")) && hnsEnabled(driver) {
 			e2eskipper.Skipf("skip gcsfuse integration HNS tests on gcsfuse version %v", v.String())
+		}
+
+		// GCSFuse flag enable-streaming-writes is supported after v2.9.0.
+		if !v.AtLeast(version.MustParseSemantic("v2.9.0")) && testName == testNameEnableStreamingWrites {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameEnableStreamingWrites, v.String())
 		}
 
 		// tests are added or modified after v2.3.1 release and before v2.4.0 release
@@ -585,5 +591,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest(testNameManagedFolders+":TestEnableEmptyManagedFoldersTrue", false, "implicit-dirs=true")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameEnableStreamingWrites+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "enable-streaming-writes=true")
 	})
 }
