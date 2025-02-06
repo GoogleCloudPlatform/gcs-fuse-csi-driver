@@ -597,6 +597,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "enable-streaming-writes=true")
+		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "enable-streaming-writes")
 	})
 }
