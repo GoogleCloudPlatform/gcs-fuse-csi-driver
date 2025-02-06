@@ -27,7 +27,6 @@ import (
 )
 
 type Config struct {
-	HostNetwork            bool   `json:"-"`
 	ContainerImage         string `json:"-"`
 	MetadataContainerImage string `json:"-"`
 	ImagePullPolicy        string `json:"-"`

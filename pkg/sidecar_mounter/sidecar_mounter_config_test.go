@@ -312,45 +312,6 @@ func TestPrepareConfigFile(t *testing.T) {
 			},
 		},
 		{
-			name: "should create valid config file when hostnetwork is enabled",
-			mc: &MountConfig{
-				ConfigFile: "./test-config-file.yaml",
-				TempDir:    "/gcsfuse-tmp/.volumes/vol1",
-				ConfigFileFlagMap: map[string]string{
-					"logging:file-path":                     "/dev/fd/1",
-					"logging:format":                        "json",
-					"logging:severity":                      "error",
-					"write:create-empty-file":               "true",
-					"file-cache:max-size-mb":                "10000",
-					"file-cache:cache-file-for-range-read":  "true",
-					"metadata-cache:stat-cache-max-size-mb": "1000",
-					"metadata-cache:type-cache-max-size-mb": "-1",
-					"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
-				},
-				HostNetwork: true,
-			},
-			expectedConfig: map[string]interface{}{
-				"logging": map[string]interface{}{
-					"file-path": "/dev/fd/1",
-					"format":    "json",
-					"severity":  "error",
-				},
-				"write": map[string]interface{}{
-					"create-empty-file": true,
-				},
-				"file-cache": map[string]interface{}{
-					"max-size-mb":               10000,
-					"cache-file-for-range-read": true,
-				},
-				"metadata-cache": map[string]interface{}{
-					"stat-cache-max-size-mb": 1000,
-					"type-cache-max-size-mb": -1,
-				},
-				"cache-dir": "/gcsfuse-cache/.volumes/volume-name",
-				"gcs-auth":  map[string]interface{}{"token-url": "unix:///gcsfuse-tmp/.volumes/vol1/token.sock"},
-			},
-		},
-		{
 			name: "should throw error when incorrect flag is passed",
 			mc: &MountConfig{
 				ConfigFile: "./test-config-file.yaml",
