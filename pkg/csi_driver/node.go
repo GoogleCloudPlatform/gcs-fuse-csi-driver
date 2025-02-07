@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -137,6 +139,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
+	}
+
+	if pod.Spec.HostNetwork {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"start-token-server=" + strconv.FormatBool(s.shouldStartTokenServer(pod))})
 	}
 
 	// Since the webhook mutating ordering is not definitive,
@@ -290,4 +296,16 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 	}
 
 	return storageService, nil
+}
+
+func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
+	for _, vol := range pod.Spec.Volumes {
+		if vol.Name == webhook.SidecarContainerSATokenVolumeName {
+			klog.Infof("Pod has sa vol injected")
+
+			return true
+		}
+	}
+
+	return false
 }

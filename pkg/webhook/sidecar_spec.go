@@ -19,7 +19,6 @@ package webhook
 
 import (
 	"path/filepath"
-	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -114,7 +113,7 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 	limits, requests := prepareResourceList(c)
 
 	volumeMounts := []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount}
-	if c.HostNetwork && c.ShouldInjectSAVolume {
+	if c.PodHostNetworkSetting && c.ShouldInjectSAVolume {
 		volumeMounts = append(volumeMounts, saTokenVolumeMount)
 	}
 
@@ -127,7 +126,6 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 		SecurityContext: GetSecurityContext(),
 		Args: []string{
 			"--v=5",
-			"--host-network=" + strconv.FormatBool(c.HostNetwork && c.ShouldInjectSAVolume),
 		},
 		Resources: corev1.ResourceRequirements{
 			Limits:   limits,

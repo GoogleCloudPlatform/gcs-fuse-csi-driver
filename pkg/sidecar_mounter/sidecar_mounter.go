@@ -64,9 +64,9 @@ func New(mounterPath string) *Mounter {
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
-	if mc.HostNetwork {
+	if mc.PodShouldUseTokenServer {
 		tp := filepath.Join(mc.TempDir, TokenFileName)
-		klog.Infof("Pod has hostNetwork enabled. Starting Token Server on %s.", tp)
+		klog.Infof("Pod has hostNetwork enabled and token server feature is turned on. Starting Token Server on %s.", tp)
 		go StartTokenServer(ctx, tp)
 	}
 

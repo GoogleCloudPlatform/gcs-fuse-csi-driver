@@ -28,7 +28,7 @@ import (
 
 type Config struct {
 	ShouldInjectSAVolume   bool   `json:"-"`
-	HostNetwork            bool   `json:"-"`
+	PodHostNetworkSetting  bool   `json:"-"`
 	ContainerImage         string `json:"-"`
 	MetadataContainerImage string `json:"-"`
 	ImagePullPolicy        string `json:"-"`

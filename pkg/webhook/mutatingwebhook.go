@@ -95,7 +95,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	config.HostNetwork = pod.Spec.HostNetwork
+	config.PodHostNetworkSetting = pod.Spec.HostNetwork
 
 	if userProvidedGcsFuseSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, GcsFuseSidecarName); err == nil {
 		if userProvidedGcsFuseSidecarImage != "" {

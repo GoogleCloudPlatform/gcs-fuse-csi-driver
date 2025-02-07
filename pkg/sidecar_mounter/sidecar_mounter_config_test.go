@@ -312,7 +312,7 @@ func TestPrepareConfigFile(t *testing.T) {
 			},
 		},
 		{
-			name: "should create valid config file when hostnetwork is enabled",
+			name: "should create valid config file when hostnetwork is enabled and token server feature is supported",
 			mc: &MountConfig{
 				ConfigFile: "./test-config-file.yaml",
 				TempDir:    "/gcsfuse-tmp/.volumes/vol1",
@@ -327,7 +327,7 @@ func TestPrepareConfigFile(t *testing.T) {
 					"metadata-cache:type-cache-max-size-mb": "-1",
 					"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
 				},
-				HostNetwork: true,
+				PodShouldUseTokenServer: true,
 			},
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{
