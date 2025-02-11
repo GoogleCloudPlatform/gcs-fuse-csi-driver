@@ -50,7 +50,7 @@ const (
 	testNameManagedFolders        = "managed_folders"
 	testNameConcurrentOperations  = "concurrent_operations"
 	testNameKernelListCache       = "kernel_list_cache"
-	testNameEnableStreamingWrites = "enable_streaming_writes"
+	testNameEnableStreamingWrites = "streaming_writes"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -260,7 +260,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket)
 			}
-		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameConcurrentOperations:
+		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameConcurrentOperations, testNameEnableStreamingWrites:
 			finalTestCommand = baseTestCommandWithTestBucket
 		case testNameRenameDirLimit:
 			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
@@ -597,6 +597,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "enable-streaming-writes")
+		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2")
 	})
 }
