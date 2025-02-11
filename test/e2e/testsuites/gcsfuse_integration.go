@@ -597,6 +597,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2")
+		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes")
 	})
 }
