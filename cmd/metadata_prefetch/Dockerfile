@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Build metadata-prefetch go binary
-FROM --platform=$BUILDPLATFORM golang:1.23.5 AS metadata-prefetch-builder
+FROM --platform=$BUILDPLATFORM golang:1.23.6 AS metadata-prefetch-builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
