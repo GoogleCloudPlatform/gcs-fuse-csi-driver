@@ -42,6 +42,7 @@ var (
 	runNode                   = flag.Bool("node", false, "run node service")
 	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
 	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	customAudience            = flag.String("custom-audience", "", "The custom Identity Pool to authenticate with GCS API.")
 	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
@@ -82,7 +83,7 @@ func main() {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
-	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider, *customAudience)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}

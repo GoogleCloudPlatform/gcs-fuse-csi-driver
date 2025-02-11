@@ -81,7 +81,6 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, e
 				Expiry:      trs.ExpirationTimestamp.Time,
 			}, nil
 		}
-
 		return nil, fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
 	}
 
@@ -113,12 +112,18 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSATo
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
+	customAudience := ts.meta.GetCustomAudience()
 
 	audience := fmt.Sprintf(
 		"identitynamespace:%s:%s",
 		ts.meta.GetIdentityPool(),
 		ts.meta.GetIdentityProvider(),
 	)
+
+	if len(customAudience) != 0 {
+		audience = customAudience
+	}
+
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",

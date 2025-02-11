@@ -29,20 +29,30 @@ type Service interface {
 	GetProjectID() string
 	GetIdentityPool() string
 	GetIdentityProvider() string
+	GetCustomAudience() string
 }
 
 type metadataServiceManager struct {
 	projectID        string
 	identityPool     string
 	identityProvider string
+	customAudience   string
 }
 
 var _ Service = &metadataServiceManager{}
 
-func NewMetadataService(identityPool, identityProvider string) (Service, error) {
+func NewMetadataService(identityPool, identityProvider string, customAudience string) (Service, error) {
 	projectID, err := metadata.ProjectIDWithContext(context.Background())
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %w", err)
+	}
+
+	if len(customAudience) != 0 {
+		projectID, err = metadata.NumericProjectIDWithContext(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get project: %w", err)
+		}
 	}
 
 	if identityPool == "" {
@@ -54,11 +64,16 @@ func NewMetadataService(identityPool, identityProvider string) (Service, error) 
 		projectID:        projectID,
 		identityPool:     identityPool,
 		identityProvider: identityProvider,
+		customAudience:   customAudience,
 	}, nil
 }
 
 func (manager *metadataServiceManager) GetProjectID() string {
 	return manager.projectID
+}
+
+func (manager *metadataServiceManager) GetCustomAudience() string {
+	return manager.customAudience
 }
 
 func (manager *metadataServiceManager) GetIdentityPool() string {
