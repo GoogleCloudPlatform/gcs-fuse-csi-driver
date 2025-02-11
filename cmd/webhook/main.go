@@ -53,7 +53,7 @@ var (
 	ephemeralStorageLimit   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImage            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 	metadataSidecarImage    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
-
+	injectSAVol             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
 	// These are set at compile time.
 	webhookVersion = "unknown"
 )
@@ -74,6 +74,8 @@ func main() {
 
 	// Load webhook config
 	c := wh.LoadConfig(*sidecarImage, *metadataSidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
+	c.ShouldInjectSAVolume = *injectSAVol
+	klog.Infof("Webhook should inject SA volume: %t", c.ShouldInjectSAVolume)
 
 	// Load config for manager, informers, listers
 	kubeConfig := config.GetConfigOrDie()

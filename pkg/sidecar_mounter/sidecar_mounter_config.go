@@ -35,23 +35,27 @@ import (
 )
 
 const (
-	GCSFuseAppName = "gke-gcs-fuse-csi"
-	TempDir        = "/temp-dir"
+	GCSFuseAppName     = "gke-gcs-fuse-csi"
+	TempDir            = "/temp-dir"
+	unixSocketBasePath = "unix://"
+	TokenFileName      = "token.sock" // #nosec G101
+	tokenServerFlag    = "start-token-server"
 )
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor    int                   `json:"-"`
-	VolumeName        string                `json:"volumeName,omitempty"`
-	BucketName        string                `json:"bucketName,omitempty"`
-	BufferDir         string                `json:"-"`
-	CacheDir          string                `json:"-"`
-	TempDir           string                `json:"-"`
-	ConfigFile        string                `json:"-"`
-	Options           []string              `json:"options,omitempty"`
-	ErrWriter         stderrWriterInterface `json:"-"`
-	FlagMap           map[string]string     `json:"-"`
-	ConfigFileFlagMap map[string]string     `json:"-"`
+	FileDescriptor          int                   `json:"-"`
+	VolumeName              string                `json:"volumeName,omitempty"`
+	BucketName              string                `json:"bucketName,omitempty"`
+	BufferDir               string                `json:"-"`
+	CacheDir                string                `json:"-"`
+	TempDir                 string                `json:"-"`
+	ConfigFile              string                `json:"-"`
+	Options                 []string              `json:"options,omitempty"`
+	ErrWriter               stderrWriterInterface `json:"-"`
+	FlagMap                 map[string]string     `json:"-"`
+	ConfigFileFlagMap       map[string]string     `json:"-"`
+	PodShouldUseTokenServer bool                  `json:"-"`
 }
 
 var prometheusPort = 8080
@@ -213,6 +217,17 @@ func (mc *MountConfig) prepareMountArgs() {
 			value = argPair[1]
 		}
 
+		if flag == tokenServerFlag {
+			val, err := strconv.ParseBool(value)
+			if err != nil {
+				klog.Errorf("failed to parse start-token-server flag value: %v", err)
+			} else {
+				mc.PodShouldUseTokenServer = val
+			}
+
+			continue
+		}
+
 		switch {
 		case boolFlags[flag] && value != "":
 			flag = flag + "=" + value
@@ -234,7 +249,6 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Warningf("got invalid arguments for volume %q: %v. Will discard invalid args and continue to mount.",
 			invalidArgs, mc.VolumeName)
 	}
-
 	mc.FlagMap, mc.ConfigFileFlagMap = flagMap, configFileFlagMap
 }
 
@@ -274,6 +288,11 @@ func (mc *MountConfig) prepareConfigFile() error {
 			} else {
 				return fmt.Errorf("invalid config file flag: %q", f)
 			}
+		}
+	}
+	if mc.PodShouldUseTokenServer {
+		configMap["gcs-auth"] = map[string]interface{}{
+			"token-url": unixSocketBasePath + filepath.Join(mc.TempDir, TokenFileName),
 		}
 	}
 

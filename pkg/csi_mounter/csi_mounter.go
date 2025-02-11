@@ -87,6 +87,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		BucketName: source,
 		Options:    sidecarMountOptions,
 	}
+
 	msg, err := json.Marshal(mc)
 	if err != nil {
 		return fmt.Errorf("failed to marshal sidecar mounter MountConfig %v: %w", mc, err)
