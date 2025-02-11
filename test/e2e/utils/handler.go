@@ -68,11 +68,15 @@ type TestParameters struct {
 	GinkgoSkipGcpSaTest bool
 
 	SupportsNativeSidecar bool
+	SupportSAVolInjection bool
 	IstioVersion          string
 	GcsfuseClientProtocol string
 }
 
-const TestWithNativeSidecarEnvVar = "TEST_WITH_NATIVE_SIDECAR"
+const (
+	TestWithNativeSidecarEnvVar     = "TEST_WITH_NATIVE_SIDECAR"
+	TestWithSAVolumeInjectionEnvVar = "TEST_WITH_SA_VOL_INJECTION"
+)
 
 func Handle(testParams *TestParameters) error {
 	oldMask := syscall.Umask(0o000)
@@ -165,7 +169,7 @@ func Handle(testParams *TestParameters) error {
 		testFocusStr = fmt.Sprintf(".*%s.*", testFocusStr)
 	}
 
-	supportsNativeSidecar, err := ClusterSupportsNativeSidecar(testParams.GkeClusterVersion, testParams.GkeNodeVersion)
+	supportsNativeSidecar, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, nativeSidecarMinimumVersion)
 	if err != nil {
 		klog.Fatalf(`native sidecar support could not be determined: %v`, err)
 	}
@@ -173,6 +177,16 @@ func Handle(testParams *TestParameters) error {
 
 	if err = os.Setenv(TestWithNativeSidecarEnvVar, strconv.FormatBool(supportsNativeSidecar)); err != nil {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithNativeSidecarEnvVar, err)
+	}
+
+	supportSAVolInjection, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, saTokenVolInjectionMinimumVersion)
+	if err != nil {
+		klog.Fatalf(`SA Vol Injection support could not be determined: %v`, err)
+	}
+	testParams.SupportSAVolInjection = supportSAVolInjection
+
+	if err = os.Setenv(TestWithSAVolumeInjectionEnvVar, strconv.FormatBool(supportSAVolInjection)); err != nil {
+		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSAVolumeInjectionEnvVar, err)
 	}
 
 	testSkipStr := generateTestSkip(testParams)

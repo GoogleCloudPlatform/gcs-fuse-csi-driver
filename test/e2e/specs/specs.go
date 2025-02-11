@@ -68,6 +68,7 @@ const (
 	EnableFileCacheAndMetricsPrefix                            = "gcsfuse-csi-enable-file-cache-and-metrics"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
 	EnableMetadataPrefetchPrefix                               = "gcsfuse-csi-enable-metadata-prefetch"
+	EnableHostNetworkPrefix                                    = "gcsfuse-csi-enable-hostnetwork"
 	EnableCustomReadAhead                                      = "gcsfuse-csi-enable-custom-read-ahead"
 	EnableMetadataPrefetchAndFakeVolumePrefix                  = "gcsfuse-csi-enable-metadata-prefetch-and-fake-volume"
 	EnableMetadataPrefetchPrefixForceNewBucketPrefix           = "gcsfuse-csi-enable-metadata-prefetch-and-force-new-bucket"
@@ -175,6 +176,10 @@ func (t *TestPod) Create(ctx context.Context) {
 
 func (t *TestPod) GetPodName() string {
 	return t.pod.Name
+}
+
+func (t *TestPod) GetPodVols() []corev1.Volume {
+	return t.pod.Spec.Volumes
 }
 
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed.
@@ -484,6 +489,10 @@ func (t *TestPod) SetRestartPolicy(rp corev1.RestartPolicy) {
 
 func (t *TestPod) SetImage(image string) {
 	t.pod.Spec.Containers[0].Image = image
+}
+
+func (t *TestPod) EnableHostNetwork() {
+	t.pod.Spec.HostNetwork = true
 }
 
 func (t *TestPod) SetResource(cpuLimit, memoryLimit, storageLimit string) {
