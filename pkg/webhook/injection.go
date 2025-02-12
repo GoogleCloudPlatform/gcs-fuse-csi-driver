@@ -24,7 +24,19 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 )
+
+var sidecarPrefixMap = map[string]string{
+	GcsFuseSidecarName:          "gke-gcsfuse/",
+	MetadataPrefetchSidecarName: "gke-gcsfuse/metadata-prefetch/",
+}
+
+// used to guarantee containers start in the correct sequence based on inter-container dependencies.
+var containerIndexOrderMap = map[string]string{
+	GcsFuseSidecarName:          IstioSidecarName,
+	MetadataPrefetchSidecarName: GcsFuseSidecarName,
+}
 
 const IstioSidecarName = "istio-proxy"
 
@@ -86,56 +98,46 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	return supportsNativeSidecar, nil
 }
 
-func injectSidecarContainer(pod *corev1.Pod, config *Config, injectAsNativeSidecar bool) {
-	if injectAsNativeSidecar {
-		pod.Spec.InitContainers = insert(pod.Spec.InitContainers, GetNativeSidecarContainerSpec(config), getInjectIndex(pod.Spec.InitContainers))
-	} else {
-		pod.Spec.Containers = insert(pod.Spec.Containers, GetSidecarContainerSpec(config), getInjectIndex(pod.Spec.Containers))
-	}
-}
-
-func (si *SidecarInjector) injectMetadataPrefetchSidecarContainer(pod *corev1.Pod, config *Config, injectAsNativeSidecar bool) {
+// InjectSidecarContainer injects a sidecar container into the pod and returns error if unexpected event occurs.
+func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *corev1.Pod, injectAsNativeSidecar bool) error {
 	var containerSpec corev1.Container
 	var index int
-
-	injected, _ := validatePodHasSidecarContainerInjected(MetadataPrefetchSidecarName, pod, []corev1.Volume{}, []corev1.VolumeMount{})
-	if injected {
-		klog.Infof("%s is already injected, skipping injection", MetadataPrefetchSidecarName)
-
-		return
+	config, err := si.prepareConfig(sidecarPrefixMap[containerName], *pod)
+	if err != nil {
+		return err
 	}
+	config.PodHostNetworkSetting = pod.Spec.HostNetwork
 
 	// Extract user provided metadata prefetch sidecar image.
-	userProvidedMetadataPrefetchSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, MetadataPrefetchSidecarName)
-	if err != nil {
-		klog.Errorf("failed to get user provided metadata prefetch image. skipping injection")
-
-		return
-	}
-
-	if userProvidedMetadataPrefetchSidecarImage != "" {
-		config.MetadataContainerImage = userProvidedMetadataPrefetchSidecarImage
-	}
-
-	if injectAsNativeSidecar {
-		containerSpec = si.GetNativeMetadataPrefetchSidecarContainerSpec(pod, config.MetadataContainerImage)
-		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, GcsFuseSidecarName)
+	if userProvidedSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, containerName); err == nil {
+		if userProvidedSidecarImage != "" {
+			config.ContainerImage = userProvidedSidecarImage
+		}
 	} else {
-		containerSpec = si.GetMetadataPrefetchSidecarContainerSpec(pod, config.MetadataContainerImage)
-		index = getInjectIndexAfterContainer(pod.Spec.Containers, GcsFuseSidecarName)
+		return err
 	}
 
-	if len(containerSpec.VolumeMounts) == 0 {
+	// Retrieve container spec and index to inject sidecar for either init containers or regular based on native sidecar support.
+	if injectAsNativeSidecar {
+		containerSpec = si.getNativeContainerSpec(containerName, pod, config)
+		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, containerIndexOrderMap[containerName])
+	} else {
+		containerSpec = si.getContainerSpec(containerName, pod, config)
+		index = getInjectIndexAfterContainer(pod.Spec.Containers, containerIndexOrderMap[containerName])
+	}
+
+	// Skip metadata prefetch sidecar injection if no volumes are requesting metadata prefetch.
+	if containerName == MetadataPrefetchSidecarName && len(containerSpec.VolumeMounts) == 0 {
 		klog.Info("no volumes are requesting metadata prefetch, skipping metadata prefetch sidecar injection")
 
-		return
+		return nil
 	}
 
 	// This should not happen as we always inject the sidecar after injecting our primary gcsfuse sidecar.
-	if index == 0 {
-		klog.Warningf("%s not found when attempting to inject metadata prefetch sidecar. skipping injection", GcsFuseSidecarName)
+	if containerName == MetadataPrefetchSidecarName && index == 0 {
+		klog.Warningf("%s not found when attempting to inject container. skipping injection", containerIndexOrderMap[containerName])
 
-		return
+		return fmt.Errorf("%s", (containerIndexOrderMap[containerName] + "not found when attempting to inject metadata prefetch. skipping injection"))
 	}
 
 	if injectAsNativeSidecar {
@@ -143,6 +145,26 @@ func (si *SidecarInjector) injectMetadataPrefetchSidecarContainer(pod *corev1.Po
 	} else {
 		pod.Spec.Containers = insert(pod.Spec.Containers, containerSpec, index)
 	}
+	// Log pod mutation after fuse sidecar injection.
+	LogPodMutation(pod, config)
+
+	return nil
+}
+
+func (si *SidecarInjector) getNativeContainerSpec(containerName string, pod *corev1.Pod, config *Config) corev1.Container {
+	containerSpec := si.getContainerSpec(containerName, pod, config)
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
+	containerSpec.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+
+	return containerSpec
+}
+
+func (si *SidecarInjector) getContainerSpec(containerName string, pod *corev1.Pod, config *Config) corev1.Container {
+	if containerName == MetadataPrefetchSidecarName {
+		return si.GetMetadataPrefetchSidecarContainerSpec(pod, config)
+	}
+
+	return GetSidecarContainerSpec(config)
 }
 
 func insert(a []corev1.Container, value corev1.Container, index int) []corev1.Container {
