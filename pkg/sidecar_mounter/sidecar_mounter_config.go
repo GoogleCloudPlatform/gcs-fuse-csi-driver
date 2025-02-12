@@ -58,7 +58,7 @@ type MountConfig struct {
 	PodShouldUseTokenServer bool                  `json:"-"`
 }
 
-var prometheusPort = 8080
+var prometheusPort = 62990
 
 var disallowedFlags = map[string]bool{
 	"temp-dir":                             true,

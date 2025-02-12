@@ -235,7 +235,7 @@ func TestPrepareMountArgs(t *testing.T) {
 		},
 	}
 
-	prometheusPort := 8080
+	prometheusPort := 62990
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
