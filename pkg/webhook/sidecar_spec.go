@@ -155,15 +155,15 @@ func GetSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-func (si *SidecarInjector) GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, image string) corev1.Container {
-	container := si.GetMetadataPrefetchSidecarContainerSpec(pod, image)
+func (si *SidecarInjector)  GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, config *Config) corev1.Container {
+	container := si.GetMetadataPrefetchSidecarContainerSpec(pod, config)
 	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
 	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
 
 	return container
 }
 
-func getMetadataPrefetchConfig(image string) *Config {
+func getDefaultMetadataPrefetchConfig(image string) *Config {
 	return &Config{
 		CPURequest:              metadataPrefetchCPURequest,
 		CPULimit:                metadataPrefetchCPULimit,
@@ -175,14 +175,24 @@ func getMetadataPrefetchConfig(image string) *Config {
 	}
 }
 
-func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, image string) corev1.Container {
+func getMetadataPrefetchConfig(c *Config) *Config {
+	config := getDefaultMetadataPrefetchConfig(c.MetadataContainerImage)
+	if(!c.MetadataPrefetchMemoryLimit.IsZero()) {
+		config.MemoryLimit = c.MetadataPrefetchMemoryLimit
+	}
+	if(!c.MetadataPrefetchMemoryRequest.IsZero()) {
+		config.MemoryRequest = c.MetadataPrefetchMemoryRequest
+	}
+	return config
+}
+
+func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
 	if pod == nil {
 		klog.Warning("failed to get metadata prefetch container spec: pod is nil")
 
 		return corev1.Container{}
 	}
-
-	c := getMetadataPrefetchConfig(image)
+	c = getMetadataPrefetchConfig(c)
 	limits, requests := prepareResourceList(c)
 
 	// The sidecar container follows Restricted Pod Security Standard,

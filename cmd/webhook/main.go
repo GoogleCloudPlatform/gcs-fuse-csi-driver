@@ -73,7 +73,7 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", webhookVersion, *sidecarImage)
 
 	// Load webhook config
-	c := wh.LoadConfig(*sidecarImage, *metadataSidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
+	c := wh.LoadConfig(*sidecarImage, *metadataSidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit, "0", "0")
 	c.ShouldInjectSAVolume = *injectSAVol
 	klog.Infof("Webhook should inject SA volume: %t", c.ShouldInjectSAVolume)
 

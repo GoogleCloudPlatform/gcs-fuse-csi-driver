@@ -118,10 +118,10 @@ func (si *SidecarInjector) injectMetadataPrefetchSidecarContainer(pod *corev1.Po
 	}
 
 	if injectAsNativeSidecar {
-		containerSpec = si.GetNativeMetadataPrefetchSidecarContainerSpec(pod, config.MetadataContainerImage)
+		containerSpec = si.GetNativeMetadataPrefetchSidecarContainerSpec(pod, config)
 		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, GcsFuseSidecarName)
 	} else {
-		containerSpec = si.GetMetadataPrefetchSidecarContainerSpec(pod, config.MetadataContainerImage)
+		containerSpec = si.GetMetadataPrefetchSidecarContainerSpec(pod, config)
 		index = getInjectIndexAfterContainer(pod.Spec.Containers, GcsFuseSidecarName)
 	}
 

@@ -44,9 +44,13 @@ type Config struct {
 	EphemeralStorageRequest resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
 	//nolint:tagliatelle
 	EphemeralStorageLimit resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
+	//nolint:tagliatelle
+	MetadataPrefetchMemoryRequest resource.Quantity `json:"gke-gcsfuse/metadata-prefetch/memory-request,omitempty"`
+	//nolint:tagliatelle
+	MetadataPrefetchMemoryLimit resource.Quantity `json:"gke-gcsfuse/metadata-prefetch/memory-limit,omitempty"`
 }
 
-func LoadConfig(containerImage, metadataContainerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
+func LoadConfig(containerImage, metadataContainerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit, metaDataPrefetchMemoryRequest, metadataPrefetchMemoryLimit string) *Config {
 	return &Config{
 		ContainerImage:          containerImage,
 		MetadataContainerImage:  metadataContainerImage,
@@ -57,6 +61,8 @@ func LoadConfig(containerImage, metadataContainerImage, imagePullPolicy, cpuRequ
 		MemoryLimit:             resource.MustParse(memoryLimit),
 		EphemeralStorageRequest: resource.MustParse(ephemeralStorageRequest),
 		EphemeralStorageLimit:   resource.MustParse(ephemeralStorageLimit),
+		MetadataPrefetchMemoryRequest:   resource.MustParse(metaDataPrefetchMemoryRequest),
+		MetadataPrefetchMemoryLimit:     resource.MustParse(metadataPrefetchMemoryLimit),
 	}
 }
 
@@ -64,7 +70,7 @@ func FakeConfig() *Config {
 	fakeImage1 := "fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
 	fakeImage2 := "fake-repo/fake-sidecar-image:v888.888.888-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
 
-	return LoadConfig(fakeImage1, fakeImage2, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
+	return LoadConfig(fakeImage1, fakeImage2, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi", "0", "0")
 }
 
 func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {
@@ -142,7 +148,7 @@ func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config
 }
 
 func LogPodMutation(pod *corev1.Pod, sidecarConfig *Config) {
-	klog.Infof("mutating Pod. Name: %q, GenerateName: %q, Namespace: %q, Sidecar Image: %s, CPU Request: %q, CPU limit: %q, Memory request: %q, Memory limit: %q, Ephemeral storage request: %q, Ephemeral storage limit: %q, Pull policy: %s",
+	klog.Infof("mutating Pod. Name: %q, GenerateName: %q, Namespace: %q, Sidecar Image: %s, CPU Request: %q, CPU limit: %q, Memory request: %q, Memory limit: %q, Ephemeral storage request: %q, Ephemeral storage limit: %q, Metadata Prefetch Memory request: %q, Metadata Prefetch Memory limit: %q, Pull policy: %s",
 		pod.Name,
 		pod.GenerateName,
 		pod.Namespace,
@@ -153,6 +159,8 @@ func LogPodMutation(pod *corev1.Pod, sidecarConfig *Config) {
 		sidecarConfig.MemoryLimit.String(),
 		sidecarConfig.EphemeralStorageRequest.String(),
 		sidecarConfig.EphemeralStorageLimit.String(),
+		sidecarConfig.MetadataPrefetchMemoryRequest.String(),
+		sidecarConfig.MetadataPrefetchMemoryLimit.String(),
 		sidecarConfig.ImagePullPolicy,
 	)
 }

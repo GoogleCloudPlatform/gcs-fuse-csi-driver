@@ -514,7 +514,8 @@ func TestGetInjectIndex(t *testing.T) {
 func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 	t.Parallel()
 
-	limits, requests := prepareResourceList(getMetadataPrefetchConfig("fake-image"))
+	limits, requests := prepareResourceList(getDefaultMetadataPrefetchConfig("fake-image"))
+	customLimits, customRequests := prepareResourceList(getMetadataPrefetchConfig(LoadConfig("fake-image", "fake-image", "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi", "20Mi", "20Mi")))
 
 	testCases := []struct {
 		testName      string
@@ -987,6 +988,194 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							SecurityContext: GetSecurityContext(),
 							Resources: corev1.ResourceRequirements{
 								Requests: requests,
+								Limits:   limits,
+							},
+							VolumeMounts: []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
+						},
+						{
+							Name: "two",
+						},
+						{
+							Name: "three",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload-one",
+						},
+						{
+							Name: "workload-two",
+						},
+						{
+							Name: "workload-three",
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "my-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: gcsFuseCsiDriverName,
+									VolumeAttributes: map[string]string{
+										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			testName: "fuse sidecar present, injection successful, with custom memory limits and requests",
+			config:   *LoadConfig("fake-image", "fake-image", "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi", "20Mi", "20Mi"),
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+						},
+						{
+							Name: "two",
+						},
+						{
+							Name: "three",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload-one",
+						},
+						{
+							Name: "workload-two",
+						},
+						{
+							Name: "workload-three",
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "my-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: gcsFuseCsiDriverName,
+									VolumeAttributes: map[string]string{
+										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+						},
+						{
+							Name:            MetadataPrefetchSidecarName,
+							Image: 		 "fake-image",
+							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
+							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
+							SecurityContext: GetSecurityContext(),
+							Resources: corev1.ResourceRequirements{
+								Requests: customRequests,
+								Limits:   customLimits,
+							},
+							VolumeMounts: []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
+						},
+						{
+							Name: "two",
+						},
+						{
+							Name: "three",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload-one",
+						},
+						{
+							Name: "workload-two",
+						},
+						{
+							Name: "workload-three",
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "my-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: gcsFuseCsiDriverName,
+									VolumeAttributes: map[string]string{
+										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			testName: "fuse sidecar present, injection successful, with custom memory requests no limit provided",
+			config:   *LoadConfig("fake-image", "fake-image", "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi", "20Mi", "0"),
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+						},
+						{
+							Name: "two",
+						},
+						{
+							Name: "three",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload-one",
+						},
+						{
+							Name: "workload-two",
+						},
+						{
+							Name: "workload-three",
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "my-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: gcsFuseCsiDriverName,
+									VolumeAttributes: map[string]string{
+										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+						},
+						{
+							Name:            MetadataPrefetchSidecarName,
+							Image: 		 "fake-image",
+							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
+							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
+							SecurityContext: GetSecurityContext(),
+							Resources: corev1.ResourceRequirements{
+								Requests: customRequests,
 								Limits:   limits,
 							},
 							VolumeMounts: []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
