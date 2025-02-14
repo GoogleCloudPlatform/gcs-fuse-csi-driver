@@ -132,8 +132,8 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
 		}
 
-		promPort := mc.FlagMap["prometheus-port"]
-		if promPort != "0" {
+		promPort, ok := mc.FlagMap["prometheus-port"]
+		if ok && promPort != "0" {
 			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
 			go collectMetrics(ctx, promPort, mc.TempDir)
 		}
