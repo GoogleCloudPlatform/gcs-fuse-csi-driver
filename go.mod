@@ -23,12 +23,12 @@ require (
 	google.golang.org/api v0.190.0
 	google.golang.org/grpc v1.65.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.30.3
-	k8s.io/apimachinery v0.30.3
-	k8s.io/apiserver v0.30.3
-	k8s.io/client-go v0.30.3
+	k8s.io/api v0.30.10
+	k8s.io/apimachinery v0.30.10
+	k8s.io/apiserver v0.30.10
+	k8s.io/client-go v0.30.10
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/kubernetes v1.30.3
+	k8s.io/kubernetes v1.30.10
 	k8s.io/mount-utils v0.30.3
 	k8s.io/pod-security-admission v0.30.3
 	k8s.io/utils v0.0.0-20240711033017-18e509b52bc8
@@ -141,10 +141,10 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/apiextensions-apiserver v0.30.3 // indirect
 	k8s.io/cloud-provider v0.30.3 // indirect
-	k8s.io/component-base v0.30.3 // indirect
+	k8s.io/component-base v0.30.10 // indirect
 	k8s.io/component-helpers v0.30.3 // indirect
 	k8s.io/controller-manager v0.30.3 // indirect
-	k8s.io/kms v0.30.3 // indirect
+	k8s.io/kms v0.30.10 // indirect
 	k8s.io/kube-openapi v0.0.0-20240411171206-dc4e619f62f3 // indirect
 	k8s.io/kubectl v0.30.3 // indirect
 	k8s.io/kubelet v0.30.3 // indirect
@@ -159,7 +159,7 @@ replace (
 	k8s.io/api => k8s.io/api v0.30.3
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.30.3
 	k8s.io/apimachinery => k8s.io/apimachinery v0.30.3
-	k8s.io/apiserver => k8s.io/apiserver v0.30.3
+	k8s.io/apiserver => k8s.io/apiserver v0.30.10
 	k8s.io/cli-runtime => k8s.io/cli-runtime v0.30.3
 	k8s.io/client-go => k8s.io/client-go v0.30.3
 	k8s.io/cloud-provider => k8s.io/cloud-provider v0.30.3
