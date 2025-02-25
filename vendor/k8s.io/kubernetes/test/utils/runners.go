@@ -134,6 +134,7 @@ type RCConfig struct {
 	PriorityClassName             string
 	TerminationGracePeriodSeconds *int64
 	Lifecycle                     *v1.Lifecycle
+	SchedulerName                 string
 
 	// Env vars, set the same for every pod.
 	Env map[string]string
@@ -615,7 +616,8 @@ func (config *RCConfig) create() error {
 					Annotations: config.Annotations,
 				},
 				Spec: v1.PodSpec{
-					Affinity: config.Affinity,
+					SchedulerName: config.SchedulerName,
+					Affinity:      config.Affinity,
 					Containers: []v1.Container{
 						{
 							Name:            config.Name,
@@ -823,7 +825,7 @@ func (config *RCConfig) start(ctx context.Context) error {
 			*config.CreatedPods = startupStatus.Created
 		}
 		if !config.Silent {
-			config.RCConfigLog(startupStatus.String(config.Name))
+			config.RCConfigLog("%s", startupStatus.String(config.Name))
 		}
 
 		if config.PodStatusFile != nil {
@@ -847,8 +849,8 @@ func (config *RCConfig) start(ctx context.Context) error {
 		if podDeletionsCount > config.MaxAllowedPodDeletions {
 			// Number of pods which disappeared is over threshold
 			err := fmt.Errorf("%d pods disappeared for %s: %v", podDeletionsCount, config.Name, strings.Join(deletedPods, ", "))
-			config.RCConfigLog(err.Error())
-			config.RCConfigLog(diff.String(sets.NewString()))
+			config.RCConfigLog("%s", err.Error())
+			config.RCConfigLog("%s", diff.String(sets.NewString()))
 			return err
 		}
 

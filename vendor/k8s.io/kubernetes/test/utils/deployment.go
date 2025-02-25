@@ -18,6 +18,7 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -105,7 +106,7 @@ func waitForDeploymentCompleteMaybeCheckRolling(c clientset.Interface, d *apps.D
 		return false, nil
 	})
 
-	if err == wait.ErrWaitTimeout {
+	if wait.Interrupted(err) {
 		err = fmt.Errorf("%s", reason)
 	}
 	if err != nil {
@@ -224,9 +225,9 @@ func WaitForDeploymentRevisionAndImage(c clientset.Interface, ns, deploymentName
 		}
 		return true, nil
 	})
-	if err == wait.ErrWaitTimeout {
+	if wait.Interrupted(err) {
 		LogReplicaSetsOfDeployment(deployment, nil, newRS, logf)
-		err = fmt.Errorf(reason)
+		err = errors.New(reason)
 	}
 	if newRS == nil {
 		return fmt.Errorf("deployment %q failed to create new replica set", deploymentName)
@@ -316,7 +317,7 @@ func UpdateDeploymentWithRetries(c clientset.Interface, namespace, name string, 
 		updateErr = err
 		return false, nil
 	})
-	if pollErr == wait.ErrWaitTimeout {
+	if wait.Interrupted(pollErr) {
 		pollErr = fmt.Errorf("couldn't apply the provided updated to deployment %q: %v", name, updateErr)
 	}
 	return deployment, pollErr
@@ -375,7 +376,7 @@ func WaitForDeploymentWithCondition(c clientset.Interface, ns, deploymentName, r
 		cond := deploymentutil.GetDeploymentCondition(deployment.Status, condType)
 		return cond != nil && cond.Reason == reason, nil
 	})
-	if pollErr == wait.ErrWaitTimeout {
+	if wait.Interrupted(pollErr) {
 		pollErr = fmt.Errorf("deployment %q never updated with the desired condition and reason, latest deployment conditions: %+v", deployment.Name, deployment.Status.Conditions)
 		_, allOldRSs, newRS, err := GetAllReplicaSets(deployment, c)
 		if err == nil {
