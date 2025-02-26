@@ -31,6 +31,7 @@ const (
 
 type TokenManager interface {
 	GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource
+	GetIdentityProvider() string
 }
 
 type tokenManager struct {
@@ -45,6 +46,10 @@ func NewTokenManager(meta metadata.Service, clientset clientset.Interface) Token
 	}
 
 	return &tm
+}
+
+func (tm *tokenManager) GetIdentityProvider() string {
+	return tm.meta.GetIdentityProvider()
 }
 
 func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource {

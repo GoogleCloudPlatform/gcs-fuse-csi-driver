@@ -35,27 +35,27 @@ import (
 )
 
 const (
-	GCSFuseAppName     = "gke-gcs-fuse-csi"
-	TempDir            = "/temp-dir"
-	unixSocketBasePath = "unix://"
-	TokenFileName      = "token.sock" // #nosec G101
-	tokenServerFlag    = "start-token-server"
+	GCSFuseAppName       = "gke-gcs-fuse-csi"
+	TempDir              = "/temp-dir"
+	unixSocketBasePath   = "unix://"
+	TokenFileName        = "token.sock" // #nosec G101
+	identityProviderFlag = "token-server-identity-provider"
 )
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor          int                   `json:"-"`
-	VolumeName              string                `json:"volumeName,omitempty"`
-	BucketName              string                `json:"bucketName,omitempty"`
-	BufferDir               string                `json:"-"`
-	CacheDir                string                `json:"-"`
-	TempDir                 string                `json:"-"`
-	ConfigFile              string                `json:"-"`
-	Options                 []string              `json:"options,omitempty"`
-	ErrWriter               stderrWriterInterface `json:"-"`
-	FlagMap                 map[string]string     `json:"-"`
-	ConfigFileFlagMap       map[string]string     `json:"-"`
-	PodShouldUseTokenServer bool                  `json:"-"`
+	FileDescriptor              int                   `json:"-"`
+	VolumeName                  string                `json:"volumeName,omitempty"`
+	BucketName                  string                `json:"bucketName,omitempty"`
+	BufferDir                   string                `json:"-"`
+	CacheDir                    string                `json:"-"`
+	TempDir                     string                `json:"-"`
+	ConfigFile                  string                `json:"-"`
+	Options                     []string              `json:"options,omitempty"`
+	ErrWriter                   stderrWriterInterface `json:"-"`
+	FlagMap                     map[string]string     `json:"-"`
+	ConfigFileFlagMap           map[string]string     `json:"-"`
+	TokenServerIdentityProvider string                `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -171,7 +171,7 @@ func (mc *MountConfig) prepareMountArgs() {
 	invalidArgs := []string{}
 
 	for _, arg := range mc.Options {
-		if strings.Contains(arg, ":") {
+		if strings.Contains(arg, ":") && !strings.Contains(arg, "https") {
 			i := strings.LastIndex(arg, ":")
 			f, v := arg[:i], arg[i+1:]
 
@@ -217,13 +217,8 @@ func (mc *MountConfig) prepareMountArgs() {
 			value = argPair[1]
 		}
 
-		if flag == tokenServerFlag {
-			val, err := strconv.ParseBool(value)
-			if err != nil {
-				klog.Errorf("failed to parse start-token-server flag value: %v", err)
-			} else {
-				mc.PodShouldUseTokenServer = val
-			}
+		if flag == identityProviderFlag {
+			mc.TokenServerIdentityProvider = value
 
 			continue
 		}
@@ -290,7 +285,7 @@ func (mc *MountConfig) prepareConfigFile() error {
 			}
 		}
 	}
-	if mc.PodShouldUseTokenServer {
+	if mc.TokenServerIdentityProvider != "" {
 		configMap["gcs-auth"] = map[string]interface{}{
 			"token-url": unixSocketBasePath + filepath.Join(mc.TempDir, TokenFileName),
 		}
