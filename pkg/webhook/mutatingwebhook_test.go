@@ -48,19 +48,18 @@ func TestPrepareConfig(t *testing.T) {
 
 	testCases := []struct {
 		name        string
-		prefix      string
 		annotations map[string]string
 		wantConfig  *Config
 		expectErr   bool
 	}{
 		{
-			name:   "use default values if no annotation is found",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "use default values if no annotation is found",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation: "true",
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                FakeConfig().CPULimit,
 				CPURequest:              FakeConfig().CPURequest,
@@ -72,8 +71,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "only limits are specified",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "only limits are specified",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:   "true",
 				cpuLimitAnnotation:              "500m",
@@ -82,6 +80,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("500m"),
@@ -93,8 +92,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "only requests are specified",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "only requests are specified",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:     "true",
 				cpuRequestAnnotation:              "500m",
@@ -103,6 +101,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("500m"),
@@ -114,8 +113,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "limits are set to '0'",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "limits are set to '0'",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:   "true",
 				cpuLimitAnnotation:              "0",
@@ -124,6 +122,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              FakeConfig().CPURequest,
@@ -135,8 +134,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "requests are set to '0'",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "requests are set to '0'",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:     "true",
 				cpuRequestAnnotation:              "0",
@@ -145,6 +143,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              resource.Quantity{},
@@ -156,8 +155,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "requests and limits are explicitly set",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "requests and limits are explicitly set",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:     "true",
 				cpuLimitAnnotation:                "500m",
@@ -169,6 +167,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.MustParse("100m"),
@@ -180,8 +179,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "requests and limits are explicitly set with '0' limits",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "requests and limits are explicitly set with '0' limits",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:     "true",
 				cpuLimitAnnotation:                "0",
@@ -193,6 +191,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.Quantity{},
 				CPURequest:              resource.MustParse("100m"),
@@ -204,8 +203,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "requests and limits are explicitly set with '0' requests",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "requests and limits are explicitly set with '0' requests",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation:     "true",
 				cpuLimitAnnotation:                "500m",
@@ -217,6 +215,7 @@ func TestPrepareConfig(t *testing.T) {
 			},
 			wantConfig: &Config{
 				ContainerImage:          FakeConfig().ContainerImage,
+				MetadataContainerImage:  FakeConfig().MetadataContainerImage,
 				ImagePullPolicy:         FakeConfig().ImagePullPolicy,
 				CPULimit:                resource.MustParse("500m"),
 				CPURequest:              resource.Quantity{},
@@ -228,84 +227,7 @@ func TestPrepareConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:   "metadata prefetch requests and limits are provided",
-			prefix: sidecarPrefixMap[MetadataPrefetchSidecarName],
-			annotations: map[string]string{
-				GcsFuseVolumeEnableAnnotation:           "true",
-				cpuLimitAnnotation:                      "500m",
-				memoryLimitAnnotation:                   "1Gi",
-				ephemeralStorageLimitAnnotation:         "50Gi",
-				cpuRequestAnnotation:                    "0",
-				memoryRequestAnnotation:                 "0",
-				ephemeralStorageRequestAnnotation:       "0",
-				metadataPrefetchMemoryLimitAnnotation:   "20Mi",
-				metadataPrefetchMemoryRequestAnnotation: "20Mi",
-			},
-			wantConfig: &Config{
-				ContainerImage:          FakePrefetchConfig().ContainerImage,
-				ImagePullPolicy:         FakePrefetchConfig().ImagePullPolicy,
-				CPULimit:                resource.MustParse("50m"),
-				CPURequest:              resource.MustParse("10m"),
-				MemoryLimit:             resource.MustParse("20Mi"),
-				MemoryRequest:           resource.MustParse("20Mi"),
-				EphemeralStorageLimit:   resource.MustParse("10Mi"),
-				EphemeralStorageRequest: resource.MustParse("10Mi"),
-			},
-			expectErr: false,
-		},
-		{
-			name:   "metadata prefetch memory limits are provided",
-			prefix: sidecarPrefixMap[MetadataPrefetchSidecarName],
-			annotations: map[string]string{
-				GcsFuseVolumeEnableAnnotation:         "true",
-				cpuLimitAnnotation:                    "500m",
-				memoryLimitAnnotation:                 "1Gi",
-				ephemeralStorageLimitAnnotation:       "50Gi",
-				cpuRequestAnnotation:                  "0",
-				memoryRequestAnnotation:               "0",
-				ephemeralStorageRequestAnnotation:     "0",
-				metadataPrefetchMemoryLimitAnnotation: "20Mi",
-			},
-			wantConfig: &Config{
-				ContainerImage:          FakePrefetchConfig().ContainerImage,
-				ImagePullPolicy:         FakePrefetchConfig().ImagePullPolicy,
-				CPULimit:                resource.MustParse("50m"),
-				CPURequest:              resource.MustParse("10m"),
-				MemoryLimit:             resource.MustParse("20Mi"),
-				MemoryRequest:           resource.MustParse("20Mi"),
-				EphemeralStorageLimit:   resource.MustParse("10Mi"),
-				EphemeralStorageRequest: resource.MustParse("10Mi"),
-			},
-			expectErr: false,
-		},
-		{
-			name:   "metadata prefetch memory requests are provided",
-			prefix: sidecarPrefixMap[MetadataPrefetchSidecarName],
-			annotations: map[string]string{
-				GcsFuseVolumeEnableAnnotation:           "true",
-				cpuLimitAnnotation:                      "500m",
-				memoryLimitAnnotation:                   "1Gi",
-				ephemeralStorageLimitAnnotation:         "50Gi",
-				cpuRequestAnnotation:                    "0",
-				memoryRequestAnnotation:                 "0",
-				ephemeralStorageRequestAnnotation:       "0",
-				metadataPrefetchMemoryRequestAnnotation: "20Mi",
-			},
-			wantConfig: &Config{
-				ContainerImage:          FakePrefetchConfig().ContainerImage,
-				ImagePullPolicy:         FakePrefetchConfig().ImagePullPolicy,
-				CPULimit:                resource.MustParse("50m"),
-				CPURequest:              resource.MustParse("10m"),
-				MemoryLimit:             resource.MustParse("20Mi"),
-				MemoryRequest:           resource.MustParse("20Mi"),
-				EphemeralStorageLimit:   resource.MustParse("10Mi"),
-				EphemeralStorageRequest: resource.MustParse("10Mi"),
-			},
-			expectErr: false,
-		},
-		{
-			name:   "invalid resource Quantity should throw error",
-			prefix: sidecarPrefixMap[GcsFuseSidecarName],
+			name: "invalid resource Quantity should throw error",
 			annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation: "true",
 				cpuLimitAnnotation:            "invalid",
@@ -317,17 +239,11 @@ func TestPrepareConfig(t *testing.T) {
 
 	for _, tc := range testCases {
 		si := SidecarInjector{
-			Client:                 nil,
-			Config:                 FakeConfig(),
-			MetadataPrefetchConfig: FakePrefetchConfig(),
-			Decoder:                admission.NewDecoder(runtime.NewScheme()),
+			Client:  nil,
+			Config:  FakeConfig(),
+			Decoder: admission.NewDecoder(runtime.NewScheme()),
 		}
-		pod := corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: tc.annotations,
-			},
-		}
-		gotConfig, gotErr := si.prepareConfig(tc.prefix, pod)
+		gotConfig, gotErr := si.prepareConfig(tc.annotations)
 		if tc.expectErr != (gotErr != nil) {
 			t.Errorf(`for "%s", expect error: %v, but got error: %v`, tc.name, tc.expectErr, gotErr)
 		}
@@ -534,13 +450,6 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			nodes:        nativeSupportNodes(),
 		},
 		{
-			name:         "native container injection successful test, with prefetch.",
-			operation:    admissionv1.Create,
-			inputPod:     validInputPodWithPrefetchIncluded(),
-			wantResponse: wantResponseWithPrefetch(t, false, false, true),
-			nodes:        nativeSupportNodes(),
-		},
-		{
 			name:         "Injection with custom sidecar container image successful test with native nodes.",
 			operation:    admissionv1.Create,
 			inputPod:     validInputPodWithCustomImage(false),
@@ -589,11 +498,10 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			lister := informerFactory.Core().V1().Nodes().Lister()
 
 			si := SidecarInjector{
-				Client:                 nil,
-				Config:                 FakeConfig(),
-				MetadataPrefetchConfig: FakePrefetchConfig(),
-				Decoder:                admission.NewDecoder(runtime.NewScheme()),
-				NodeLister:             lister,
+				Client:     nil,
+				Config:     FakeConfig(),
+				Decoder:    admission.NewDecoder(runtime.NewScheme()),
+				NodeLister: lister,
 			}
 
 			stopCh := make(<-chan struct{})
@@ -760,18 +668,6 @@ func validInputPod() *corev1.Pod {
 	return validInputPodWithSettings(false, false)
 }
 
-func validInputPodWithPrefetchIncluded() *corev1.Pod {
-	pod := validInputPodWithSettings(false, false)
-	pod.ObjectMeta.Annotations[GcsFuseNativeSidecarEnableAnnotation] = "true"
-	pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
-		Name:            MetadataPrefetchSidecarName,
-		Image:           "my-private-image",
-		SecurityContext: GetSecurityContext(),
-	})
-
-	return pod
-}
-
 func getWorkloadSpec(name string) corev1.Container {
 	return corev1.Container{
 		Name:  name,
@@ -795,14 +691,6 @@ func wantResponse(t *testing.T, customImage bool, nativeCustomImage bool, native
 	t.Helper()
 	pod := validInputPodWithSettings(customImage, nativeCustomImage)
 	newPod := *modifySpec(*validInputPodWithSettings(customImage, nativeCustomImage), customImage, nativeCustomImage, native)
-
-	return generatePatch(t, pod, &newPod)
-}
-
-func wantResponseWithPrefetch(t *testing.T, customImage bool, nativeCustomImage bool, native bool) admission.Response {
-	t.Helper()
-	pod := validInputPodWithPrefetchIncluded()
-	newPod := *modifySpec(*validInputPodWithPrefetchIncluded(), customImage, nativeCustomImage, native)
 
 	return generatePatch(t, pod, &newPod)
 }
