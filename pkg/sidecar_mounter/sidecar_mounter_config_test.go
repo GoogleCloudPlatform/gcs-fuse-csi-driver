@@ -88,7 +88,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BufferDir:  "test-buffer-dir",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
-				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
+				Options:    []string{"uid=100", "gid=200", "token-server-identity-provider=https://fakeresource", "debug_gcs", "max-conns-per-host=10", "implicit-dirs", "write:create-empty-file:false", "logging:severity:error", "write:create-empty-file:true"},
 			},
 			expectedArgs: map[string]string{
 				"implicit-dirs":      "",
@@ -327,7 +327,7 @@ func TestPrepareConfigFile(t *testing.T) {
 					"metadata-cache:type-cache-max-size-mb": "-1",
 					"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
 				},
-				PodShouldUseTokenServer: true,
+				TokenServerIdentityProvider: "https://container.googleapis.com/v1/projects/fake-project/locations/us-central1/clusters/fake-cluster",
 			},
 			expectedConfig: map[string]interface{}{
 				"logging": map[string]interface{}{

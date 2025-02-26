@@ -20,7 +20,6 @@ package driver
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -141,8 +140,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
 
-	if pod.Spec.HostNetwork {
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"start-token-server=" + strconv.FormatBool(s.shouldStartTokenServer(pod))})
+	if s.shouldStartTokenServer(pod) && pod.Spec.HostNetwork {
+		identityProvider := s.driver.config.TokenManager.GetIdentityProvider()
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"token-server-identity-provider=" + identityProvider})
 	}
 
 	// Since the webhook mutating ordering is not definitive,
@@ -301,7 +301,7 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
 	for _, vol := range pod.Spec.Volumes {
 		if vol.Name == webhook.SidecarContainerSATokenVolumeName {
-			klog.Infof("Pod has sa vol injected")
+			klog.Infof("Service Account Token Injection feature is turned on.")
 
 			return true
 		}
