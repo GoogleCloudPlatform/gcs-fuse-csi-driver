@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
@@ -48,6 +49,14 @@ const (
 )
 
 var (
+	// Metadata prefetch container resources.
+	metadataPrefetchCPURequest              = resource.MustParse("10m")
+	metadataPrefetchCPULimit                = resource.MustParse("50m")
+	metadataPrefetchMemoryRequest           = resource.MustParse("10Mi")
+	metadataPrefetchMemoryLimit             = resource.MustParse("10Mi")
+	metadataPrefetchEphemeralStorageRequest = resource.MustParse("10Mi")
+	metadataPrefetchEphemeralStorageLimit   = resource.MustParse("10Mi")
+
 	// gke-gcsfuse-sidecar volumes.
 	tmpVolume = corev1.Volume{
 		Name: SidecarContainerTmpVolumeName,
@@ -146,19 +155,41 @@ func GetSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
+func (si *SidecarInjector) GetNativeMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, image string) corev1.Container {
+	container := si.GetMetadataPrefetchSidecarContainerSpec(pod, image)
+	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
+	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+
+	return container
+}
+
+func getMetadataPrefetchConfig(image string) *Config {
+	return &Config{
+		CPURequest:              metadataPrefetchCPURequest,
+		CPULimit:                metadataPrefetchCPULimit,
+		MemoryRequest:           metadataPrefetchMemoryRequest,
+		MemoryLimit:             metadataPrefetchMemoryLimit,
+		EphemeralStorageRequest: metadataPrefetchEphemeralStorageRequest,
+		EphemeralStorageLimit:   metadataPrefetchEphemeralStorageLimit,
+		MetadataContainerImage:  image,
+	}
+}
+
+func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, image string) corev1.Container {
 	if pod == nil {
 		klog.Warning("failed to get metadata prefetch container spec: pod is nil")
 
 		return corev1.Container{}
 	}
+
+	c := getMetadataPrefetchConfig(image)
 	limits, requests := prepareResourceList(c)
 
 	// The sidecar container follows Restricted Pod Security Standard,
 	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 	container := corev1.Container{
 		Name:            MetadataPrefetchSidecarName,
-		Image:           c.ContainerImage,
+		Image:           c.MetadataContainerImage,
 		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
 		SecurityContext: GetSecurityContext(),
 		Resources: corev1.ResourceRequirements{

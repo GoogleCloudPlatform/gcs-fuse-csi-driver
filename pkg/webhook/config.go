@@ -20,7 +20,6 @@ package webhook
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -28,27 +27,29 @@ import (
 )
 
 type Config struct {
-	ShouldInjectSAVolume  bool   `json:"-"`
-	PodHostNetworkSetting bool   `json:"-"`
-	ContainerImage        string `json:"-"`
-	ImagePullPolicy       string `json:"-"`
+	ShouldInjectSAVolume   bool   `json:"-"`
+	PodHostNetworkSetting  bool   `json:"-"`
+	ContainerImage         string `json:"-"`
+	MetadataContainerImage string `json:"-"`
+	ImagePullPolicy        string `json:"-"`
 	//nolint:tagliatelle
-	CPURequest resource.Quantity `json:"cpu-request,omitempty"`
+	CPURequest resource.Quantity `json:"gke-gcsfuse/cpu-request,omitempty"`
 	//nolint:tagliatelle
-	CPULimit resource.Quantity `json:"cpu-limit,omitempty"`
+	CPULimit resource.Quantity `json:"gke-gcsfuse/cpu-limit,omitempty"`
 	//nolint:tagliatelle
-	MemoryRequest resource.Quantity `json:"memory-request,omitempty"`
+	MemoryRequest resource.Quantity `json:"gke-gcsfuse/memory-request,omitempty"`
 	//nolint:tagliatelle
-	MemoryLimit resource.Quantity `json:"memory-limit,omitempty"`
+	MemoryLimit resource.Quantity `json:"gke-gcsfuse/memory-limit,omitempty"`
 	//nolint:tagliatelle
-	EphemeralStorageRequest resource.Quantity `json:"ephemeral-storage-request,omitempty"`
+	EphemeralStorageRequest resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-request,omitempty"`
 	//nolint:tagliatelle
-	EphemeralStorageLimit resource.Quantity `json:"ephemeral-storage-limit,omitempty"`
+	EphemeralStorageLimit resource.Quantity `json:"gke-gcsfuse/ephemeral-storage-limit,omitempty"`
 }
 
-func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
+func LoadConfig(containerImage, metadataContainerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
 	return &Config{
 		ContainerImage:          containerImage,
+		MetadataContainerImage:  metadataContainerImage,
 		ImagePullPolicy:         imagePullPolicy,
 		CPURequest:              resource.MustParse(cpuRequest),
 		CPULimit:                resource.MustParse(cpuLimit),
@@ -61,12 +62,9 @@ func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryReq
 
 func FakeConfig() *Config {
 	fakeImage1 := "fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
+	fakeImage2 := "fake-repo/fake-sidecar-image:v888.888.888-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
 
-	return LoadConfig(fakeImage1, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
-}
-
-func FakePrefetchConfig() *Config {
-	return LoadConfig("fake-image", "Always", "10m", "50m", "10Mi", "10Mi", "10Mi", "10Mi")
+	return LoadConfig(fakeImage1, fakeImage2, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
 }
 
 func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {
@@ -117,62 +115,30 @@ func populateResource(requestQuantity, limitQuantity *resource.Quantity, default
 	}
 }
 
-// prepareConfig overwrites config values set by user input from pod annotations,
+// prepareConfig overwrittes config values set by user input from pod annotations,
 // remaining values that are not specified by user are kept as the default config values.
-func (si *SidecarInjector) prepareConfig(prefix string, pod corev1.Pod) (*Config, error) {
-	defaultConfig, err := si.getDefaultConfig(prefix)
-	if err != nil {
-		return nil, err
-	}
-
-	config, err := getConfigFromAnnotation(*defaultConfig, prefix, pod.Annotations)
-	if err != nil {
-		return nil, err
-	}
-
-	populateResource(&config.CPURequest, &config.CPULimit, defaultConfig.CPURequest, defaultConfig.CPULimit)
-	populateResource(&config.MemoryRequest, &config.MemoryLimit, defaultConfig.MemoryRequest, defaultConfig.MemoryLimit)
-	populateResource(&config.EphemeralStorageRequest, &config.EphemeralStorageLimit, defaultConfig.EphemeralStorageRequest, defaultConfig.EphemeralStorageLimit)
-
-	return config, nil
-}
-
-func getConfigFromAnnotation(defaultConfig Config, prefix string, annotations map[string]string) (*Config, error) {
+func (si *SidecarInjector) prepareConfig(annotations map[string]string) (*Config, error) {
 	config := &Config{
-		ShouldInjectSAVolume: defaultConfig.ShouldInjectSAVolume,
-		ContainerImage:       defaultConfig.ContainerImage,
-		ImagePullPolicy:      defaultConfig.ImagePullPolicy,
+		ShouldInjectSAVolume:   si.Config.ShouldInjectSAVolume,
+		ContainerImage:         si.Config.ContainerImage,
+		MetadataContainerImage: si.Config.MetadataContainerImage,
+		ImagePullPolicy:        si.Config.ImagePullPolicy,
 	}
-	extractedData := make(map[string]string)
-	for key, value := range annotations {
-		// Check if the key starts with the given prefix
-		if strings.HasPrefix(key, prefix) {
-			// Remove the prefix and keep only the case name
-			newKey := strings.TrimPrefix(key, prefix)
-			extractedData[newKey] = value
-		}
-	}
-	extractedJSON, err := json.Marshal(extractedData)
+
+	jsonData, err := json.Marshal(annotations)
 	if err != nil {
-		return config, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: %w", err)
+		return nil, fmt.Errorf("failed to marshal pod annotations: %w", err)
 	}
-	err = json.Unmarshal(extractedJSON, config)
-	if err != nil {
-		return config, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: %w", err)
+
+	if err := json.Unmarshal(jsonData, config); err != nil {
+		return nil, fmt.Errorf("failed to parse sidecar container resource allocation from pod annotations: %w", err)
 	}
+
+	populateResource(&config.CPURequest, &config.CPULimit, si.Config.CPURequest, si.Config.CPULimit)
+	populateResource(&config.MemoryRequest, &config.MemoryLimit, si.Config.MemoryRequest, si.Config.MemoryLimit)
+	populateResource(&config.EphemeralStorageRequest, &config.EphemeralStorageLimit, si.Config.EphemeralStorageRequest, si.Config.EphemeralStorageLimit)
 
 	return config, nil
-}
-
-func (si *SidecarInjector) getDefaultConfig(prefix string) (*Config, error) {
-	switch prefix {
-	case sidecarPrefixMap[GcsFuseSidecarName]:
-		return si.Config, nil
-	case sidecarPrefixMap[MetadataPrefetchSidecarName]:
-		return si.MetadataPrefetchConfig, nil
-	default:
-		return nil, fmt.Errorf("invalid sidecar name: %s", prefix)
-	}
 }
 
 func LogPodMutation(pod *corev1.Pod, sidecarConfig *Config) {

@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/informers"
@@ -34,19 +33,6 @@ import (
 )
 
 var UnsupportedVersion = version.MustParseGeneric("1.28.0")
-
-func getDefaultMetadataPrefetchConfig(image string) *Config {
-	return &Config{
-		CPURequest:              resource.MustParse("10m"),
-		CPULimit:                resource.MustParse("50m"),
-		MemoryRequest:           resource.MustParse("10Mi"),
-		MemoryLimit:             resource.MustParse("10Mi"),
-		EphemeralStorageRequest: resource.MustParse("10Mi"),
-		EphemeralStorageLimit:   resource.MustParse("10Mi"),
-		ImagePullPolicy:         "Always",
-		ContainerImage:          image,
-	}
-}
 
 func TestInjectAsNativeSidecar(t *testing.T) {
 	t.Parallel()
@@ -528,8 +514,7 @@ func TestGetInjectIndex(t *testing.T) {
 func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 	t.Parallel()
 
-	limits, requests := prepareResourceList(getDefaultMetadataPrefetchConfig("fake-image"))
-	customLimits, customRequests := prepareResourceList(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"))
+	limits, requests := prepareResourceList(getMetadataPrefetchConfig("fake-image"))
 
 	testCases := []struct {
 		testName      string
@@ -811,6 +796,65 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			},
 		},
 		{
+			testName: "fuse sidecar not present, already injected",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:            MetadataPrefetchSidecarName,
+							Image:           "my-private-image",
+							SecurityContext: GetSecurityContext(),
+						},
+						{
+							Name: "two",
+						},
+						{
+							Name: "three",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload-one",
+						},
+						{
+							Name: "workload-two",
+						},
+						{
+							Name: "workload-three",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:            MetadataPrefetchSidecarName,
+							Image:           "my-private-image",
+							SecurityContext: GetSecurityContext(),
+						},
+						{
+							Name: "two",
+						},
+						{
+							Name: "three",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload-one",
+						},
+						{
+							Name: "workload-two",
+						},
+						{
+							Name: "workload-three",
+						},
+					},
+				},
+			},
+		},
+		{
 			testName: "fuse sidecar not present, privately hosted image",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
@@ -941,8 +985,6 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
 							SecurityContext: GetSecurityContext(),
-							Image:           FakePrefetchConfig().ContainerImage,
-							ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
 							Resources: corev1.ResourceRequirements{
 								Requests: requests,
 								Limits:   limits,
@@ -984,236 +1026,9 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			},
 		},
 		{
-			testName: "fuse sidecar present, injection successful, with custom memory limits and requests",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: generateAnnotationsFromConfig(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"), sidecarPrefixMap[MetadataPrefetchSidecarName]),
-				},
-				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{
-						{
-							Name: GcsFuseSidecarName,
-						},
-						{
-							Name: "two",
-						},
-						{
-							Name: "three",
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name: "workload-one",
-						},
-						{
-							Name: "workload-two",
-						},
-						{
-							Name: "workload-three",
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "my-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: gcsFuseCsiDriverName,
-									VolumeAttributes: map[string]string{
-										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			expectedPod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"gke-gcsfuse/metadata-prefetch/container-image":           "fake-image",
-						"gke-gcsfuse/metadata-prefetch/cpu-limit":                 "250m",
-						"gke-gcsfuse/metadata-prefetch/cpu-request":               "250m",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-limit":   "5Gi",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-request": "5Gi",
-						"gke-gcsfuse/metadata-prefetch/image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch/memory-limit":              "20Mi",
-						"gke-gcsfuse/metadata-prefetch/memory-request":            "20Mi",
-					},
-				},
-				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{
-						{
-							Name: GcsFuseSidecarName,
-						},
-						{
-							Name:            MetadataPrefetchSidecarName,
-							Image:           "fake-image",
-							ImagePullPolicy: corev1.PullPolicy(FakeConfig().ImagePullPolicy),
-							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
-							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
-							Resources: corev1.ResourceRequirements{
-								Requests: customRequests,
-								Limits:   customLimits,
-							},
-							VolumeMounts: []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
-						},
-						{
-							Name: "two",
-						},
-						{
-							Name: "three",
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name: "workload-one",
-						},
-						{
-							Name: "workload-two",
-						},
-						{
-							Name: "workload-three",
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "my-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: gcsFuseCsiDriverName,
-									VolumeAttributes: map[string]string{
-										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		{
-			testName: "fuse sidecar present, injection successful, with custom memory requests no limit provided",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: generateAnnotationsFromConfig(&Config{
-						ContainerImage:          "fake-image",
-						ImagePullPolicy:         "Always",
-						CPURequest:              resource.MustParse("250m"),
-						CPULimit:                resource.MustParse("250m"),
-						MemoryRequest:           resource.MustParse("20Mi"),
-						EphemeralStorageRequest: resource.MustParse("5Gi"),
-						EphemeralStorageLimit:   resource.MustParse("5Gi"),
-					}, sidecarPrefixMap[MetadataPrefetchSidecarName]),
-				},
-				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{
-						{
-							Name: GcsFuseSidecarName,
-						},
-						{
-							Name: "two",
-						},
-						{
-							Name: "three",
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name: "workload-one",
-						},
-						{
-							Name: "workload-two",
-						},
-						{
-							Name: "workload-three",
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "my-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: gcsFuseCsiDriverName,
-									VolumeAttributes: map[string]string{
-										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			expectedPod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"gke-gcsfuse/metadata-prefetch/container-image":           "fake-image",
-						"gke-gcsfuse/metadata-prefetch/cpu-limit":                 "250m",
-						"gke-gcsfuse/metadata-prefetch/cpu-request":               "250m",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-limit":   "5Gi",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-request": "5Gi",
-						"gke-gcsfuse/metadata-prefetch/image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch/memory-request":            "20Mi",
-					},
-				},
-				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{
-						{
-							Name: GcsFuseSidecarName,
-						},
-						{
-							Name:            MetadataPrefetchSidecarName,
-							Image:           FakePrefetchConfig().ContainerImage,
-							ImagePullPolicy: corev1.PullPolicy(FakeConfig().ImagePullPolicy),
-							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
-							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
-							Resources: corev1.ResourceRequirements{
-								Requests: customRequests,
-								Limits:   customLimits,
-							},
-							VolumeMounts: []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
-						},
-						{
-							Name: "two",
-						},
-						{
-							Name: "three",
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name: "workload-one",
-						},
-						{
-							Name: "workload-two",
-						},
-						{
-							Name: "workload-three",
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "my-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: gcsFuseCsiDriverName,
-									VolumeAttributes: map[string]string{
-										gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		{
 			testName: "fuse sidecar present with many volumes and config, injection successful",
+			config:   *FakeConfig(),
 			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: generateAnnotationsFromConfig(FakePrefetchConfig(), sidecarPrefixMap[MetadataPrefetchSidecarName]),
-				},
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
 						{
@@ -1278,18 +1093,6 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 				},
 			},
 			expectedPod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"gke-gcsfuse/metadata-prefetch/container-image":           "fake-image",
-						"gke-gcsfuse/metadata-prefetch/cpu-limit":                 "50m",
-						"gke-gcsfuse/metadata-prefetch/cpu-request":               "10m",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-limit":   "10Mi",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-request": "10Mi",
-						"gke-gcsfuse/metadata-prefetch/image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch/memory-limit":              "10Mi",
-						"gke-gcsfuse/metadata-prefetch/memory-request":            "10Mi",
-					},
-				},
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
 						{
@@ -1297,8 +1100,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 						},
 						{
 							Name:            MetadataPrefetchSidecarName,
-							Image:           FakePrefetchConfig().ContainerImage,
-							ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
+							Image:           FakeConfig().MetadataContainerImage,
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
 							SecurityContext: GetSecurityContext(),
@@ -1427,9 +1229,8 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 								Requests: requests,
 								Limits:   limits,
 							},
-							Image:           "my-private-image",
-							ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
-							VolumeMounts:    []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
+							Image:        "my-private-image",
+							VolumeMounts: []corev1.VolumeMount{{Name: "my-volume", ReadOnly: true, MountPath: "/volumes/my-volume"}},
 						},
 						{
 							Name: "two",
@@ -1557,42 +1358,11 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			if tc.nativeSidecar == nil {
 				tc.nativeSidecar = ptr.To(true)
 			}
-			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
-			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar)
-			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
+			si := SidecarInjector{}
+			si.injectMetadataPrefetchSidecarContainer(tc.pod, &tc.config, *tc.nativeSidecar)
 			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
 				t.Errorf(`failed to run %s, expected: "%v", but got "%v". Diff: %s`, tc.testName, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))
 			}
 		})
 	}
-}
-
-func generateAnnotationsFromConfig(config *Config, prefix string) map[string]string {
-	annotations := make(map[string]string)
-	if config.ImagePullPolicy != "" {
-		annotations[prefix+"image-pull-policy"] = config.ImagePullPolicy
-	}
-	if config.CPULimit.Format != "" {
-		annotations[prefix+"cpu-limit"] = config.CPULimit.String()
-	}
-	if config.CPURequest.Format != "" {
-		annotations[prefix+"cpu-request"] = config.CPURequest.String()
-	}
-	if config.ContainerImage != "" {
-		annotations[prefix+"container-image"] = config.ContainerImage
-	}
-	if config.MemoryRequest.Format != "" {
-		annotations[prefix+"memory-request"] = config.MemoryRequest.String()
-	}
-	if config.MemoryLimit.Format != "" {
-		annotations[prefix+"memory-limit"] = config.MemoryLimit.String()
-	}
-	if config.EphemeralStorageRequest.Format != "" {
-		annotations[prefix+"ephemeral-storage-request"] = config.EphemeralStorageRequest.String()
-	}
-	if config.EphemeralStorageLimit.Format != "" {
-		annotations[prefix+"ephemeral-storage-limit"] = config.EphemeralStorageLimit.String()
-	}
-
-	return annotations
 }

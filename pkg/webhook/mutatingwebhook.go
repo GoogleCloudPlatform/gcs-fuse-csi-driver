@@ -34,33 +34,29 @@ import (
 )
 
 const (
-	GcsFuseVolumeEnableAnnotation           = "gke-gcsfuse/volumes"
-	GcsFuseNativeSidecarEnableAnnotation    = "gke-gcsfuse/enable-native-sidecar"
-	cpuLimitAnnotation                      = "gke-gcsfuse/cpu-limit"
-	cpuRequestAnnotation                    = "gke-gcsfuse/cpu-request"
-	memoryLimitAnnotation                   = "gke-gcsfuse/memory-limit"
-	memoryRequestAnnotation                 = "gke-gcsfuse/memory-request"
-	ephemeralStorageLimitAnnotation         = "gke-gcsfuse/ephemeral-storage-limit"
-	ephemeralStorageRequestAnnotation       = "gke-gcsfuse/ephemeral-storage-request"
-	metadataPrefetchMemoryLimitAnnotation   = "gke-gcsfuse/metadata-prefetch/memory-limit"
-	metadataPrefetchMemoryRequestAnnotation = "gke-gcsfuse/metadata-prefetch/memory-request"
+	GcsFuseVolumeEnableAnnotation        = "gke-gcsfuse/volumes"
+	GcsFuseNativeSidecarEnableAnnotation = "gke-gcsfuse/enable-native-sidecar"
+	cpuLimitAnnotation                   = "gke-gcsfuse/cpu-limit"
+	cpuRequestAnnotation                 = "gke-gcsfuse/cpu-request"
+	memoryLimitAnnotation                = "gke-gcsfuse/memory-limit"
+	memoryRequestAnnotation              = "gke-gcsfuse/memory-request"
+	ephemeralStorageLimitAnnotation      = "gke-gcsfuse/ephemeral-storage-limit"
+	ephemeralStorageRequestAnnotation    = "gke-gcsfuse/ephemeral-storage-request"
 )
 
 type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
-	Config                 *Config
-	MetadataPrefetchConfig *Config
-	Decoder                admission.Decoder
-	NodeLister             listersv1.NodeLister
-	PvcLister              listersv1.PersistentVolumeClaimLister
-	PvLister               listersv1.PersistentVolumeLister
-	ServerVersion          *version.Version
+	Config        *Config
+	Decoder       admission.Decoder
+	NodeLister    listersv1.NodeLister
+	PvcLister     listersv1.PersistentVolumeClaimLister
+	PvLister      listersv1.PersistentVolumeLister
+	ServerVersion *version.Version
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
 func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) admission.Response {
-	// Validate injection request
 	pod := &corev1.Pod{}
 
 	if err := si.Decoder.Decode(req, pod); err != nil {
@@ -93,22 +89,33 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	if sidecarInjected {
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
+
+	config, err := si.prepareConfig(pod.Annotations)
+	if err != nil {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	config.PodHostNetworkSetting = pod.Spec.HostNetwork
+
+	if userProvidedGcsFuseSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, GcsFuseSidecarName); err == nil {
+		if userProvidedGcsFuseSidecarImage != "" {
+			config.ContainerImage = userProvidedGcsFuseSidecarImage
+		}
+	} else {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
 	// Check support for native sidecar.
 	injectAsNativeSidecar, err := si.injectAsNativeSidecar(pod)
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to verify native sidecar support: %w", err))
 	}
 
-	// Inject Fuse Side Car container.
-	injected, _ := validatePodHasSidecarContainerInjected(GcsFuseSidecarName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount})
-	if !injected {
-		err = si.injectSidecarContainer(GcsFuseSidecarName, pod, injectAsNativeSidecar)
-	}
-	if err != nil {
-		return admission.Errored(http.StatusBadRequest, err)
-	}
+	// Inject container.
+	injectSidecarContainer(pod, config, injectAsNativeSidecar)
+
 	// Inject service account volume
-	if si.Config.ShouldInjectSAVolume && pod.Spec.HostNetwork {
+	if config.ShouldInjectSAVolume && pod.Spec.HostNetwork {
 		projectID, err := metadata.ProjectIDWithContext(ctx)
 		if err != nil {
 			return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to get project id: %w", err))
@@ -118,14 +125,11 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
+	// Log pod mutation.
+	LogPodMutation(pod, config)
+
 	// Inject metadata prefetch sidecar.
-	injected, _ = validatePodHasSidecarContainerInjected(MetadataPrefetchSidecarName, pod, []corev1.Volume{}, []corev1.VolumeMount{})
-	if !injected {
-		err = si.injectSidecarContainer(MetadataPrefetchSidecarName, pod, injectAsNativeSidecar)
-	}
-	if err != nil {
-		return admission.Errored(http.StatusBadRequest, err)
-	}
+	si.injectMetadataPrefetchSidecarContainer(pod, config, injectAsNativeSidecar)
 
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
