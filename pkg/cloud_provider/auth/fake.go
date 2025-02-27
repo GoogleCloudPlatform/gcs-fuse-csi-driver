@@ -31,6 +31,10 @@ func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saN
 	return &FakeGCPTokenSource{k8sSAName: saName, k8sSANamespace: saNamespace}
 }
 
+func (tm *fakeTokenManager) GetIdentityProvider() string {
+	return "fake.identity.provider"
+}
+
 type FakeGCPTokenSource struct {
 	k8sSAName      string
 	k8sSANamespace string

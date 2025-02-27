@@ -26,10 +26,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -64,10 +62,10 @@ func New(mounterPath string) *Mounter {
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
-	if mc.PodShouldUseTokenServer {
+	if mc.TokenServerIdentityProvider != "" {
 		tp := filepath.Join(mc.TempDir, TokenFileName)
 		klog.Infof("Pod has hostNetwork enabled and token server feature is turned on. Starting Token Server on %s.", tp)
-		go StartTokenServer(ctx, tp)
+		go StartTokenServer(ctx, tp, mc.TokenServerIdentityProvider)
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
@@ -302,13 +300,13 @@ func getK8sTokenFromFile(tokenPath string) (string, error) {
 	return strings.TrimSpace(string(token)), nil
 }
 
-func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string) (*oauth2.Token, error) {
+func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
 	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
 
-	audience, err := getAudienceFromContext(ctx)
+	audience, err := getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audience from the context: %w", err)
 	}
@@ -334,39 +332,23 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string) (*oauth2.
 	}, nil
 }
 
-func getAudienceFromContext(ctx context.Context) (string, error) {
+func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
 	projectID, err := metadata.ProjectIDWithContext(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get project ID: %w", err)
-	}
-	// Get all instance metadata attributes
-	clusterLocation, err := metadata.InstanceAttributeValueWithContext(ctx, "cluster-location")
-	if err != nil {
-		return "", fmt.Errorf("failed to get clusterLocation: %w", err)
-	}
-	clusterName, err := metadata.InstanceAttributeValueWithContext(ctx, "cluster-name")
-	if err != nil {
-		return "", fmt.Errorf("failed to get clusterName: %w", err)
-	}
-
-	klog.Infof("projectID: %s, clusterName: %s, clusterLocation: %s", projectID, clusterName, clusterLocation)
-	onePlatformClusterResourceURL := &url.URL{
-		Scheme: "https",
-		Host:   "container.googleapis.com",
-		Path:   path.Join("v1", "projects", projectID, "locations", clusterLocation, "clusters", clusterName),
 	}
 
 	audience := fmt.Sprintf(
 		"identitynamespace:%s.svc.id.goog:%s",
 		projectID,
-		onePlatformClusterResourceURL,
+		identityProvider,
 	)
 	klog.Infof("audience: %s", audience)
 
 	return audience, nil
 }
 
-func StartTokenServer(ctx context.Context, tokenURLSocketPath string) {
+func StartTokenServer(ctx context.Context, tokenURLSocketPath string, identityProvider string) {
 	// Create a unix domain socket and listen for incoming connections.
 	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)
 	if err != nil {
@@ -388,7 +370,7 @@ func StartTokenServer(ctx context.Context, tokenURLSocketPath string) {
 
 			return
 		}
-		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken)
+		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
 		if err != nil {
 			klog.Errorf("failed to get sts token from path %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
