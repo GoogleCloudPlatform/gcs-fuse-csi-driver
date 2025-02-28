@@ -21,12 +21,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -277,5 +279,34 @@ func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mou
 	less := func(a, b string) bool { return a > b }
 	if diff := cmp.Diff(a.Opts, e.Opts, cmpopts.SortSlices(less)); diff != "" {
 		t.Errorf("unexpected options args (-got, +want)\n%s", diff)
+	}
+}
+
+func TestConcurrentMapWrites(t *testing.T) {
+	t.Parallel()
+	// Create a shared map for the test
+	sharedVSS := util.NewVolumeStateStore()
+	// Number of concurrent writes we want to simulate
+	numWrites := 2000
+
+	// Use a WaitGroup to wait for all goroutines to finish
+	var wg sync.WaitGroup
+
+	// Run concurrent tests manually using goroutines
+	for i := range numWrites {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Simulate concurrent writes to the shared map
+			sharedVSS.Store(string(rune(i)), &util.VolumeState{})
+		}()
+	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+
+	// validate correct number of writes occurred
+	if int(sharedVSS.Size()) != numWrites {
+		t.Errorf("expected %d entries in the map, got %d", numWrites, sharedVSS.Size())
 	}
 }
