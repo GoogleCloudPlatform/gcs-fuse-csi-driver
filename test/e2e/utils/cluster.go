@@ -31,6 +31,9 @@ import (
 var (
 	nativeSidecarMinimumVersion       = version.MustParseGeneric("1.29.0")
 	saTokenVolInjectionMinimumVersion = version.MustParseGeneric("1.33.0")
+	skipBucketCheckMinimumVersion     = version.MustParseGeneric("1.29.0")
+	kernelReadAheadMinimumVersion     = version.MustParseGeneric("1.32.0")
+	metadataPrefetchMinimumVersion    = version.MustParseGeneric("1.32.0")
 )
 
 func clusterDownGKE(testParams *TestParameters) error {
@@ -137,14 +140,14 @@ func clusterUpGKE(testParams *TestParameters) error {
 }
 
 func ClusterAtLeastMinVersion(clusterVersion, nodeVersion string, minVersion *version.Version) (bool, error) {
-	supportsNativeSidecar := false
+	supportsFeature := false
 	if clusterVersion != "" {
 		parsedClusterVersion, err := version.ParseGeneric(clusterVersion)
 		if err != nil {
 			return false, err
 		}
 		if parsedClusterVersion.AtLeast(minVersion) {
-			supportsNativeSidecar = true
+			supportsFeature = true
 
 			if nodeVersion != "" {
 				parsedNodeVersion, err := version.ParseGeneric(nodeVersion)
@@ -152,11 +155,11 @@ func ClusterAtLeastMinVersion(clusterVersion, nodeVersion string, minVersion *ve
 					return false, err
 				}
 				if !parsedNodeVersion.AtLeast(minVersion) {
-					supportsNativeSidecar = false
+					supportsFeature = false
 				}
 			}
 		}
 	}
 
-	return supportsNativeSidecar, nil
+	return supportsFeature, nil
 }

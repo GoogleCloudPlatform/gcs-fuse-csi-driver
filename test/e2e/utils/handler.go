@@ -240,13 +240,20 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	if testParams.UseGKEManagedDriver {
-		skipTests = append(skipTests, "metrics")
-		skipTests = append(skipTests, "read.ahead")
-		// TODO(jaimebz): Skip this test until Managed Driver has changes released.
-		skipTests = append(skipTests, "metadata.prefetch")
+		skipTests = append(skipTests, "metrics") // Skipping as these tests are known to be unstable
 
-		// TODO(saikatroyc) remove this skip when GCSFuse CSI v1.4.3 is back-ported to the below GKE versions.
-		if strings.HasPrefix(testParams.GkeClusterVersion, "1.27") || strings.HasPrefix(testParams.GkeClusterVersion, "1.28") {
+		supportsKernelReadAhead, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, kernelReadAheadMinimumVersion)
+		if !supportsKernelReadAhead {
+			skipTests = append(skipTests, "read.ahead")
+		}
+
+		supportsMetadataPrefetch, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, metadataPrefetchMinimumVersion)
+		if !supportsMetadataPrefetch {
+			skipTests = append(skipTests, "metadata.prefetch")
+		}
+
+		supportsSkipBucketAccessCheck, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, skipBucketCheckMinimumVersion)
+		if !supportsSkipBucketAccessCheck {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
 	}
