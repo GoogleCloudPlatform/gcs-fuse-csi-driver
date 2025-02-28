@@ -21,12 +21,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -244,6 +246,38 @@ func TestNodeUnpublishVolume(t *testing.T) {
 		}
 
 		validateMountPoint(t, test.name, testEnv.fm, test.expectedMount)
+	}
+}
+
+// Attempts to modify a shared map, causes fatal error: concurrent map writes unless using alter with lock.
+func TestConcurrentMapWrites(t *testing.T) {
+	t.Parallel()
+	// Create a shared map for the test
+	sharedVSS := make(map[string]*volumeState)
+	ns := &nodeServer{volumeLocks: util.NewVolumeLocks()}
+	// Number of concurrent writes we want to simulate
+	numWrites := 200
+
+	// Use a WaitGroup to wait for all goroutines to finish
+	var wg sync.WaitGroup
+
+	// Run concurrent tests manually using goroutines
+	for i := range numWrites {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Simulate concurrent writes to the shared map
+			// sharedVSS[string(rune(i))] = &volumeState{}
+			ns.alterWithLock("vss", func() { sharedVSS[string(rune(i))] = &volumeState{} })
+		}()
+	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+
+	// validate correct number of writes occurred
+	if len(sharedVSS) != numWrites {
+		t.Errorf("expected %d entries in the map, got %d", numWrites, len(sharedVSS))
 	}
 }
 
