@@ -115,7 +115,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		// Pods may belong to different namespaces and would need their own access check.
 		vs, ok := s.volumeStateStore[targetPath]
 		if !ok {
-			s.volumeStateStore[targetPath] = &volumeState{}
+			s.alterWithLock("volumeStateStore", func() { s.volumeStateStore[targetPath] = &volumeState{} })
 			vs = s.volumeStateStore[targetPath]
 		}
 
@@ -239,7 +239,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
 	}
 
-	delete(s.volumeStateStore, targetPath)
+	s.alterWithLock("volumeStateStore", func() { delete(s.volumeStateStore, targetPath) })
 
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {
@@ -308,4 +308,23 @@ func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
 	}
 
 	return false
+}
+
+// acquire a lock on the specified resource (resource). If the lock is successfully acquired, the specified operation is executed, else retries.
+func (s *nodeServer) alterWithLock(resource string, operation func()) {
+	for {
+		// Try to acquire the lock
+		if acquired := s.volumeLocks.TryAcquire(resource); acquired {
+			// If acquired, execute the operation
+			operation()
+
+			// Release the lock and break out of the loop
+			s.volumeLocks.Release(resource)
+
+			break
+		}
+
+		// If the lock wasn't acquired, wait for a short duration and try again
+		time.Sleep(time.Millisecond * 100) // Adjust delay as necessary
+	}
 }
