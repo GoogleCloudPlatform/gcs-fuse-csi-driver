@@ -436,7 +436,7 @@ func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountN
 	// so there is no need to check if the bucket already exists
 	newBucket := &storage.ServiceBucket{
 		Project:                        n.meta.GetProjectID(),
-		Name:                           "gcsfusecsi-testsuite-gen-" + uuid.NewString(),
+		Name:                           uuid.NewString(),
 		Location:                       n.bucketLocation,
 		EnableUniformBucketLevelAccess: true,
 		EnableHierarchicalNamespace:    n.EnableHierarchicalNamespace,
