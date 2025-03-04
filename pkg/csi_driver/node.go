@@ -52,11 +52,7 @@ type nodeServer struct {
 	volumeLocks           *util.VolumeLocks
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
-	volumeStateStore      map[string]*volumeState
-}
-
-type volumeState struct {
-	bucketAccessCheckPassed bool
+	volumeStateStore      *util.VolumeStateStore
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -67,7 +63,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		volumeLocks:           util.NewVolumeLocks(),
 		k8sClients:            driver.config.K8sClients,
 		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
-		volumeStateStore:      make(map[string]*volumeState),
+		volumeStateStore:      util.NewVolumeStateStore(),
 	}
 }
 
@@ -113,13 +109,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if bucketName != "_" && !skipBucketAccessCheck {
 		// Use target path as an volume identifier because it corresponds to Pods and volumes.
 		// Pods may belong to different namespaces and would need their own access check.
-		vs, ok := s.volumeStateStore[targetPath]
+		vs, ok := s.volumeStateStore.Load(targetPath)
 		if !ok {
-			s.volumeStateStore[targetPath] = &volumeState{}
-			vs = s.volumeStateStore[targetPath]
+			s.volumeStateStore.Store(targetPath, &util.VolumeState{})
+			vs, _ = s.volumeStateStore.Load(targetPath)
 		}
 
-		if !vs.bucketAccessCheckPassed {
+		if !vs.BucketAccessCheckPassed {
 			storageService, err := s.prepareStorageService(ctx, vc)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
@@ -130,7 +126,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 				return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", bucketName, err)
 			}
 
-			vs.bucketAccessCheckPassed = true
+			vs.BucketAccessCheckPassed = true
 		}
 	}
 
@@ -239,7 +235,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
 	}
 
-	delete(s.volumeStateStore, targetPath)
+	s.volumeStateStore.Delete(targetPath)
 
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {
