@@ -163,6 +163,26 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod.Cleanup(ctx)
 	}
 
+	testCaseLongMountOptions := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring pod with long mount options")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		// this will result in a byte > 500 message
+		longMountOptions := "metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1," + "metadata-cache:type-cache-max-size-mb:-1,file-system:kernel-list-cache-ttl-secs:-1,gcs-connection:client-protocol:grpc,write:enable-streaming-writes:true,file-cache:enable-parallel-downloads:true,file-cache:parallel-downloads-per-file:100,file-cache:max-parallel-downloads:-1,file-cache:download-chunk-size-mb:10,file-cache:max-size-mb:-1"
+		ginkgo.By("Mount option length: " + strconv.Itoa(len(longMountOptions)))
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false, longMountOptions)
+
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
 	ginkgo.It("[read ahead config] should update read ahead config knobs", func() {
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
@@ -179,5 +199,12 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		} else {
 			ginkgo.By("Skipping the hostnetwork test for cluster version < 1.33.0")
 		}
+	})
+
+	ginkgo.It("should successfully mount with long mount options", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
+		testCaseLongMountOptions()
 	})
 }
