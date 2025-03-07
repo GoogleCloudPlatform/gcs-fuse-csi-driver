@@ -17,7 +17,6 @@ limitations under the License.
 package options
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -201,7 +200,7 @@ func (o *CloudControllerManagerOptions) ApplyTo(c *config.Config, allControllers
 		}
 	}
 	if o.WebhookServing != nil {
-		if err = o.WebhookServing.ApplyTo(&c.WebhookSecureServing, c.ComponentConfig.Webhook); err != nil {
+		if err = o.WebhookServing.ApplyTo(&c.WebhookSecureServing); err != nil {
 			return err
 		}
 	}
@@ -222,7 +221,7 @@ func (o *CloudControllerManagerOptions) ApplyTo(c *config.Config, allControllers
 		return err
 	}
 
-	c.EventBroadcaster = record.NewBroadcaster(record.WithContext(context.TODO())) // TODO: move broadcaster construction to a place where there is a proper context.
+	c.EventBroadcaster = record.NewBroadcaster()
 	c.EventRecorder = c.EventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: userAgent})
 
 	rootClientBuilder := clientbuilder.SimpleControllerClientBuilder{
