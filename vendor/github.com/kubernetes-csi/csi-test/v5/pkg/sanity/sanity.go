@@ -47,7 +47,6 @@ type CSISecrets struct {
 	CreateSnapshotSecret                       map[string]string `yaml:"CreateSnapshotSecret"`
 	DeleteSnapshotSecret                       map[string]string `yaml:"DeleteSnapshotSecret"`
 	ControllerExpandVolumeSecret               map[string]string `yaml:"ControllerExpandVolumeSecret"`
-	ControllerModifyVolumeSecret               map[string]string `yaml:"ControllerModifyVolumeSecret"`
 	ListSnapshotsSecret                        map[string]string `yaml:"ListSnapshotsSecret"`
 }
 
@@ -101,10 +100,6 @@ type TestConfig struct {
 	// TestSnapshotParametersFile for setting CreateVolumeRequest.Parameters.
 	TestSnapshotParametersFile string
 	TestSnapshotParameters     map[string]string
-
-	// TestVolumeMutableParametersFile for setting ModifyVolumeRequest.MutableParameters.
-	TestVolumeMutableParametersFile string
-	TestVolumeMutableParameters     map[string]string
 
 	// Callback functions to customize the creation of target and staging
 	// directories. Returns the new paths for mount and staging.
@@ -250,8 +245,6 @@ func (sc *TestContext) Setup() {
 	loadFromFile(sc.Config.TestVolumeParametersFile, &sc.Config.TestVolumeParameters)
 	// Get VolumeSnapshotClass parameters from TestSnapshotParametersFile
 	loadFromFile(sc.Config.TestSnapshotParametersFile, &sc.Config.TestSnapshotParameters)
-	// Get VolumeAttributeClass parameters from TestVolumeMutableParametersFile
-	loadFromFile(sc.Config.TestVolumeMutableParametersFile, &sc.Config.TestVolumeMutableParameters)
 
 	if len(sc.Config.SecretsFile) > 0 {
 		sc.Secrets, err = loadSecrets(sc.Config.SecretsFile)
@@ -458,14 +451,6 @@ func PseudoUUID() string {
 // alone should already be fairly unique.
 func UniqueString(prefix string) string {
 	return prefix + uniqueSuffix
-}
-
-func UniqueStringWithLength(prefix string, length int) string {
-	str := UniqueString(prefix)
-	if len(str) > length {
-		panic(fmt.Sprintf("prefix %q is too long, use a shorter one", prefix))
-	}
-	return str + strings.Repeat("a", length-len(str))
 }
 
 // Return codes for CheckPath

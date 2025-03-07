@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -66,7 +68,7 @@ func isPluginCapabilitySupported(c csi.IdentityClient,
 
 func runControllerTest(sc *TestContext, r *Resources, controllerPublishSupported bool, nodeStageSupported bool, nodeVolumeStatsSupported bool, count int) {
 
-	name := UniqueString(fmt.Sprintf("sanity-node-full-%d", count))
+	name := UniqueString("sanity-node-full")
 
 	By("getting node information")
 	ni, err := r.NodeGetInfo(
@@ -375,28 +377,36 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 
 	Describe("NodePublishVolume", func() {
 		It("should fail when no volume id is provided", func() {
-			rsp, err := r.NodePublishVolume(
+			_, err := r.NodePublishVolume(
 				context.Background(),
 				&csi.NodePublishVolumeRequest{
 					Secrets: sc.Secrets.NodePublishVolumeSecret,
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no target path is provided", func() {
-			rsp, err := r.NodePublishVolume(
+			_, err := r.NodePublishVolume(
 				context.Background(),
 				&csi.NodePublishVolumeRequest{
 					VolumeId: sc.Config.IDGen.GenerateUniqueValidVolumeID(),
 					Secrets:  sc.Secrets.NodePublishVolumeSecret,
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no volume capability is provided", func() {
-			rsp, err := r.NodePublishVolume(
+			_, err := r.NodePublishVolume(
 				context.Background(),
 				&csi.NodePublishVolumeRequest{
 					VolumeId:         sc.Config.IDGen.GenerateUniqueValidVolumeID(),
@@ -405,27 +415,39 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 					Secrets:          sc.Secrets.NodePublishVolumeSecret,
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 	})
 
 	Describe("NodeUnpublishVolume", func() {
 		It("should fail when no volume id is provided", func() {
 
-			rsp, err := r.NodeUnpublishVolume(
+			_, err := r.NodeUnpublishVolume(
 				context.Background(),
 				&csi.NodeUnpublishVolumeRequest{})
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no target path is provided", func() {
 
-			rsp, err := r.NodeUnpublishVolume(
+			_, err := r.NodeUnpublishVolume(
 				context.Background(),
 				&csi.NodeUnpublishVolumeRequest{
 					VolumeId: sc.Config.IDGen.GenerateUniqueValidVolumeID(),
 				})
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should remove target path", func() {
@@ -501,7 +523,7 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 		})
 
 		It("should fail when no volume id is provided", func() {
-			rsp, err := r.NodeStageVolume(
+			_, err := r.NodeStageVolume(
 				context.Background(),
 				&csi.NodeStageVolumeRequest{
 					StagingTargetPath: sc.StagingPath,
@@ -512,11 +534,15 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 					Secrets: sc.Secrets.NodeStageVolumeSecret,
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no staging target path is provided", func() {
-			rsp, err := r.NodeStageVolume(
+			_, err := r.NodeStageVolume(
 				context.Background(),
 				&csi.NodeStageVolumeRequest{
 					VolumeId:         sc.Config.IDGen.GenerateUniqueValidVolumeID(),
@@ -527,7 +553,11 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 					Secrets: sc.Secrets.NodeStageVolumeSecret,
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no volume capability is provided", func() {
@@ -555,7 +585,7 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 				},
 			)
 
-			rsp, err := r.NodeStageVolume(
+			_, err := r.NodeStageVolume(
 				context.Background(),
 				&csi.NodeStageVolumeRequest{
 					VolumeId:          vol.GetVolume().GetVolumeId(),
@@ -566,7 +596,11 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 					Secrets: sc.Secrets.NodeStageVolumeSecret,
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 	})
 
@@ -579,22 +613,30 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 
 		It("should fail when no volume id is provided", func() {
 
-			rsp, err := r.NodeUnstageVolume(
+			_, err := r.NodeUnstageVolume(
 				context.Background(),
 				&csi.NodeUnstageVolumeRequest{
 					StagingTargetPath: sc.StagingPath,
 				})
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no staging target path is provided", func() {
 
-			rsp, err := r.NodeUnstageVolume(
+			_, err := r.NodeUnstageVolume(
 				context.Background(),
 				&csi.NodeUnstageVolumeRequest{
 					VolumeId: sc.Config.IDGen.GenerateUniqueValidVolumeID(),
 				})
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 	})
 
@@ -606,34 +648,46 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 		})
 
 		It("should fail when no volume id is provided", func() {
-			rsp, err := r.NodeGetVolumeStats(
+			_, err := r.NodeGetVolumeStats(
 				context.Background(),
 				&csi.NodeGetVolumeStatsRequest{
 					VolumePath: "some/path",
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no volume path is provided", func() {
-			rsp, err := r.NodeGetVolumeStats(
+			_, err := r.NodeGetVolumeStats(
 				context.Background(),
 				&csi.NodeGetVolumeStatsRequest{
 					VolumeId: sc.Config.IDGen.GenerateUniqueValidVolumeID(),
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when volume is not found", func() {
-			rsp, err := r.NodeGetVolumeStats(
+			_, err := r.NodeGetVolumeStats(
 				context.Background(),
 				&csi.NodeGetVolumeStatsRequest{
 					VolumeId:   sc.Config.IDGen.GenerateUniqueValidVolumeID(),
 					VolumePath: "some/path",
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.NotFound)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.NotFound), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when volume does not exist on the specified path", func() {
@@ -659,14 +713,18 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 
 			// NodeGetVolumeStats
 			By("Get node volume stats")
-			rsp, err := r.NodeGetVolumeStats(
+			_, err = r.NodeGetVolumeStats(
 				context.Background(),
 				&csi.NodeGetVolumeStatsRequest{
 					VolumeId:   vol.GetVolume().GetVolumeId(),
 					VolumePath: "some/path",
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.NotFound)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.NotFound), "unexpected error: %s", serverError.Message())
 		})
 
 	})
@@ -680,14 +738,18 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 		})
 
 		It("should fail when no volume id is provided", func() {
-			rsp, err := r.NodeExpandVolume(
+			_, err := r.NodeExpandVolume(
 				context.Background(),
 				&csi.NodeExpandVolumeRequest{
 					VolumePath:       sc.TargetPath,
 					VolumeCapability: TestVolumeCapabilityWithAccessType(sc, csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER),
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when no volume path is provided", func() {
@@ -695,25 +757,33 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 
 			vol := createVolume(name)
 
-			rsp, err := r.NodeExpandVolume(
+			_, err := r.NodeExpandVolume(
 				context.Background(),
 				&csi.NodeExpandVolumeRequest{
 					VolumeId:         vol.GetVolume().VolumeId,
 					VolumeCapability: TestVolumeCapabilityWithAccessType(sc, csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER),
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.InvalidArgument)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.InvalidArgument), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should fail when volume is not found", func() {
-			rsp, err := r.NodeExpandVolume(
+			_, err := r.NodeExpandVolume(
 				context.Background(),
 				&csi.NodeExpandVolumeRequest{
 					VolumeId:   sc.Config.IDGen.GenerateUniqueValidVolumeID(),
 					VolumePath: "some/path",
 				},
 			)
-			ExpectErrorCode(rsp, err, codes.NotFound)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.NotFound), "unexpected error: %s", serverError.Message())
 		})
 
 		It("should work if node-expand is called after node-publish", func() {

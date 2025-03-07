@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC.
+// Copyright 2024 Google LLC.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -57,13 +57,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
-	"github.com/googleapis/gax-go/v2/internallog"
 	googleapi "google.golang.org/api/googleapi"
 	internal "google.golang.org/api/internal"
 	gensupport "google.golang.org/api/internal/gensupport"
@@ -87,7 +85,6 @@ var _ = strings.Replace
 var _ = context.Canceled
 var _ = internaloption.WithDefaultEndpoint
 var _ = internal.Version
-var _ = internallog.New
 
 const apiId = "iam:v1"
 const apiName = "iam"
@@ -118,13 +115,7 @@ func NewService(ctx context.Context, opts ...option.ClientOption) (*Service, err
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{client: client, BasePath: basePath, logger: internaloption.GetLogger(opts)}
-	s.IamPolicies = NewIamPoliciesService(s)
-	s.Locations = NewLocationsService(s)
-	s.Organizations = NewOrganizationsService(s)
-	s.Permissions = NewPermissionsService(s)
-	s.Projects = NewProjectsService(s)
-	s.Roles = NewRolesService(s)
+	s, err := New(client)
 	if err != nil {
 		return nil, err
 	}
@@ -143,12 +134,18 @@ func New(client *http.Client) (*Service, error) {
 	if client == nil {
 		return nil, errors.New("client is nil")
 	}
-	return NewService(context.TODO(), option.WithHTTPClient(client))
+	s := &Service{client: client, BasePath: basePath}
+	s.IamPolicies = NewIamPoliciesService(s)
+	s.Locations = NewLocationsService(s)
+	s.Organizations = NewOrganizationsService(s)
+	s.Permissions = NewPermissionsService(s)
+	s.Projects = NewProjectsService(s)
+	s.Roles = NewRolesService(s)
+	return s, nil
 }
 
 type Service struct {
 	client    *http.Client
-	logger    *slog.Logger
 	BasePath  string // API endpoint base URL
 	UserAgent string // optional additional User-Agent fragment
 
@@ -1186,21 +1183,12 @@ type GoogleIamAdminV1WorkforcePoolProviderExtraAttributesOAuth2Client struct {
 	// Possible values:
 	//   "ATTRIBUTES_TYPE_UNSPECIFIED" - No AttributesType specified.
 	//   "AZURE_AD_GROUPS_MAIL" - Used to get the user's group claims from the
-	// Microsoft Entra ID identity provider using configuration provided in
+	// Azure AD identity provider using configuration provided in
 	// ExtraAttributesOAuth2Client and `mail` property of the
 	// `microsoft.graph.group` object is used for claim mapping. See
 	// https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0#properties
 	// for more details on `microsoft.graph.group` properties. The attributes
 	// obtained from idntity provider are mapped to `assertion.groups`.
-	//   "AZURE_AD_GROUPS_ID" - Used to get the user's group claims from the
-	// Microsoft Entra ID identity provider using configuration provided in
-	// ExtraAttributesOAuth2Client and `id` property of the `microsoft.graph.group`
-	// object is used for claim mapping. See
-	// https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0#properties
-	// for more details on `microsoft.graph.group` properties. The group IDs
-	// obtained from Microsoft Entra ID are present in `assertion. groups` for OIDC
-	// providers and `assertion.attributes.groups` for SAML providers for attribute
-	// mapping.
 	AttributesType string `json:"attributesType,omitempty"`
 	// ClientId: Required. The OAuth 2.0 client ID for retrieving extra attributes
 	// from the identity provider. Required to get the Access Token using client
@@ -1271,16 +1259,16 @@ type GoogleIamAdminV1WorkforcePoolProviderOidc struct {
 	// ClientId: Required. The client ID. Must match the audience claim of the JWT
 	// issued by the identity provider.
 	ClientId string `json:"clientId,omitempty"`
-	// ClientSecret: Optional. The optional client secret. Required to enable
-	// Authorization Code flow for web sign-in.
+	// ClientSecret: The optional client secret. Required to enable Authorization
+	// Code flow for web sign-in.
 	ClientSecret *GoogleIamAdminV1WorkforcePoolProviderOidcClientSecret `json:"clientSecret,omitempty"`
 	// IssuerUri: Required. The OIDC issuer URI. Must be a valid URI using the
 	// `https` scheme.
 	IssuerUri string `json:"issuerUri,omitempty"`
-	// JwksJson: Optional. OIDC JWKs in JSON String format. For details on the
-	// definition of a JWK, see https://tools.ietf.org/html/rfc7517. If not set,
-	// the `jwks_uri` from the discovery document(fetched from the .well-known path
-	// of the `issuer_uri`) will be used. Currently, RSA and EC asymmetric keys are
+	// JwksJson: OIDC JWKs in JSON String format. For details on the definition of
+	// a JWK, see https://tools.ietf.org/html/rfc7517. If not set, the `jwks_uri`
+	// from the discovery document(fetched from the .well-known path of the
+	// `issuer_uri`) will be used. Currently, RSA and EC asymmetric keys are
 	// supported. The JWK must use following format and include only the following
 	// fields: { "keys": [ { "kty": "RSA/EC", "alg": "", "use": "sig", "kid": "",
 	// "n": "", "e": "", "x": "", "y": "", "crv": "" } ] }
@@ -1333,8 +1321,8 @@ func (s GoogleIamAdminV1WorkforcePoolProviderOidcClientSecret) MarshalJSON() ([]
 // GoogleIamAdminV1WorkforcePoolProviderOidcClientSecretValue: Representation
 // of the value of the client secret.
 type GoogleIamAdminV1WorkforcePoolProviderOidcClientSecretValue struct {
-	// PlainText: Optional. Input only. The plain text of the client secret value.
-	// For security reasons, this field is only used for input and will never be
+	// PlainText: Input only. The plain text of the client secret value. For
+	// security reasons, this field is only used for input and will never be
 	// populated in any response.
 	PlainText string `json:"plainText,omitempty"`
 	// Thumbprint: Output only. A thumbprint to represent the current client secret
@@ -1361,7 +1349,7 @@ func (s GoogleIamAdminV1WorkforcePoolProviderOidcClientSecretValue) MarshalJSON(
 // GoogleIamAdminV1WorkforcePoolProviderOidcWebSsoConfig: Configuration for web
 // single sign-on for the OIDC provider.
 type GoogleIamAdminV1WorkforcePoolProviderOidcWebSsoConfig struct {
-	// AdditionalScopes: Optional. Additional scopes to request for in the OIDC
+	// AdditionalScopes: Additional scopes to request for in the OIDC
 	// authentication request on top of scopes requested by default. By default,
 	// the `openid`, `profile` and `email` scopes that are supported by the
 	// identity provider are requested. Each additional scope may be at most 256
@@ -1943,10 +1931,7 @@ type OauthClient struct {
 	// to request during OAuth flows. The following scopes are supported: *
 	// `https://www.googleapis.com/auth/cloud-platform`: See, edit, configure, and
 	// delete your Google Cloud data and see the email address for your Google
-	// Account. * `openid`: The OAuth client can associate you with your personal
-	// information on Google Cloud. * `email`: The OAuth client can read a
-	// federated identity's email address. * `groups`: The OAuth client can read a
-	// federated identity's groups.
+	// Account.
 	AllowedScopes []string `json:"allowedScopes,omitempty"`
 	// ClientId: Output only. The system-generated OauthClient id.
 	ClientId string `json:"clientId,omitempty"`
@@ -1971,7 +1956,7 @@ type OauthClient struct {
 	// ExpireTime: Output only. Time after which the OauthClient will be
 	// permanently purged and cannot be recovered.
 	ExpireTime string `json:"expireTime,omitempty"`
-	// Name: Immutable. Identifier. The resource name of the OauthClient.
+	// Name: Immutable. The resource name of the OauthClient.
 	// Format:`projects/{project}/locations/{location}/oauthClients/{oauth_client}`.
 	Name string `json:"name,omitempty"`
 	// State: Output only. The state of the OauthClient.
@@ -2020,8 +2005,7 @@ type OauthClientCredential struct {
 	// DisplayName: Optional. A user-specified display name of the
 	// OauthClientCredential. Cannot exceed 32 characters.
 	DisplayName string `json:"displayName,omitempty"`
-	// Name: Immutable. Identifier. The resource name of the OauthClientCredential.
-	// Format:
+	// Name: Immutable. The resource name of the OauthClientCredential. Format:
 	// `projects/{project}/locations/{location}/oauthClients/{oauth_client}/credenti
 	// als/{credential}`
 	Name string `json:"name,omitempty"`
@@ -2048,13 +2032,13 @@ func (s OauthClientCredential) MarshalJSON() ([]byte, error) {
 
 // Oidc: Represents an OpenId Connect 1.0 identity provider.
 type Oidc struct {
-	// AllowedAudiences: Optional. Acceptable values for the `aud` field (audience)
-	// in the OIDC token. Token exchange requests are rejected if the token
-	// audience does not match one of the configured values. Each audience may be
-	// at most 256 characters. A maximum of 10 audiences may be configured. If this
-	// list is empty, the OIDC token audience must be equal to the full canonical
-	// resource name of the WorkloadIdentityPoolProvider, with or without the HTTPS
-	// prefix. For example: ```
+	// AllowedAudiences: Acceptable values for the `aud` field (audience) in the
+	// OIDC token. Token exchange requests are rejected if the token audience does
+	// not match one of the configured values. Each audience may be at most 256
+	// characters. A maximum of 10 audiences may be configured. If this list is
+	// empty, the OIDC token audience must be equal to the full canonical resource
+	// name of the WorkloadIdentityPoolProvider, with or without the HTTPS prefix.
+	// For example: ```
 	// //iam.googleapis.com/projects//locations//workloadIdentityPools//providers/
 	// https://iam.googleapis.com/projects//locations//workloadIdentityPools//providers/
 	// ```
@@ -2140,8 +2124,8 @@ type OperationMetadata struct {
 	ApiVersion string `json:"apiVersion,omitempty"`
 	// CancelRequested: Output only. Identifies whether the user has requested
 	// cancellation of the operation. Operations that have been cancelled
-	// successfully have google.longrunning.Operation.error value with a
-	// google.rpc.Status.code of `1`, corresponding to `Code.CANCELLED`.
+	// successfully have Operation.error value with a google.rpc.Status.code of 1,
+	// corresponding to `Code.CANCELLED`.
 	CancelRequested bool `json:"cancelRequested,omitempty"`
 	// CreateTime: Output only. The time the operation was created.
 	CreateTime string `json:"createTime,omitempty"`
@@ -2210,7 +2194,8 @@ type Permission struct {
 	//   "TESTING" - Permission is being tested to check custom role compatibility.
 	//   "NOT_SUPPORTED" - Permission is not supported for custom role use.
 	CustomRolesSupportLevel string `json:"customRolesSupportLevel,omitempty"`
-	// Description: A brief description of what this Permission is used for.
+	// Description: A brief description of what this Permission is used for. This
+	// permission can ONLY be used in predefined roles.
 	Description string `json:"description,omitempty"`
 	// Name: The name of this Permission.
 	Name                  string `json:"name,omitempty"`
@@ -2446,7 +2431,7 @@ type QueryGrantableRolesRequest struct {
 	// `//cloudresourcemanager.googleapis.com/projects/my-project`.
 	FullResourceName string `json:"fullResourceName,omitempty"`
 	// PageSize: Optional limit on the number of roles to include in the response.
-	// The default is 300, and the maximum is 2,000.
+	// The default is 300, and the maximum is 1,000.
 	PageSize int64 `json:"pageSize,omitempty"`
 	// PageToken: Optional pagination token returned in an earlier
 	// QueryGrantableRolesResponse.
@@ -3249,32 +3234,32 @@ type WorkforcePool struct {
 	// restricted to given set of services or programmatic sign-in can be disabled
 	// for pool users.
 	AccessRestrictions *AccessRestrictions `json:"accessRestrictions,omitempty"`
-	// Description: Optional. A user-specified description of the pool. Cannot
-	// exceed 256 characters.
+	// Description: A user-specified description of the pool. Cannot exceed 256
+	// characters.
 	Description string `json:"description,omitempty"`
-	// Disabled: Optional. Disables the workforce pool. You cannot use a disabled
-	// pool to exchange tokens, or use existing tokens to access resources. If the
-	// pool is re-enabled, existing tokens grant access again.
+	// Disabled: Disables the workforce pool. You cannot use a disabled pool to
+	// exchange tokens, or use existing tokens to access resources. If the pool is
+	// re-enabled, existing tokens grant access again.
 	Disabled bool `json:"disabled,omitempty"`
-	// DisplayName: Optional. A user-specified display name of the pool in Google
-	// Cloud Console. Cannot exceed 32 characters.
+	// DisplayName: A user-specified display name of the pool in Google Cloud
+	// Console. Cannot exceed 32 characters.
 	DisplayName string `json:"displayName,omitempty"`
 	// ExpireTime: Output only. Time after which the workforce pool will be
 	// permanently purged and cannot be recovered.
 	ExpireTime string `json:"expireTime,omitempty"`
-	// Name: Identifier. The resource name of the pool. Format:
+	// Name: Output only. The resource name of the pool. Format:
 	// `locations/{location}/workforcePools/{workforce_pool_id}`
 	Name string `json:"name,omitempty"`
 	// Parent: Immutable. The resource name of the parent. Format:
 	// `organizations/{org-id}`.
 	Parent string `json:"parent,omitempty"`
-	// SessionDuration: Optional. Duration that the Google Cloud access tokens,
-	// console sign-in sessions, and `gcloud` sign-in sessions from this pool are
-	// valid. Must be greater than 15 minutes (900s) and less than 12 hours
-	// (43200s). If `session_duration` is not configured, minted credentials have a
-	// default duration of one hour (3600s). For SAML providers, the lifetime of
-	// the token is the minimum of the `session_duration` and the
-	// `SessionNotOnOrAfter` claim in the SAML assertion.
+	// SessionDuration: Duration that the Google Cloud access tokens, console
+	// sign-in sessions, and `gcloud` sign-in sessions from this pool are valid.
+	// Must be greater than 15 minutes (900s) and less than 12 hours (43200s). If
+	// `session_duration` is not configured, minted credentials have a default
+	// duration of one hour (3600s). For SAML providers, the lifetime of the token
+	// is the minimum of the `session_duration` and the `SessionNotOnOrAfter` claim
+	// in the SAML assertion.
 	SessionDuration string `json:"sessionDuration,omitempty"`
 	// State: Output only. The state of the pool.
 	//
@@ -3311,7 +3296,7 @@ func (s WorkforcePool) MarshalJSON() ([]byte, error) {
 
 // WorkforcePoolProvider: A configuration for an external identity provider.
 type WorkforcePoolProvider struct {
-	// AttributeCondition: Optional. A Common Expression Language
+	// AttributeCondition: A Common Expression Language
 	// (https://opensource.google/projects/cel) expression, in plain text, to
 	// restrict what otherwise valid authentication credentials issued by the
 	// provider should not be accepted. The expression must output a boolean
@@ -3372,15 +3357,14 @@ type WorkforcePoolProvider struct {
 	// `sub` claim of the incoming credential to the `subject` attribute on a
 	// Google token: ``` {"google.subject": "assertion.sub"} ```
 	AttributeMapping map[string]string `json:"attributeMapping,omitempty"`
-	// Description: Optional. A user-specified description of the provider. Cannot
-	// exceed 256 characters.
+	// Description: A user-specified description of the provider. Cannot exceed 256
+	// characters.
 	Description string `json:"description,omitempty"`
-	// Disabled: Optional. Disables the workforce pool provider. You cannot use a
-	// disabled provider to exchange tokens. However, existing tokens still grant
-	// access.
+	// Disabled: Disables the workforce pool provider. You cannot use a disabled
+	// provider to exchange tokens. However, existing tokens still grant access.
 	Disabled bool `json:"disabled,omitempty"`
-	// DisplayName: Optional. A user-specified display name for the provider.
-	// Cannot exceed 32 characters.
+	// DisplayName: A user-specified display name for the provider. Cannot exceed
+	// 32 characters.
 	DisplayName string `json:"displayName,omitempty"`
 	// ExpireTime: Output only. Time after which the workload pool provider will be
 	// permanently purged and cannot be recovered.
@@ -3390,7 +3374,7 @@ type WorkforcePoolProvider struct {
 	// users can't get the desired claims in authentication credentials. Currently
 	// this configuration is only supported with OIDC protocol.
 	ExtraAttributesOauth2Client *GoogleIamAdminV1WorkforcePoolProviderExtraAttributesOAuth2Client `json:"extraAttributesOauth2Client,omitempty"`
-	// Name: Identifier. The resource name of the provider. Format:
+	// Name: Output only. The resource name of the provider. Format:
 	// `locations/{location}/workforcePools/{workforce_pool_id}/providers/{provider_
 	// id}`
 	Name string `json:"name,omitempty"`
@@ -3440,9 +3424,7 @@ type WorkforcePoolProviderKey struct {
 	ExpireTime string `json:"expireTime,omitempty"`
 	// KeyData: Immutable. Public half of the asymmetric key.
 	KeyData *KeyData `json:"keyData,omitempty"`
-	// Name: Identifier. The resource name of the key. Format:
-	// `locations/{location}/workforcePools/{workforce_pool_id}/providers/{provider_
-	// id}/keys/{key_id}`
+	// Name: Output only. The resource name of the key.
 	Name string `json:"name,omitempty"`
 	// State: Output only. The state of the key.
 	//
@@ -3484,15 +3466,13 @@ func (s WorkforcePoolProviderKey) MarshalJSON() ([]byte, error) {
 // can define IAM policies to grant these identities access to Google Cloud
 // resources.
 type WorkloadIdentityPool struct {
-	// Description: Optional. A description of the pool. Cannot exceed 256
-	// characters.
+	// Description: A description of the pool. Cannot exceed 256 characters.
 	Description string `json:"description,omitempty"`
-	// Disabled: Optional. Whether the pool is disabled. You cannot use a disabled
-	// pool to exchange tokens, or use existing tokens to access resources. If the
-	// pool is re-enabled, existing tokens grant access again.
+	// Disabled: Whether the pool is disabled. You cannot use a disabled pool to
+	// exchange tokens, or use existing tokens to access resources. If the pool is
+	// re-enabled, existing tokens grant access again.
 	Disabled bool `json:"disabled,omitempty"`
-	// DisplayName: Optional. A display name for the pool. Cannot exceed 32
-	// characters.
+	// DisplayName: A display name for the pool. Cannot exceed 32 characters.
 	DisplayName string `json:"displayName,omitempty"`
 	// ExpireTime: Output only. Time after which the workload identity pool will be
 	// permanently purged and cannot be recovered.
@@ -3540,7 +3520,7 @@ type WorkloadIdentityPoolOperationMetadata struct {
 // WorkloadIdentityPoolProvider: A configuration for an external identity
 // provider.
 type WorkloadIdentityPoolProvider struct {
-	// AttributeCondition: Optional. A Common Expression Language
+	// AttributeCondition: A Common Expression Language
 	// (https://opensource.google/projects/cel) expression, in plain text, to
 	// restrict what otherwise valid authentication credentials issued by the
 	// provider should not be accepted. The expression must output a boolean
@@ -3555,22 +3535,22 @@ type WorkloadIdentityPoolProvider struct {
 	// credentials with a mapped `google.groups` value of `admins`: ``` "'admins'
 	// in google.groups" ```
 	AttributeCondition string `json:"attributeCondition,omitempty"`
-	// AttributeMapping: Optional. Maps attributes from authentication credentials
-	// issued by an external identity provider to Google Cloud attributes, such as
-	// `subject` and `segment`. Each key must be a string specifying the Google
-	// Cloud IAM attribute to map to. The following keys are supported: *
-	// `google.subject`: The principal IAM is authenticating. You can reference
-	// this value in IAM bindings. This is also the subject that appears in Cloud
-	// Logging logs. Cannot exceed 127 bytes. * `google.groups`: Groups the
-	// external identity belongs to. You can grant groups access to resources using
-	// an IAM `principalSet` binding; access applies to all members of the group.
-	// You can also provide custom attributes by specifying
-	// `attribute.{custom_attribute}`, where `{custom_attribute}` is the name of
-	// the custom attribute to be mapped. You can define a maximum of 50 custom
-	// attributes. The maximum length of a mapped attribute key is 100 characters,
-	// and the key may only contain the characters [a-z0-9_]. You can reference
-	// these attributes in IAM policies to define fine-grained access for a
-	// workload to Google Cloud resources. For example: * `google.subject`:
+	// AttributeMapping:  Maps attributes from authentication credentials issued by
+	// an external identity provider to Google Cloud attributes, such as `subject`
+	// and `segment`. Each key must be a string specifying the Google Cloud IAM
+	// attribute to map to. The following keys are supported: * `google.subject`:
+	// The principal IAM is authenticating. You can reference this value in IAM
+	// bindings. This is also the subject that appears in Cloud Logging logs.
+	// Cannot exceed 127 bytes. * `google.groups`: Groups the external identity
+	// belongs to. You can grant groups access to resources using an IAM
+	// `principalSet` binding; access applies to all members of the group. You can
+	// also provide custom attributes by specifying `attribute.{custom_attribute}`,
+	// where `{custom_attribute}` is the name of the custom attribute to be mapped.
+	// You can define a maximum of 50 custom attributes. The maximum length of a
+	// mapped attribute key is 100 characters, and the key may only contain the
+	// characters [a-z0-9_]. You can reference these attributes in IAM policies to
+	// define fine-grained access for a workload to Google Cloud resources. For
+	// example: * `google.subject`:
 	// `principal://iam.googleapis.com/projects/{project}/locations/{location}/workl
 	// oadIdentityPools/{pool}/subject/{value}` * `google.groups`:
 	// `principalSet://iam.googleapis.com/projects/{project}/locations/{location}/wo
@@ -3598,15 +3578,12 @@ type WorkloadIdentityPoolProvider struct {
 	AttributeMapping map[string]string `json:"attributeMapping,omitempty"`
 	// Aws: An Amazon Web Services identity provider.
 	Aws *Aws `json:"aws,omitempty"`
-	// Description: Optional. A description for the provider. Cannot exceed 256
-	// characters.
+	// Description: A description for the provider. Cannot exceed 256 characters.
 	Description string `json:"description,omitempty"`
-	// Disabled: Optional. Whether the provider is disabled. You cannot use a
-	// disabled provider to exchange tokens. However, existing tokens still grant
-	// access.
+	// Disabled: Whether the provider is disabled. You cannot use a disabled
+	// provider to exchange tokens. However, existing tokens still grant access.
 	Disabled bool `json:"disabled,omitempty"`
-	// DisplayName: Optional. A display name for the provider. Cannot exceed 32
-	// characters.
+	// DisplayName: A display name for the provider. Cannot exceed 32 characters.
 	DisplayName string `json:"displayName,omitempty"`
 	// ExpireTime: Output only. Time after which the workload identity pool
 	// provider will be permanently purged and cannot be recovered.
@@ -3742,7 +3719,8 @@ func (c *IamPoliciesLintPolicyCall) Header() http.Header {
 
 func (c *IamPoliciesLintPolicyCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.lintpolicyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.lintpolicyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -3755,7 +3733,6 @@ func (c *IamPoliciesLintPolicyCall) doRequest(alt string) (*http.Response, error
 		return nil, err
 	}
 	req.Header = reqHeaders
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.iamPolicies.lintPolicy", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -3791,11 +3768,9 @@ func (c *IamPoliciesLintPolicyCall) Do(opts ...googleapi.CallOption) (*LintPolic
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.iamPolicies.lintPolicy", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -3842,7 +3817,8 @@ func (c *IamPoliciesQueryAuditableServicesCall) Header() http.Header {
 
 func (c *IamPoliciesQueryAuditableServicesCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.queryauditableservicesrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.queryauditableservicesrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -3855,7 +3831,6 @@ func (c *IamPoliciesQueryAuditableServicesCall) doRequest(alt string) (*http.Res
 		return nil, err
 	}
 	req.Header = reqHeaders
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.iamPolicies.queryAuditableServices", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -3891,11 +3866,9 @@ func (c *IamPoliciesQueryAuditableServicesCall) Do(opts ...googleapi.CallOption)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.iamPolicies.queryAuditableServices", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -3911,7 +3884,7 @@ type LocationsWorkforcePoolsCreateCall struct {
 // Create: Creates a new WorkforcePool. You cannot reuse the name of a deleted
 // pool until 30 days after deletion.
 //
-//   - location: Optional. The location of the pool to create. Format:
+//   - location: The location of the pool to create. Format:
 //     `locations/{location}`.
 func (r *LocationsWorkforcePoolsService) Create(location string, workforcepool *WorkforcePool) *LocationsWorkforcePoolsCreateCall {
 	c := &LocationsWorkforcePoolsCreateCall{s: r.s, urlParams_: make(gensupport.URLParams)}
@@ -3955,7 +3928,8 @@ func (c *LocationsWorkforcePoolsCreateCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workforcepool)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workforcepool)
 	if err != nil {
 		return nil, err
 	}
@@ -3971,7 +3945,6 @@ func (c *LocationsWorkforcePoolsCreateCall) doRequest(alt string) (*http.Respons
 	googleapi.Expand(req.URL, map[string]string{
 		"location": c.location,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4006,11 +3979,9 @@ func (c *LocationsWorkforcePoolsCreateCall) Do(opts ...googleapi.CallOption) (*O
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4064,11 +4035,12 @@ func (c *LocationsWorkforcePoolsDeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4076,7 +4048,6 @@ func (c *LocationsWorkforcePoolsDeleteCall) doRequest(alt string) (*http.Respons
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4111,11 +4082,9 @@ func (c *LocationsWorkforcePoolsDeleteCall) Do(opts ...googleapi.CallOption) (*O
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4174,11 +4143,12 @@ func (c *LocationsWorkforcePoolsGetCall) doRequest(alt string) (*http.Response, 
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4186,7 +4156,6 @@ func (c *LocationsWorkforcePoolsGetCall) doRequest(alt string) (*http.Response, 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4221,11 +4190,9 @@ func (c *LocationsWorkforcePoolsGetCall) Do(opts ...googleapi.CallOption) (*Work
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4275,7 +4242,8 @@ func (c *LocationsWorkforcePoolsGetIamPolicyCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsGetIamPolicyCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.getiampolicyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.getiampolicyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -4291,7 +4259,6 @@ func (c *LocationsWorkforcePoolsGetIamPolicyCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"resource": c.resource,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.getIamPolicy", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4326,11 +4293,9 @@ func (c *LocationsWorkforcePoolsGetIamPolicyCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.getIamPolicy", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4419,11 +4384,12 @@ func (c *LocationsWorkforcePoolsListCall) doRequest(alt string) (*http.Response,
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+location}/workforcePools")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4431,7 +4397,6 @@ func (c *LocationsWorkforcePoolsListCall) doRequest(alt string) (*http.Response,
 	googleapi.Expand(req.URL, map[string]string{
 		"location": c.location,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4467,11 +4432,9 @@ func (c *LocationsWorkforcePoolsListCall) Do(opts ...googleapi.CallOption) (*Lis
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4507,7 +4470,7 @@ type LocationsWorkforcePoolsPatchCall struct {
 
 // Patch: Updates an existing WorkforcePool.
 //
-//   - name: Identifier. The resource name of the pool. Format:
+//   - name: Output only. The resource name of the pool. Format:
 //     `locations/{location}/workforcePools/{workforce_pool_id}`.
 func (r *LocationsWorkforcePoolsService) Patch(name string, workforcepool *WorkforcePool) *LocationsWorkforcePoolsPatchCall {
 	c := &LocationsWorkforcePoolsPatchCall{s: r.s, urlParams_: make(gensupport.URLParams)}
@@ -4548,7 +4511,8 @@ func (c *LocationsWorkforcePoolsPatchCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workforcepool)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workforcepool)
 	if err != nil {
 		return nil, err
 	}
@@ -4564,7 +4528,6 @@ func (c *LocationsWorkforcePoolsPatchCall) doRequest(alt string) (*http.Response
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4599,11 +4562,9 @@ func (c *LocationsWorkforcePoolsPatchCall) Do(opts ...googleapi.CallOption) (*Op
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4653,7 +4614,8 @@ func (c *LocationsWorkforcePoolsSetIamPolicyCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsSetIamPolicyCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.setiampolicyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.setiampolicyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -4669,7 +4631,6 @@ func (c *LocationsWorkforcePoolsSetIamPolicyCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"resource": c.resource,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.setIamPolicy", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4704,11 +4665,9 @@ func (c *LocationsWorkforcePoolsSetIamPolicyCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.setIamPolicy", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4761,7 +4720,8 @@ func (c *LocationsWorkforcePoolsTestIamPermissionsCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsTestIamPermissionsCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.testiampermissionsrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.testiampermissionsrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -4777,7 +4737,6 @@ func (c *LocationsWorkforcePoolsTestIamPermissionsCall) doRequest(alt string) (*
 	googleapi.Expand(req.URL, map[string]string{
 		"resource": c.resource,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.testIamPermissions", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4813,11 +4772,9 @@ func (c *LocationsWorkforcePoolsTestIamPermissionsCall) Do(opts ...googleapi.Cal
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.testIamPermissions", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4867,7 +4824,8 @@ func (c *LocationsWorkforcePoolsUndeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkforcepoolrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkforcepoolrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -4883,7 +4841,6 @@ func (c *LocationsWorkforcePoolsUndeleteCall) doRequest(alt string) (*http.Respo
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -4918,11 +4875,9 @@ func (c *LocationsWorkforcePoolsUndeleteCall) Do(opts ...googleapi.CallOption) (
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -4982,11 +4937,12 @@ func (c *LocationsWorkforcePoolsOperationsGetCall) doRequest(alt string) (*http.
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4994,7 +4950,6 @@ func (c *LocationsWorkforcePoolsOperationsGetCall) doRequest(alt string) (*http.
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5029,11 +4984,9 @@ func (c *LocationsWorkforcePoolsOperationsGetCall) Do(opts ...googleapi.CallOpti
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5093,7 +5046,8 @@ func (c *LocationsWorkforcePoolsProvidersCreateCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsProvidersCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workforcepoolprovider)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workforcepoolprovider)
 	if err != nil {
 		return nil, err
 	}
@@ -5109,7 +5063,6 @@ func (c *LocationsWorkforcePoolsProvidersCreateCall) doRequest(alt string) (*htt
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5144,11 +5097,9 @@ func (c *LocationsWorkforcePoolsProvidersCreateCall) Do(opts ...googleapi.CallOp
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5200,11 +5151,12 @@ func (c *LocationsWorkforcePoolsProvidersDeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsProvidersDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5212,7 +5164,6 @@ func (c *LocationsWorkforcePoolsProvidersDeleteCall) doRequest(alt string) (*htt
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5247,11 +5198,9 @@ func (c *LocationsWorkforcePoolsProvidersDeleteCall) Do(opts ...googleapi.CallOp
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5311,11 +5260,12 @@ func (c *LocationsWorkforcePoolsProvidersGetCall) doRequest(alt string) (*http.R
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5323,7 +5273,6 @@ func (c *LocationsWorkforcePoolsProvidersGetCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5359,11 +5308,9 @@ func (c *LocationsWorkforcePoolsProvidersGetCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5446,11 +5393,12 @@ func (c *LocationsWorkforcePoolsProvidersListCall) doRequest(alt string) (*http.
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/providers")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5458,7 +5406,6 @@ func (c *LocationsWorkforcePoolsProvidersListCall) doRequest(alt string) (*http.
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5494,11 +5441,9 @@ func (c *LocationsWorkforcePoolsProvidersListCall) Do(opts ...googleapi.CallOpti
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5534,7 +5479,7 @@ type LocationsWorkforcePoolsProvidersPatchCall struct {
 
 // Patch: Updates an existing WorkforcePoolProvider.
 //
-//   - name: Identifier. The resource name of the provider. Format:
+//   - name: Output only. The resource name of the provider. Format:
 //     `locations/{location}/workforcePools/{workforce_pool_id}/providers/{provide
 //     r_id}`.
 func (r *LocationsWorkforcePoolsProvidersService) Patch(name string, workforcepoolprovider *WorkforcePoolProvider) *LocationsWorkforcePoolsProvidersPatchCall {
@@ -5576,7 +5521,8 @@ func (c *LocationsWorkforcePoolsProvidersPatchCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsProvidersPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workforcepoolprovider)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workforcepoolprovider)
 	if err != nil {
 		return nil, err
 	}
@@ -5592,7 +5538,6 @@ func (c *LocationsWorkforcePoolsProvidersPatchCall) doRequest(alt string) (*http
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5627,11 +5572,9 @@ func (c *LocationsWorkforcePoolsProvidersPatchCall) Do(opts ...googleapi.CallOpt
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5682,7 +5625,8 @@ func (c *LocationsWorkforcePoolsProvidersUndeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsProvidersUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkforcepoolproviderrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkforcepoolproviderrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -5698,7 +5642,6 @@ func (c *LocationsWorkforcePoolsProvidersUndeleteCall) doRequest(alt string) (*h
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5733,11 +5676,9 @@ func (c *LocationsWorkforcePoolsProvidersUndeleteCall) Do(opts ...googleapi.Call
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5794,7 +5735,8 @@ func (c *LocationsWorkforcePoolsProvidersKeysCreateCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsProvidersKeysCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workforcepoolproviderkey)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workforcepoolproviderkey)
 	if err != nil {
 		return nil, err
 	}
@@ -5810,7 +5752,6 @@ func (c *LocationsWorkforcePoolsProvidersKeysCreateCall) doRequest(alt string) (
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5845,11 +5786,9 @@ func (c *LocationsWorkforcePoolsProvidersKeysCreateCall) Do(opts ...googleapi.Ca
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -5896,11 +5835,12 @@ func (c *LocationsWorkforcePoolsProvidersKeysDeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsProvidersKeysDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5908,7 +5848,6 @@ func (c *LocationsWorkforcePoolsProvidersKeysDeleteCall) doRequest(alt string) (
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -5943,11 +5882,9 @@ func (c *LocationsWorkforcePoolsProvidersKeysDeleteCall) Do(opts ...googleapi.Ca
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6005,11 +5942,12 @@ func (c *LocationsWorkforcePoolsProvidersKeysGetCall) doRequest(alt string) (*ht
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6017,7 +5955,6 @@ func (c *LocationsWorkforcePoolsProvidersKeysGetCall) doRequest(alt string) (*ht
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6053,11 +5990,9 @@ func (c *LocationsWorkforcePoolsProvidersKeysGetCall) Do(opts ...googleapi.CallO
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6142,11 +6077,12 @@ func (c *LocationsWorkforcePoolsProvidersKeysListCall) doRequest(alt string) (*h
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/keys")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6154,7 +6090,6 @@ func (c *LocationsWorkforcePoolsProvidersKeysListCall) doRequest(alt string) (*h
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6190,11 +6125,9 @@ func (c *LocationsWorkforcePoolsProvidersKeysListCall) Do(opts ...googleapi.Call
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6264,7 +6197,8 @@ func (c *LocationsWorkforcePoolsProvidersKeysUndeleteCall) Header() http.Header 
 
 func (c *LocationsWorkforcePoolsProvidersKeysUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkforcepoolproviderkeyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkforcepoolproviderkeyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -6280,7 +6214,6 @@ func (c *LocationsWorkforcePoolsProvidersKeysUndeleteCall) doRequest(alt string)
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6315,11 +6248,9 @@ func (c *LocationsWorkforcePoolsProvidersKeysUndeleteCall) Do(opts ...googleapi.
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6379,11 +6310,12 @@ func (c *LocationsWorkforcePoolsProvidersKeysOperationsGetCall) doRequest(alt st
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6391,7 +6323,6 @@ func (c *LocationsWorkforcePoolsProvidersKeysOperationsGetCall) doRequest(alt st
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6426,11 +6357,9 @@ func (c *LocationsWorkforcePoolsProvidersKeysOperationsGetCall) Do(opts ...googl
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.keys.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6490,11 +6419,12 @@ func (c *LocationsWorkforcePoolsProvidersOperationsGetCall) doRequest(alt string
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6502,7 +6432,6 @@ func (c *LocationsWorkforcePoolsProvidersOperationsGetCall) doRequest(alt string
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6537,11 +6466,9 @@ func (c *LocationsWorkforcePoolsProvidersOperationsGetCall) Do(opts ...googleapi
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.providers.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6604,11 +6531,12 @@ func (c *LocationsWorkforcePoolsSubjectsDeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsSubjectsDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6616,7 +6544,6 @@ func (c *LocationsWorkforcePoolsSubjectsDeleteCall) doRequest(alt string) (*http
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.subjects.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6651,11 +6578,9 @@ func (c *LocationsWorkforcePoolsSubjectsDeleteCall) Do(opts ...googleapi.CallOpt
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.subjects.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6709,7 +6634,8 @@ func (c *LocationsWorkforcePoolsSubjectsUndeleteCall) Header() http.Header {
 
 func (c *LocationsWorkforcePoolsSubjectsUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkforcepoolsubjectrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkforcepoolsubjectrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -6725,7 +6651,6 @@ func (c *LocationsWorkforcePoolsSubjectsUndeleteCall) doRequest(alt string) (*ht
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.subjects.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6760,11 +6685,9 @@ func (c *LocationsWorkforcePoolsSubjectsUndeleteCall) Do(opts ...googleapi.CallO
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.subjects.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6824,11 +6747,12 @@ func (c *LocationsWorkforcePoolsSubjectsOperationsGetCall) doRequest(alt string)
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6836,7 +6760,6 @@ func (c *LocationsWorkforcePoolsSubjectsOperationsGetCall) doRequest(alt string)
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.subjects.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6871,11 +6794,9 @@ func (c *LocationsWorkforcePoolsSubjectsOperationsGetCall) Do(opts ...googleapi.
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.locations.workforcePools.subjects.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -6942,7 +6863,8 @@ func (c *OrganizationsRolesCreateCall) Header() http.Header {
 
 func (c *OrganizationsRolesCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.createrolerequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.createrolerequest)
 	if err != nil {
 		return nil, err
 	}
@@ -6958,7 +6880,6 @@ func (c *OrganizationsRolesCreateCall) doRequest(alt string) (*http.Response, er
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.organizations.roles.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -6993,11 +6914,9 @@ func (c *OrganizationsRolesCreateCall) Do(opts ...googleapi.CallOption) (*Role, 
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.organizations.roles.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7014,12 +6933,12 @@ type OrganizationsRolesDeleteCall struct {
 // in an IAM Policy. * Existing bindings to the custom role are not changed,
 // but they have no effect. * By default, the response from ListRoles does not
 // include the custom role. A deleted custom role still counts toward the
-// custom role limit (https://cloud.google.com/iam/help/limits) until it is
-// permanently deleted. You have 7 days to undelete the custom role. After 7
-// days, the following changes occur: * The custom role is permanently deleted
-// and cannot be recovered. * If an IAM policy contains a binding to the custom
-// role, the binding is permanently removed. * The custom role no longer counts
-// toward your custom role limit.
+// custom role limit (/iam/quotas#limits) until it is permanently deleted. You
+// have 7 days to undelete the custom role. After 7 days, the following changes
+// occur: * The custom role is permanently deleted and cannot be recovered. *
+// If an IAM policy contains a binding to the custom role, the binding is
+// permanently removed. * The custom role no longer counts toward your custom
+// role limit.
 //
 //   - name: The `name` parameter's value depends on the target resource for the
 //     request, namely projects
@@ -7081,11 +7000,12 @@ func (c *OrganizationsRolesDeleteCall) Header() http.Header {
 
 func (c *OrganizationsRolesDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7093,7 +7013,6 @@ func (c *OrganizationsRolesDeleteCall) doRequest(alt string) (*http.Response, er
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.organizations.roles.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7128,11 +7047,9 @@ func (c *OrganizationsRolesDeleteCall) Do(opts ...googleapi.CallOption) (*Role, 
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.organizations.roles.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7216,11 +7133,12 @@ func (c *OrganizationsRolesGetCall) doRequest(alt string) (*http.Response, error
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7228,7 +7146,6 @@ func (c *OrganizationsRolesGetCall) doRequest(alt string) (*http.Response, error
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.organizations.roles.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7263,11 +7180,9 @@ func (c *OrganizationsRolesGetCall) Do(opts ...googleapi.CallOption) (*Role, err
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.organizations.roles.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7391,11 +7306,12 @@ func (c *OrganizationsRolesListCall) doRequest(alt string) (*http.Response, erro
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/roles")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7403,7 +7319,6 @@ func (c *OrganizationsRolesListCall) doRequest(alt string) (*http.Response, erro
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.organizations.roles.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7439,11 +7354,9 @@ func (c *OrganizationsRolesListCall) Do(opts ...googleapi.CallOption) (*ListRole
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.organizations.roles.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7540,7 +7453,8 @@ func (c *OrganizationsRolesPatchCall) Header() http.Header {
 
 func (c *OrganizationsRolesPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.role)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.role)
 	if err != nil {
 		return nil, err
 	}
@@ -7556,7 +7470,6 @@ func (c *OrganizationsRolesPatchCall) doRequest(alt string) (*http.Response, err
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.organizations.roles.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7591,11 +7504,9 @@ func (c *OrganizationsRolesPatchCall) Do(opts ...googleapi.CallOption) (*Role, e
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.organizations.roles.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7664,7 +7575,8 @@ func (c *OrganizationsRolesUndeleteCall) Header() http.Header {
 
 func (c *OrganizationsRolesUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleterolerequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleterolerequest)
 	if err != nil {
 		return nil, err
 	}
@@ -7680,7 +7592,6 @@ func (c *OrganizationsRolesUndeleteCall) doRequest(alt string) (*http.Response, 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.organizations.roles.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7715,11 +7626,9 @@ func (c *OrganizationsRolesUndeleteCall) Do(opts ...googleapi.CallOption) (*Role
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.organizations.roles.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7765,7 +7674,8 @@ func (c *PermissionsQueryTestablePermissionsCall) Header() http.Header {
 
 func (c *PermissionsQueryTestablePermissionsCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.querytestablepermissionsrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.querytestablepermissionsrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -7778,7 +7688,6 @@ func (c *PermissionsQueryTestablePermissionsCall) doRequest(alt string) (*http.R
 		return nil, err
 	}
 	req.Header = reqHeaders
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.permissions.queryTestablePermissions", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7814,11 +7723,9 @@ func (c *PermissionsQueryTestablePermissionsCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.permissions.queryTestablePermissions", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -7900,7 +7807,8 @@ func (c *ProjectsLocationsOauthClientsCreateCall) Header() http.Header {
 
 func (c *ProjectsLocationsOauthClientsCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.oauthclient)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.oauthclient)
 	if err != nil {
 		return nil, err
 	}
@@ -7916,7 +7824,6 @@ func (c *ProjectsLocationsOauthClientsCreateCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -7951,11 +7858,9 @@ func (c *ProjectsLocationsOauthClientsCreateCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8009,11 +7914,12 @@ func (c *ProjectsLocationsOauthClientsDeleteCall) Header() http.Header {
 
 func (c *ProjectsLocationsOauthClientsDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8021,7 +7927,6 @@ func (c *ProjectsLocationsOauthClientsDeleteCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8056,11 +7961,9 @@ func (c *ProjectsLocationsOauthClientsDeleteCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8119,11 +8022,12 @@ func (c *ProjectsLocationsOauthClientsGetCall) doRequest(alt string) (*http.Resp
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8131,7 +8035,6 @@ func (c *ProjectsLocationsOauthClientsGetCall) doRequest(alt string) (*http.Resp
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8166,11 +8069,9 @@ func (c *ProjectsLocationsOauthClientsGetCall) Do(opts ...googleapi.CallOption) 
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8252,11 +8153,12 @@ func (c *ProjectsLocationsOauthClientsListCall) doRequest(alt string) (*http.Res
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/oauthClients")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8264,7 +8166,6 @@ func (c *ProjectsLocationsOauthClientsListCall) doRequest(alt string) (*http.Res
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8300,11 +8201,9 @@ func (c *ProjectsLocationsOauthClientsListCall) Do(opts ...googleapi.CallOption)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8340,7 +8239,7 @@ type ProjectsLocationsOauthClientsPatchCall struct {
 
 // Patch: Updates an existing OauthClient.
 //
-//   - name: Immutable. Identifier. The resource name of the OauthClient.
+//   - name: Immutable. The resource name of the OauthClient.
 //     Format:`projects/{project}/locations/{location}/oauthClients/{oauth_client}
 //     `.
 func (r *ProjectsLocationsOauthClientsService) Patch(name string, oauthclient *OauthClient) *ProjectsLocationsOauthClientsPatchCall {
@@ -8382,7 +8281,8 @@ func (c *ProjectsLocationsOauthClientsPatchCall) Header() http.Header {
 
 func (c *ProjectsLocationsOauthClientsPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.oauthclient)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.oauthclient)
 	if err != nil {
 		return nil, err
 	}
@@ -8398,7 +8298,6 @@ func (c *ProjectsLocationsOauthClientsPatchCall) doRequest(alt string) (*http.Re
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8433,11 +8332,9 @@ func (c *ProjectsLocationsOauthClientsPatchCall) Do(opts ...googleapi.CallOption
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8487,7 +8384,8 @@ func (c *ProjectsLocationsOauthClientsUndeleteCall) Header() http.Header {
 
 func (c *ProjectsLocationsOauthClientsUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteoauthclientrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteoauthclientrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -8503,7 +8401,6 @@ func (c *ProjectsLocationsOauthClientsUndeleteCall) doRequest(alt string) (*http
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8538,11 +8435,9 @@ func (c *ProjectsLocationsOauthClientsUndeleteCall) Do(opts ...googleapi.CallOpt
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8601,7 +8496,8 @@ func (c *ProjectsLocationsOauthClientsCredentialsCreateCall) Header() http.Heade
 
 func (c *ProjectsLocationsOauthClientsCredentialsCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.oauthclientcredential)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.oauthclientcredential)
 	if err != nil {
 		return nil, err
 	}
@@ -8617,7 +8513,6 @@ func (c *ProjectsLocationsOauthClientsCredentialsCreateCall) doRequest(alt strin
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8653,11 +8548,9 @@ func (c *ProjectsLocationsOauthClientsCredentialsCreateCall) Do(opts ...googleap
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8706,11 +8599,12 @@ func (c *ProjectsLocationsOauthClientsCredentialsDeleteCall) Header() http.Heade
 
 func (c *ProjectsLocationsOauthClientsCredentialsDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8718,7 +8612,6 @@ func (c *ProjectsLocationsOauthClientsCredentialsDeleteCall) doRequest(alt strin
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8753,11 +8646,9 @@ func (c *ProjectsLocationsOauthClientsCredentialsDeleteCall) Do(opts ...googleap
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8817,11 +8708,12 @@ func (c *ProjectsLocationsOauthClientsCredentialsGetCall) doRequest(alt string) 
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8829,7 +8721,6 @@ func (c *ProjectsLocationsOauthClientsCredentialsGetCall) doRequest(alt string) 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8865,11 +8756,9 @@ func (c *ProjectsLocationsOauthClientsCredentialsGetCall) Do(opts ...googleapi.C
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8927,11 +8816,12 @@ func (c *ProjectsLocationsOauthClientsCredentialsListCall) doRequest(alt string)
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/credentials")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8939,7 +8829,6 @@ func (c *ProjectsLocationsOauthClientsCredentialsListCall) doRequest(alt string)
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -8975,11 +8864,9 @@ func (c *ProjectsLocationsOauthClientsCredentialsListCall) Do(opts ...googleapi.
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8994,8 +8881,7 @@ type ProjectsLocationsOauthClientsCredentialsPatchCall struct {
 
 // Patch: Updates an existing OauthClientCredential.
 //
-//   - name: Immutable. Identifier. The resource name of the
-//     OauthClientCredential. Format:
+//   - name: Immutable. The resource name of the OauthClientCredential. Format:
 //     `projects/{project}/locations/{location}/oauthClients/{oauth_client}/creden
 //     tials/{credential}`.
 func (r *ProjectsLocationsOauthClientsCredentialsService) Patch(name string, oauthclientcredential *OauthClientCredential) *ProjectsLocationsOauthClientsCredentialsPatchCall {
@@ -9037,7 +8923,8 @@ func (c *ProjectsLocationsOauthClientsCredentialsPatchCall) Header() http.Header
 
 func (c *ProjectsLocationsOauthClientsCredentialsPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.oauthclientcredential)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.oauthclientcredential)
 	if err != nil {
 		return nil, err
 	}
@@ -9053,7 +8940,6 @@ func (c *ProjectsLocationsOauthClientsCredentialsPatchCall) doRequest(alt string
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9089,11 +8975,9 @@ func (c *ProjectsLocationsOauthClientsCredentialsPatchCall) Do(opts ...googleapi
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.oauthClients.credentials.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9153,7 +9037,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsCreateCall) Header() http.Header 
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workloadidentitypool)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workloadidentitypool)
 	if err != nil {
 		return nil, err
 	}
@@ -9169,7 +9054,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsCreateCall) doRequest(alt string)
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9204,11 +9088,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsCreateCall) Do(opts ...googleapi.
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9261,11 +9143,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsDeleteCall) Header() http.Header 
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9273,7 +9156,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsDeleteCall) doRequest(alt string)
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9308,11 +9190,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsDeleteCall) Do(opts ...googleapi.
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9370,11 +9250,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsGetCall) doRequest(alt string) (*
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9382,7 +9263,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsGetCall) doRequest(alt string) (*
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9418,11 +9298,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsGetCall) Do(opts ...googleapi.Cal
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9504,11 +9382,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsListCall) doRequest(alt string) (
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/workloadIdentityPools")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9516,7 +9395,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsListCall) doRequest(alt string) (
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9552,11 +9430,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsListCall) Do(opts ...googleapi.Ca
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9632,7 +9508,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsPatchCall) Header() http.Header {
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workloadidentitypool)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workloadidentitypool)
 	if err != nil {
 		return nil, err
 	}
@@ -9648,7 +9525,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsPatchCall) doRequest(alt string) 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9683,11 +9559,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsPatchCall) Do(opts ...googleapi.C
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9736,7 +9610,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsUndeleteCall) Header() http.Heade
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkloadidentitypoolrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkloadidentitypoolrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -9752,7 +9627,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsUndeleteCall) doRequest(alt strin
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9787,11 +9661,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsUndeleteCall) Do(opts ...googleap
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9851,11 +9723,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesManagedIdentitiesOperat
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9863,7 +9736,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesManagedIdentitiesOperat
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.namespaces.managedIdentities.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -9898,11 +9770,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesManagedIdentitiesOperat
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.namespaces.managedIdentities.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -9962,11 +9832,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesManagedIdentitiesWorklo
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9974,7 +9845,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesManagedIdentitiesWorklo
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.namespaces.managedIdentities.workloadSources.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10009,11 +9879,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesManagedIdentitiesWorklo
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.namespaces.managedIdentities.workloadSources.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10073,11 +9941,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesOperationsGetCall) doRe
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10085,7 +9954,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesOperationsGetCall) doRe
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.namespaces.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10120,11 +9988,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsNamespacesOperationsGetCall) Do(o
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.namespaces.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10184,11 +10050,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsOperationsGetCall) doRequest(alt 
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10196,7 +10063,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsOperationsGetCall) doRequest(alt 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10231,11 +10097,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsOperationsGetCall) Do(opts ...goo
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10295,7 +10159,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersCreateCall) Header() htt
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workloadidentitypoolprovider)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workloadidentitypoolprovider)
 	if err != nil {
 		return nil, err
 	}
@@ -10311,7 +10176,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersCreateCall) doRequest(al
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10346,11 +10210,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersCreateCall) Do(opts ...g
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10400,11 +10262,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersDeleteCall) Header() htt
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10412,7 +10275,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersDeleteCall) doRequest(al
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10447,11 +10309,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersDeleteCall) Do(opts ...g
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10509,11 +10369,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersGetCall) doRequest(alt s
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10521,7 +10382,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersGetCall) doRequest(alt s
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10557,11 +10417,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersGetCall) Do(opts ...goog
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10644,11 +10502,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersListCall) doRequest(alt 
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/providers")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10656,7 +10515,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersListCall) doRequest(alt 
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10692,11 +10550,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersListCall) Do(opts ...goo
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10772,7 +10628,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersPatchCall) Header() http
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workloadidentitypoolprovider)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workloadidentitypoolprovider)
 	if err != nil {
 		return nil, err
 	}
@@ -10788,7 +10645,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersPatchCall) doRequest(alt
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10823,11 +10679,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersPatchCall) Do(opts ...go
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10876,7 +10730,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersUndeleteCall) Header() h
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkloadidentitypoolproviderrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkloadidentitypoolproviderrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -10892,7 +10747,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersUndeleteCall) doRequest(
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -10927,11 +10781,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersUndeleteCall) Do(opts ..
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -10989,7 +10841,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysCreateCall) Header()
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.workloadidentitypoolproviderkey)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.workloadidentitypoolproviderkey)
 	if err != nil {
 		return nil, err
 	}
@@ -11005,7 +10858,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysCreateCall) doReques
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11040,11 +10892,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysCreateCall) Do(opts 
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11091,11 +10941,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysDeleteCall) Header()
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11103,7 +10954,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysDeleteCall) doReques
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11138,11 +10988,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysDeleteCall) Do(opts 
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11200,11 +11048,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysGetCall) doRequest(a
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11212,7 +11061,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysGetCall) doRequest(a
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11248,11 +11096,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysGetCall) Do(opts ...
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11334,11 +11180,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysListCall) doRequest(
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/keys")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11346,7 +11193,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysListCall) doRequest(
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11382,11 +11228,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysListCall) Do(opts ..
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11456,7 +11300,8 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysUndeleteCall) Header
 
 func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteworkloadidentitypoolproviderkeyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteworkloadidentitypoolproviderkeyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -11472,7 +11317,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysUndeleteCall) doRequ
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11507,11 +11351,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysUndeleteCall) Do(opt
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11571,11 +11413,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysOperationsGetCall) d
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11583,7 +11426,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysOperationsGetCall) d
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11618,11 +11460,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersKeysOperationsGetCall) D
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.keys.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11682,11 +11522,12 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersOperationsGetCall) doReq
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11694,7 +11535,6 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersOperationsGetCall) doReq
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.operations.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11729,11 +11569,9 @@ func (c *ProjectsLocationsWorkloadIdentityPoolsProvidersOperationsGetCall) Do(op
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.locations.workloadIdentityPools.providers.operations.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11800,7 +11638,8 @@ func (c *ProjectsRolesCreateCall) Header() http.Header {
 
 func (c *ProjectsRolesCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.createrolerequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.createrolerequest)
 	if err != nil {
 		return nil, err
 	}
@@ -11816,7 +11655,6 @@ func (c *ProjectsRolesCreateCall) doRequest(alt string) (*http.Response, error) 
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.roles.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11851,11 +11689,9 @@ func (c *ProjectsRolesCreateCall) Do(opts ...googleapi.CallOption) (*Role, error
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.roles.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -11872,12 +11708,12 @@ type ProjectsRolesDeleteCall struct {
 // in an IAM Policy. * Existing bindings to the custom role are not changed,
 // but they have no effect. * By default, the response from ListRoles does not
 // include the custom role. A deleted custom role still counts toward the
-// custom role limit (https://cloud.google.com/iam/help/limits) until it is
-// permanently deleted. You have 7 days to undelete the custom role. After 7
-// days, the following changes occur: * The custom role is permanently deleted
-// and cannot be recovered. * If an IAM policy contains a binding to the custom
-// role, the binding is permanently removed. * The custom role no longer counts
-// toward your custom role limit.
+// custom role limit (/iam/quotas#limits) until it is permanently deleted. You
+// have 7 days to undelete the custom role. After 7 days, the following changes
+// occur: * The custom role is permanently deleted and cannot be recovered. *
+// If an IAM policy contains a binding to the custom role, the binding is
+// permanently removed. * The custom role no longer counts toward your custom
+// role limit.
 //
 //   - name: The `name` parameter's value depends on the target resource for the
 //     request, namely projects
@@ -11939,11 +11775,12 @@ func (c *ProjectsRolesDeleteCall) Header() http.Header {
 
 func (c *ProjectsRolesDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11951,7 +11788,6 @@ func (c *ProjectsRolesDeleteCall) doRequest(alt string) (*http.Response, error) 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.roles.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -11986,11 +11822,9 @@ func (c *ProjectsRolesDeleteCall) Do(opts ...googleapi.CallOption) (*Role, error
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.roles.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12074,11 +11908,12 @@ func (c *ProjectsRolesGetCall) doRequest(alt string) (*http.Response, error) {
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12086,7 +11921,6 @@ func (c *ProjectsRolesGetCall) doRequest(alt string) (*http.Response, error) {
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.roles.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12121,11 +11955,9 @@ func (c *ProjectsRolesGetCall) Do(opts ...googleapi.CallOption) (*Role, error) {
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.roles.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12249,11 +12081,12 @@ func (c *ProjectsRolesListCall) doRequest(alt string) (*http.Response, error) {
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+parent}/roles")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12261,7 +12094,6 @@ func (c *ProjectsRolesListCall) doRequest(alt string) (*http.Response, error) {
 	googleapi.Expand(req.URL, map[string]string{
 		"parent": c.parent,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.roles.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12297,11 +12129,9 @@ func (c *ProjectsRolesListCall) Do(opts ...googleapi.CallOption) (*ListRolesResp
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.roles.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12398,7 +12228,8 @@ func (c *ProjectsRolesPatchCall) Header() http.Header {
 
 func (c *ProjectsRolesPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.role)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.role)
 	if err != nil {
 		return nil, err
 	}
@@ -12414,7 +12245,6 @@ func (c *ProjectsRolesPatchCall) doRequest(alt string) (*http.Response, error) {
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.roles.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12449,11 +12279,9 @@ func (c *ProjectsRolesPatchCall) Do(opts ...googleapi.CallOption) (*Role, error)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.roles.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12522,7 +12350,8 @@ func (c *ProjectsRolesUndeleteCall) Header() http.Header {
 
 func (c *ProjectsRolesUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleterolerequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleterolerequest)
 	if err != nil {
 		return nil, err
 	}
@@ -12538,7 +12367,6 @@ func (c *ProjectsRolesUndeleteCall) doRequest(alt string) (*http.Response, error
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.roles.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12573,11 +12401,9 @@ func (c *ProjectsRolesUndeleteCall) Do(opts ...googleapi.CallOption) (*Role, err
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.roles.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12626,7 +12452,8 @@ func (c *ProjectsServiceAccountsCreateCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.createserviceaccountrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.createserviceaccountrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -12642,7 +12469,6 @@ func (c *ProjectsServiceAccountsCreateCall) doRequest(alt string) (*http.Respons
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12677,11 +12503,9 @@ func (c *ProjectsServiceAccountsCreateCall) Do(opts ...googleapi.CallOption) (*S
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12747,11 +12571,12 @@ func (c *ProjectsServiceAccountsDeleteCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12759,7 +12584,6 @@ func (c *ProjectsServiceAccountsDeleteCall) doRequest(alt string) (*http.Respons
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12794,11 +12618,9 @@ func (c *ProjectsServiceAccountsDeleteCall) Do(opts ...googleapi.CallOption) (*E
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12866,7 +12688,8 @@ func (c *ProjectsServiceAccountsDisableCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsDisableCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.disableserviceaccountrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.disableserviceaccountrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -12882,7 +12705,6 @@ func (c *ProjectsServiceAccountsDisableCall) doRequest(alt string) (*http.Respon
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.disable", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -12917,11 +12739,9 @@ func (c *ProjectsServiceAccountsDisableCall) Do(opts ...googleapi.CallOption) (*
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.disable", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -12983,7 +12803,8 @@ func (c *ProjectsServiceAccountsEnableCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsEnableCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.enableserviceaccountrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.enableserviceaccountrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -12999,7 +12820,6 @@ func (c *ProjectsServiceAccountsEnableCall) doRequest(alt string) (*http.Respons
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.enable", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13034,11 +12854,9 @@ func (c *ProjectsServiceAccountsEnableCall) Do(opts ...googleapi.CallOption) (*E
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.enable", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13106,11 +12924,12 @@ func (c *ProjectsServiceAccountsGetCall) doRequest(alt string) (*http.Response, 
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13118,7 +12937,6 @@ func (c *ProjectsServiceAccountsGetCall) doRequest(alt string) (*http.Response, 
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13153,11 +12971,9 @@ func (c *ProjectsServiceAccountsGetCall) Do(opts ...googleapi.CallOption) (*Serv
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13230,11 +13046,12 @@ func (c *ProjectsServiceAccountsGetIamPolicyCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsGetIamPolicyCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+resource}:getIamPolicy")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("POST", urls, nil)
+	req, err := http.NewRequest("POST", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13242,7 +13059,6 @@ func (c *ProjectsServiceAccountsGetIamPolicyCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"resource": c.resource,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.getIamPolicy", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13277,11 +13093,9 @@ func (c *ProjectsServiceAccountsGetIamPolicyCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.getIamPolicy", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13357,11 +13171,12 @@ func (c *ProjectsServiceAccountsListCall) doRequest(alt string) (*http.Response,
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}/serviceAccounts")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13369,7 +13184,6 @@ func (c *ProjectsServiceAccountsListCall) doRequest(alt string) (*http.Response,
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13405,11 +13219,9 @@ func (c *ProjectsServiceAccountsListCall) Do(opts ...googleapi.CallOption) (*Lis
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13488,7 +13300,8 @@ func (c *ProjectsServiceAccountsPatchCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsPatchCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.patchserviceaccountrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.patchserviceaccountrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -13504,7 +13317,6 @@ func (c *ProjectsServiceAccountsPatchCall) doRequest(alt string) (*http.Response
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.patch", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13539,11 +13351,9 @@ func (c *ProjectsServiceAccountsPatchCall) Do(opts ...googleapi.CallOption) (*Se
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.patch", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13605,7 +13415,8 @@ func (c *ProjectsServiceAccountsSetIamPolicyCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsSetIamPolicyCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.setiampolicyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.setiampolicyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -13621,7 +13432,6 @@ func (c *ProjectsServiceAccountsSetIamPolicyCall) doRequest(alt string) (*http.R
 	googleapi.Expand(req.URL, map[string]string{
 		"resource": c.resource,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.setIamPolicy", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13656,11 +13466,9 @@ func (c *ProjectsServiceAccountsSetIamPolicyCall) Do(opts ...googleapi.CallOptio
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.setIamPolicy", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13726,7 +13534,8 @@ func (c *ProjectsServiceAccountsSignBlobCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsSignBlobCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.signblobrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.signblobrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -13742,7 +13551,6 @@ func (c *ProjectsServiceAccountsSignBlobCall) doRequest(alt string) (*http.Respo
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.signBlob", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13778,11 +13586,9 @@ func (c *ProjectsServiceAccountsSignBlobCall) Do(opts ...googleapi.CallOption) (
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.signBlob", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13848,7 +13654,8 @@ func (c *ProjectsServiceAccountsSignJwtCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsSignJwtCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.signjwtrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.signjwtrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -13864,7 +13671,6 @@ func (c *ProjectsServiceAccountsSignJwtCall) doRequest(alt string) (*http.Respon
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.signJwt", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -13900,11 +13706,9 @@ func (c *ProjectsServiceAccountsSignJwtCall) Do(opts ...googleapi.CallOption) (*
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.signJwt", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -13956,7 +13760,8 @@ func (c *ProjectsServiceAccountsTestIamPermissionsCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsTestIamPermissionsCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.testiampermissionsrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.testiampermissionsrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -13972,7 +13777,6 @@ func (c *ProjectsServiceAccountsTestIamPermissionsCall) doRequest(alt string) (*
 	googleapi.Expand(req.URL, map[string]string{
 		"resource": c.resource,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.testIamPermissions", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14008,11 +13812,9 @@ func (c *ProjectsServiceAccountsTestIamPermissionsCall) Do(opts ...googleapi.Cal
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.testIamPermissions", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14074,7 +13876,8 @@ func (c *ProjectsServiceAccountsUndeleteCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsUndeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.undeleteserviceaccountrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.undeleteserviceaccountrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -14090,7 +13893,6 @@ func (c *ProjectsServiceAccountsUndeleteCall) doRequest(alt string) (*http.Respo
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.undelete", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14126,11 +13928,9 @@ func (c *ProjectsServiceAccountsUndeleteCall) Do(opts ...googleapi.CallOption) (
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.undelete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14190,7 +13990,8 @@ func (c *ProjectsServiceAccountsUpdateCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsUpdateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.serviceaccount)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.serviceaccount)
 	if err != nil {
 		return nil, err
 	}
@@ -14206,7 +14007,6 @@ func (c *ProjectsServiceAccountsUpdateCall) doRequest(alt string) (*http.Respons
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.update", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14241,11 +14041,9 @@ func (c *ProjectsServiceAccountsUpdateCall) Do(opts ...googleapi.CallOption) (*S
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.update", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14303,7 +14101,8 @@ func (c *ProjectsServiceAccountsKeysCreateCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsKeysCreateCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.createserviceaccountkeyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.createserviceaccountkeyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -14319,7 +14118,6 @@ func (c *ProjectsServiceAccountsKeysCreateCall) doRequest(alt string) (*http.Res
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.create", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14355,11 +14153,9 @@ func (c *ProjectsServiceAccountsKeysCreateCall) Do(opts ...googleapi.CallOption)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.create", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14419,11 +14215,12 @@ func (c *ProjectsServiceAccountsKeysDeleteCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsKeysDeleteCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("DELETE", urls, nil)
+	req, err := http.NewRequest("DELETE", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14431,7 +14228,6 @@ func (c *ProjectsServiceAccountsKeysDeleteCall) doRequest(alt string) (*http.Res
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.delete", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14466,11 +14262,9 @@ func (c *ProjectsServiceAccountsKeysDeleteCall) Do(opts ...googleapi.CallOption)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.delete", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14531,7 +14325,8 @@ func (c *ProjectsServiceAccountsKeysDisableCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsKeysDisableCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.disableserviceaccountkeyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.disableserviceaccountkeyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -14547,7 +14342,6 @@ func (c *ProjectsServiceAccountsKeysDisableCall) doRequest(alt string) (*http.Re
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.disable", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14582,11 +14376,9 @@ func (c *ProjectsServiceAccountsKeysDisableCall) Do(opts ...googleapi.CallOption
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.disable", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14646,7 +14438,8 @@ func (c *ProjectsServiceAccountsKeysEnableCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsKeysEnableCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.enableserviceaccountkeyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.enableserviceaccountkeyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -14662,7 +14455,6 @@ func (c *ProjectsServiceAccountsKeysEnableCall) doRequest(alt string) (*http.Res
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.enable", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14697,11 +14489,9 @@ func (c *ProjectsServiceAccountsKeysEnableCall) Do(opts ...googleapi.CallOption)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.enable", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14785,11 +14575,12 @@ func (c *ProjectsServiceAccountsKeysGetCall) doRequest(alt string) (*http.Respon
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14797,7 +14588,6 @@ func (c *ProjectsServiceAccountsKeysGetCall) doRequest(alt string) (*http.Respon
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14833,11 +14623,9 @@ func (c *ProjectsServiceAccountsKeysGetCall) Do(opts ...googleapi.CallOption) (*
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14922,11 +14710,12 @@ func (c *ProjectsServiceAccountsKeysListCall) doRequest(alt string) (*http.Respo
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}/keys")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14934,7 +14723,6 @@ func (c *ProjectsServiceAccountsKeysListCall) doRequest(alt string) (*http.Respo
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -14970,11 +14758,9 @@ func (c *ProjectsServiceAccountsKeysListCall) Do(opts ...googleapi.CallOption) (
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -15035,7 +14821,8 @@ func (c *ProjectsServiceAccountsKeysUploadCall) Header() http.Header {
 
 func (c *ProjectsServiceAccountsKeysUploadCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.uploadserviceaccountkeyrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.uploadserviceaccountkeyrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -15051,7 +14838,6 @@ func (c *ProjectsServiceAccountsKeysUploadCall) doRequest(alt string) (*http.Res
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.upload", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -15087,11 +14873,9 @@ func (c *ProjectsServiceAccountsKeysUploadCall) Do(opts ...googleapi.CallOption)
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.projects.serviceAccounts.keys.upload", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -15175,11 +14959,12 @@ func (c *RolesGetCall) doRequest(alt string) (*http.Response, error) {
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/{+name}")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15187,7 +14972,6 @@ func (c *RolesGetCall) doRequest(alt string) (*http.Response, error) {
 	googleapi.Expand(req.URL, map[string]string{
 		"name": c.name,
 	})
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.roles.get", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -15222,11 +15006,9 @@ func (c *RolesGetCall) Do(opts ...googleapi.CallOption) (*Role, error) {
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.roles.get", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -15350,16 +15132,16 @@ func (c *RolesListCall) doRequest(alt string) (*http.Response, error) {
 	if c.ifNoneMatch_ != "" {
 		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
 	}
+	var body io.Reader = nil
 	c.urlParams_.Set("alt", alt)
 	c.urlParams_.Set("prettyPrint", "false")
 	urls := googleapi.ResolveRelative(c.s.BasePath, "v1/roles")
 	urls += "?" + c.urlParams_.Encode()
-	req, err := http.NewRequest("GET", urls, nil)
+	req, err := http.NewRequest("GET", urls, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header = reqHeaders
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.roles.list", "request", internallog.HTTPRequest(req, nil))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -15395,11 +15177,9 @@ func (c *RolesListCall) Do(opts ...googleapi.CallOption) (*ListRolesResponse, er
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.roles.list", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -15466,7 +15246,8 @@ func (c *RolesQueryGrantableRolesCall) Header() http.Header {
 
 func (c *RolesQueryGrantableRolesCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.querygrantablerolesrequest)
+	var body io.Reader = nil
+	body, err := googleapi.WithoutDataWrapper.JSONReader(c.querygrantablerolesrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -15479,7 +15260,6 @@ func (c *RolesQueryGrantableRolesCall) doRequest(alt string) (*http.Response, er
 		return nil, err
 	}
 	req.Header = reqHeaders
-	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "iam.roles.queryGrantableRoles", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -15515,11 +15295,9 @@ func (c *RolesQueryGrantableRolesCall) Do(opts ...googleapi.CallOption) (*QueryG
 		},
 	}
 	target := &ret
-	b, err := gensupport.DecodeResponseBytes(target, res)
-	if err != nil {
+	if err := gensupport.DecodeResponse(target, res); err != nil {
 		return nil, err
 	}
-	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "iam.roles.queryGrantableRoles", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 

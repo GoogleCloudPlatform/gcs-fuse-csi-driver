@@ -59,7 +59,8 @@ func SkipUnlessAtLeast(value int, minValue int, message string) {
 var featureGate featuregate.FeatureGate
 
 // InitFeatureGates must be called in test suites that have a --feature-gates parameter.
-// If not called, SkipUnlessFeatureGateEnabled will record a test failure.
+// If not called, SkipUnlessFeatureGateEnabled and SkipIfFeatureGateEnabled will
+// record a test failure.
 func InitFeatureGates(defaults featuregate.FeatureGate, overrides map[string]bool) error {
 	clone := defaults.DeepCopy()
 	if err := clone.SetFromMap(overrides); err != nil {
@@ -67,16 +68,6 @@ func InitFeatureGates(defaults featuregate.FeatureGate, overrides map[string]boo
 	}
 	featureGate = clone
 	return nil
-}
-
-// IsFeatureGateEnabled can be used during e2e tests to figure out if a certain feature gate is enabled.
-// This function is dependent on InitFeatureGates under the hood. Therefore, the test must be called with a
-// --feature-gates parameter.
-func IsFeatureGateEnabled(feature featuregate.Feature) bool {
-	if featureGate == nil {
-		framework.Failf("feature gate interface is not initialized")
-	}
-	return featureGate.Enabled(feature)
 }
 
 // SkipUnlessFeatureGateEnabled skips if the feature is disabled.
@@ -130,17 +121,6 @@ func SkipUnlessMultizone(ctx context.Context, c clientset.Interface) {
 	}
 	if zones.Len() <= 1 {
 		skipInternalf(1, "Requires more than one zone")
-	}
-}
-
-// SkipUnlessAtLeastNZones skips if the cluster does not have n multizones.
-func SkipUnlessAtLeastNZones(ctx context.Context, c clientset.Interface, n int) {
-	zones, err := e2enode.GetClusterZones(ctx, c)
-	if err != nil {
-		skipInternalf(1, "Error listing cluster zones")
-	}
-	if zones.Len() < n {
-		skipInternalf(1, "Requires >= %d zones", n)
 	}
 }
 

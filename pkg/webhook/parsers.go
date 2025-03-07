@@ -20,43 +20,12 @@ package webhook
 import (
 	"fmt"
 
-	dockerref "github.com/distribution/reference"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/kubernetes/pkg/util/parsers"
 )
 
 var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
-
-// ParseImageName parses a docker image string into three parts: repo, tag and digest.
-// If both tag and digest are empty, a default image tag will be returned.
-//
-// This is taken from k8s.io/kubernetes/pkg/util/parsers; it's not supported to
-// import from k8s.io/kubernetes (https://github.com/kubernetes/kubernetes/?tab=readme-ov-file#to-start-using-k8s).
-func ParseImageName(image string) (string, string, string, error) {
-	named, err := dockerref.ParseNormalizedNamed(image)
-	if err != nil {
-		return "", "", "", fmt.Errorf("couldn't parse image name %q: %w", image, err)
-	}
-
-	repoToPull := named.Name()
-	var tag, digest string
-
-	tagged, ok := named.(dockerref.Tagged)
-	if ok {
-		tag = tagged.Tag()
-	}
-
-	digested, ok := named.(dockerref.Digested)
-	if ok {
-		digest = digested.Digest().String()
-	}
-	// If no tag was specified, use the default "latest".
-	if len(tag) == 0 && len(digest) == 0 {
-		tag = "latest"
-	}
-
-	return repoToPull, tag, digest, nil
-}
 
 // iterates the container list,
 // if a container is named "gke-gcsfuse-sidecar",
@@ -70,7 +39,7 @@ func parseSidecarContainerImage(pod *corev1.Pod) (string, error) {
 			image = c.Image
 			index = i
 
-			if _, _, _, err := ParseImageName(image); err != nil {
+			if _, _, _, err := parsers.ParseImageName(image); err != nil {
 				return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
 			}
 		}

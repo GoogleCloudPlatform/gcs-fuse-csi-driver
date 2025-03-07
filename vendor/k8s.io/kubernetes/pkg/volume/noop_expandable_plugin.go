@@ -52,7 +52,7 @@ func (n *noopExpandableVolumePluginInstance) RequiresRemount(spec *Spec) bool {
 	return false
 }
 
-func (n *noopExpandableVolumePluginInstance) NewMounter(spec *Spec, podRef *v1.Pod) (Mounter, error) {
+func (n *noopExpandableVolumePluginInstance) NewMounter(spec *Spec, podRef *v1.Pod, opts VolumeOptions) (Mounter, error) {
 	return nil, nil
 }
 
@@ -66,6 +66,10 @@ func (n *noopExpandableVolumePluginInstance) ConstructVolumeSpec(volumeName, mou
 
 func (n *noopExpandableVolumePluginInstance) SupportsMountOption() bool {
 	return true
+}
+
+func (n *noopExpandableVolumePluginInstance) SupportsBulkVolumeVerification() bool {
+	return false
 }
 
 func (n *noopExpandableVolumePluginInstance) RequiresFSResize() bool {
