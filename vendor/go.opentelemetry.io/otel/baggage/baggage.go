@@ -1,5 +1,16 @@
 // Copyright The OpenTelemetry Authors
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package baggage // import "go.opentelemetry.io/otel/baggage"
 
@@ -56,10 +67,10 @@ func NewKeyProperty(key string) (Property, error) {
 // NewKeyValueProperty returns a new Property for key with value.
 //
 // The passed key must be compliant with W3C Baggage specification.
-// The passed value must be percent-encoded as defined in W3C Baggage specification.
+// The passed value must be precent-encoded as defined in W3C Baggage specification.
 //
 // Notice: Consider using [NewKeyValuePropertyRaw] instead
-// that does not require percent-encoding of the value.
+// that does not require precent-encoding of the value.
 func NewKeyValueProperty(key, value string) (Property, error) {
 	if !validateValue(value) {
 		return newInvalidProperty(), fmt.Errorf("%w: %q", errInvalidValue, value)
@@ -224,10 +235,10 @@ type Member struct {
 // NewMemberRaw returns a new Member from the passed arguments.
 //
 // The passed key must be compliant with W3C Baggage specification.
-// The passed value must be percent-encoded as defined in W3C Baggage specification.
+// The passed value must be precent-encoded as defined in W3C Baggage specification.
 //
 // Notice: Consider using [NewMemberRaw] instead
-// that does not require percent-encoding of the value.
+// that does not require precent-encoding of the value.
 func NewMember(key, value string, props ...Property) (Member, error) {
 	if !validateValue(value) {
 		return newInvalidMember(), fmt.Errorf("%w: %q", errInvalidValue, value)
@@ -298,7 +309,7 @@ func parseMember(member string) (Member, error) {
 		return newInvalidMember(), fmt.Errorf("%w: %q", errInvalidValue, v)
 	}
 
-	// Decode a percent-encoded value.
+	// Decode a precent-encoded value.
 	value, err := url.PathUnescape(val)
 	if err != nil {
 		return newInvalidMember(), fmt.Errorf("%w: %v", errInvalidValue, err)
@@ -605,7 +616,7 @@ func parsePropertyInternal(s string) (p Property, ok bool) {
 		return
 	}
 
-	// Decode a percent-encoded value.
+	// Decode a precent-encoded value.
 	value, err := url.PathUnescape(s[valueStart:valueEnd])
 	if err != nil {
 		return

@@ -73,7 +73,7 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	rm -f ${BINDIR}/Dockerfile.gcsfuse
 	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
 	$(eval GCSFUSE_VERSION=999.$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c 1-40))
-
+	
 	docker buildx build \
 		--load \
 		--file ${BINDIR}/Dockerfile.gcsfuse \
@@ -236,7 +236,7 @@ unit-test:
 	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
-	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
+	cd test && go test -v -timeout 30s "./sanity/" -run TestSanity
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh

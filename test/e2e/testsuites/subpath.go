@@ -22,7 +22,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"local/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"

@@ -24,8 +24,8 @@ import (
 	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"

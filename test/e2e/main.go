@@ -22,7 +22,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
+	"local/test/e2e/utils"
 	"k8s.io/klog/v2"
 )
 

@@ -19,7 +19,7 @@ set -o xtrace
 set -o nounset
 set -o errexit
 
-readonly PKGDIR="$( dirname -- "$0"; )/../.."
+readonly PKGDIR=$(realpath "$( dirname -- "$0"; )/../..")
 readonly gke_cluster_region=${GKE_CLUSTER_REGION:-us-central1}
 readonly gke_cluster_version=$(kubectl version | grep -Eo 'Server Version: v[0-9]+\.[0-9]+\.[0-9]+' | grep -Eo  '[0-9]+\.[0-9]+\.[0-9]+')
 readonly use_gke_autopilot=${E2E_TEST_USE_GKE_AUTOPILOT:-false}
@@ -40,7 +40,9 @@ export PATH=${PATH}:$(go env GOPATH)/bin
 go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.1
 
 # Build e2e-test CLI
-go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
+pushd ./test
+go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./e2e
+popd
 chmod +x ${PKGDIR}/bin/e2e-test-ci
 
 # Prepare the test cmd

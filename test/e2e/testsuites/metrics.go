@@ -26,7 +26,7 @@ import (
 	"github.com/google/uuid"
 	csidriver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	metricspkg "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
+	"local/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	dto "github.com/prometheus/client_model/go"
