@@ -7,6 +7,7 @@ require (
 	cloud.google.com/go/iam v1.1.12
 	cloud.google.com/go/storage v1.43.0
 	github.com/container-storage-interface/spec v1.10.0
+	github.com/distribution/reference v0.6.0
 	github.com/go-logr/logr v1.4.2
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
@@ -55,7 +56,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.3.4 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/euank/go-kmsg-parser v2.0.0+incompatible // indirect
