@@ -59,7 +59,7 @@ func RecvMsg(via net.Conn) (int, []byte, error) {
 
 	klog.V(4).Info("calling recvmsg...")
 	buf := make([]byte, syscall.CmsgSpace(4))
-	b := make([]byte, 500)
+	b := make([]byte, 5000)
 	//nolint:dogsled
 	n, _, _, _, err := syscall.Recvmsg(socket, b, buf, 0)
 	if err != nil {
