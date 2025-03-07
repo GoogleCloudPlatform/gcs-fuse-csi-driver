@@ -50,7 +50,9 @@ make sanity-test
 
     If you want to run the test against GKE pre-installed CSI driver, please follow the GKE documentation [Access Cloud Storage buckets with the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver) to create a cluster with the Cloud Storage FUSE CSI driver enabled.
 
-    If you want to create a cluster to manually install the CSI driver and test it, follow the [GKE documentation](https://cloud.google.com/kubernetes-engine/docs/concepts/kubernetes-engine-overview) to create a **Standard** cluster **without** enabling the `GcsFuseCsiDriver` add-on. Then follow the [installation instruction](../docs/installation.md) to manually install the CSI driver.
+    Otherwise, follow [GKE documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable_on_cluster) to create a **Standard** cluster with workload identity enabled,  **without** enabling the `GcsFuseCsiDriver` add-on.
+    
+    The test can be run with an existing manually deployed CSI driver (via the [installation instruction](../docs/installation.md), or the e2e test can build and install the CSI driver. See below for the parameter choices to make that happen.
 
 4. Make sure the current kubelet context uses the cluster
 
@@ -73,14 +75,14 @@ make sanity-test
     If your kubelet config file is not located in ~/.kube/config, please run the following command to set your kubelet config location:
 
     ```bash
-    expoert KUBECONFIG=<your-kubelet-config-location>
+    export KUBECONFIG=<your-kubelet-config-location>
     ```
 
 ### Run end-to-end test
 
-You can control the test through the following parameters:
+You can control the test through the following make parameters, eg `make e2e-test REGISTRY=us-docker.pkg.dev/foo`.
 
-- `REGISTRY`: default value is `jiaxun`. Change the container registry to your own if you need to build your own CSI images. Make sure you have permission to push images to the container registry.
+- `REGISTRY`: Change the container registry to your own if you need to build your own CSI images. Make sure you have permission to push images to the container registry. An example value might be `us-docker.pkg.dev/$your-registry-name/$your-registry-folder`. Required if the managed driver is not used.
 - `OVERLAY`: default value is `stable`. Change the kustomize overlay name for manual installation.
 - `STAGINGVERSION`: default value is the current git commit hash. Pass the container image version if you need to build your own CSI images with a different version.
 - `E2E_TEST_USE_GKE_AUTOPILOT`: default value is `false`. Change it to `true` if you will test the CSI driver on an Autopilot cluster.

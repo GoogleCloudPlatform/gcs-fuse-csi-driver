@@ -22,8 +22,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"k8s.io/klog/v2"
+	"local/test/e2e/utils"
 )
 
 var (
