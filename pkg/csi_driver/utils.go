@@ -362,6 +362,31 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 	return nil
 }
 
+func putMachineTypeFile(machineType string, targetPath string) error {
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
+	if err != nil {
+		return fmt.Errorf("failed to get emptyDir path: %w", err)
+	}
+
+	machineTypeFilePath := filepath.Dir(emptyDirBasePath) + "/machine-type"
+	f, err := os.Create(machineTypeFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to put the machine-type file: %w", err)
+	}
+	if _, err := f.WriteString(machineType); err != nil {
+		return fmt.Errorf("failed to write machine-type file: %w", err)
+	}
+
+	f.Close()
+
+	err = os.Chown(machineTypeFilePath, webhook.NobodyUID, webhook.NobodyGID)
+	if err != nil {
+		return fmt.Errorf("failed to change ownership on the machine-type file: %w", err)
+	}
+
+	return nil
+}
+
 func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (codes.Code, error) {
 	code := codes.Internal
 	cs, err := getSidecarContainerStatus(isInitContainer, pod)

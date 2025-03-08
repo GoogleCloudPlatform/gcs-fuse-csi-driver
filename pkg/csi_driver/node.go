@@ -160,6 +160,19 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, bucketName)
 	}
 
+	// Deliver the machine-type argument to the targetPath
+	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get node: %v", err)
+	}
+	machineType, ok := node.Labels["node.kubernetes.io/instance-type"]
+	if ok {
+		klog.V(1).Infof("Putting machine-type file to %v: %v", targetPath, machineType)
+		if err := putMachineTypeFile(machineType, targetPath); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+
 	// Check if the sidecar container is still required,
 	// if not, put an exit file to the emptyDir path to
 	// notify the sidecar container to exit.
