@@ -1,3 +1,5 @@
+// +build go1.6
+
 // Copyright 2014 Unknwon
 //
 // Licensed under the Apache License, Version 2.0 (the "License"): you may
@@ -23,15 +25,15 @@ import (
 )
 
 const (
+	// DefaultSection is the name of default section. You can use this constant or the string literal.
+	// In most of cases, an empty string is all you need to access the section.
+	DefaultSection = "DEFAULT"
+
 	// Maximum allowed depth when recursively substituing variable names.
 	depthValues = 99
 )
 
 var (
-	// DefaultSection is the name of default section. You can use this var or the string literal.
-	// In most of cases, an empty string is all you need to access the section.
-	DefaultSection = "DEFAULT"
-
 	// LineBreak is the delimiter to determine or compose a new line.
 	// This variable will be changed to "\r\n" automatically on Windows at package init time.
 	LineBreak = "\n"
@@ -123,8 +125,6 @@ type LoadOptions struct {
 	ReaderBufferSize int
 	// AllowNonUniqueSections indicates whether to allow sections with the same name multiple times.
 	AllowNonUniqueSections bool
-	// AllowDuplicateShadowValues indicates whether values for shadowed keys should be deduplicated.
-	AllowDuplicateShadowValues bool
 }
 
 // DebugFunc is the type of function called to log parse events.

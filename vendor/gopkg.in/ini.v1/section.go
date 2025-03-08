@@ -217,7 +217,7 @@ func (s *Section) KeysHash() map[string]string {
 		defer s.f.lock.RUnlock()
 	}
 
-	hash := make(map[string]string, len(s.keysHash))
+	hash := map[string]string{}
 	for key, value := range s.keysHash {
 		hash[key] = value
 	}
