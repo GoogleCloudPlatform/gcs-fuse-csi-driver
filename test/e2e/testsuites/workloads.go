@@ -247,7 +247,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		defer tJob.Cleanup(ctx)
 
 		ginkgo.By("Checking that the job is in failed status")
-		tJob.WaitForJobFailed()
+		tJob.WaitForJobFailed(ctx)
 
 		ginkgo.By("The pod should terminate fast")
 		tJob.WaitForAllJobPodsGone(ctx)
