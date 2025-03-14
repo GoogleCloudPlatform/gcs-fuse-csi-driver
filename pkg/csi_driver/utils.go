@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
+	"golang.org/x/mod/semver"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -63,6 +65,7 @@ const (
 	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
+	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -459,4 +462,25 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 	}
 
 	return nil, errors.New("the sidecar container was not found")
+}
+
+func isSidecarVersionSupportedForTokenServer(imageName string) bool {
+	managedSidecarPattern := `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+.\d+.\d+-gke\.\d+.*`
+	re := regexp.MustCompile(managedSidecarPattern)
+	isManagedSidecar := re.MatchString(imageName)
+
+	if !isManagedSidecar {
+		klog.Infof("mountOptions should not be passed because this is a private sidecar image %q", imageName)
+
+		return false
+	}
+	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
+	klog.Infof("sidecar image version: %v", imageVersion)
+	if semver.Compare(imageVersion, tokenServerSidecarMinVersion) >= 0 {
+		klog.Infof("sidecar version is supported for token server")
+
+		return true
+	}
+
+	return false
 }
