@@ -295,13 +295,25 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 }
 
 func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
+	tokenVolumeInjected := false
 	for _, vol := range pod.Spec.Volumes {
 		if vol.Name == webhook.SidecarContainerSATokenVolumeName {
-			klog.Infof("Service Account Token Injection feature is turned on.")
+			klog.Infof("Service Account Token Injection feature is turned on from webhook.")
 
-			return true
+			tokenVolumeInjected = true
+
+			break
+		}
+	}
+	var sidecarVersionSupported bool
+
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name == webhook.GcsFuseSidecarName {
+			sidecarVersionSupported = isSidecarVersionSupportedForTokenServer(container.Image)
+
+			break
 		}
 	}
 
-	return false
+	return tokenVolumeInjected && sidecarVersionSupported
 }

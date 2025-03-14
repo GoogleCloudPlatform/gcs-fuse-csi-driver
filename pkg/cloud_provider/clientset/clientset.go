@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -105,6 +106,11 @@ func (c *Clientset) ConfigurePodLister(nodeName string) {
 
 		var newInitContainers []corev1.Container
 		for _, cont := range podObj.Spec.InitContainers {
+			if cont.Name == webhook.GcsFuseSidecarName {
+				newInitContainers = append(newInitContainers, cont)
+
+				continue
+			}
 			container := corev1.Container{
 				Name:            cont.Name,
 				SecurityContext: cont.SecurityContext,
