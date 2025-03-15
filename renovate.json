@@ -1,17 +1,23 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [ "config:base"],
+  "extends": [
+    "config:recommended"
+  ],
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
   "packageRules": [
     {
       "enabled": true,
-      "matchPackagePatterns": ["*"]
+      "matchPackageNames": [
+        "*"
+      ]
     }
   ],
   "vulnerabilityAlerts": {
     "enabled": true
   },
   "osvVulnerabilityAlerts": true,
-  "baseBranches": ["/release-*/"],
+  "baseBranches": [
+    "/release-*/"
+  ]
 }
