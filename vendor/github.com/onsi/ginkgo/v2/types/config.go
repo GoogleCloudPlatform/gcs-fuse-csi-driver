@@ -202,7 +202,6 @@ type GoFlagsConfig struct {
 	A             bool
 	ASMFlags      string
 	BuildMode     string
-	BuildVCS      bool
 	Compiler      string
 	GCCGoFlags    string
 	GCFlags       string
@@ -328,7 +327,7 @@ var ParallelConfigFlags = GinkgoFlags{
 // ReporterConfigFlags provides flags for the Ginkgo test process, and CLI
 var ReporterConfigFlags = GinkgoFlags{
 	{KeyPath: "R.NoColor", Name: "no-color", SectionKey: "output", DeprecatedName: "noColor", DeprecatedDocLink: "changed-command-line-flags",
-		Usage: "If set, suppress color output in default reporter.  You can also set the environment variable GINKGO_NO_COLOR=TRUE"},
+		Usage: "If set, suppress color output in default reporter."},
 	{KeyPath: "R.Verbose", Name: "v", SectionKey: "output",
 		Usage: "If set, emits more output including GinkgoWriter contents."},
 	{KeyPath: "R.VeryVerbose", Name: "vv", SectionKey: "output",
@@ -529,8 +528,6 @@ var GoBuildFlags = GinkgoFlags{
 		Usage: "arguments to pass on each go tool asm invocation."},
 	{KeyPath: "Go.BuildMode", Name: "buildmode", UsageArgument: "mode", SectionKey: "go-build",
 		Usage: "build mode to use. See 'go help buildmode' for more."},
-	{KeyPath: "Go.BuildVCS", Name: "buildvcs", SectionKey: "go-build",
-		Usage: "adds version control information."},
 	{KeyPath: "Go.Compiler", Name: "compiler", UsageArgument: "name", SectionKey: "go-build",
 		Usage: "name of compiler to use, as in runtime.Compiler (gccgo or gc)."},
 	{KeyPath: "Go.GCCGoFlags", Name: "gccgoflags", UsageArgument: "'[pattern=]arg list'", SectionKey: "go-build",

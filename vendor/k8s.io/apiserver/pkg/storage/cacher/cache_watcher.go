@@ -454,13 +454,6 @@ func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watch
 	const initProcessThreshold = 500 * time.Millisecond
 	startTime := time.Now()
 
-	// cacheInterval may be created from a version being more fresh than requested
-	// (e.g. for NotOlderThan semantic). In such a case, we need to prevent watch event
-	// with lower resourceVersion from being delivered to ensure watch contract.
-	if cacheInterval.resourceVersion > resourceVersion {
-		resourceVersion = cacheInterval.resourceVersion
-	}
-
 	initEventCount := 0
 	for {
 		event, err := cacheInterval.Next()
@@ -510,10 +503,6 @@ func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watch
 		klog.V(2).Infof("processing %d initEvents of %s (%s) took %v", initEventCount, c.groupResource, c.identifier, processingTime)
 	}
 
-	// send bookmark after sending all events in cacheInterval for watchlist request
-	if cacheInterval.initialEventsEndBookmark != nil {
-		c.sendWatchCacheEvent(cacheInterval.initialEventsEndBookmark)
-	}
 	c.process(ctx, resourceVersion)
 }
 

@@ -9,11 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
-
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 type (
@@ -38,8 +36,6 @@ type (
 	}
 
 	defaultServiceNameDetector struct{}
-
-	defaultServiceInstanceIDDetector struct{}
 )
 
 var (
@@ -47,7 +43,6 @@ var (
 	_ Detector = host{}
 	_ Detector = stringDetector{}
 	_ Detector = defaultServiceNameDetector{}
-	_ Detector = defaultServiceInstanceIDDetector{}
 )
 
 // Detect returns a *Resource that describes the OpenTelemetry SDK used.
@@ -97,22 +92,6 @@ func (defaultServiceNameDetector) Detect(ctx context.Context) (*Resource, error)
 				return "unknown_service:go", nil
 			}
 			return "unknown_service:" + filepath.Base(executable), nil
-		},
-	).Detect(ctx)
-}
-
-// Detect implements Detector.
-func (defaultServiceInstanceIDDetector) Detect(ctx context.Context) (*Resource, error) {
-	return StringDetector(
-		semconv.SchemaURL,
-		semconv.ServiceInstanceIDKey,
-		func() (string, error) {
-			version4Uuid, err := uuid.NewRandom()
-			if err != nil {
-				return "", err
-			}
-
-			return version4Uuid.String(), nil
 		},
 	).Detect(ctx)
 }

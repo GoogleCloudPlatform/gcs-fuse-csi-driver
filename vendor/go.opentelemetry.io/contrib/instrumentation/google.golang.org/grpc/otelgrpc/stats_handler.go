@@ -27,7 +27,6 @@ type gRPCContext struct {
 	messagesReceived int64
 	messagesSent     int64
 	metricAttrs      []attribute.KeyValue
-	record           bool
 }
 
 type serverHandler struct {
@@ -67,10 +66,6 @@ func (h *serverHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) cont
 
 	gctx := gRPCContext{
 		metricAttrs: attrs,
-		record:      true,
-	}
-	if h.config.Filter != nil {
-		gctx.record = h.config.Filter(info)
 	}
 	return context.WithValue(ctx, gRPCContextKey{}, &gctx)
 }
@@ -107,10 +102,6 @@ func (h *clientHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) cont
 
 	gctx := gRPCContext{
 		metricAttrs: attrs,
-		record:      true,
-	}
-	if h.config.Filter != nil {
-		gctx.record = h.config.Filter(info)
 	}
 
 	return inject(context.WithValue(ctx, gRPCContextKey{}, &gctx), h.config.Propagators)
@@ -139,9 +130,6 @@ func (c *config) handleRPC(ctx context.Context, rs stats.RPCStats, isServer bool
 
 	gctx, _ := ctx.Value(gRPCContextKey{}).(*gRPCContext)
 	if gctx != nil {
-		if !gctx.record {
-			return
-		}
 		metricAttrs = make([]attribute.KeyValue, 0, len(gctx.metricAttrs)+1)
 		metricAttrs = append(metricAttrs, gctx.metricAttrs...)
 	}
@@ -151,7 +139,7 @@ func (c *config) handleRPC(ctx context.Context, rs stats.RPCStats, isServer bool
 	case *stats.InPayload:
 		if gctx != nil {
 			messageId = atomic.AddInt64(&gctx.messagesReceived, 1)
-			c.rpcRequestSize.Record(ctx, int64(rs.Length), metric.WithAttributeSet(attribute.NewSet(metricAttrs...)))
+			c.rpcRequestSize.Record(ctx, int64(rs.Length), metric.WithAttributes(metricAttrs...))
 		}
 
 		if c.ReceivedEvent {
@@ -167,7 +155,7 @@ func (c *config) handleRPC(ctx context.Context, rs stats.RPCStats, isServer bool
 	case *stats.OutPayload:
 		if gctx != nil {
 			messageId = atomic.AddInt64(&gctx.messagesSent, 1)
-			c.rpcResponseSize.Record(ctx, int64(rs.Length), metric.WithAttributeSet(attribute.NewSet(metricAttrs...)))
+			c.rpcResponseSize.Record(ctx, int64(rs.Length), metric.WithAttributes(metricAttrs...))
 		}
 
 		if c.SentEvent {
@@ -204,17 +192,14 @@ func (c *config) handleRPC(ctx context.Context, rs stats.RPCStats, isServer bool
 		span.End()
 
 		metricAttrs = append(metricAttrs, rpcStatusAttr)
-		// Allocate vararg slice once.
-		recordOpts := []metric.RecordOption{metric.WithAttributeSet(attribute.NewSet(metricAttrs...))}
 
 		// Use floating point division here for higher precision (instead of Millisecond method).
-		// Measure right before calling Record() to capture as much elapsed time as possible.
 		elapsedTime := float64(rs.EndTime.Sub(rs.BeginTime)) / float64(time.Millisecond)
 
-		c.rpcDuration.Record(ctx, elapsedTime, recordOpts...)
+		c.rpcDuration.Record(ctx, elapsedTime, metric.WithAttributes(metricAttrs...))
 		if gctx != nil {
-			c.rpcRequestsPerRPC.Record(ctx, atomic.LoadInt64(&gctx.messagesReceived), recordOpts...)
-			c.rpcResponsesPerRPC.Record(ctx, atomic.LoadInt64(&gctx.messagesSent), recordOpts...)
+			c.rpcRequestsPerRPC.Record(ctx, atomic.LoadInt64(&gctx.messagesReceived), metric.WithAttributes(metricAttrs...))
+			c.rpcResponsesPerRPC.Record(ctx, atomic.LoadInt64(&gctx.messagesSent), metric.WithAttributes(metricAttrs...))
 		}
 	default:
 		return

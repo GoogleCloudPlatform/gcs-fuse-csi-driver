@@ -35,9 +35,10 @@ rules:
   - selectorRegexp: ^github.com/|^gopkg.in
     allowedPrefixes: [
       "gopkg.in/inf.v0",
-      "gopkg.in/evanphx/json-patch.v4",
+      "gopkg.in/yaml.v2",
       "github.com/blang/semver/",
       "github.com/davecgh/go-spew/spew",
+      "github.com/evanphx/json-patch",
       "github.com/go-logr/logr",
       "github.com/gogo/protobuf/proto",
       "github.com/gogo/protobuf/sortkeys",
