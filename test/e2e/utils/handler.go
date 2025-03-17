@@ -239,6 +239,11 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, "metadata.prefetch")
 	}
 
+	supportsLongMountOptions, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, longMountOptionsMinimumVersion)
+	if !supportsLongMountOptions {
+		skipTests = append(skipTests, "long.mount.options")
+	}
+
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "metrics") // Skipping as these tests are known to be unstable
 
