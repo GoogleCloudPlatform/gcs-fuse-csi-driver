@@ -33,7 +33,9 @@ func (in *ControllerRevision) DeepCopyInto(out *ControllerRevision) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
-	in.Data.DeepCopyInto(&out.Data)
+	if in.Data != nil {
+		out.Data = in.Data.DeepCopyObject()
+	}
 	return
 }
 

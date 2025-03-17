@@ -20,34 +20,22 @@ import (
 	"fmt"
 
 	"github.com/google/cel-go/cel"
-	celast "github.com/google/cel-go/common/ast"
-	"github.com/google/cel-go/common/operators"
 	"github.com/google/cel-go/common/types/ref"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/util/version"
 	apiservercel "k8s.io/apiserver/pkg/cel"
 	"k8s.io/apiserver/pkg/cel/environment"
-	genericfeatures "k8s.io/apiserver/pkg/features"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 )
 
 const (
 	subjectAccessReviewRequestVarName = "request"
-
-	fieldSelectorVarName = "fieldSelector"
-	labelSelectorVarName = "labelSelector"
 )
 
 // CompilationResult represents a compiled authorization cel expression.
 type CompilationResult struct {
 	Program            cel.Program
 	ExpressionAccessor ExpressionAccessor
-
-	// These track if a given expression uses fieldSelector and labelSelector,
-	// so construction of data passed to the CEL expression can be optimized if those fields are unused.
-	UsesFieldSelector bool
-	UsesLabelSelector bool
 }
 
 // EvaluationResult contains the minimal required fields and metadata of a cel evaluation
@@ -63,12 +51,6 @@ type Compiler interface {
 
 type compiler struct {
 	envSet *environment.EnvSet
-}
-
-// NewDefaultCompiler returns a new Compiler following the default compatibility version.
-// Note: the compiler construction depends on feature gates and the compatibility version to be initialized.
-func NewDefaultCompiler() Compiler {
-	return NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
 }
 
 // NewCompiler returns a new Compiler.
@@ -114,50 +96,11 @@ func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor) (C
 
 		return resultError(reason, apiservercel.ErrorTypeInvalid)
 	}
-	checkedExpr, err := cel.AstToCheckedExpr(ast)
+	_, err = cel.AstToCheckedExpr(ast)
 	if err != nil {
 		// should be impossible since env.Compile returned no issues
 		return resultError("unexpected compilation error: "+err.Error(), apiservercel.ErrorTypeInternal)
 	}
-	celAST, err := celast.ToAST(checkedExpr)
-	if err != nil {
-		// should be impossible since env.Compile returned no issues
-		return resultError("unexpected compilation error: "+err.Error(), apiservercel.ErrorTypeInternal)
-	}
-
-	var usesFieldSelector, usesLabelSelector bool
-	celast.PreOrderVisit(celast.NavigateAST(celAST), celast.NewExprVisitor(func(e celast.Expr) {
-		// we already know we use both, no need to inspect more
-		if usesFieldSelector && usesLabelSelector {
-			return
-		}
-
-		var fieldName string
-		switch e.Kind() {
-		case celast.SelectKind:
-			// simple select (.fieldSelector / .labelSelector)
-			fieldName = e.AsSelect().FieldName()
-		case celast.CallKind:
-			// optional select (.?fieldSelector / .?labelSelector)
-			if e.AsCall().FunctionName() != operators.OptSelect {
-				return
-			}
-			args := e.AsCall().Args()
-			// args[0] is the receiver (what comes before the `.?`), args[1] is the field name being optionally selected (what comes after the `.?`)
-			if len(args) != 2 || args[1].Kind() != celast.LiteralKind || args[1].AsLiteral().Type() != cel.StringType {
-				return
-			}
-			fieldName, _ = args[1].AsLiteral().Value().(string)
-		}
-
-		switch fieldName {
-		case fieldSelectorVarName:
-			usesFieldSelector = true
-		case labelSelectorVarName:
-			usesLabelSelector = true
-		}
-	}))
-
 	prog, err := env.Program(ast)
 	if err != nil {
 		return resultError("program instantiation failed: "+err.Error(), apiservercel.ErrorTypeInternal)
@@ -165,8 +108,6 @@ func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor) (C
 	return CompilationResult{
 		Program:            prog,
 		ExpressionAccessor: expressionAccessor,
-		UsesFieldSelector:  usesFieldSelector,
-		UsesLabelSelector:  usesLabelSelector,
 	}, nil
 }
 
@@ -220,7 +161,7 @@ func buildRequestType(field func(name string, declType *apiservercel.DeclType, r
 // buildResourceAttributesType generates a DeclType for ResourceAttributes.
 // if attributes are added here, also add to convertObjectToUnstructured.
 func buildResourceAttributesType(field func(name string, declType *apiservercel.DeclType, required bool) *apiservercel.DeclField, fields func(fields ...*apiservercel.DeclField) map[string]*apiservercel.DeclField) *apiservercel.DeclType {
-	resourceAttributesFields := []*apiservercel.DeclField{
+	return apiservercel.NewObjectType("kubernetes.ResourceAttributes", fields(
 		field("namespace", apiservercel.StringType, false),
 		field("verb", apiservercel.StringType, false),
 		field("group", apiservercel.StringType, false),
@@ -228,33 +169,6 @@ func buildResourceAttributesType(field func(name string, declType *apiservercel.
 		field("resource", apiservercel.StringType, false),
 		field("subresource", apiservercel.StringType, false),
 		field("name", apiservercel.StringType, false),
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.AuthorizeWithSelectors) {
-		resourceAttributesFields = append(resourceAttributesFields, field("fieldSelector", buildFieldSelectorType(field, fields), false))
-		resourceAttributesFields = append(resourceAttributesFields, field("labelSelector", buildLabelSelectorType(field, fields), false))
-	}
-	return apiservercel.NewObjectType("kubernetes.ResourceAttributes", fields(resourceAttributesFields...))
-}
-
-func buildFieldSelectorType(field func(name string, declType *apiservercel.DeclType, required bool) *apiservercel.DeclField, fields func(fields ...*apiservercel.DeclField) map[string]*apiservercel.DeclField) *apiservercel.DeclType {
-	return apiservercel.NewObjectType("kubernetes.FieldSelectorAttributes", fields(
-		field("rawSelector", apiservercel.StringType, false),
-		field("requirements", apiservercel.NewListType(buildSelectorRequirementType(field, fields), -1), false),
-	))
-}
-
-func buildLabelSelectorType(field func(name string, declType *apiservercel.DeclType, required bool) *apiservercel.DeclField, fields func(fields ...*apiservercel.DeclField) map[string]*apiservercel.DeclField) *apiservercel.DeclType {
-	return apiservercel.NewObjectType("kubernetes.LabelSelectorAttributes", fields(
-		field("rawSelector", apiservercel.StringType, false),
-		field("requirements", apiservercel.NewListType(buildSelectorRequirementType(field, fields), -1), false),
-	))
-}
-
-func buildSelectorRequirementType(field func(name string, declType *apiservercel.DeclType, required bool) *apiservercel.DeclField, fields func(fields ...*apiservercel.DeclField) map[string]*apiservercel.DeclField) *apiservercel.DeclType {
-	return apiservercel.NewObjectType("kubernetes.SelectorRequirement", fields(
-		field("key", apiservercel.StringType, false),
-		field("operator", apiservercel.StringType, false),
-		field("values", apiservercel.NewListType(apiservercel.StringType, -1), false),
 	))
 }
 
@@ -267,7 +181,7 @@ func buildNonResourceAttributesType(field func(name string, declType *apiserverc
 	))
 }
 
-func convertObjectToUnstructured(obj *authorizationv1.SubjectAccessReviewSpec, includeFieldSelector, includeLabelSelector bool) map[string]interface{} {
+func convertObjectToUnstructured(obj *authorizationv1.SubjectAccessReviewSpec) map[string]interface{} {
 	// Construct version containing every SubjectAccessReview user and string attribute field, even omitempty ones, for evaluation by CEL
 	extra := obj.Extra
 	if extra == nil {
@@ -280,7 +194,7 @@ func convertObjectToUnstructured(obj *authorizationv1.SubjectAccessReviewSpec, i
 		"extra":  extra,
 	}
 	if obj.ResourceAttributes != nil {
-		resourceAttributes := map[string]interface{}{
+		ret["resourceAttributes"] = map[string]string{
 			"namespace":   obj.ResourceAttributes.Namespace,
 			"verb":        obj.ResourceAttributes.Verb,
 			"group":       obj.ResourceAttributes.Group,
@@ -289,42 +203,6 @@ func convertObjectToUnstructured(obj *authorizationv1.SubjectAccessReviewSpec, i
 			"subresource": obj.ResourceAttributes.Subresource,
 			"name":        obj.ResourceAttributes.Name,
 		}
-
-		if includeFieldSelector && obj.ResourceAttributes.FieldSelector != nil {
-			if len(obj.ResourceAttributes.FieldSelector.Requirements) > 0 {
-				requirements := make([]map[string]interface{}, 0, len(obj.ResourceAttributes.FieldSelector.Requirements))
-				for _, r := range obj.ResourceAttributes.FieldSelector.Requirements {
-					requirements = append(requirements, map[string]interface{}{
-						"key":      r.Key,
-						"operator": r.Operator,
-						"values":   r.Values,
-					})
-				}
-				resourceAttributes[fieldSelectorVarName] = map[string]interface{}{"requirements": requirements}
-			}
-			if len(obj.ResourceAttributes.FieldSelector.RawSelector) > 0 {
-				resourceAttributes[fieldSelectorVarName] = map[string]interface{}{"rawSelector": obj.ResourceAttributes.FieldSelector.RawSelector}
-			}
-		}
-
-		if includeLabelSelector && obj.ResourceAttributes.LabelSelector != nil {
-			if len(obj.ResourceAttributes.LabelSelector.Requirements) > 0 {
-				requirements := make([]map[string]interface{}, 0, len(obj.ResourceAttributes.LabelSelector.Requirements))
-				for _, r := range obj.ResourceAttributes.LabelSelector.Requirements {
-					requirements = append(requirements, map[string]interface{}{
-						"key":      r.Key,
-						"operator": r.Operator,
-						"values":   r.Values,
-					})
-				}
-				resourceAttributes[labelSelectorVarName] = map[string]interface{}{"requirements": requirements}
-			}
-			if len(obj.ResourceAttributes.LabelSelector.RawSelector) > 0 {
-				resourceAttributes[labelSelectorVarName] = map[string]interface{}{"rawSelector": obj.ResourceAttributes.LabelSelector.RawSelector}
-			}
-		}
-
-		ret["resourceAttributes"] = resourceAttributes
 	}
 	if obj.NonResourceAttributes != nil {
 		ret["nonResourceAttributes"] = map[string]string{

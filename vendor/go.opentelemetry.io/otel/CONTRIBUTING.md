@@ -570,9 +570,6 @@ functionality should be added, each one will need their own super-set
 interfaces and will duplicate the pattern. For this reason, the simple targeted
 interface that defines the specific functionality should be preferred.
 
-See also:
-[Keeping Your Modules Compatible: Working with interfaces](https://go.dev/blog/module-compatibility#working-with-interfaces).
-
 ### Testing
 
 The tests should never leak goroutines.
@@ -628,15 +625,17 @@ should be canceled.
 
 ### Approvers
 
+- [Evan Torrie](https://github.com/evantorrie), Verizon Media
+- [Sam Xie](https://github.com/XSAM), Cisco/AppDynamics
 - [Chester Cheung](https://github.com/hanyuancheung), Tencent
+- [Damien Mathieu](https://github.com/dmathieu), Elastic
+- [Anthony Mirabella](https://github.com/Aneurysm9), AWS
 
 ### Maintainers
 
-- [Aaron Clawson](https://github.com/MadVikingGod), LightStep
-- [Damien Mathieu](https://github.com/dmathieu), Elastic
 - [David Ashpole](https://github.com/dashpole), Google
+- [Aaron Clawson](https://github.com/MadVikingGod), LightStep
 - [Robert Pająk](https://github.com/pellared), Splunk
-- [Sam Xie](https://github.com/XSAM), Cisco/AppDynamics
 - [Tyler Yahn](https://github.com/MrAlias), Splunk
 
 ### Emeritus
@@ -644,8 +643,6 @@ should be canceled.
 - [Liz Fong-Jones](https://github.com/lizthegrey), Honeycomb
 - [Gustavo Silva Paiva](https://github.com/paivagustavo), LightStep
 - [Josh MacDonald](https://github.com/jmacd), LightStep
-- [Anthony Mirabella](https://github.com/Aneurysm9), AWS
-- [Evan Torrie](https://github.com/evantorrie), Yahoo
 
 ### Become an Approver or a Maintainer
 

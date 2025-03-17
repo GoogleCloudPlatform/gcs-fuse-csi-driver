@@ -30,11 +30,6 @@ import (
 type CELMatcher struct {
 	CompilationResults []CompilationResult
 
-	// These track if any expressions use fieldSelector and labelSelector,
-	// so construction of data passed to the CEL expression can be optimized if those fields are unused.
-	UsesLabelSelector bool
-	UsesFieldSelector bool
-
 	// These are optional fields which can be populated if metrics reporting is desired
 	Metrics        MatcherMetrics
 	AuthorizerType string
@@ -58,7 +53,7 @@ func (c *CELMatcher) Eval(ctx context.Context, r *authorizationv1.SubjectAccessR
 	}()
 
 	va := map[string]interface{}{
-		"request": convertObjectToUnstructured(&r.Spec, c.UsesFieldSelector, c.UsesLabelSelector),
+		"request": convertObjectToUnstructured(&r.Spec),
 	}
 	for _, compilationResult := range c.CompilationResults {
 		evalResult, _, err := compilationResult.Program.ContextEval(ctx, va)
