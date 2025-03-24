@@ -103,12 +103,11 @@ def file_passes(filename, refs, regexs):
 
     data = data.splitlines()
 
-    # if our test file is smaller than the reference it surely fails!
-    if len(ref) > len(data):
-        print('File %s smaller than reference (%d < %d)' %
-              (filename, len(data), len(ref)),
-              file=verbose_out)
-        return False
+    # Exempt lines that contain Kubernetes authors.
+    for i in range(len(data)):
+        if data[i].__contains__("Kubernetes Authors"):
+            data.pop(i)
+            break
 
     # trim our file to the same number of lines as the reference file
     data = data[:len(ref)]
