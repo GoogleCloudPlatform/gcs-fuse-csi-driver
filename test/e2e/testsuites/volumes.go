@@ -346,7 +346,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 	ginkgo.It("should store data using custom sidecar container image", func() {
 		testCaseStoreDataCustomContainerImage("")
 	})
-	ginkgo.It("should gcsfuse process succeed without missing flag error for hostnetwork pods using custom sidecar container image", func() {
+	ginkgo.It("should gcsfuse process succeed without missing flag error for hostnetwork enabled pods using custom sidecar container image", func() {
 		testCaseStoreDataCustomContainerImage(specs.EnableHostNetworkPrefix)
 	})
 	ginkgo.It("[csi-skip-bucket-access-check] should store data using custom sidecar container image", func() {
