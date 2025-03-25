@@ -244,6 +244,10 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, "long.mount.options")
 	}
 
+	if testParams.UseGKEAutopilot {
+		skipTests = append(skipTests, "hostnetwork.enabled.pods")
+	}
+
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "metrics") // Skipping as these tests are known to be unstable
 
