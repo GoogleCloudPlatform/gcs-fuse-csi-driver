@@ -30,6 +30,8 @@ type FakeClientset struct{}
 
 func (c *FakeClientset) ConfigurePodLister(_ string) {}
 
+func (c *FakeClientset) ConfigureNodeLister(_ string) {}
+
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	config := webhook.FakeConfig()
 	pod := &corev1.Pod{
@@ -56,6 +58,16 @@ func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	}
 
 	return pod, nil
+}
+
+func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+
+	return node, nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
