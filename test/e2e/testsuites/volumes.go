@@ -321,6 +321,11 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.SetCustomSidecarContainerImage()
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
+		if configPrefix == specs.EnableHostNetworkPrefix {
+			ginkgo.By("Turn on hostnetwork setting")
+			tPod.EnableHostNetwork()
+		}
+
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
@@ -330,14 +335,19 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Checking that the sidecar container is using the custom image")
 		tPod.VerifyCustomSidecarContainerImage(supportsNativeSidecar, hasMetadataPrefetch)
-
-		ginkgo.By("Checking that the pod command exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		// Do not check pod exec for hostnetwork, as we do not expect it to work until we support this feature for private sidecars.
+		if configPrefix != specs.EnableHostNetworkPrefix {
+			ginkgo.By("Checking that the pod command exits with no error")
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+		}
 	}
 
 	ginkgo.It("should store data using custom sidecar container image", func() {
 		testCaseStoreDataCustomContainerImage("")
+	})
+	ginkgo.It("should gcsfuse process succeed without missing flag error for hostnetwork pods using custom sidecar container image", func() {
+		testCaseStoreDataCustomContainerImage(specs.EnableHostNetworkPrefix)
 	})
 	ginkgo.It("[csi-skip-bucket-access-check] should store data using custom sidecar container image", func() {
 		testCaseStoreDataCustomContainerImage(specs.SkipCSIBucketAccessCheckPrefix)

@@ -90,7 +90,7 @@ const (
 	GolangImage         = "golang:1.22.7"
 	UbuntuImage         = "ubuntu:20.04"
 
-	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter@sha256:380bd2a716b936d9469d09e3a83baf22dddca1586a04a0060d7006ea78930cac"
+	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.7.1-gke.3@sha256:380bd2a716b936d9469d09e3a83baf22dddca1586a04a0060d7006ea78930cac"
 
 	pollInterval     = 1 * time.Second
 	pollTimeout      = 1 * time.Minute
