@@ -39,9 +39,11 @@ import (
 
 type Interface interface {
 	ConfigurePodLister(nodeName string)
+	ConfigureNodeLister(nodeName string)
 	GetPod(namespace, name string) (*corev1.Pod, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
+	GetNode(name string) (*corev1.Node, error)
 }
 
 type PodInfo struct {
@@ -52,7 +54,56 @@ type PodInfo struct {
 type Clientset struct {
 	k8sClients                kubernetes.Interface
 	podLister                 listersv1.PodLister
+	nodeLister                listersv1.NodeLister
 	informerResyncDurationSec int
+}
+
+const GkeMetaDataServerKey = "iam.gke.io/gke-metadata-server-enabled"
+
+func (c *Clientset) ConfigureNodeLister(nodeName string) {
+	trim := func(obj interface{}) (interface{}, error) {
+		if accessor, err := meta.Accessor(obj); err == nil {
+			if accessor.GetManagedFields() != nil {
+				accessor.SetManagedFields(nil)
+			}
+		}
+
+		// We are filtering only for relevant Node annotations to optimize memory usage.
+		// Relevant info is for NodePublishVolume calls:
+		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
+		nodeObj, ok := obj.(*corev1.Node)
+		if !ok {
+			return obj, nil
+		}
+
+		newLabels := map[string]string{}
+		isGkeMetaDataServerEnabled, ok := nodeObj.ObjectMeta.Labels[GkeMetaDataServerKey]
+		if ok {
+			newLabels[GkeMetaDataServerKey] = isGkeMetaDataServerEnabled
+		}
+
+		nodeObj.Spec = corev1.NodeSpec{}
+		nodeObj.Status = corev1.NodeStatus{}
+		nodeObj.ObjectMeta.Annotations = nil
+		nodeObj.ObjectMeta.Labels = newLabels
+		return obj, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.FieldSelector = "metadata.name=" + nodeName
+		}),
+		informers.WithTransform(trim),
+	)
+	nodeLister := informerFactory.Core().V1().Nodes().Lister()
+
+	ctx := context.Background()
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.nodeLister = nodeLister
 }
 
 func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
@@ -158,6 +209,14 @@ func (c *Clientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	}
 
 	return c.podLister.Pods(namespace).Get(name)
+}
+
+func (c *Clientset) GetNode(name string) (*corev1.Node, error) {
+	if c.nodeLister == nil {
+		return nil, errors.New("node informer is not ready")
+	}
+
+	return c.nodeLister.Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
