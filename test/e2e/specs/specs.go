@@ -1110,7 +1110,7 @@ func (t *TestJob) WaitForJobPodsSucceeded(ctx context.Context) {
 
 func (t *TestJob) WaitForJobFailed() {
 	framework.Logf("Waiting Job %s to fail", t.job.Name)
-	err := e2ejob.WaitForJobFailed(t.client, t.namespace.Name, t.job.Name)
+	err := e2ejob.WaitForJobFailed(context.TODO(), t.client, t.namespace.Name, t.job.Name)
 	framework.ExpectNoError(err)
 }
 
@@ -1190,10 +1190,8 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 	image := sidecarImageConfig.Data["sidecar-image"]
 	gomega.Expect(image).ToNot(gomega.BeEmpty())
 
-	f := &framework.Framework{
-		ClientSet: client,
-		Namespace: &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
-	}
+	f := framework.NewFramework("GetGCSFuseVersion", framework.Options{}, client)
+	f.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	tPod := NewTestPod(client, f.Namespace)
 	tPod.pod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

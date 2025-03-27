@@ -20,9 +20,9 @@ package webhook
 import (
 	"fmt"
 
+	dockerref "github.com/distribution/reference"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/kubernetes/pkg/util/parsers"
 )
 
 var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
@@ -60,7 +60,7 @@ func ExtractImageAndDeleteContainer(podSpec *corev1.PodSpec, containerName strin
 		copy(podSpec.Containers[index:], podSpec.Containers[index+1:])
 		podSpec.Containers = podSpec.Containers[:len(podSpec.Containers)-1]
 
-		if _, _, _, err := parsers.ParseImageName(image); err != nil {
+		if _, _, _, err := parseImageName(image); err != nil {
 			return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
 		}
 	}
@@ -73,10 +73,40 @@ func ExtractImageAndDeleteContainer(podSpec *corev1.PodSpec, containerName strin
 		copy(podSpec.InitContainers[index:], podSpec.InitContainers[index+1:])
 		podSpec.InitContainers = podSpec.InitContainers[:len(podSpec.InitContainers)-1]
 
-		if _, _, _, err := parsers.ParseImageName(image); err != nil {
+		if _, _, _, err := parseImageName(image); err != nil {
 			return "", fmt.Errorf("could not parse input image: %q, error: %w", image, err)
 		}
 	}
 
 	return image, nil
+}
+
+// parseImageName parses a docker image string into three parts: repo, tag and digest.
+// If both tag and digest are empty, a default image tag will be returned.
+//
+// Copied from "k8s.io/kubernetes/pkg/util/parsers" in order to break our dependency on
+// k8.io/kubernetes
+func parseImageName(image string) (string, string, string, error) {
+	named, err := dockerref.ParseNormalizedNamed(image)
+	if err != nil {
+		return "", "", "", fmt.Errorf("couldn't parse image name %q: %v", image, err)
+	}
+
+	repoToPull := named.Name()
+	var tag, digest string
+
+	tagged, ok := named.(dockerref.Tagged)
+	if ok {
+		tag = tagged.Tag()
+	}
+
+	digested, ok := named.(dockerref.Digested)
+	if ok {
+		digest = digested.Digest().String()
+	}
+	// If no tag was specified, use the default "latest".
+	if len(tag) == 0 && len(digest) == 0 {
+		tag = "latest"
+	}
+	return repoToPull, tag, digest, nil
 }

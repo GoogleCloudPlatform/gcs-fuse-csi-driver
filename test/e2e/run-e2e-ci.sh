@@ -22,7 +22,7 @@ set -o nounset
 set -o errexit
 
 # Note: the environment variable names in Prow are different from the local e2e test script.
-readonly PKGDIR="$( dirname -- "$0"; )/../.."
+readonly PKGDIR=$(realpath "$( dirname -- "$0"; )/../..")
 readonly gke_cluster_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
 readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
@@ -49,8 +49,12 @@ export PATH=$PATH:/usr/local/go/bin && go version && rm go_tar.tar.gz
 export PATH=${PATH}:$(go env GOPATH)/bin
 go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.1
 
+cd "${PKGDIR}"
+
 # Build e2e-test CLI
-go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
+pushd test
+go build -o ${PKGDIR}/bin/e2e-test-ci ./e2e
+popd
 chmod +x ${PKGDIR}/bin/e2e-test-ci
 
 # Prepare the test cmd

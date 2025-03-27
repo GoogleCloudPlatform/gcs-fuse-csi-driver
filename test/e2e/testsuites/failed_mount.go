@@ -25,8 +25,6 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/utils"
 	"github.com/onsi/ginkgo/v2"
 	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -37,6 +35,8 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 )
 
 type gcsFuseCSIFailedMountTestSuite struct {
