@@ -67,7 +67,7 @@ func NewAbstractType(name string, paramTypes ...*exprpb.Type) *exprpb.Type {
 // NewOptionalType constructs an abstract type indicating that the parameterized type
 // may be contained within the object.
 func NewOptionalType(paramType *exprpb.Type) *exprpb.Type {
-	return NewAbstractType("optional", paramType)
+	return NewAbstractType("optional_type", paramType)
 }
 
 // NewFunctionType creates a function invocation contract, typically only used
@@ -231,7 +231,5 @@ func NewWrapperType(wrapped *exprpb.Type) *exprpb.Type {
 		// TODO: return an error
 		panic("Wrapped type must be a primitive")
 	}
-	return &exprpb.Type{
-		TypeKind: &exprpb.Type_Wrapper{
-			Wrapper: primitive}}
+	return &exprpb.Type{TypeKind: &exprpb.Type_Wrapper{Wrapper: primitive}}
 }
