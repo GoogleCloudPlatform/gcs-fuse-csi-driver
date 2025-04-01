@@ -28,7 +28,7 @@ jobs:
     - name: Build webhook
       run: make webhook
     - name: Build e2e test binary
-      run: go build -mod=vendor ./test/e2e
+      run: make build-e2e-test
   
   unit-test:
     runs-on: ubuntu-22.04

@@ -26,7 +26,6 @@ import (
 	"github.com/google/uuid"
 	csidriver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	metricspkg "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/test/e2e/specs"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	dto "github.com/prometheus/client_model/go"
@@ -35,6 +34,7 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
+	"local/test/e2e/specs"
 )
 
 var expectedMetricNames = map[string]int{

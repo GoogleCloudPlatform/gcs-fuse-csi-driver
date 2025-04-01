@@ -41,6 +41,8 @@ ifneq ("$(shell docker buildx build --help | grep 'provenance')", "")
 DOCKER_BUILDX_ARGS += --provenance=false
 endif
 
+DOCKER_BUILDX_ARGS += --quiet
+
 $(info PROJECT is ${PROJECT})
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
@@ -68,7 +70,7 @@ webhook:
 
 download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
-	
+
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	rm -f ${BINDIR}/Dockerfile.gcsfuse
 	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
@@ -82,7 +84,7 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 		--build-arg BRANCH_NAME=master \
 		--build-arg ARCHITECTURE=amd64 \
 		--platform=linux/amd64 .
-	
+
 	docker run \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
@@ -132,7 +134,7 @@ init-buildx:
 
 build-image-and-push-multi-arch: init-buildx download-gcsfuse build-image-linux-amd64
 ifeq (${BUILD_ARM}, true)
-	make build-image-linux-arm64
+	$(MAKE) build-image-linux-arm64
 	docker manifest create ${DRIVER_IMAGE}:${STAGINGVERSION} ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest create ${SIDECAR_IMAGE}:${STAGINGVERSION} ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64
 	docker manifest create ${PREFETCH_IMAGE}:${STAGINGVERSION} ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64
@@ -184,18 +186,18 @@ build-image-linux-arm64:
 		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 \
 		--build-arg TARGETPLATFORM=linux/arm64 .
-
+	\
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_arm64 \
 		--platform=linux/arm64 \
 		--target validation-image .
-	
+	\
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 .
-
+	\
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/sidecar_mounter/Dockerfile \
 		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64 \
@@ -203,13 +205,13 @@ build-image-linux-arm64:
 		--build-arg TARGETPLATFORM=linux/arm64 .
 
 install:
-	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
+	$(MAKE) generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
 	./deploy/base/webhook/create-cert.sh --namespace gcs-fuse-csi-driver --service gcs-fuse-csi-driver-webhook --secret gcs-fuse-csi-driver-webhook-secret
 	./deploy/base/webhook/manage-validating_admission_policy.sh --install
 
 uninstall:
-	make generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
+	$(MAKE) generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl delete -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml --wait
 	./deploy/base/webhook/manage-validating_admission_policy.sh --uninstall
 
@@ -236,10 +238,13 @@ unit-test:
 	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
-	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
+	cd test && go test -v -timeout 30s "./sanity/" -run TestSanity
+
+build-e2e-test:
+	cd test && go build -o ../bin/e2e-test-ci ./e2e
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh
 
 perf-test:
-	make e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=3h E2E_TEST_SKIP= E2E_TEST_FOCUS=should.succeed.in.performance.test E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
+	$(MAKE) e2e-test E2E_TEST_USE_MANAGED_DRIVER=true E2E_TEST_GINKGO_TIMEOUT=3h E2E_TEST_SKIP= E2E_TEST_FOCUS=should.succeed.in.performance.test E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
