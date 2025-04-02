@@ -55,6 +55,18 @@ func main() {
 	mounter := sidecarmounter.New(*gcsfusePath)
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Read machine-type path
+	machineType := ""
+	volumePath := *volumeBasePath + "/machine-type"
+	klog.Infof("Checking if machine-type file exists: %v", volumePath)
+	if _, err := os.Stat(volumePath); err == nil {
+		machineTypeBytes, err := os.ReadFile(volumePath)
+		if err != nil {
+			klog.Fatalf("failed to read machine-type file: %v", err)
+		}
+		machineType = string(machineTypeBytes)
+	}
+
 	for _, sp := range socketPaths {
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
@@ -62,6 +74,8 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp)
 		if mc != nil {
+			// TODO: Pass machine-type to gcsfuse binary
+			klog.Infof("Setting machine type... %v", machineType)
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
