@@ -1030,14 +1030,14 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			expectedPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"gke-gcsfuse/metadata-prefetch/container-image":           "fake-image",
-						"gke-gcsfuse/metadata-prefetch/cpu-limit":                 "250m",
-						"gke-gcsfuse/metadata-prefetch/cpu-request":               "250m",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-limit":   "5Gi",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-request": "5Gi",
-						"gke-gcsfuse/metadata-prefetch/image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch/memory-limit":              "20Mi",
-						"gke-gcsfuse/metadata-prefetch/memory-request":            "20Mi",
+						"gke-gcsfuse/metadata-prefetch-container-image":           "fake-image",
+						"gke-gcsfuse/metadata-prefetch-cpu-limit":                 "250m",
+						"gke-gcsfuse/metadata-prefetch-cpu-request":               "250m",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-limit":   "5Gi",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-request": "5Gi",
+						"gke-gcsfuse/metadata-prefetch-image-pull-policy":         "Always",
+						"gke-gcsfuse/metadata-prefetch-memory-limit":              "20Mi",
+						"gke-gcsfuse/metadata-prefetch-memory-request":            "20Mi",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -1147,13 +1147,13 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			expectedPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"gke-gcsfuse/metadata-prefetch/container-image":           "fake-image",
-						"gke-gcsfuse/metadata-prefetch/cpu-limit":                 "250m",
-						"gke-gcsfuse/metadata-prefetch/cpu-request":               "250m",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-limit":   "5Gi",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-request": "5Gi",
-						"gke-gcsfuse/metadata-prefetch/image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch/memory-request":            "20Mi",
+						"gke-gcsfuse/metadata-prefetch-container-image":           "fake-image",
+						"gke-gcsfuse/metadata-prefetch-cpu-limit":                 "250m",
+						"gke-gcsfuse/metadata-prefetch-cpu-request":               "250m",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-limit":   "5Gi",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-request": "5Gi",
+						"gke-gcsfuse/metadata-prefetch-image-pull-policy":         "Always",
+						"gke-gcsfuse/metadata-prefetch-memory-request":            "20Mi",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -1280,14 +1280,14 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			expectedPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"gke-gcsfuse/metadata-prefetch/container-image":           "fake-image",
-						"gke-gcsfuse/metadata-prefetch/cpu-limit":                 "50m",
-						"gke-gcsfuse/metadata-prefetch/cpu-request":               "10m",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-limit":   "10Mi",
-						"gke-gcsfuse/metadata-prefetch/ephemeral-storage-request": "10Mi",
-						"gke-gcsfuse/metadata-prefetch/image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch/memory-limit":              "10Mi",
-						"gke-gcsfuse/metadata-prefetch/memory-request":            "10Mi",
+						"gke-gcsfuse/metadata-prefetch-container-image":           "fake-image",
+						"gke-gcsfuse/metadata-prefetch-cpu-limit":                 "50m",
+						"gke-gcsfuse/metadata-prefetch-cpu-request":               "10m",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-limit":   "10Mi",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-request": "10Mi",
+						"gke-gcsfuse/metadata-prefetch-image-pull-policy":         "Always",
+						"gke-gcsfuse/metadata-prefetch-memory-limit":              "10Mi",
+						"gke-gcsfuse/metadata-prefetch-memory-request":            "10Mi",
 					},
 				},
 				Spec: corev1.PodSpec{
