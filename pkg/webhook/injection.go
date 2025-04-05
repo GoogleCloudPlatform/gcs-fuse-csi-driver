@@ -29,7 +29,7 @@ import (
 
 var sidecarPrefixMap = map[string]string{
 	GcsFuseSidecarName:          "gke-gcsfuse/",
-	MetadataPrefetchSidecarName: "gke-gcsfuse/metadata-prefetch/",
+	MetadataPrefetchSidecarName: "gke-gcsfuse/metadata-prefetch-",
 }
 
 // used to guarantee containers start in the correct sequence based on inter-container dependencies.
