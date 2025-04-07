@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -56,14 +57,20 @@ type manager struct {
 	metricsEndpoint string
 	fuseSocketDir   string
 	clientset       clientset.Interface
+
+	maximumNumberOfCollectors int
+	registeredCollectorsCount int
+	mutex                     sync.Mutex
 }
 
-func NewMetricsManager(metricsEndpoint, fuseSocketDir string, clientset clientset.Interface) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface) Manager {
 	mm := &manager{
-		registry:        prometheus.NewRegistry(),
-		metricsEndpoint: metricsEndpoint,
-		fuseSocketDir:   fuseSocketDir,
-		clientset:       clientset,
+		registry:                  prometheus.NewRegistry(),
+		metricsEndpoint:           metricsEndpoint,
+		fuseSocketDir:             fuseSocketDir,
+		clientset:                 clientset,
+		maximumNumberOfCollectors: maximumNumberOfCollectors,
+		mutex:                     sync.Mutex{},
 	}
 
 	return mm
@@ -115,8 +122,25 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		"bucket_name":    bucketName,
 		"pod_uid":        podUID,
 	}, mm.clientset)
-	if err := mm.registry.Register(c); err != nil && !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
-		klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
+
+	// Lock the number of registered collectors while we attemtp to register a new collector.
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
+	// We skip registration when we already registered all supported metrics collectors. If a limit is
+	// unset (maximumNumberOfCollectors less than zero), we continue to registration.
+	if mm.maximumNumberOfCollectors >= 0 && mm.registeredCollectorsCount >= mm.maximumNumberOfCollectors {
+		return
+	}
+
+	err = mm.registry.Register(c)
+	if err != nil {
+		if !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
+			klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
+		}
+	} else {
+		mm.registeredCollectorsCount += 1
+		klog.Infof("successfully registered a new metrics collector: podUID: %s, volume: %s. there's %d collectors registerd.", podUID, bucketName, mm.registeredCollectorsCount)
 	}
 }
 
@@ -126,8 +150,16 @@ func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 
 	// metricsCollector uses a hash of pod UID and volume name as an identifier.
 	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil)
+
+	// Lock the number of registered collectors while we attempt to unregister a collector.
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
 	if ok := mm.registry.Unregister(c); !ok {
 		klog.Infof("Unregister metrics collector for targetPath %q is not needed since the collector is not registered", targetPath)
+	} else {
+		mm.registeredCollectorsCount -= 1
+		klog.Infof("successfully unregistered a metrics collector: podUID: %s, volume: %s. there's %d collectors registerd.", podUID, volumeName, mm.registeredCollectorsCount)
 	}
 }
 

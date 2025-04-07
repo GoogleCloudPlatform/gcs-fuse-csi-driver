@@ -47,6 +47,7 @@ var (
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
 	fuseSocketDir             = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
 	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
+	maximumNumberOfCollectors = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -109,7 +110,7 @@ func main() {
 		}
 
 		if *metricsEndpoint != "" {
-			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, clientset)
+			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
 			mm.InitializeHTTPHandler()
 		}
 	}
