@@ -36,6 +36,7 @@ func NewFakeClientset() *FakeClientset {
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
 	fakeClientSet.CreatePod( /*hostNetworkEnabled */ false)
 	fakeClientSet.CreateNode( /* isWorkloadIdentityEnabledOnNode */ true)
+
 	return fakeClientSet
 }
 
