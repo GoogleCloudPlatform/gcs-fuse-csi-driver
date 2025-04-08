@@ -59,6 +59,7 @@ spec:
             - --cert-dir=/etc/tls-certs
             - --port=22030
             - --health-probe-bind-address=:22031
+            - --should-inject-sa-vol=true
           env:
             - name: SIDECAR_IMAGE_PULL_POLICY
               value: "IfNotPresent"

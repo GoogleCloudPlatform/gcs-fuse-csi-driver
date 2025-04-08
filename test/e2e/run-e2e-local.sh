@@ -19,7 +19,7 @@ set -o xtrace
 set -o nounset
 set -o errexit
 
-readonly PKGDIR="$( dirname -- "$0"; )/../.."
+readonly PKGDIR=$(realpath "$( dirname -- "$0"; )/../..")
 readonly gke_cluster_region=${GKE_CLUSTER_REGION:-us-central1}
 readonly gke_cluster_version=$(kubectl version | grep -Eo 'Server Version: v[0-9]+\.[0-9]+\.[0-9]+' | grep -Eo  '[0-9]+\.[0-9]+\.[0-9]+')
 readonly use_gke_autopilot=${E2E_TEST_USE_GKE_AUTOPILOT:-false}
@@ -27,6 +27,8 @@ readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERR
 
 readonly use_gke_managed_driver="${E2E_TEST_USE_GKE_MANAGED_DRIVER:-true}"
 readonly build_gcs_fuse_csi_driver="${E2E_TEST_BUILD_DRIVER:-false}"
+readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
+readonly overlay="${OVERLAY:-stable}"
 
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
 readonly ginkgo_skip="${E2E_TEST_SKIP:-should.succeed.in.performance.test}"
@@ -37,11 +39,16 @@ readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.1
+## Keep this up to date with ../go.mod.
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.23.0
+
+cd "${PKGDIR}"
 
 # Build e2e-test CLI
-go build -mod=vendor -o ${PKGDIR}/bin/e2e-test-ci ./test/e2e
-chmod +x ${PKGDIR}/bin/e2e-test-ci
+pushd ./test
+go build -o ${PKGDIR}/bin/e2e-test-ci ./e2e
+popd
+chmod +x "${PKGDIR}/bin/e2e-test-ci"
 
 # Prepare the test cmd
 base_cmd="${PKGDIR}/bin/e2e-test-ci \
@@ -52,8 +59,8 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \
             --image-registry=${REGISTRY} \
             --build-gcs-fuse-csi-driver=${build_gcs_fuse_csi_driver} \
-            --build-gcs-fuse-from-source=${BUILD_GCSFUSE_FROM_SOURCE} \
-            --deploy-overlay-name=${OVERLAY} \
+            --build-gcs-fuse-from-source=${build_gcsfuse_from_source} \
+            --deploy-overlay-name=${overlay} \
             --use-gke-managed-driver=${use_gke_managed_driver} \
             --gke-cluster-version=${gke_cluster_version} \
             --ginkgo-focus=${ginkgo_focus} \
