@@ -42,8 +42,8 @@ const (
 	memoryRequestAnnotation                 = "gke-gcsfuse/memory-request"
 	ephemeralStorageLimitAnnotation         = "gke-gcsfuse/ephemeral-storage-limit"
 	ephemeralStorageRequestAnnotation       = "gke-gcsfuse/ephemeral-storage-request"
-	metadataPrefetchMemoryLimitAnnotation   = "gke-gcsfuse/metadata-prefetch/memory-limit"
-	metadataPrefetchMemoryRequestAnnotation = "gke-gcsfuse/metadata-prefetch/memory-request"
+	metadataPrefetchMemoryLimitAnnotation   = "gke-gcsfuse/metadata-prefetch-memory-limit"
+	metadataPrefetchMemoryRequestAnnotation = "gke-gcsfuse/metadata-prefetch-memory-request"
 )
 
 type SidecarInjector struct {
