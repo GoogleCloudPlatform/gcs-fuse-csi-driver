@@ -31,6 +31,15 @@ type FakeClientset struct {
 	fakeNode *corev1.Node
 }
 
+func NewFakeClientset() *FakeClientset {
+	fakeClientSet := &FakeClientset{}
+	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
+	fakeClientSet.CreatePod( /*hostNetworkEnabled */ false)
+	fakeClientSet.CreateNode( /* isWorkloadIdentityEnabledOnNode */ true)
+
+	return fakeClientSet
+}
+
 func (c *FakeClientset) ConfigurePodLister(_ string) {}
 
 func (c *FakeClientset) ConfigureNodeLister(_ string) {}
