@@ -238,8 +238,7 @@ unit-test:
 	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
-	cd test && go test -v -timeout 30s "./sanity/" -run TestSanity
-	echo $${GITHUB_SHA}
+	cd test && go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
 
 build-e2e-test:
 	cd test && go build -o ../bin/e2e-test-ci ./e2e
