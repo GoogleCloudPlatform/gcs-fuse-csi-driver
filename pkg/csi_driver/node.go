@@ -141,6 +141,18 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"token-server-identity-provider=" + identityProvider})
 	}
 
+	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get node: %v", err)
+	}
+
+	val, ok := node.Labels[clientset.GkeMetaDataServerKey]
+	// If Workload Identity is not enabled, the key should be missing; the check for "val == false" is just for extra caution
+	isWorkloadIdentityDisabled := val != "true" || !ok
+	if isWorkloadIdentityDisabled && !pod.Spec.HostNetwork {
+		return nil, status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)")
+	}
+
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
 	shouldInjectedByWebhook := strings.ToLower(pod.Annotations[webhook.GcsFuseVolumeEnableAnnotation]) == util.TrueStr

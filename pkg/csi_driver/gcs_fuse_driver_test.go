@@ -31,6 +31,10 @@ import (
 
 func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 	t.Helper()
+	fakeClientSet := &clientset.FakeClientset{}
+	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
+	fakeClientSet.CreatePod( /*hostNetworkEnabled */ false)
+	fakeClientSet.CreateNode( /* isWorkloadIdentityEnabledOnNode */ true)
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
 		NodeID:                "test-node",
@@ -40,7 +44,33 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		StorageServiceManager: storage.NewFakeServiceManager(),
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               fm,
-		K8sClients:            &clientset.FakeClientset{},
+		K8sClients:            fakeClientSet,
+		MetricsManager:        &metrics.FakeMetricsManager{},
+	}
+	driver, err := NewGCSDriver(config)
+	if err != nil {
+		t.Fatalf("failed to init driver: %v", err)
+	}
+	if driver == nil {
+		t.Fatalf("driver is nil")
+	}
+
+	return driver
+}
+
+// Helper function for creating node server with a custom FakeClientset
+func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, clientSet *clientset.FakeClientset) *GCSDriver {
+	t.Helper()
+	config := &GCSDriverConfig{
+		Name:                  "test-driver",
+		NodeID:                "test-node",
+		Version:               "test-version",
+		RunController:         true,
+		RunNode:               true,
+		StorageServiceManager: storage.NewFakeServiceManager(),
+		TokenManager:          auth.NewFakeTokenManager(),
+		Mounter:               fm,
+		K8sClients:            clientSet,
 		MetricsManager:        &metrics.FakeMetricsManager{},
 	}
 	driver, err := NewGCSDriver(config)
