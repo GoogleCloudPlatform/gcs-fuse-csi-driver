@@ -59,7 +59,6 @@ func TestSanity(t *testing.T) {
 	}
 	defer cleanUp()
 
-	// Set up driver and env
 	driverConfig := &driver.GCSDriverConfig{
 		Name:                  driverName,
 		Version:               driverVersion,
@@ -69,7 +68,7 @@ func TestSanity(t *testing.T) {
 		StorageServiceManager: storage.NewFakeServiceManager(),
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
-		K8sClients:            &clientset.FakeClientset{},
+		K8sClients:            clientset.NewFakeClientset(),
 		MetricsManager:        &metrics.FakeMetricsManager{},
 	}
 
