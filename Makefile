@@ -237,7 +237,6 @@ unit-test:
 
 sanity-test:
 	go test -v -mod=vendor -timeout 30s "./test/sanity/" -run TestSanity
-	echo $${GITHUB_SHA}
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh
