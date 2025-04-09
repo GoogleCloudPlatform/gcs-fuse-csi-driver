@@ -81,11 +81,13 @@ func (c *FakeClientset) CreateNode(isWorkloadIdentityEnabled bool) {
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	c.fakePod.ObjectMeta.Name = name
 	c.fakePod.ObjectMeta.Namespace = namespace
+
 	return c.fakePod, nil
 }
 
 func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
 	c.fakeNode.ObjectMeta.Name = name
+
 	return c.fakeNode, nil
 }
 

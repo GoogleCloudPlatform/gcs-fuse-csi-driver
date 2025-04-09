@@ -193,6 +193,7 @@ func TestNodePublishVolume(t *testing.T) {
 }
 
 func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
+	t.Parallel()
 	defaultPerm := os.FileMode(0o750) + os.ModeDir
 	// Setup mount target path
 	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
