@@ -27,7 +27,6 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
@@ -54,21 +53,6 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriver(t, mounter)
-	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
-	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
-		t.Fatalf("failed to create the fake bucket: %v", err)
-	}
-
-	return &nodeServerTestEnv{
-		ns: newNodeServer(driver, mounter),
-		fm: mounter,
-	}
-}
-
-func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.FakeClientset) *nodeServerTestEnv {
-	t.Helper()
-	mounter := mount.NewFakeMounter([]mount.MountPoint{})
-	driver := initTestDriverWithCustomNodeServer(t, mounter, clientSet)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
@@ -181,6 +165,7 @@ func TestNodePublishVolume(t *testing.T) {
 		if test.mounts != nil {
 			testEnv.fm.MountPoints = test.mounts
 		}
+
 		_, err := testEnv.ns.NodePublishVolume(context.TODO(), test.req)
 		if test.expectErr == nil && err != nil {
 			t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
@@ -190,75 +175,6 @@ func TestNodePublishVolume(t *testing.T) {
 		}
 		validateMountPoint(t, test.name, testEnv.fm, test.expectedMount)
 	}
-}
-
-func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
-	defaultPerm := os.FileMode(0o750) + os.ModeDir
-	// Setup mount target path
-	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
-	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
-		t.Fatalf("failed to setup tmp dir path: %v", err)
-	}
-	base, err := os.MkdirTemp(tmpDir, "node-publish-")
-	if err != nil {
-		t.Fatalf("failed to setup testdir: %v", err)
-	}
-	testTargetPath := filepath.Join(base, "mount")
-	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
-		t.Fatalf("failed to setup target path: %v", err)
-	}
-	defer os.RemoveAll(base)
-
-	req := &csi.NodePublishVolumeRequest{
-		VolumeId:         testVolumeID,
-		TargetPath:       testTargetPath,
-		VolumeCapability: testVolumeCapability,
-	}
-
-	cases := []struct {
-		name                          string
-		hostNetworkEnabledOnPod       bool
-		workloadIdentityEnabledOnNode bool
-		expectErr                     error
-	}{
-		{
-			name:                          "workload identity is enabled on node + pod using hostnetwork",
-			hostNetworkEnabledOnPod:       true,
-			workloadIdentityEnabledOnNode: true,
-		},
-		{
-			name:                          "workload identity is not enabled on node + pod is not using hostnetwork, expecting error",
-			hostNetworkEnabledOnPod:       false,
-			workloadIdentityEnabledOnNode: false,
-			expectErr:                     status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)"),
-		},
-		{
-			name:                          "testcase3",
-			hostNetworkEnabledOnPod:       false,
-			workloadIdentityEnabledOnNode: true,
-		},
-		{
-			name:                          "testcase4",
-			hostNetworkEnabledOnPod:       true,
-			workloadIdentityEnabledOnNode: false,
-			// TODO: confirm if this case needs to throw an error (if hostnetwork requires node to have GKE Metadata server enabled) once hostnetwork feature is available for testing
-		},
-	}
-	for _, test := range cases {
-		fakeClientSet := &clientset.FakeClientset{}
-		fakeClientSet.CreateNode( /* workloadIdentityEnabled */ test.workloadIdentityEnabledOnNode)
-		fakeClientSet.CreatePod( /* hostNetworkEnabled */ test.hostNetworkEnabledOnPod)
-		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet)
-
-		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
-		if test.expectErr == nil && err != nil {
-			t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
-		}
-		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
-			t.Errorf("test %q failed:\ngot error %q,\nexpected error %q", test.name, err, test.expectErr)
-		}
-	}
-
 }
 
 func TestNodeUnpublishVolume(t *testing.T) {

@@ -26,21 +26,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type FakeClientset struct {
-	fakePod  *corev1.Pod
-	fakeNode *corev1.Node
-}
+type FakeClientset struct{}
 
 func (c *FakeClientset) ConfigurePodLister(_ string) {}
 
-func (c *FakeClientset) ConfigureNodeLister(_ string) {}
-
-func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
+func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	config := webhook.FakeConfig()
-	c.fakePod = &corev1.Pod{
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "",
-			Namespace: "",
+			Name:      name,
+			Namespace: namespace,
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -60,33 +55,7 @@ func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
 		},
 	}
 
-	if hostNetworkEnabled {
-		c.fakePod.Spec.HostNetwork = true
-	}
-}
-
-func (c *FakeClientset) CreateNode(isWorkloadIdentityEnabled bool) {
-	c.fakeNode = &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "",
-			Labels: map[string]string{},
-		},
-	}
-
-	if isWorkloadIdentityEnabled {
-		c.fakeNode.Labels[GkeMetaDataServerKey] = "true"
-	}
-}
-
-func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
-	c.fakePod.ObjectMeta.Name = name
-	c.fakePod.ObjectMeta.Namespace = namespace
-	return c.fakePod, nil
-}
-
-func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
-	c.fakeNode.ObjectMeta.Name = name
-	return c.fakeNode, nil
+	return pod, nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

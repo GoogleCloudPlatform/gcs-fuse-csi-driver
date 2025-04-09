@@ -37,9 +37,6 @@ rules:
     resources: ["pods"]
     verbs: ["get", "watch", "list"]
   - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "watch", "list"]
-  - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get"]
 ---
