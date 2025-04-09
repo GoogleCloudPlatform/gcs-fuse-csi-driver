@@ -101,7 +101,6 @@ func main() {
 		}
 
 		clientset.ConfigurePodLister(*nodeID)
-		clientset.ConfigureNodeLister(*nodeID)
 
 		mounter, err = csimounter.New("", *fuseSocketDir)
 		if err != nil {
