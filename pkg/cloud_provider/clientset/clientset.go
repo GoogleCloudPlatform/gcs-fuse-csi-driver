@@ -86,6 +86,7 @@ func (c *Clientset) ConfigureNodeLister(nodeName string) {
 		nodeObj.Status = corev1.NodeStatus{}
 		nodeObj.ObjectMeta.Annotations = nil
 		nodeObj.ObjectMeta.Labels = newLabels
+
 		return obj, nil
 	}
 
