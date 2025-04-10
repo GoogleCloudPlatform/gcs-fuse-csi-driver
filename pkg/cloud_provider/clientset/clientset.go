@@ -59,6 +59,7 @@ type Clientset struct {
 }
 
 const GkeMetaDataServerKey = "iam.gke.io/gke-metadata-server-enabled"
+const MachineTypeKey = "node.kubernetes.io/instance-type"
 
 func (c *Clientset) ConfigureNodeLister(nodeName string) {
 	trim := func(obj interface{}) (interface{}, error) {
@@ -80,6 +81,10 @@ func (c *Clientset) ConfigureNodeLister(nodeName string) {
 		isGkeMetaDataServerEnabled, ok := nodeObj.ObjectMeta.Labels[GkeMetaDataServerKey]
 		if ok {
 			newLabels[GkeMetaDataServerKey] = isGkeMetaDataServerEnabled
+		}
+		machineType, ok := nodeObj.ObjectMeta.Labels[MachineTypeKey]
+		if ok {
+			newLabels[MachineTypeKey] = machineType
 		}
 
 		nodeObj.Spec = corev1.NodeSpec{}
