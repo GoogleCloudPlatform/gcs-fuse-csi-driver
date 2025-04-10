@@ -86,6 +86,8 @@ const (
 	ReadAheadCustomReadAheadKb = "15360"
 	ReadAheadCustomMaxRatio    = "100"
 
+	DisableAutoconfig = "disable-autoconfig"
+
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.7"
 	UbuntuImage         = "ubuntu:20.04"
@@ -404,6 +406,15 @@ func (t *TestPod) SetName(name string) {
 
 func (t *TestPod) GetNode() string {
 	return t.pod.Spec.NodeName
+}
+
+func (t *TestPod) GetMachineType(ctx context.Context) (string, error) {
+	nodeName := t.GetNode()
+	node, err := t.client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("error getting test node %v's machine type ", nodeName)
+	}
+	return node.ObjectMeta.Labels["node.kubernetes.io/instance-type"], nil
 }
 
 func (t *TestPod) GetCSIDriverNodePodIP(ctx context.Context) string {
@@ -1236,4 +1247,19 @@ func DeployIstioSidecar(namespace string) {
 
 func DeployIstioServiceEntry(namespace string) {
 	e2ekubectl.RunKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-service-entry.yaml")
+}
+
+func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachineTypeFlag string, expectedDisableAutoconfigFlag bool) {
+	stdout, stderr, err := e2ekubectl.RunKubectlWithFullOutput(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+
+	expectedDisableAutoconfigFlagString := fmt.Sprintf(`"DisableAutoconfig":%t`, expectedDisableAutoconfigFlag)
+	expectedMachineTypeFlagString := fmt.Sprintf(`"MachineType":"%s"`, expectedMachineTypeFlag)
+
+	gomega.Expect(stdout).To(gomega.ContainSubstring(expectedDisableAutoconfigFlagString),
+		"Should find DisableAutoconfig flag string %q in stdout", expectedDisableAutoconfigFlagString)
+	gomega.Expect(stdout).To(gomega.ContainSubstring(expectedMachineTypeFlagString),
+		"Should find MachineType flag string %q in stdout", expectedMachineTypeFlagString)
 }

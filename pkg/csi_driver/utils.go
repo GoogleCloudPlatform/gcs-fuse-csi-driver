@@ -66,6 +66,9 @@ const (
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
 	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
+	// TODO: Update with actual minimum sidecar version after the first feature release
+	AutoconfigDefaultingSidecarMinVersion = "v1.99.0-gke.0"
+	FlagFileForDefaultingPath             = "flags-for-defaulting"
 )
 
 var volumeIDRegEx = regexp.MustCompile(`:.*$`)
@@ -473,22 +476,73 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 }
 
 func isSidecarVersionSupportedForTokenServer(imageName string) bool {
+	return isSidecarVersionSupportedForGivenFeature(imageName, tokenServerSidecarMinVersion)
+}
+
+func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
 	managedSidecarPattern := `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+.\d+.\d+-gke\.\d+.*`
 	re := regexp.MustCompile(managedSidecarPattern)
 	isManagedSidecar := re.MatchString(imageName)
 
 	if !isManagedSidecar {
 		klog.Infof("mountOptions should not be passed because this is a private sidecar image %q", imageName)
-
 		return false
 	}
 	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
 	klog.Infof("sidecar image version: %v", imageVersion)
-	if semver.Compare(imageVersion, tokenServerSidecarMinVersion) >= 0 {
+	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
 		klog.Infof("sidecar version is supported for token server")
-
 		return true
 	}
 
 	return false
+}
+
+func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string, fileName string) error {
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
+	if err != nil {
+		return fmt.Errorf("failed to get emptyDir path: %w", err)
+	}
+
+	absolutePath := filepath.Dir(emptyDirBasePath) + "/" + fileName
+	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %q: %v", absolutePath, flagMap)
+
+	f, err := os.Create(absolutePath)
+	if err != nil {
+		return fmt.Errorf("failed to create defaulting-flag file: %w", err)
+	}
+	content := prepareFileContentFromFlagMap(flagMap)
+	if _, err := f.WriteString(content); err != nil {
+		return fmt.Errorf("failed to write defaulting-flag file: %w", err)
+	}
+
+	f.Close()
+
+	return nil
+}
+
+func prepareFileContentFromFlagMap(flagMap map[string]string) string {
+	var sb strings.Builder
+	for key, value := range flagMap {
+		sb.WriteString(key)
+		sb.WriteString(":")
+		sb.WriteString(value)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func ParseFlagMapFromFlagFile(flagFileContent string) map[string]string {
+	configFlags := make(map[string]string)
+	lines := strings.Split(flagFileContent, "\n")
+	for _, line := range lines {
+		if line == "" { // Skip empty lines
+			continue
+		}
+		parts := strings.Split(line, ":")
+		key := parts[0]
+		value := parts[1]
+		configFlags[key] = value
+	}
+	return configFlags
 }
