@@ -66,6 +66,7 @@ const (
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
 	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
+	MachineTypePath                     = "/machine-type"
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -483,4 +484,30 @@ func isSidecarVersionSupportedForTokenServer(imageName string) bool {
 	}
 
 	return false
+}
+
+func putMachineTypeFile(machineType string, targetPath string) error {
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
+	if err != nil {
+		return fmt.Errorf("failed to get emptyDir path: %w", err)
+	}
+
+	machineTypeFilePath := filepath.Dir(emptyDirBasePath) + MachineTypePath
+
+	f, err := os.Create(machineTypeFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to put the machine-type file: %w", err)
+	}
+	if _, err := f.WriteString(machineType); err != nil {
+		return fmt.Errorf("failed to write machine-type file: %w", err)
+	}
+
+	f.Close()
+
+	err = os.Chown(machineTypeFilePath, webhook.NobodyUID, webhook.NobodyGID)
+	if err != nil {
+		return fmt.Errorf("failed to change ownership on the machine-type file: %w", err)
+	}
+
+	return nil
 }

@@ -28,15 +28,17 @@ import (
 	"syscall"
 	"time"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
 
 var (
-	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	_              = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	gcsfusePath       = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath    = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
+	disableAutoConfig = flag.Bool("disable-autoconfig", true, "disable defaulting configurations")
+	_                 = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -55,6 +57,17 @@ func main() {
 	mounter := sidecarmounter.New(*gcsfusePath)
 	ctx, cancel := context.WithCancel(context.Background())
 
+	machineType := ""
+	volumePath := *volumeBasePath + driver.MachineTypePath
+	klog.Infof("Checking if machine-type file exists: %v", volumePath)
+	if _, err := os.Stat(volumePath); err == nil {
+		machineTypeBytes, err := os.ReadFile(volumePath)
+		if err != nil {
+			klog.Fatalf("failed to read machine-type file: %v", err)
+		}
+		machineType = string(machineTypeBytes)
+	}
+
 	for _, sp := range socketPaths {
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
@@ -62,6 +75,10 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp)
 		if mc != nil {
+			// TODO: Pass machine-type to gcsfuse binary
+			klog.Infof("Setting machine type to gcsfuse binary %v", machineType)
+			mc.FlagMap["machine-type"] = machineType
+			mc.FlagMap["disable-autoconfig"] = strconv.FormatBool(*disableAutoConfig)
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}

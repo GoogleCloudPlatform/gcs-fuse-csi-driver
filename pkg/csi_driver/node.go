@@ -181,6 +181,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	machineType, ok := node.Labels[clientset.MachineTypeKey]
+	if ok {
+		klog.V(1).Infof("Putting machine-type file to %v: %v", targetPath, machineType)
+		if err := putMachineTypeFile(machineType, targetPath); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+
 	// Check if there is any error from the gcsfuse
 	code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
 	if code != codes.OK {
