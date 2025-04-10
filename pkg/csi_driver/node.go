@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,6 +179,18 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// notify the sidecar container to exit.
 	if !isInitContainer {
 		if err := putExitFile(pod, targetPath); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+
+	machineType, ok := node.Labels[clientset.MachineTypeKey]
+	shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
+
+	flagMap := map[string]string{"machine-type": machineType, "disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig)}
+
+	if ok {
+		klog.V(1).Infof("Putting machine-type file to %v: %v", targetPath, machineType)
+		if err := PutFlagsFromDriverToTargetPath(flagMap, targetPath, MachineTypePath); err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}

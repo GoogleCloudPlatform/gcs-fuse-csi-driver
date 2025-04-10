@@ -66,6 +66,8 @@ const (
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
 	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
+	MachineTypePath                     = "/machine-type"
+	DisableAutoconfigPath               = "/disable-autoconfig"
 )
 
 var volumeIDRegEx = regexp.MustCompile(`:.*$`)
@@ -491,4 +493,57 @@ func isSidecarVersionSupportedForTokenServer(imageName string) bool {
 	}
 
 	return false
+}
+
+func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string, fileName string) error {
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
+	if err != nil {
+		return fmt.Errorf("failed to get emptyDir path: %w", err)
+	}
+
+	absolutePath := filepath.Dir(emptyDirBasePath) + fileName
+
+	f, err := os.Create(absolutePath)
+	if err != nil {
+		return fmt.Errorf("failed to put the machine-type file: %w", err)
+	}
+	content := prepareFileContentFromFlagMap(flagMap)
+	if _, err := f.WriteString(content); err != nil {
+		return fmt.Errorf("failed to write machine-type file: %w", err)
+	}
+
+	f.Close()
+
+	err = os.Chown(absolutePath, webhook.NobodyUID, webhook.NobodyGID)
+	if err != nil {
+		return fmt.Errorf("failed to change ownership on the machine-type file: %w", err)
+	}
+
+	return nil
+}
+
+func prepareFileContentFromFlagMap(flagMap map[string]string) string {
+	var sb strings.Builder
+	for key, value := range flagMap {
+		sb.WriteString(key)
+		sb.WriteString(":")
+		sb.WriteString(value)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func ParseFlagMapFromFlagFile(flagFileContent string) map[string]string {
+	configFlags := make(map[string]string)
+	lines := strings.Split(flagFileContent, "\n")
+	for _, line := range lines {
+		if line == "" { // Skip empty lines
+			continue
+		}
+		parts := strings.Split(line, ":")
+		key := parts[0]
+		value := parts[1]
+		configFlags[key] = value
+	}
+	return configFlags
 }
