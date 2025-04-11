@@ -60,20 +60,20 @@ type manager struct {
 	fuseSocketDir   string
 	clientset       clientset.Interface
 
-	maximumNumberOfCollectors int
-	volumesRegistered         sets.Set[string]
-	mutex                     sync.Mutex
+	maximumNumberOfCollectors   int
+	volumePublishPathRegistered sets.Set[string]
+	mutex                       sync.Mutex
 }
 
 func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface) Manager {
 	mm := &manager{
-		registry:                  prometheus.NewRegistry(),
-		metricsEndpoint:           metricsEndpoint,
-		fuseSocketDir:             fuseSocketDir,
-		clientset:                 clientset,
-		volumesRegistered:         sets.Set[string]{},
-		maximumNumberOfCollectors: maximumNumberOfCollectors,
-		mutex:                     sync.Mutex{},
+		registry:                    prometheus.NewRegistry(),
+		metricsEndpoint:             metricsEndpoint,
+		fuseSocketDir:               fuseSocketDir,
+		clientset:                   clientset,
+		volumePublishPathRegistered: sets.Set[string]{},
+		maximumNumberOfCollectors:   maximumNumberOfCollectors,
+		mutex:                       sync.Mutex{},
 	}
 
 	return mm
@@ -130,18 +130,22 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
+	if mm.maximumNumberOfCollectors == 0 {
+		klog.Infof("could not register metrics collector: podUID: %s, volume: %s. metrics collector limit is set to zero.", podUID, bucketName)
+	}
+
 	// Check if we need to register collector. We register a collector when the following are met:
 	// 1. There is space on the metrics pipeline for the collector to be registered.
 	// 2. The metrics collector has not previously been registered.
-	if mm.maximumNumberOfCollectors >= 0 {
+	if mm.maximumNumberOfCollectors > 0 {
 		// If volume is already registered, do not register again. This flow can get triggered
 		//  since CSI driver has republishVolume capability.
-		if mm.volumesRegistered.Has(targetPath) {
+		if mm.volumePublishPathRegistered.Has(targetPath) {
 			return
 		}
 		// If collector hasn't been registered and there's no space left, log a warning.
-		if mm.volumesRegistered.Len() >= mm.maximumNumberOfCollectors {
-			klog.Infof("could not register a metrics collector: podUID: %s, volume: %s. there's already %d collectors registered.", podUID, bucketName, mm.volumesRegistered.Len())
+		if mm.volumePublishPathRegistered.Len() >= mm.maximumNumberOfCollectors {
+			klog.Infof("could not register a metrics collector: podUID: %s, volume: %s. there's already %d collectors registered.", podUID, bucketName, mm.volumePublishPathRegistered.Len())
 
 			return
 		}
@@ -154,8 +158,8 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 			klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
 		}
 	} else {
-		mm.volumesRegistered.Insert(targetPath)
-		klog.Infof("successfully registered a new metrics collector: podUID: %s, volume: %s. there's %d collectors registered.", podUID, bucketName, mm.volumesRegistered.Len())
+		mm.volumePublishPathRegistered.Insert(targetPath)
+		klog.Infof("successfully registered a new metrics collector: podUID: %s, volume: %s. there's %d collectors registered.", podUID, bucketName, mm.volumePublishPathRegistered.Len())
 	}
 }
 
@@ -173,8 +177,8 @@ func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 	if ok := mm.registry.Unregister(c); !ok {
 		klog.Infof("Unregister metrics collector for targetPath %q is not needed since the collector is not registered", targetPath)
 	} else {
-		mm.volumesRegistered.Delete(targetPath)
-		klog.Infof("successfully unregistered a metrics collector: podUID: %s, volume: %s. there's %d collectors registered.", podUID, volumeName, mm.volumesRegistered.Len())
+		mm.volumePublishPathRegistered.Delete(targetPath)
+		klog.Infof("successfully unregistered a metrics collector: podUID: %s, volume: %s. there's %d collectors registered.", podUID, volumeName, mm.volumePublishPathRegistered.Len())
 	}
 }
 
