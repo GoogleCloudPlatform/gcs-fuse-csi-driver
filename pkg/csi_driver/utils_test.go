@@ -29,6 +29,51 @@ const (
 	TraceStr = "trace"
 )
 
+func TestRemoveBucketSuffixIfPresentAndReturnVolumeId(t *testing.T) {
+	t.Parallel()
+	t.Run("removing bucket suffix if present and returning volume id", func(t *testing.T) {
+		t.Parallel()
+		testCases := []struct {
+			name          string
+			bucketName    string
+			expectedValue string
+		}{
+			{
+				name:          "should return bucket name without suffix",
+				bucketName:    "bucket-name:1234567890123456789",
+				expectedValue: "bucket-name",
+			},
+			{
+				name:          "should return bucket name without suffix",
+				bucketName:    "bucket-name:1234567890123456789@us-central1",
+				expectedValue: "bucket-name",
+			},
+			{
+				name:          "should return bucket name without suffix",
+				bucketName:    "bucket-name@us-central1",
+				expectedValue: "bucket-name@us-central1",
+			},
+			{
+				name:          "should return bucket name without suffix",
+				bucketName:    "bucket-name:1234567890123456789:12",
+				expectedValue: "bucket-name",
+			},
+			{
+				name:          "should return bucket name without suffix",
+				bucketName:    "bucket-name",
+				expectedValue: "bucket-name",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Logf("test case: %s", tc.name)
+			actual := parseVolumeID(tc.bucketName)
+			if actual != tc.expectedValue {
+				t.Errorf("Got value %v, but expected %v", actual, tc.expectedValue)
+			}
+		}
+	})
+}
 func TestJoinMountOptions(t *testing.T) {
 	t.Parallel()
 	t.Run("joining mount options into one", func(t *testing.T) {
