@@ -23,5 +23,5 @@ PKG_ROOT=$(git rev-parse --show-toplevel)
 ${PKG_ROOT}/hack/verify-boilerplate.sh
 ${PKG_ROOT}/hack/verify-gofmt.sh
 ${PKG_ROOT}/hack/verify-govet.sh
-${PKG_ROOT}/hack/verify-golint.sh
+# No lint as it's too noisy in test/ and non-file-path-imports (eg, klog/v2).
 ${PKG_ROOT}/hack/verify-gomod.sh
