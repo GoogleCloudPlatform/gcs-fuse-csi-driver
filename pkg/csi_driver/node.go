@@ -189,8 +189,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	flagMap := map[string]string{"machine-type": machineType, "disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig)}
 
 	if ok {
-		klog.V(1).Infof("Putting machine-type file to %v: %v", targetPath, machineType)
-		if err := PutFlagsFromDriverToTargetPath(flagMap, targetPath, MachineTypePath); err != nil {
+		if err := PutFlagsFromDriverToTargetPath(flagMap, targetPath, FlagFileForDefaultingPath); err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}

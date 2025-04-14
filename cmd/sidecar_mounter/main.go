@@ -57,16 +57,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	flagsFromDriver := map[string]string{}
-	volumePath := *volumeBasePath + driver.MachineTypePath
-	klog.Infof("Checking if machine-type file exists: %v", volumePath)
+	volumePath := *volumeBasePath + driver.FlagFileForDefaultingPath
+	klog.Infof("Checking if defaulting-flag file exists: %v", volumePath)
 	if _, err := os.Stat(volumePath); err == nil {
 		machineTypeBytes, err := os.ReadFile(volumePath)
 		if err != nil {
-			klog.Fatalf("failed to read machine-type file: %v", err)
+			klog.Fatalf("failed to read defaulting-flag file: %v", err)
 		}
 		fileContent := string(machineTypeBytes)
 		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
-		klog.Infof("Parsed flag file content: %v", fileContent)
 	}
 
 	for _, sp := range socketPaths {
@@ -74,12 +73,8 @@ func main() {
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-		mc := sidecarmounter.NewMountConfig(sp)
+		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
-			// TODO: Pass machine-type to gcsfuse binary
-			mergeFlags(mc.FlagMap, flagsFromDriver)
-			klog.Infof("Setting machine type to gcsfuse binary %v", mc.FlagMap["machine-type"])
-			klog.Infof("Setting disable-autoconfig to gcsfuse binary %v", mc.FlagMap["disable-autoconfig"])
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
@@ -134,14 +129,4 @@ func main() {
 	mounter.WaitGroup.Wait()
 
 	klog.Info("exiting sidecar mounter...")
-}
-
-func mergeFlags(mountConfigFlagMap map[string]string, driverFlagMap map[string]string) {
-	for key, value := range driverFlagMap {
-		_, ok := mountConfigFlagMap[key]
-		// Only overwrite values not set in mountConfigMap
-		if !ok {
-			mountConfigFlagMap[key] = value
-		}
-	}
 }

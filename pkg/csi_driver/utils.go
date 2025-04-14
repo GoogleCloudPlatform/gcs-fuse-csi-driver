@@ -66,8 +66,7 @@ const (
 	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName          = "bucketName"
 	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
-	MachineTypePath                     = "/machine-type"
-	DisableAutoconfigPath               = "/disable-autoconfig"
+	FlagFileForDefaultingPath           = "/flags-for-defaulting"
 )
 
 var volumeIDRegEx = regexp.MustCompile(`:.*$`)
@@ -502,14 +501,15 @@ func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string
 	}
 
 	absolutePath := filepath.Dir(emptyDirBasePath) + fileName
+	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %v: %v", absolutePath, flagMap)
 
 	f, err := os.Create(absolutePath)
 	if err != nil {
-		return fmt.Errorf("failed to put the machine-type file: %w", err)
+		return fmt.Errorf("failed to create defaulting flag file: %w", err)
 	}
 	content := prepareFileContentFromFlagMap(flagMap)
 	if _, err := f.WriteString(content); err != nil {
-		return fmt.Errorf("failed to write machine-type file: %w", err)
+		return fmt.Errorf("failed to write defaulting flag file: %w", err)
 	}
 
 	f.Close()
