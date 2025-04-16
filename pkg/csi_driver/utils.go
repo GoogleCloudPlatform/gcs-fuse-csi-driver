@@ -474,20 +474,22 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 }
 
 func isSidecarVersionSupportedForTokenServer(imageName string) bool {
+	return isSidecarVersionSupportedForGivenFeature(imageName, tokenServerSidecarMinVersion)
+}
+
+func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
 	managedSidecarPattern := `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+.\d+.\d+-gke\.\d+.*`
 	re := regexp.MustCompile(managedSidecarPattern)
 	isManagedSidecar := re.MatchString(imageName)
 
 	if !isManagedSidecar {
 		klog.Infof("mountOptions should not be passed because this is a private sidecar image %q", imageName)
-
 		return false
 	}
 	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
 	klog.Infof("sidecar image version: %v", imageVersion)
-	if semver.Compare(imageVersion, tokenServerSidecarMinVersion) >= 0 {
+	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
 		klog.Infof("sidecar version is supported for token server")
-
 		return true
 	}
 
@@ -505,19 +507,14 @@ func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string
 
 	f, err := os.Create(absolutePath)
 	if err != nil {
-		return fmt.Errorf("failed to create defaulting flag file: %w", err)
+		return fmt.Errorf("failed to create defaulting-flag file: %w", err)
 	}
 	content := prepareFileContentFromFlagMap(flagMap)
 	if _, err := f.WriteString(content); err != nil {
-		return fmt.Errorf("failed to write defaulting flag file: %w", err)
+		return fmt.Errorf("failed to write defaulting-flag file: %w", err)
 	}
 
 	f.Close()
-
-	err = os.Chown(absolutePath, webhook.NobodyUID, webhook.NobodyGID)
-	if err != nil {
-		return fmt.Errorf("failed to change ownership on the machine-type file: %w", err)
-	}
 
 	return nil
 }

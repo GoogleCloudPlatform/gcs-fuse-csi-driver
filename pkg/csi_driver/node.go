@@ -183,15 +183,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	machineType, ok := node.Labels[clientset.MachineTypeKey]
 	shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
-
-	flagMap := map[string]string{"machine-type": machineType, "disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig)}
-
+	machineType, ok := node.Labels[clientset.MachineTypeKey]
+	// TODO: Add check for whether sidecar is managed and >= minimum version with compatible gcsfuse
 	if ok {
+		flagMap := map[string]string{"machine-type": machineType, "disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig)}
 		if err := PutFlagsFromDriverToTargetPath(flagMap, targetPath, FlagFileForDefaultingPath); err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
+	} else {
+		klog.Warningf("Unable to fetch node %v's machine type", node.Name)
 	}
 
 	// Check if there is any error from the gcsfuse
