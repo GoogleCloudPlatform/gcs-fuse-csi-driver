@@ -192,7 +192,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	} else {
-		klog.Warningf("Unable to fetch node %v's machine type", node.Name)
+		klog.Warningf("Unable to fetch target node %v's machine type", node.Name)
 	}
 
 	// Check if there is any error from the gcsfuse

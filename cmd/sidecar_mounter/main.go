@@ -57,10 +57,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	flagsFromDriver := map[string]string{}
-	volumePath := *volumeBasePath + driver.FlagFileForDefaultingPath
-	klog.Infof("Checking if defaulting-flag file exists: %v", volumePath)
-	if _, err := os.Stat(volumePath); err == nil {
-		machineTypeBytes, err := os.ReadFile(volumePath)
+	defaultingFlagFilePath := *volumeBasePath + driver.FlagFileForDefaultingPath
+	klog.Infof("Checking if defaulting-flag file exists: %v", defaultingFlagFilePath)
+	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
+		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
 		if err != nil {
 			klog.Fatalf("failed to read defaulting-flag file: %v", err)
 		}
