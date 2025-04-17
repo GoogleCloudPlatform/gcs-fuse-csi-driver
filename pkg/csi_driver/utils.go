@@ -68,6 +68,8 @@ const (
 	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
 )
 
+var volumeIDRegEx = regexp.MustCompile(`:.*$`)
+
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
 	return &csi.VolumeCapability_AccessMode{Mode: mode}
 }
@@ -271,14 +273,13 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, [
 	}
 
 	vc := req.GetVolumeContext()
-	bucketName := req.GetVolumeId()
+	bucketName := parseVolumeID(req.GetVolumeId())
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
 			return "", "", nil, false, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
 		}
 	}
-
 	fuseMountOptions := []string{}
 	if req.GetReadonly() {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
@@ -300,6 +301,13 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, [
 	}
 
 	return targetPath, bucketName, fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, nil
+}
+
+// The format allows customers to specify a fake volume handle for static provisioning,
+// enabling multiple PVs in the same pod to mount the same bucket. This prevents Kubelet from
+// skipping mounts of volumes with the same volume handle, which can cause the pod to be stuck in container creation.
+func parseVolumeID(bucketHandle string) string {
+	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {

@@ -76,6 +76,9 @@ func (s *controllerServer) ControllerGetCapabilities(_ context.Context, _ *csi.C
 func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
 	// Validate arguments
 	volumeID := req.GetVolumeId()
+	if req.GetVolumeContext()[VolumeContextKeyEphemeral] != util.TrueStr {
+		volumeID = parseVolumeID(volumeID)
+	}
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "ValidateVolumeCapabilities volumeID must be provided")
 	}
