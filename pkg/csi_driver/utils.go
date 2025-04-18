@@ -191,7 +191,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
 	}
 	skipCSIBucketAccessCheck := false
-	disableMetricsCollection := true
+	disableMetricsCollection := false
 	for volumeAttribute, mountOption := range volumeAttributesToMountOptionsMapping {
 		value, ok := volumeContext[volumeAttribute]
 		if !ok {
