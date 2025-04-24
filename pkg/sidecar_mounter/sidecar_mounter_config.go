@@ -154,16 +154,13 @@ func NewMountConfig(sp string) *MountConfig {
 
 func (mc *MountConfig) prepareMountArgs() {
 	flagMap := map[string]string{
-		"app-name":        GCSFuseAppName,
-		"temp-dir":        mc.BufferDir + TempDir,
-		"config-file":     mc.ConfigFile,
-		"foreground":      "",
-		"uid":             "0",
-		"gid":             "0",
-		"prometheus-port": strconv.Itoa(prometheusPort),
+		"app-name":    GCSFuseAppName,
+		"temp-dir":    mc.BufferDir + TempDir,
+		"config-file": mc.ConfigFile,
+		"foreground":  "",
+		"uid":         "0",
+		"gid":         "0",
 	}
-	// Use a new port each gcsfuse instance that we start.
-	prometheusPort++
 
 	configFileFlagMap := map[string]string{
 		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
@@ -179,8 +176,10 @@ func (mc *MountConfig) prepareMountArgs() {
 			f, v := arg[:i], arg[i+1:]
 
 			if f == util.DisableMetricsForGKE {
-				if v == util.TrueStr {
-					flagMap["prometheus-port"] = "0"
+				if v == util.FalseStr {
+					flagMap["prometheus-port"] = strconv.Itoa(prometheusPort)
+					// Use a new port each gcsfuse instance that we start.
+					prometheusPort++
 				}
 
 				continue
