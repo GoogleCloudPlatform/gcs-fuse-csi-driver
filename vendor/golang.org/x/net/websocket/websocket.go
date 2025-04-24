@@ -6,10 +6,9 @@
 // as specified in RFC 6455.
 //
 // This package currently lacks some features found in an alternative
-// and more actively maintained WebSocket packages:
+// and more actively maintained WebSocket package:
 //
-//   - [github.com/gorilla/websocket]
-//   - [github.com/coder/websocket]
+//	https://pkg.go.dev/github.com/coder/websocket
 package websocket // import "golang.org/x/net/websocket"
 
 import (
