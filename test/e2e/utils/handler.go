@@ -41,6 +41,7 @@ type TestParameters struct {
 
 	GkeClusterRegion    string
 	GkeClusterVersion   string
+	GkeReleaseChannel   string
 	GkeNodeVersion      string
 	GkeClusterName      string
 	NodeImageType       string

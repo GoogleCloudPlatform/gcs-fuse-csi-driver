@@ -69,7 +69,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 	cmdParams := []string{
 		"container", "clusters", createCmd, testParams.GkeClusterName,
 		"--region", testParams.GkeClusterRegion, "--quiet",
-		"--release-channel", "rapid",
+		"--release-channel", testParams.GkeReleaseChannel,
 	}
 
 	if isVariableSet(testParams.GkeClusterVersion) {

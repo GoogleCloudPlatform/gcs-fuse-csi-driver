@@ -22,8 +22,9 @@ import (
 	"os"
 	"strings"
 
-	"k8s.io/klog/v2"
 	"local/test/e2e/utils"
+
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -32,6 +33,7 @@ var (
 	// Kubernetes cluster flags.
 	gkeClusterRegion    = flag.String("gke-cluster-region", "", "region that gke regional cluster should be created in")
 	gkeClusterVersion   = flag.String("gke-cluster-version", "", "GKE cluster worker master and node version")
+	gkeReleaseChannel   = flag.String("gke-release-channel", "rapid", "GKE cluster release channel")
 	gkeNodeVersion      = flag.String("gke-node-version", "", "GKE cluster worker node version")
 	nodeMachineType     = flag.String("node-machine-type", "n1-standard-2", "GKE cluster worker node machine type")
 	numNodes            = flag.Int("number-nodes", 3, "number of nodes in the test cluster")
@@ -73,6 +75,7 @@ func main() {
 		utils.EnsureVariable(boskosResourceType, true, "'boskos-resource-type' must be set when running in prow")
 		utils.EnsureVariable(gkeClusterRegion, true, "'gke-cluster-region' must be set when running in prow")
 		utils.EnsureVariable(gkeClusterVersion, true, "'gke-cluster-version' must be set when running in prow")
+		utils.EnsureVariable(gkeReleaseChannel, true, "'gke-release-channel' must be set when running in prow")
 		utils.EnsureVariable(apiEndpointOverride, true, "'api-endpoint-override' must be set")
 		if err := os.Setenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER", *apiEndpointOverride); err != nil {
 			klog.Fatalf("failed to set CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER to %q: %v", *apiEndpointOverride, err.Error())
@@ -89,6 +92,7 @@ func main() {
 		APIEndpointOverride:    *apiEndpointOverride,
 		GkeClusterRegion:       *gkeClusterRegion,
 		GkeClusterVersion:      *gkeClusterVersion,
+		GkeReleaseChannel:      *gkeReleaseChannel,
 		GkeNodeVersion:         *gkeNodeVersion,
 		NodeMachineType:        *nodeMachineType,
 		NumNodes:               *numNodes,
