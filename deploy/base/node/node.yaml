@@ -53,7 +53,6 @@ spec:
             - --node=true
             - --identity-provider=$(IDENTITY_PROVIDER)
             - --metrics-endpoint=:9920
-            - --max-metric-collectors=10
           ports:
           - containerPort: 9920
             name: metrics
