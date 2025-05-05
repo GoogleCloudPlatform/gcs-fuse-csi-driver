@@ -114,8 +114,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			s.volumeStateStore.Store(targetPath, &util.VolumeState{})
 			vs, _ = s.volumeStateStore.Load(targetPath)
 		}
-		// volumeState is safe to access for remaining of function since volumeLock prevents
-		// Node Publish/Unpublish Volume calls from running more than once at a time per volume.
+
 		if !vs.BucketAccessCheckPassed {
 			storageService, err := s.prepareStorageService(ctx, vc)
 			if err != nil {
@@ -166,7 +165,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Error(codes.FailedPrecondition, "failed to find the sidecar container in Pod spec")
 	}
 
-	// Register metrics collector.
+	// Register metrics collecter.
 	// It is idempotent to register the same collector in node republish calls.
 	if s.driver.config.MetricsManager != nil && !disableMetricsCollection {
 		klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
