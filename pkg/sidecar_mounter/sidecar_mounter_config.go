@@ -88,6 +88,7 @@ var boolFlags = map[string]bool{
 	"debug_http":                    true,
 	"debug_invariants":              true,
 	"debug_mutex":                   true,
+	"disable-autoconfig":            true,
 }
 
 // Fetch the following information from a given socket path:
@@ -95,7 +96,7 @@ var boolFlags = map[string]bool{
 // 2. The file descriptor
 // 3. GCS bucket name
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
-func NewMountConfig(sp string) *MountConfig {
+func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig {
 	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
 	tempDir := filepath.Dir(sp)
 	volumeName := filepath.Base(tempDir)
@@ -143,6 +144,7 @@ func NewMountConfig(sp string) *MountConfig {
 	}
 
 	mc.prepareMountArgs()
+	mergeFlags(mc.ConfigFileFlagMap, flagMapFromDriver)
 	if err := mc.prepareConfigFile(); err != nil {
 		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to create config file %q: %v", mc.ConfigFile, err))
 
@@ -150,6 +152,16 @@ func NewMountConfig(sp string) *MountConfig {
 	}
 
 	return &mc
+}
+
+func mergeFlags(mountConfigFlagMap map[string]string, driverFlagMap map[string]string) {
+	for key, value := range driverFlagMap {
+		_, ok := mountConfigFlagMap[key]
+		// Only overwrite values not set in mountConfigMap
+		if !ok {
+			mountConfigFlagMap[key] = value
+		}
+	}
 }
 
 func (mc *MountConfig) prepareMountArgs() {

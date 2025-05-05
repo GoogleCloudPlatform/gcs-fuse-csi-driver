@@ -239,6 +239,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix:
 			mountOptions += ",file-system:kernel-list-cache-ttl-secs:-1,invalid-option"
 			v.metadataPrefetch = true
+		case DisableAutoconfig:
+			mountOptions += ",disable-autoconfig"
 		}
 
 		v.mountOptions = mountOptions

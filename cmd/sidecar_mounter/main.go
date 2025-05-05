@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
@@ -55,12 +56,24 @@ func main() {
 	mounter := sidecarmounter.New(*gcsfusePath)
 	ctx, cancel := context.WithCancel(context.Background())
 
+	flagsFromDriver := map[string]string{}
+	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
+	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
+	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
+		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
+		if err != nil {
+			klog.Fatalf("failed to read defaulting-flag file: %v", err)
+		}
+		fileContent := string(machineTypeBytes)
+		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
+	}
+
 	for _, sp := range socketPaths {
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-		mc := sidecarmounter.NewMountConfig(sp)
+		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))

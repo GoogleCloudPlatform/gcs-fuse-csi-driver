@@ -19,12 +19,18 @@ package clientset
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+type FakeNodeConfig struct {
+	IsWorkloadIdentityEnabled bool
+	MachineType               string
+}
 
 type FakeClientset struct {
 	fakePod  *corev1.Pod
@@ -35,7 +41,7 @@ func NewFakeClientset() *FakeClientset {
 	fakeClientSet := &FakeClientset{}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
 	fakeClientSet.CreatePod( /*hostNetworkEnabled */ false)
-	fakeClientSet.CreateNode( /* isWorkloadIdentityEnabledOnNode */ true)
+	fakeClientSet.CreateNode(FakeNodeConfig{IsWorkloadIdentityEnabled: true})
 
 	return fakeClientSet
 }
@@ -74,7 +80,7 @@ func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
 	}
 }
 
-func (c *FakeClientset) CreateNode(isWorkloadIdentityEnabled bool) {
+func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 	c.fakeNode = &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "",
@@ -82,8 +88,10 @@ func (c *FakeClientset) CreateNode(isWorkloadIdentityEnabled bool) {
 		},
 	}
 
-	if isWorkloadIdentityEnabled {
-		c.fakeNode.Labels[GkeMetaDataServerKey] = "true"
+	c.fakeNode.Labels[GkeMetaDataServerKey] = strconv.FormatBool(nodeConfig.IsWorkloadIdentityEnabled)
+	c.fakeNode.Labels[MachineTypeKey] = nodeConfig.MachineType
+	if c.fakeNode.Labels[MachineTypeKey] == "" {
+		c.fakeNode.Labels[MachineTypeKey] = "e2-medium"
 	}
 }
 

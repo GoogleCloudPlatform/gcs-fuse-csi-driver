@@ -156,6 +156,47 @@ func TestIsSidecarVersionSupportedForTokenServer(t *testing.T) {
 	})
 }
 
+func TestIsSidecarVersionSupportedForDefaultingFlags(t *testing.T) {
+	t.Parallel()
+	t.Run("checking if sidecar version is supported for token server", func(t *testing.T) {
+		t.Parallel()
+		testCases := []struct {
+			name              string
+			imageName         string
+			expectedSupported bool
+		}{
+			{
+				name:              "should return true for supported sidecar version",
+				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.2@sha256:abcd",
+				expectedSupported: true,
+			},
+			{
+				name:              "should return true for supported sidecar version in staging gcr",
+				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+				expectedSupported: true,
+			},
+			{
+				name:              "should return false for unsupported sidecar version",
+				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.14.0-gke.1@sha256:abcd",
+				expectedSupported: false,
+			},
+			{
+				name:              "should return false for private sidecar",
+				imageName:         "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.12.2-gke.0@sha256:abcd",
+				expectedSupported: false,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Logf("test case: %s", tc.name)
+			actual := isSidecarVersionSupportedForGivenFeature(tc.imageName, AutoconfigDefaultingSidecarMinVersion)
+			if actual != tc.expectedSupported {
+				t.Errorf("Got supported %v, but expected %v", actual, tc.expectedSupported)
+			}
+		}
+	})
+}
+
 func TestParseVolumeAttributes(t *testing.T) {
 	t.Parallel()
 	t.Run("parsing volume attributes into mount options", func(t *testing.T) {

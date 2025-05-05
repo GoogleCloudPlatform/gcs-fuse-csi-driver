@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -182,6 +183,20 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
+	if s.shouldPassDefaultingFlags(pod) {
+		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
+		machineType, ok := node.Labels[clientset.MachineTypeKey]
+		if ok {
+			flagMap := map[string]string{"machine-type": machineType, "disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig)}
+			if err := PutFlagsFromDriverToTargetPath(flagMap, targetPath, FlagFileForDefaultingPath); err != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		} else {
+			klog.Warningf("Unable to fetch target node %v's machine type", node.Name)
+		}
+	}
+
 	// Check if there is any error from the gcsfuse
 	code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
 	if code != codes.OK {
@@ -329,4 +344,17 @@ func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
 	}
 
 	return tokenVolumeInjected && sidecarVersionSupported
+}
+
+func (s *nodeServer) shouldPassDefaultingFlags(pod *corev1.Pod) bool {
+	var sidecarVersionSupported bool
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name == webhook.GcsFuseSidecarName {
+			sidecarVersionSupported = isSidecarVersionSupportedForGivenFeature(container.Image, AutoconfigDefaultingSidecarMinVersion)
+
+			break
+		}
+	}
+
+	return sidecarVersionSupported
 }

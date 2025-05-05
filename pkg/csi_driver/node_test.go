@@ -247,7 +247,7 @@ func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 	}
 	for _, test := range cases {
 		fakeClientSet := &clientset.FakeClientset{}
-		fakeClientSet.CreateNode( /* workloadIdentityEnabled */ test.workloadIdentityEnabledOnNode)
+		fakeClientSet.CreateNode( /* workloadIdentityEnabled */ clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
 		fakeClientSet.CreatePod( /* hostNetworkEnabled */ test.hostNetworkEnabledOnPod)
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet)
 

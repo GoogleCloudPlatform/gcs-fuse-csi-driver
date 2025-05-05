@@ -45,6 +45,7 @@ type GCSDriverConfig struct {
 	Mounter               mount.Interface
 	K8sClients            clientset.Interface
 	MetricsManager        metrics.Manager
+	DisableAutoconfig     bool
 }
 
 type GCSDriver struct {

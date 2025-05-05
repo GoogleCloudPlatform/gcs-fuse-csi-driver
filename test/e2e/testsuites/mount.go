@@ -21,7 +21,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
+
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
@@ -33,8 +37,6 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 )
 
 type gcsFuseCSIMountTestSuite struct {
@@ -182,6 +184,40 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		ginkgo.By("Deleting pod")
 		tPod.Cleanup(ctx)
 	}
+
+	testDefaultingFlags := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring test pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		machineType, err := tPod.GetMachineType(ctx)
+		framework.ExpectNoError(err, "error getting node's machine type")
+
+		if slices.Contains(configPrefix, specs.DisableAutoconfig) {
+			tPod.VerifyDefaultingFlagsArePassed(f.Namespace.Name, machineType /* disableAutoconfig */, true)
+		} else {
+			tPod.VerifyDefaultingFlagsArePassed(f.Namespace.Name, machineType /* disableAutoconfig */, false)
+		}
+
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
+	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse ", func() {
+		testDefaultingFlags()
+	})
+
+	ginkgo.It("should pass --disable-autoconfig=true as a user-specified mountOption to gcsfuse", func() {
+		testDefaultingFlags(specs.DisableAutoconfig)
+	})
 
 	ginkgo.It("[read ahead config] should update read ahead config knobs", func() {
 		if pattern.VolType == storageframework.DynamicPV {
