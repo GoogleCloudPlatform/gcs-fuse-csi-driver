@@ -20,6 +20,7 @@ package sidecarmounter
 import (
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -220,7 +221,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BufferDir:  "test-buffer-dir",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
-				Options:    []string{util.DisableMetricsForGKE + ":false"},
+				Options:    []string{util.DisableMetricsForGKE + ":true"},
 			},
 			expectedArgs: map[string]string{
 				"app-name":        GCSFuseAppName,
@@ -233,25 +234,37 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
+		{
+			name: "should return valid args when metrics is enabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{util.DisableMetricsForGKE + ":false"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
 	}
 
-	prometheusPort := 62990
+	testPrometheusPort := prometheusPort
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			found := false
-			for _, o := range tc.mc.Options {
-				if o == util.DisableMetricsForGKE+":false" {
-					found = true
-
-					break
-				}
+			// Do not parallelize [e.g t.Parallel()] because all testcases share testPrometheusPort.
+			found := slices.Contains(tc.mc.Options, util.DisableMetricsForGKE+":true")
+			if !found {
+				tc.expectedArgs["prometheus-port"] = strconv.Itoa(testPrometheusPort)
 			}
-
-			if found {
-				tc.expectedArgs["prometheus-port"] = strconv.Itoa(prometheusPort)
-				prometheusPort++
-			}
+			// Increase port value to match behavior of prepareMountArgs()
+			testPrometheusPort++
 
 			tc.mc.prepareMountArgs()
 			if !reflect.DeepEqual(tc.mc.FlagMap, tc.expectedArgs) {
