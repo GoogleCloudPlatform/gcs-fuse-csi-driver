@@ -212,10 +212,14 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	}
 
 	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse ", func() {
+		// TODO: remove this skip after we've updated the minimum sidecar version that supports the feature
+		e2eskipper.Skipf("skipping machine type defaulting test while new sidecar version is not known")
 		testDefaultingFlags()
 	})
 
 	ginkgo.It("should pass --disable-autoconfig=true as a user-specified mountOption to gcsfuse", func() {
+		// TODO: remove this skip after we've updated the minimum sidecar version that supports the feature
+		e2eskipper.Skipf("skipping machine type defaulting test while new sidecar version is not known")
 		testDefaultingFlags(specs.DisableAutoconfig)
 	})
 
