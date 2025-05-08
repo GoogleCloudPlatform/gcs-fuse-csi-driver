@@ -18,6 +18,7 @@ limitations under the License.
 package util
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"net/url"
 	"os"
@@ -159,8 +160,21 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 	return emptyDirBasePath, nil
 }
 
+// sha1Hash function takes a string as input and returns its SHA1 hash as a hexadecimal string.
+func sha1Hash(str string) string {
+	return fmt.Sprintf("%x", sha1.Sum([]byte(str)))
+}
+
+// GetSocketBasePath constructs the base path for a Unix domain socket.
+// It takes the target path and the directory where Fuse sockets are stored as input.
 func GetSocketBasePath(targetPath, fuseSocketDir string) string {
 	podID, volumeName, _ := ParsePodIDVolumeFromTargetpath(targetPath)
 
-	return filepath.Join(fuseSocketDir, podID+"_"+volumeName)
+	// We hash the combined pod ID and volume name because Unix domain socket paths
+	// have a length limitation (often around 104 characters). Directly using potentially
+	// long pod IDs and volume names could easily violate this limit. SHA1 provides a
+	// fixed-length, short representation (40 hexadecimal characters) that ensures
+	// we stay within these constraints while still providing a unique identifier
+	// based on the pod and volume.
+	return filepath.Join(fuseSocketDir, sha1Hash(podID+"_"+volumeName))
 }
