@@ -227,6 +227,8 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	})
 
 	ginkgo.It("should successfully mount for hostnetwork enabled pods", func() {
+		// TODO: remove this skip after we've rolled out the feature again
+		e2eskipper.Skipf("Skipping this test while hostnetwork support is rolled back")
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
