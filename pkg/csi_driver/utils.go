@@ -60,15 +60,14 @@ const (
 
 	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
 	//nolint:gosec
-	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
-	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
-	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
-	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
-	VolumeContextKeyBucketName          = "bucketName"
-	tokenServerSidecarMinVersion        = "v1.12.2-gke.0" // #nosec G101
-	// TODO: Update with actual minimum sidecar version after the first feature release
-	AutoconfigDefaultingSidecarMinVersion = "v1.99.0-gke.0"
-	FlagFileForDefaultingPath             = "flags-for-defaulting"
+	VolumeContextKeyServiceAccountToken    = "csi.storage.k8s.io/serviceAccount.tokens"
+	VolumeContextKeyPodName                = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace           = "csi.storage.k8s.io/pod.namespace"
+	VolumeContextKeyEphemeral              = "csi.storage.k8s.io/ephemeral"
+	VolumeContextKeyBucketName             = "bucketName"
+	tokenServerSidecarMinVersion           = "v1.12.2-gke.0" // #nosec G101
+	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
+	FlagFileForDefaultingPath              = "flags-for-defaulting"
 )
 
 var volumeIDRegEx = regexp.MustCompile(`:.*$`)

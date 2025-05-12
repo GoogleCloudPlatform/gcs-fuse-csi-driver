@@ -67,10 +67,11 @@ type TestParameters struct {
 	GinkgoFlakeAttempts string
 	GinkgoSkipGcpSaTest bool
 
-	SupportsNativeSidecar bool
-	SupportSAVolInjection bool
-	IstioVersion          string
-	GcsfuseClientProtocol string
+	SupportsNativeSidecar        bool
+	SupportSAVolInjection        bool
+	SupportMachineTypeAutoconfig bool
+	IstioVersion                 string
+	GcsfuseClientProtocol        string
 }
 
 const (
@@ -189,6 +190,12 @@ func Handle(testParams *TestParameters) error {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSAVolumeInjectionEnvVar, err)
 	}
 
+	supportsMachineTypeAutoConfig, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, supportsMachineTypeAutoConfigMinimumVersion)
+	if err != nil {
+		klog.Fatalf(`support for intelligent defaults on high-performance machine types could not be determined: %v`, err)
+	}
+	testParams.SupportMachineTypeAutoconfig = supportsMachineTypeAutoConfig
+
 	testSkipStr := generateTestSkip(testParams)
 	if !strings.Contains(testSkipStr, "istio") && (len(testFocusStr) == 0 || strings.Contains(testFocusStr, "istio")) {
 		installIstio(testParams.IstioVersion)
@@ -265,6 +272,10 @@ func generateTestSkip(testParams *TestParameters) string {
 		if !supportsSkipBucketAccessCheck {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
+	}
+
+	if !testParams.SupportMachineTypeAutoconfig {
+		skipTests = append(skipTests, "disable-autoconfig")
 	}
 
 	skipTests = append(skipTests, "flaky")

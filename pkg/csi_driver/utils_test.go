@@ -189,7 +189,7 @@ func TestIsSidecarVersionSupportedForDefaultingFlags(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			actual := isSidecarVersionSupportedForGivenFeature(tc.imageName, AutoconfigDefaultingSidecarMinVersion)
+			actual := isSidecarVersionSupportedForGivenFeature(tc.imageName, MachineTypeAutoConfigSidecarMinVersion)
 			if actual != tc.expectedSupported {
 				t.Errorf("Got supported %v, but expected %v", actual, tc.expectedSupported)
 			}

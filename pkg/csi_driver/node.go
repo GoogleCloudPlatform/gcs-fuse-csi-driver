@@ -350,7 +350,7 @@ func (s *nodeServer) shouldPassDefaultingFlags(pod *corev1.Pod) bool {
 	var sidecarVersionSupported bool
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
-			sidecarVersionSupported = isSidecarVersionSupportedForGivenFeature(container.Image, AutoconfigDefaultingSidecarMinVersion)
+			sidecarVersionSupported = isSidecarVersionSupportedForGivenFeature(container.Image, MachineTypeAutoConfigSidecarMinVersion)
 
 			break
 		}
