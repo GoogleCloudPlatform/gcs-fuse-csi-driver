@@ -64,11 +64,18 @@ func (t *gcsFuseCSIMountTestSuite) SkipUnsupportedTests(_ storageframework.TestD
 }
 
 func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
-	envVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
-	supportSAVolInjection, err := strconv.ParseBool(envVar)
+	supportSAVolInjectionEnvVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
+	supportSAVolInjection, err := strconv.ParseBool(supportSAVolInjectionEnvVar)
 	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
+		klog.Fatalf("env variable %q could not be converted to boolean", supportSAVolInjectionEnvVar)
 	}
+
+	supportMachineTypeAutoConfigEnvVar := os.Getenv(utils.TestWithMachineTypeAutoConfigEnvVar)
+	supportMachineTypeAutoconfig, err := strconv.ParseBool(supportMachineTypeAutoConfigEnvVar)
+	if err != nil {
+		klog.Fatalf("env variable %q could not be converted to boolean", supportMachineTypeAutoConfigEnvVar)
+	}
+
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -211,15 +218,11 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod.Cleanup(ctx)
 	}
 
-	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse ", func() {
-		// TODO: remove this skip after we've updated the minimum sidecar version that supports the feature
-		e2eskipper.Skipf("skipping machine type defaulting test while new sidecar version is not known")
-		testDefaultingFlags()
+	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse", func() {
+		testDefaultingFlags(specs.DisableAutoconfig)
 	})
 
 	ginkgo.It("should pass --disable-autoconfig=true as a user-specified mountOption to gcsfuse", func() {
-		// TODO: remove this skip after we've updated the minimum sidecar version that supports the feature
-		e2eskipper.Skipf("skipping machine type defaulting test while new sidecar version is not known")
 		testDefaultingFlags(specs.DisableAutoconfig)
 	})
 
