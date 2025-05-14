@@ -29,12 +29,13 @@ import (
 )
 
 var (
-	nativeSidecarMinimumVersion       = version.MustParseGeneric("1.29.0")
-	saTokenVolInjectionMinimumVersion = version.MustParseGeneric("1.33.0")
-	skipBucketCheckMinimumVersion     = version.MustParseGeneric("1.29.0")
-	kernelReadAheadMinimumVersion     = version.MustParseGeneric("1.32.0")
-	metadataPrefetchMinimumVersion    = version.MustParseGeneric("1.32.0")
-	longMountOptionsMinimumVersion    = version.MustParseGeneric("1.32.0")
+	nativeSidecarMinimumVersion                 = version.MustParseGeneric("1.29.0")
+	saTokenVolInjectionMinimumVersion           = version.MustParseGeneric("1.33.0")
+	skipBucketCheckMinimumVersion               = version.MustParseGeneric("1.29.0")
+	kernelReadAheadMinimumVersion               = version.MustParseGeneric("1.32.0")
+	metadataPrefetchMinimumVersion              = version.MustParseGeneric("1.32.0")
+	longMountOptionsMinimumVersion              = version.MustParseGeneric("1.32.0")
+	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")
 )
 
 func clusterDownGKE(testParams *TestParameters) error {
