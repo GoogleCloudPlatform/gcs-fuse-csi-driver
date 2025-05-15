@@ -70,12 +70,6 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		klog.Fatalf("env variable %q could not be converted to boolean", supportSAVolInjectionEnvVar)
 	}
 
-	supportMachineTypeAutoConfigEnvVar := os.Getenv(utils.TestWithMachineTypeAutoConfigEnvVar)
-	supportMachineTypeAutoconfig, err := strconv.ParseBool(supportMachineTypeAutoConfigEnvVar)
-	if err != nil {
-		klog.Fatalf("env variable %q could not be converted to boolean", supportMachineTypeAutoConfigEnvVar)
-	}
-
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
