@@ -488,9 +488,8 @@ func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSuppor
 		return false
 	}
 	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
-	klog.Infof("sidecar image version: %v", imageVersion)
 	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
-		klog.Infof("sidecar version is supported for token server")
+		klog.Infof("sidecar version is supported for intelligent defaults on high-performance machine types")
 		return true
 	}
 
