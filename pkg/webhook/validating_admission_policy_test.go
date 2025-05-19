@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -158,12 +159,14 @@ func TestValidatingAdmissionPolicy(t *testing.T) {
 
 	validator := compilePolicy(policy)
 
+	ignoreElapsedField := cmpopts.IgnoreFields(validating.PolicyDecision{}, "Elapsed")
+
 	for _, tc := range testCases {
 		fakeAttr := admission.NewAttributesRecord(tc.pod, nil, schema.GroupVersionKind{}, "", "", schema.GroupVersionResource{}, "", "", nil, false, nil)
 		fakeVersionedAttr, _ := admission.NewVersionedAttributes(fakeAttr, schema.GroupVersionKind{}, nil)
 		validateResult := validator.Validate(context.TODO(), fakeVersionedAttr.GetResource(), fakeVersionedAttr, nil, nil, celconfig.RuntimeCELCostBudget, nil)
 
-		if diff := cmp.Diff(validateResult, tc.expectedResult); diff != "" {
+		if diff := cmp.Diff(validateResult, tc.expectedResult, ignoreElapsedField); diff != "" {
 			t.Errorf("unexpected options args (-got, +want)\n%s", diff)
 		}
 	}
