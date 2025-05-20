@@ -90,15 +90,17 @@ var admittedDecision = validating.PolicyDecision{
 }
 
 var missingRestartPolicyDecision = validating.PolicyDecision{
-	Action:  validating.ActionDeny,
-	Message: "the native gcsfuse sidecar init container must have restartPolicy:Always.",
-	Reason:  metav1.StatusReasonInvalid,
+	Action:     validating.ActionDeny,
+	Evaluation: validating.EvalDeny,
+	Message:    "the native gcsfuse sidecar init container must have restartPolicy:Always.",
+	Reason:     metav1.StatusReasonInvalid,
 }
 
 var missingEnvVarDecision = validating.PolicyDecision{
-	Action:  validating.ActionDeny,
-	Message: "the native gcsfuse sidecar init container must have env var NATIVE_SIDECAR with value TRUE.",
-	Reason:  metav1.StatusReasonInvalid,
+	Action:     validating.ActionDeny,
+	Evaluation: validating.EvalDeny,
+	Message:    "the native gcsfuse sidecar init container must have env var NATIVE_SIDECAR with value TRUE.",
+	Reason:     metav1.StatusReasonInvalid,
 }
 
 var testCases = []struct {
@@ -111,41 +113,41 @@ var testCases = []struct {
 		pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, ptr.To(corev1.ContainerRestartPolicyAlways), []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}}),
 		expectedResult: expectedValidateResult(&admittedDecision, &admittedDecision),
 	},
-	// {
-	// 	name:           "validation failed with a native sidecar container missing RestartPolicy",
-	// 	pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, nil, []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}}),
-	// 	expectedResult: expectedValidateResult(&missingRestartPolicyDecision, &admittedDecision),
-	// },
-	// {
-	// 	name:           "validation failed with a native sidecar container missing env var",
-	// 	pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, ptr.To(corev1.ContainerRestartPolicyAlways), nil),
-	// 	expectedResult: expectedValidateResult(&admittedDecision, &missingEnvVarDecision),
-	// },
-	// {
-	// 	name:           "validation failed with a valid native sidecar container missing correct env var",
-	// 	pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, ptr.To(corev1.ContainerRestartPolicyAlways), []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "FALSE"}}),
-	// 	expectedResult: expectedValidateResult(&admittedDecision, &missingEnvVarDecision),
-	// },
-	// {
-	// 	name:           "validation failed with a native sidecar container missing RestartPolicy and env var",
-	// 	pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, nil, nil),
-	// 	expectedResult: expectedValidateResult(&missingRestartPolicyDecision, &missingEnvVarDecision),
-	// },
-	// {
-	// 	name:           "validation skipped without pod annotations",
-	// 	pod:            testPod(true, nil, nil, nil),
-	// 	expectedResult: expectedValidateResult(nil, nil),
-	// },
-	// {
-	// 	name:           "validation skipped with a pod annotation gke-gcsfuse/volumes: false",
-	// 	pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "false"}, nil, nil),
-	// 	expectedResult: expectedValidateResult(nil, nil),
-	// },
-	// {
-	// 	name:           "validation skipped with a regular sidecar container",
-	// 	pod:            testPod(false, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, nil, nil),
-	// 	expectedResult: expectedValidateResult(nil, nil),
-	// },
+	{
+		name:           "validation failed with a native sidecar container missing RestartPolicy",
+		pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, nil, []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}}),
+		expectedResult: expectedValidateResult(&missingRestartPolicyDecision, &admittedDecision),
+	},
+	{
+		name:           "validation failed with a native sidecar container missing env var",
+		pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, ptr.To(corev1.ContainerRestartPolicyAlways), nil),
+		expectedResult: expectedValidateResult(&admittedDecision, &missingEnvVarDecision),
+	},
+	{
+		name:           "validation failed with a valid native sidecar container missing correct env var",
+		pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, ptr.To(corev1.ContainerRestartPolicyAlways), []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "FALSE"}}),
+		expectedResult: expectedValidateResult(&admittedDecision, &missingEnvVarDecision),
+	},
+	{
+		name:           "validation failed with a native sidecar container missing RestartPolicy and env var",
+		pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, nil, nil),
+		expectedResult: expectedValidateResult(&missingRestartPolicyDecision, &missingEnvVarDecision),
+	},
+	{
+		name:           "validation skipped without pod annotations",
+		pod:            testPod(true, nil, nil, nil),
+		expectedResult: expectedValidateResult(nil, nil),
+	},
+	{
+		name:           "validation skipped with a pod annotation gke-gcsfuse/volumes: false",
+		pod:            testPod(true, map[string]string{GcsFuseVolumeEnableAnnotation: "false"}, nil, nil),
+		expectedResult: expectedValidateResult(nil, nil),
+	},
+	{
+		name:           "validation skipped with a regular sidecar container",
+		pod:            testPod(false, map[string]string{GcsFuseVolumeEnableAnnotation: "true"}, nil, nil),
+		expectedResult: expectedValidateResult(nil, nil),
+	},
 }
 
 func TestValidatingAdmissionPolicy(t *testing.T) {
