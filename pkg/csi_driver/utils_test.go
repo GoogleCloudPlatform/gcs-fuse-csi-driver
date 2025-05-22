@@ -166,13 +166,18 @@ func TestIsSidecarVersionSupportedForDefaultingFlags(t *testing.T) {
 			expectedSupported bool
 		}{
 			{
-				name:              "should return true for supported sidecar version",
+				name:              "should return true for supported sidecar version (managed driver image)",
 				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.2@sha256:abcd",
 				expectedSupported: true,
 			},
 			{
 				name:              "should return true for supported sidecar version in staging gcr",
 				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+				expectedSupported: true,
+			},
+			{
+				name:              "should return true for supported sidecar version (non-managed driver image)",
+				imageName:         "gcr.io/prow-gob-internal-boskos-447/gcs-fuse-csi-driver/gcs-fuse-csi-driver-sidecar-mounter:v1.15.1-gke.0-14-gf752039e_linux_amd64@sha:abcd",
 				expectedSupported: true,
 			},
 			{
