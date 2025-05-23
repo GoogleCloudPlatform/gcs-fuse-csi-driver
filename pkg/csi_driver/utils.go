@@ -479,6 +479,11 @@ func isSidecarVersionSupportedForTokenServer(imageName string) bool {
 }
 
 func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
+	// since it's built off latest code in main
+	if strings.Contains(imageName, "prow-gob-internal-boskos") {
+		return true
+	}
 	managedSidecarPattern := `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+.\d+.\d+-gke\.\d+.*`
 	re := regexp.MustCompile(managedSidecarPattern)
 	isManagedSidecar := re.MatchString(imageName)
