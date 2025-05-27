@@ -274,9 +274,6 @@ func generateTestSkip(testParams *TestParameters) string {
 		if !supportsSkipBucketAccessCheck {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
-
-		// TODO(hungpnguyen): remove this skip once we do 1.15.3 release or 1.16 since sidecar version filter will work correctly by then
-		skipTests = append(skipTests, "disable-autoconfig")
 	}
 
 	if !testParams.SupportMachineTypeAutoconfig {
