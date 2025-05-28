@@ -125,8 +125,9 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 	}
 	// as we got all the information from the socket, closing the connection and deleting the socket
 	c.Close()
-	if err = syscall.Unlink(sp); err != nil {
-		klog.Errorf("failed to close socket %q: %v", sp, err)
+	if err = syscall.Unlink(sp); err != nil && err != syscall.ENOENT {
+		// ENOENT suggests, the file may have already been unliked and removed, since the listener is closed on the csi node driver when it has successfully responsed to the sidecar
+		klog.Errorf("failed to unlink socket %q: %v", sp, err)
 	}
 
 	mc.FileDescriptor = fd
