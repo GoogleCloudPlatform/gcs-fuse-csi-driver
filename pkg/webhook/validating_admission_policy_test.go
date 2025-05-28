@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,15 +90,17 @@ var admittedDecision = validating.PolicyDecision{
 }
 
 var missingRestartPolicyDecision = validating.PolicyDecision{
-	Action:  validating.ActionDeny,
-	Message: "the native gcsfuse sidecar init container must have restartPolicy:Always.",
-	Reason:  metav1.StatusReasonInvalid,
+	Action:     validating.ActionDeny,
+	Evaluation: validating.EvalDeny,
+	Message:    "the native gcsfuse sidecar init container must have restartPolicy:Always.",
+	Reason:     metav1.StatusReasonInvalid,
 }
 
 var missingEnvVarDecision = validating.PolicyDecision{
-	Action:  validating.ActionDeny,
-	Message: "the native gcsfuse sidecar init container must have env var NATIVE_SIDECAR with value TRUE.",
-	Reason:  metav1.StatusReasonInvalid,
+	Action:     validating.ActionDeny,
+	Evaluation: validating.EvalDeny,
+	Message:    "the native gcsfuse sidecar init container must have env var NATIVE_SIDECAR with value TRUE.",
+	Reason:     metav1.StatusReasonInvalid,
 }
 
 var testCases = []struct {
@@ -158,12 +161,14 @@ func TestValidatingAdmissionPolicy(t *testing.T) {
 
 	validator := compilePolicy(policy)
 
+	ignoreElapsedField := cmpopts.IgnoreFields(validating.PolicyDecision{}, "Elapsed")
+
 	for _, tc := range testCases {
 		fakeAttr := admission.NewAttributesRecord(tc.pod, nil, schema.GroupVersionKind{}, "", "", schema.GroupVersionResource{}, "", "", nil, false, nil)
 		fakeVersionedAttr, _ := admission.NewVersionedAttributes(fakeAttr, schema.GroupVersionKind{}, nil)
 		validateResult := validator.Validate(context.TODO(), fakeVersionedAttr.GetResource(), fakeVersionedAttr, nil, nil, celconfig.RuntimeCELCostBudget, nil)
 
-		if diff := cmp.Diff(validateResult, tc.expectedResult); diff != "" {
+		if diff := cmp.Diff(validateResult, tc.expectedResult, ignoreElapsedField); diff != "" {
 			t.Errorf("unexpected options args (-got, +want)\n%s", diff)
 		}
 	}
@@ -185,32 +190,35 @@ func loadValidatingAdmissionPolicy(filename string) (*admissionregistrationv1.Va
 
 func compilePolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) validating.Validator {
 	hasParam := false
+	optionalVars := cel.OptionalVariableDeclarations{HasParams: hasParam, HasAuthorizer: true, StrictCost: true}
 	if policy.Spec.ParamKind != nil {
 		hasParam = true
 	}
-	optionalVars := cel.OptionalVariableDeclarations{HasParams: hasParam, HasAuthorizer: true, StrictCost: true}
-	expressionOptionalVars := cel.OptionalVariableDeclarations{HasParams: hasParam, HasAuthorizer: false, StrictCost: true}
+	strictCost := true
+	expressionOptionalVars := cel.OptionalVariableDeclarations{HasParams: hasParam, HasAuthorizer: false, StrictCost: strictCost}
 	failurePolicy := policy.Spec.FailurePolicy
+	var matcher matchconditions.Matcher = nil
 	matchConditions := policy.Spec.MatchConditions
-
 	compositionEnvTemplate, err := cel.NewCompositionEnv(cel.VariablesTypeName, environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
 	if err != nil {
 		panic(err)
 	}
+
 	filterCompiler := cel.NewCompositedCompilerFromTemplate(compositionEnvTemplate)
 	filterCompiler.CompileAndStoreVariables(convertv1beta1Variables(policy.Spec.Variables), optionalVars, environment.StoredExpressions)
 
-	matchExpressionAccessors := make([]cel.ExpressionAccessor, len(matchConditions))
-	for i := range matchConditions {
-		matchExpressionAccessors[i] = (*matchconditions.MatchCondition)(&matchConditions[i])
+	if len(matchConditions) > 0 {
+		matchExpressionAccessors := make([]cel.ExpressionAccessor, len(matchConditions))
+		for i := range matchConditions {
+			matchExpressionAccessors[i] = (*matchconditions.MatchCondition)(&matchConditions[i])
+		}
+		matcher = matchconditions.NewMatcher(filterCompiler.CompileCondition(matchExpressionAccessors, optionalVars, environment.StoredExpressions), failurePolicy, "policy", "validate", policy.Name)
 	}
-
-	matcher := matchconditions.NewMatcher(filterCompiler.Compile(matchExpressionAccessors, optionalVars, environment.StoredExpressions), failurePolicy, "policy", "validate", policy.Name)
 	res := validating.NewValidator(
-		filterCompiler.Compile(convertv1Validations(policy.Spec.Validations), optionalVars, environment.StoredExpressions),
+		filterCompiler.CompileCondition(convertv1Validations(policy.Spec.Validations), optionalVars, environment.StoredExpressions),
 		matcher,
-		filterCompiler.Compile(convertv1AuditAnnotations(policy.Spec.AuditAnnotations), optionalVars, environment.StoredExpressions),
-		filterCompiler.Compile(convertv1MessageExpressions(policy.Spec.Validations), expressionOptionalVars, environment.StoredExpressions),
+		filterCompiler.CompileCondition(convertv1AuditAnnotations(policy.Spec.AuditAnnotations), optionalVars, environment.StoredExpressions),
+		filterCompiler.CompileCondition(convertv1MessageExpressions(policy.Spec.Validations), expressionOptionalVars, environment.StoredExpressions),
 		failurePolicy,
 	)
 
