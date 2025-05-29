@@ -430,3 +430,9 @@ spec:
 [Filestore CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/filestore-csi-driver) is a better option than Cloud Storage FUSE CSI driver for workloads that require high instantaneous input/output operations per second (IOPS) and lower latency.
 
 See GKE documentation [Storage for GKE clusters overview](https://cloud.google.com/kubernetes-engine/docs/concepts/storage-overview) for the storage options that GKE supports and some key considerations for selecting the best option for your business needs.
+
+
+
+### Container restarts
+
+If the sidecar container (`gke-gcsfuse-sidecar`) hosting the gcsfuse process, crashes for some reason (e.g OOM Kill, or fatals), and kubelet decides to inplace restart the container, gcsfusecsi driver does not handle this scenario gracefully. This is because in the CSI NodePublishVolume the driver [checks the last known state](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/v1.15.4/pkg/csi_driver/utils.go#L431) of the container and fails fast. To mitigate this, delete and create the pod.
