@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 
+	"local/test/e2e/specs"
+
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -29,7 +31,6 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
 )
 
 type gcsFuseCSIWorkloadsTestSuite struct {
@@ -247,7 +248,7 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		defer tJob.Cleanup(ctx)
 
 		ginkgo.By("Checking that the job is in failed status")
-		tJob.WaitForJobFailed()
+		tJob.WaitForJobFailed(ctx)
 
 		ginkgo.By("The pod should terminate fast")
 		tJob.WaitForAllJobPodsGone(ctx)

@@ -1119,9 +1119,9 @@ func (t *TestJob) WaitForJobPodsSucceeded(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestJob) WaitForJobFailed() {
+func (t *TestJob) WaitForJobFailed(ctx context.Context) {
 	framework.Logf("Waiting Job %s to fail", t.job.Name)
-	err := e2ejob.WaitForJobFailed(t.client, t.namespace.Name, t.job.Name)
+	err := e2ejob.WaitForJobFailed(ctx, t.client, t.namespace.Name, t.job.Name)
 	framework.ExpectNoError(err)
 }
 
