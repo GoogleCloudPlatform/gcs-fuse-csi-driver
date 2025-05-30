@@ -43,7 +43,6 @@ import (
 	e2ejob "k8s.io/kubernetes/test/e2e/framework/job"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2epodooutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	"k8s.io/utils/ptr"
@@ -267,8 +266,46 @@ func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context) {
 }
 
 func (t *TestPod) WaitForLog(ctx context.Context, container string, expectedString string) {
-	_, err := e2epodooutput.LookForStringInLogWithoutKubectl(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, pollTimeout)
+	_, err := LookForStringInLogWithoutKubectl(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, pollTimeout)
 	framework.ExpectNoError(err)
+}
+
+// LookForStringInLogWithoutKubectl looks for the given string in the log of a specific pod container
+// Based on the following kubernetes function: https://github.com/kubernetes/kubernetes/blob/4832b57e48b98af0b0d558fa9810dc77b906ea62/test/e2e/framework/pod/output/output.go#L125
+func LookForStringInLogWithoutKubectl(ctx context.Context, client clientset.Interface, ns string, podName string, container string, expectedString string, timeout time.Duration) (result string, err error) {
+	return lookForString(expectedString, timeout, func() string {
+		// Implementing function with retries to circumvent server overload failures.
+		var podLogs string
+		var err error
+
+		maxRetries := 10
+		for retries := 0; retries < maxRetries; retries++ {
+			podLogs, err = e2epod.GetPodLogs(ctx, client, ns, podName, container)
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Second * 5)
+		}
+
+		framework.ExpectNoError(err)
+
+		return podLogs
+	})
+}
+
+// lookForString looks for the given string in the output of fn, repeatedly calling fn until
+// the timeout is reached or the string is found. Returns last log and possibly
+// error if the string was not found.
+// Note: This function is a duplicate of https://github.com/kubernetes/kubernetes/blob/4832b57e48b98af0b0d558fa9810dc77b906ea62/test/e2e/framework/pod/output/output.go#L65
+func lookForString(expectedString string, timeout time.Duration, fn func() string) (result string, err error) {
+	for t := time.Now(); time.Since(t) < timeout; time.Sleep(time.Second * 10) {
+		result = fn()
+		if strings.Contains(result, expectedString) {
+			return
+		}
+	}
+	err = fmt.Errorf("failed to find \"%s\", last result: \"%s\"", expectedString, result)
+	return
 }
 
 func (t *TestPod) CheckSidecarNeverTerminatedAfterAWhile(ctx context.Context, isNativeSidecar bool) {
