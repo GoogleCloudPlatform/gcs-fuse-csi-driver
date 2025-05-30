@@ -436,3 +436,15 @@ See GKE documentation [Storage for GKE clusters overview](https://cloud.google.c
 ### Container restarts
 
 If the sidecar container (`gke-gcsfuse-sidecar`) hosting the gcsfuse process, crashes for some reason (e.g OOM Kill, or fatals), and kubelet decides to inplace restart the container, gcsfusecsi driver does not handle this scenario gracefully. This is because in the CSI NodePublishVolume the driver [checks the last known state](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/v1.15.4/pkg/csi_driver/utils.go#L431) of the container and fails fast. To mitigate this, delete and create the pod.
+
+
+### enabling debug logs
+
+For debugging any gcsfuse IO issues, enable the [log-severity](https://cloud.google.com/storage/docs/cloud-storage-fuse/cli-options#log-severity) gcsfuse cli flag in the mount options of CSI volume. Please know that trace/debug logs are only recommended for debugging as there is a logging overhead that can impact IO perf. A snippet of the mountOptions looks as follows
+
+```
+csi:
+  volumeAttributes:
+    mountOptions: "log-severity=trace"
+```
+
