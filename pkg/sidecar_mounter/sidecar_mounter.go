@@ -82,6 +82,13 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 	}
 
+	// Cleanup stale error file.
+	klog.V(4).Info("Removing any stale error files")
+	err := os.Remove(mc.TempDir + "/error")
+	if err != nil && !os.IsNotExist(err) {
+		klog.Errorf("failed to remove stale error file %s", mc.TempDir+"/error")
+	}
+
 	args = append(args, mc.BucketName)
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
@@ -104,6 +111,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// so it is safe to force kill the gcsfuse process.
 	go func(cmd *exec.Cmd) {
 		<-ctx.Done()
+		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
 		time.Sleep(time.Second * 5)
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
@@ -239,6 +247,17 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 
 	// Create a unix domain socket and listen for incoming connections.
 	socketPath := filepath.Join(tempDir, metrics.SocketName)
+
+	// Cleanup any stale metrics path to handle container restart scenario.
+	if _, err := os.Stat(socketPath); err == nil {
+		klog.V(4).Infof("found stale socket path for metrics collector %s, attempting delete of the path", socketPath)
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			klog.Errorf("error removing stale socket file for metrics collector, %s: %v, ", socketPath, err)
+		}
+		klog.V(4).Infof("successfully removed stale socket for metrics collector at %s", socketPath)
+	}
+
+	klog.V(4).Infof("Start listen on metrics collector socket %s", socketPath)
 	socket, err := net.Listen("unix", socketPath)
 	if err != nil {
 		klog.Errorf("failed to create socket %q: %v", socketPath, err)
@@ -349,6 +368,17 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 }
 
 func StartTokenServer(ctx context.Context, tokenURLSocketPath string, identityProvider string) {
+	// Clean up any stale socket file before creating a new one.
+	if _, err := os.Stat(tokenURLSocketPath); err == nil {
+		klog.V(4).Infof("found stale socket at %q, attempting to remove it.", tokenURLSocketPath)
+		if err := os.Remove(tokenURLSocketPath); err != nil && os.IsNotExist(err) {
+			klog.Errorf("failed to remove stale token server socket %q: %v", tokenURLSocketPath, err)
+
+			return
+		}
+		klog.Infof("successfully removed stale token server socket at %q.", tokenURLSocketPath)
+	}
+
 	// Create a unix domain socket and listen for incoming connections.
 	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)
 	if err != nil {

@@ -23,6 +23,9 @@ import (
 	"os"
 	"strconv"
 
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
@@ -35,8 +38,6 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 )
 
 type gcsFuseCSIFailedMountTestSuite struct {
@@ -135,16 +136,20 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
-
 		if gcsfuseVersionStr == "" {
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
 		}
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && (err != nil || !v.AtLeast(version.MustParseSemantic("v2.12.1-gke.0"))) {
+			ginkgo.By("Checking that the pod has failed mount error")
+			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
+		}
+
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.5.0"))) {
+			ginkgo.By("Checking that sidecar logs contain bucket does not exist message")
 			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "bucket does not exist")
 		} else {
+			ginkgo.By("Checking the mount failed due to bucket doesn't exist error.")
 			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
 		}
 	}
@@ -187,7 +192,9 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
 		}
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0"))) {
+		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.12.1-gke.0"))) {
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "name should be a valid bucket resource name")
+		} else if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && v.AtLeast(version.MustParseSemantic("v2.9.0")) {
 			tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
 			tPod.WaitForFailedMountError(ctx, "name should be a valid bucket resource name")
 		} else {
@@ -232,6 +239,16 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
+
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+		}
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		if configPrefix == specs.SkipCSIBucketAccessCheckPrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.12.1-gke.0"))) {
+			// New versions of CSI can only rely on GCSFuse logs.
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
+			return
+		}
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
 		tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
@@ -368,7 +385,18 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.ResourceExhausted.String())
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+		}
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+
+		if err != nil || v.AtLeast(version.MustParseSemantic("v2.12.1-gke.0")) {
+			// The "transport endpoint is not connected" is a generic error, but since GCSFuse crashed, there's no log we can look at there.
+			ginkgo.By("verifying OOM via transport endpoint not connected")
+			tPod.WaitForFailedContainerError(ctx, "transport endpoint is not connected")
+		} else {
+			tPod.WaitForFailedMountError(ctx, codes.ResourceExhausted.String())
+		}
 	}
 
 	ginkgo.It("should fail when the gcsfuse processes got killed due to OOM", func() {
@@ -397,9 +425,19 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
-		tPod.WaitForFailedMountError(ctx, "-invalid-option")
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+		}
+
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		if err != nil || v.AtLeast(version.MustParseSemantic("v2.12.1-gke.0")) {
+			ginkgo.By("Checking the pod has unknown flag logs")
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "unknown flag")
+		} else {
+			ginkgo.By("Checking that the pod has failed mount error")
+			tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
+			tPod.WaitForFailedMountError(ctx, "-invalid-option")
+		}
 	}
 
 	ginkgo.It("should fail when invalid mount options are passed", func() {

@@ -25,6 +25,9 @@ import (
 	"strings"
 	"testing"
 
+	"local/test/e2e/specs"
+	"local/test/e2e/testsuites"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
@@ -33,8 +36,6 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
-	"local/test/e2e/specs"
-	"local/test/e2e/testsuites"
 )
 
 var (
