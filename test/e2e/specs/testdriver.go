@@ -48,6 +48,7 @@ type GCSFuseCSITestDriver struct {
 	ClientProtocol              string
 	skipGcpSaTest               bool
 	EnableHierarchicalNamespace bool
+	EnableZB                    bool // Enable Zonal Buckets
 }
 
 type gcsVolume struct {
@@ -63,7 +64,7 @@ type gcsVolume struct {
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
-func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool, clientProtocol string) storageframework.TestDriver {
+func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool, clientProtocol string, enableZB bool) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
@@ -89,6 +90,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		skipGcpSaTest:               skipGcpSaTest,
 		ClientProtocol:              clientProtocol,
 		EnableHierarchicalNamespace: enableHierarchicalNamespace,
+		EnableZB:                    enableZB, // Enable Zonal Buckets
 	}
 }
 
@@ -442,6 +444,7 @@ func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountN
 		Location:                       n.bucketLocation,
 		EnableUniformBucketLevelAccess: true,
 		EnableHierarchicalNamespace:    n.EnableHierarchicalNamespace,
+		EnableZB:                       n.EnableZB,
 	}
 
 	ginkgo.By(fmt.Sprintf("Creating bucket %q", newBucket.Name))

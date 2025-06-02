@@ -39,6 +39,7 @@ readonly node_machine_type=${MACHINE_TYPE:-n2-standard-4}
 readonly number_nodes=${NUMBER_NODES:-3}
 readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 readonly build_gcsfuse_from_source=${BUILD_GCSFUSE_FROM_SOURCE:-false}
+readonly enable_zb=${ENABLE_ZB:-false}
 
 # Install golang
 version=1.22.7
@@ -78,6 +79,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gke-node-version=${gke_node_version} \
             --node-machine-type=${node_machine_type} \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
-            --number-nodes=${number_nodes}"
+            --number-nodes=${number_nodes} \
+            --enable-zb=${enable_zb} \"
 
 eval "$base_cmd"
