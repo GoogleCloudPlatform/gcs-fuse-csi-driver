@@ -39,6 +39,7 @@ var (
 	apiEndpointOverride = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
 	nodeImageType       = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
 	istioVersion        = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
+	enableZB 	   = flag.Bool("enable-zb", false, "use GKE Zonal Buckets in US-Central1-c for the tests")
 
 	// Test infrastructure flags.
 	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -105,6 +106,7 @@ func main() {
 		GinkgoSkipGcpSaTest:    *ginkgoSkipGcpSaTest,
 		IstioVersion:           *istioVersion,
 		GcsfuseClientProtocol:  *gcsfuseClientProtocol,
+		EnableZB: 			    *enableZB,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {

@@ -71,6 +71,7 @@ type TestParameters struct {
 	SupportSAVolInjection bool
 	IstioVersion          string
 	GcsfuseClientProtocol string
+	EnableZB 			  bool 
 }
 
 const (
@@ -208,6 +209,7 @@ func Handle(testParams *TestParameters) error {
 		"--client-protocol", testParams.GcsfuseClientProtocol,
 		"--provider", "skeleton",
 		"--test-bucket-location", testParams.GkeClusterRegion,
+		"--enable-zb", strconv.FormatBool(testParams.EnableZB),
 		"--skip-gcp-sa-test", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest),
 		"--api-env", envAPIMap[testParams.APIEndpointOverride],
 	)

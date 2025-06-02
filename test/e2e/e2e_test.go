@@ -116,11 +116,14 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseMountTestSuite,
 	}
 
-	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol)
+	//ZB is only valid for HNS enabled buckets
+	if !*enableZB {
+	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *enableZB)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
 	})
+	}
 
 	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
@@ -128,7 +131,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 	}
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol)
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *enableZB)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
