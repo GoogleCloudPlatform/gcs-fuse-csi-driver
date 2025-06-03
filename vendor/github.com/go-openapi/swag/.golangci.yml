@@ -1,56 +1,54 @@
 linters-settings:
+  govet:
+    check-shadowing: true
+  golint:
+    min-confidence: 0
   gocyclo:
-    min-complexity: 45
+    min-complexity: 25
+  maligned:
+    suggest-new: true
   dupl:
-    threshold: 200
+    threshold: 100
   goconst:
-    min-len: 2
-    min-occurrences: 3
+    min-len: 3
+    min-occurrences: 2
 
 linters:
   enable-all: true
   disable:
-    - recvcheck
-    - unparam
+    - maligned
     - lll
     - gochecknoinits
     - gochecknoglobals
-    - funlen
-    - godox
-    - gocognit
-    - whitespace
-    - wsl
-    - wrapcheck
-    - testpackage
     - nlreturn
-    - errorlint
-    - nestif
-    - godot
+    - testpackage
+    - wrapcheck
+    - gomnd
+    - exhaustive
+    - exhaustivestruct
+    - goerr113
+    - wsl
+    - whitespace
     - gofumpt
-    - paralleltest
-    - tparallel
-    - thelper
-    - exhaustruct
-    - varnamelen
+    - godot
+    - nestif
+    - godox
+    - funlen
     - gci
-    - depguard
-    - errchkjson
-    - inamedparam
-    - nonamedreturns
-    - musttag
-    - ireturn
-    - forcetypeassert
+    - gocognit
+    - paralleltest
+    - thelper
+    - ifshort
+    - gomoddirectives
     - cyclop
-    # deprecated linters
-    #- deadcode
-    #- interfacer
-    #- scopelint
-    #- varcheck
-    #- structcheck
-    #- golint
-    #- nosnakecase
-    #- maligned
-    #- goerr113
-    #- ifshort
-    #- gomnd
-    #- exhaustivestruct
+    - forcetypeassert
+    - ireturn
+    - tagliatelle
+    - varnamelen
+    - goimports
+    - tenv
+    - golint
+    - exhaustruct
+    - nilnil
+    - nonamedreturns
+    - nosnakecase
