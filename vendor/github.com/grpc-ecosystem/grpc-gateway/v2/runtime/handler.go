@@ -2,12 +2,10 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/textproto"
-	"strconv"
 	"strings"
 
 	"google.golang.org/genproto/googleapis/api/httpbody"
@@ -19,10 +17,16 @@ import (
 
 // ForwardResponseStream forwards the stream from gRPC server to REST client.
 func ForwardResponseStream(ctx context.Context, mux *ServeMux, marshaler Marshaler, w http.ResponseWriter, req *http.Request, recv func() (proto.Message, error), opts ...func(context.Context, http.ResponseWriter, proto.Message) error) {
-	rc := http.NewResponseController(w)
+	f, ok := w.(http.Flusher)
+	if !ok {
+		grpclog.Infof("Flush not supported in %T", w)
+		http.Error(w, "unexpected type of web server", http.StatusInternalServerError)
+		return
+	}
+
 	md, ok := ServerMetadataFromContext(ctx)
 	if !ok {
-		grpclog.Error("Failed to extract ServerMetadata from context")
+		grpclog.Infof("Failed to extract ServerMetadata from context")
 		http.Error(w, "unexpected error", http.StatusInternalServerError)
 		return
 	}
@@ -44,7 +48,7 @@ func ForwardResponseStream(ctx context.Context, mux *ServeMux, marshaler Marshal
 	var wroteHeader bool
 	for {
 		resp, err := recv()
-		if errors.Is(err, io.EOF) {
+		if err == io.EOF {
 			return
 		}
 		if err != nil {
@@ -56,33 +60,20 @@ func ForwardResponseStream(ctx context.Context, mux *ServeMux, marshaler Marshal
 			return
 		}
 
-		respRw, err := mux.forwardResponseRewriter(ctx, resp)
-		if err != nil {
-			grpclog.Errorf("Rewrite error: %v", err)
-			handleForwardResponseStreamError(ctx, wroteHeader, marshaler, w, req, mux, err, delimiter)
-			return
-		}
-
 		if !wroteHeader {
-			var contentType string
-			if sct, ok := marshaler.(StreamContentType); ok {
-				contentType = sct.StreamContentType(respRw)
-			} else {
-				contentType = marshaler.ContentType(respRw)
-			}
-			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Content-Type", marshaler.ContentType(resp))
 		}
 
 		var buf []byte
-		httpBody, isHTTPBody := respRw.(*httpbody.HttpBody)
+		httpBody, isHTTPBody := resp.(*httpbody.HttpBody)
 		switch {
-		case respRw == nil:
+		case resp == nil:
 			buf, err = marshaler.Marshal(errorChunk(status.New(codes.Internal, "empty response")))
 		case isHTTPBody:
 			buf = httpBody.GetData()
 		default:
-			result := map[string]interface{}{"result": respRw}
-			if rb, ok := respRw.(responseBody); ok {
+			result := map[string]interface{}{"result": resp}
+			if rb, ok := resp.(responseBody); ok {
 				result["result"] = rb.XXX_ResponseBody()
 			}
 
@@ -90,29 +81,20 @@ func ForwardResponseStream(ctx context.Context, mux *ServeMux, marshaler Marshal
 		}
 
 		if err != nil {
-			grpclog.Errorf("Failed to marshal response chunk: %v", err)
+			grpclog.Infof("Failed to marshal response chunk: %v", err)
 			handleForwardResponseStreamError(ctx, wroteHeader, marshaler, w, req, mux, err, delimiter)
 			return
 		}
 		if _, err := w.Write(buf); err != nil {
-			grpclog.Errorf("Failed to send response chunk: %v", err)
+			grpclog.Infof("Failed to send response chunk: %v", err)
 			return
 		}
 		wroteHeader = true
 		if _, err := w.Write(delimiter); err != nil {
-			grpclog.Errorf("Failed to send delimiter chunk: %v", err)
+			grpclog.Infof("Failed to send delimiter chunk: %v", err)
 			return
 		}
-		err = rc.Flush()
-		if err != nil {
-			if errors.Is(err, http.ErrNotSupported) {
-				grpclog.Errorf("Flush not supported in %T", w)
-				http.Error(w, "unexpected type of web server", http.StatusInternalServerError)
-				return
-			}
-			grpclog.Errorf("Failed to flush response to client: %v", err)
-			return
-		}
+		f.Flush()
 	}
 }
 
@@ -126,20 +108,18 @@ func handleForwardResponseServerMetadata(w http.ResponseWriter, mux *ServeMux, m
 	}
 }
 
-func handleForwardResponseTrailerHeader(w http.ResponseWriter, mux *ServeMux, md ServerMetadata) {
+func handleForwardResponseTrailerHeader(w http.ResponseWriter, md ServerMetadata) {
 	for k := range md.TrailerMD {
-		if h, ok := mux.outgoingTrailerMatcher(k); ok {
-			w.Header().Add("Trailer", textproto.CanonicalMIMEHeaderKey(h))
-		}
+		tKey := textproto.CanonicalMIMEHeaderKey(fmt.Sprintf("%s%s", MetadataTrailerPrefix, k))
+		w.Header().Add("Trailer", tKey)
 	}
 }
 
-func handleForwardResponseTrailer(w http.ResponseWriter, mux *ServeMux, md ServerMetadata) {
+func handleForwardResponseTrailer(w http.ResponseWriter, md ServerMetadata) {
 	for k, vs := range md.TrailerMD {
-		if h, ok := mux.outgoingTrailerMatcher(k); ok {
-			for _, v := range vs {
-				w.Header().Add(h, v)
-			}
+		tKey := fmt.Sprintf("%s%s", MetadataTrailerPrefix, k)
+		for _, v := range vs {
+			w.Header().Add(tKey, v)
 		}
 	}
 }
@@ -153,9 +133,11 @@ type responseBody interface {
 // ForwardResponseMessage forwards the message "resp" from gRPC server to REST client.
 func ForwardResponseMessage(ctx context.Context, mux *ServeMux, marshaler Marshaler, w http.ResponseWriter, req *http.Request, resp proto.Message, opts ...func(context.Context, http.ResponseWriter, proto.Message) error) {
 	md, ok := ServerMetadataFromContext(ctx)
-	if ok {
-		handleForwardResponseServerMetadata(w, mux, md)
+	if !ok {
+		grpclog.Infof("Failed to extract ServerMetadata from context")
 	}
+
+	handleForwardResponseServerMetadata(w, mux, md)
 
 	// RFC 7230 https://tools.ietf.org/html/rfc7230#section-4.1.2
 	// Unless the request includes a TE header field indicating "trailers"
@@ -164,10 +146,12 @@ func ForwardResponseMessage(ctx context.Context, mux *ServeMux, marshaler Marsha
 	// agent to receive.
 	doForwardTrailers := requestAcceptsTrailers(req)
 
-	if ok && doForwardTrailers {
-		handleForwardResponseTrailerHeader(w, mux, md)
+	if doForwardTrailers {
+		handleForwardResponseTrailerHeader(w, md)
 		w.Header().Set("Transfer-Encoding", "chunked")
 	}
+
+	handleForwardResponseTrailerHeader(w, md)
 
 	contentType := marshaler.ContentType(resp)
 	w.Header().Set("Content-Type", contentType)
@@ -176,34 +160,25 @@ func ForwardResponseMessage(ctx context.Context, mux *ServeMux, marshaler Marsha
 		HTTPError(ctx, mux, marshaler, w, req, err)
 		return
 	}
-	respRw, err := mux.forwardResponseRewriter(ctx, resp)
-	if err != nil {
-		grpclog.Errorf("Rewrite error: %v", err)
-		HTTPError(ctx, mux, marshaler, w, req, err)
-		return
-	}
 	var buf []byte
-	if rb, ok := respRw.(responseBody); ok {
+	var err error
+	if rb, ok := resp.(responseBody); ok {
 		buf, err = marshaler.Marshal(rb.XXX_ResponseBody())
 	} else {
-		buf, err = marshaler.Marshal(respRw)
+		buf, err = marshaler.Marshal(resp)
 	}
 	if err != nil {
-		grpclog.Errorf("Marshal error: %v", err)
+		grpclog.Infof("Marshal error: %v", err)
 		HTTPError(ctx, mux, marshaler, w, req, err)
 		return
 	}
 
-	if !doForwardTrailers && mux.writeContentLength {
-		w.Header().Set("Content-Length", strconv.Itoa(len(buf)))
+	if _, err = w.Write(buf); err != nil {
+		grpclog.Infof("Failed to write response: %v", err)
 	}
 
-	if _, err = w.Write(buf); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
-		grpclog.Errorf("Failed to write response: %v", err)
-	}
-
-	if ok && doForwardTrailers {
-		handleForwardResponseTrailer(w, mux, md)
+	if doForwardTrailers {
+		handleForwardResponseTrailer(w, md)
 	}
 }
 
@@ -218,7 +193,8 @@ func handleForwardResponseOptions(ctx context.Context, w http.ResponseWriter, re
 	}
 	for _, opt := range opts {
 		if err := opt(ctx, w, resp); err != nil {
-			return fmt.Errorf("error handling ForwardResponseOptions: %w", err)
+			grpclog.Infof("Error handling ForwardResponseOptions: %v", err)
+			return err
 		}
 	}
 	return nil
@@ -233,15 +209,15 @@ func handleForwardResponseStreamError(ctx context.Context, wroteHeader bool, mar
 	}
 	buf, err := marshaler.Marshal(msg)
 	if err != nil {
-		grpclog.Errorf("Failed to marshal an error: %v", err)
+		grpclog.Infof("Failed to marshal an error: %v", err)
 		return
 	}
 	if _, err := w.Write(buf); err != nil {
-		grpclog.Errorf("Failed to notify error to client: %v", err)
+		grpclog.Infof("Failed to notify error to client: %v", err)
 		return
 	}
 	if _, err := w.Write(delimiter); err != nil {
-		grpclog.Errorf("Failed to send delimiter chunk: %v", err)
+		grpclog.Infof("Failed to send delimiter chunk: %v", err)
 		return
 	}
 }
