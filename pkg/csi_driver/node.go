@@ -197,33 +197,34 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// Check if there is any error from the gcsfuse
-	code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
-	if code != codes.OK {
-		if code == codes.Canceled {
-			klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the gcsfuse has terminated.", bucketName, targetPath)
-
-			return &csi.NodePublishVolumeResponse{}, nil
-		}
-
-		return nil, status.Error(code, err.Error())
-	}
-
-	// Check if there is any error from the sidecar container
-	code, err = checkSidecarContainerErr(isInitContainer, pod)
-	if code != codes.OK {
-		return nil, status.Error(code, err.Error())
-	}
-
-	// TODO: Check if the socket listener timed out
-
 	// Check if the target path is already mounted
 	mounted, err := s.isDirMounted(targetPath)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
 	}
 
+	// Skip mount if the mount on target path already exists.
 	if mounted {
+		// Check if there is any error from the gcsfuse
+		code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
+		if code != codes.OK {
+			if code == codes.Canceled {
+				klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the gcsfuse has terminated.", bucketName, targetPath)
+
+				return &csi.NodePublishVolumeResponse{}, nil
+			}
+
+			return nil, status.Error(code, err.Error())
+		}
+
+		// Check if there is any error from the sidecar container
+		code, err = checkSidecarContainerErr(isInitContainer, pod)
+		if code != codes.OK {
+			return nil, status.Error(code, err.Error())
+		}
+
+		// TODO: Check if the socket listener timed out
+
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", bucketName, targetPath)
 
 		return &csi.NodePublishVolumeResponse{}, nil

@@ -437,6 +437,13 @@ See GKE documentation [Storage for GKE clusters overview](https://cloud.google.c
 
 If the sidecar container (`gke-gcsfuse-sidecar`) hosting the gcsfuse process, crashes for some reason (e.g OOM Kill, or fatals), and kubelet decides to inplace restart the container, gcsfusecsi driver does not handle this scenario gracefully. This is because in the CSI NodePublishVolume the driver [checks the last known state](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/v1.15.4/pkg/csi_driver/utils.go#L431) of the container and fails fast. To mitigate this, delete and create the pod.
 
+### Node level restarts
+
+GCSFuse CSI Driver can now manage node restarts without impacting pods using GCSFuse-backed volumes. The driver ensures a clean slate by clearing stale files or sockets, and re-establishing the gcsfuse /dev/fuse file descriptor during the NodePublishVolume phase after a restart.
+
+Known issues after a node restart:
+- Metrics will not be visible on Cloud Monitoring after node restart. If they become visible, assume that they will be malformed.
+- Metrics after a restart will only look at the time period after the node restart.
 
 ### enabling debug logs
 

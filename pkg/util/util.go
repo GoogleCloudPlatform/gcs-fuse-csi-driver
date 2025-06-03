@@ -178,3 +178,30 @@ func GetSocketBasePath(targetPath, fuseSocketDir string) string {
 	// based on the pod and volume.
 	return filepath.Join(fuseSocketDir, sha1Hash(podID+"_"+volumeName))
 }
+
+func CheckAndDeleteStaleFile(dirPath, fileName string) error {
+	filePath := filepath.Join(dirPath, fileName)
+
+	// Use os.Stat to check for file existence.
+	if _, err := os.Stat(filePath); err != nil {
+		if os.IsNotExist(err) {
+			// File does not exist.
+			klog.V(4).Infof("File '%s' not found in '%s'. No action needed.", fileName, dirPath)
+
+			return nil
+		}
+		// Other error occurred (e.g., permissions issue, directory not found)
+		return fmt.Errorf("error checking for stale file '%s' in '%s': %w", fileName, dirPath, err)
+	}
+
+	// Stale file exists.
+	klog.V(4).Infof("File '%s' found in '%s'. Attempting to delete...", fileName, dirPath)
+
+	// Delete the file.
+	if deleteErr := os.Remove(filePath); deleteErr != nil {
+		return fmt.Errorf("failed to delete file '%s': %w", filePath, deleteErr)
+	}
+	klog.Infof("Stale file '%s' successfully deleted.", fileName)
+
+	return nil
+}
