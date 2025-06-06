@@ -1,9 +1,11 @@
 module github.com/googlecloudplatform/gcs-fuse-csi-driver
 
-go 1.22
+go 1.23.0
+
+toolchain go1.24.4
 
 require (
-	cloud.google.com/go/compute/metadata v0.2.3
+	cloud.google.com/go/compute/metadata v0.3.0
 	cloud.google.com/go/iam v1.1.6
 	cloud.google.com/go/storage v1.38.0
 	github.com/container-storage-interface/spec v1.9.0
@@ -15,7 +17,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.15.0
 	github.com/onsi/gomega v1.31.1
 	golang.org/x/net v0.21.0
-	golang.org/x/oauth2 v0.17.0
+	golang.org/x/oauth2 v0.27.0
 	google.golang.org/api v0.164.0
 	google.golang.org/grpc v1.61.1
 	gopkg.in/yaml.v3 v3.0.1
