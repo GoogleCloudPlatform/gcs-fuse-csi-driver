@@ -106,7 +106,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	klog.V(4).Infof("%v mounting the fuse filesystem", logPrefix)
 	err = m.MountSensitiveWithoutSystemdWithMountFlags(source, target, fstype, csiMountOptions, nil, []string{"--internal-only"})
 	if err != nil {
-		klog.V(4).ErrorS(err, "MountSensitiveWithoutSystemdWithMountFlags failed with error %v", err)
+		klog.Errorf("MountSensitiveWithoutSystemdWithMountFlags failed with error %v", err)
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
@@ -135,7 +135,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return err
 	}
 
-	// Clean up stale /error file for the fresh gcsfuse process to use.
+	// Clean up stale /error file. We perform stale file clean up here to make sure its called when the CSI driver
+	//  is about to set up the mount on the node publish path, just before the sidecar container invokes the gcsfuse process
+	// for the first time to complete the bottom half (registration of the file descriptor for events) of the mount.
 	// We put this cleanup step here because:
 	// 1. We can keep visibility into sidecar failures through subsequent NodePublishVolume calls.
 	// 2. SLOs report sidecar failures.

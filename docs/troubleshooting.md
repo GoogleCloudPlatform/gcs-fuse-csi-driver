@@ -439,11 +439,10 @@ If the sidecar container (`gke-gcsfuse-sidecar`) hosting the gcsfuse process, cr
 
 ### Node level restarts
 
-GCSFuse CSI Driver can now manage node restarts without impacting pods using GCSFuse-backed volumes. The driver ensures a clean slate by clearing stale files or sockets, and re-establishing the gcsfuse /dev/fuse file descriptor during the NodePublishVolume phase after a restart.
+If the GKE Node running GCSFuse CSI Driver enabled pod restarts (either due to a crash or a minor graceful restart), the pod will be able to start back up will still have access to GCS backed volume once runnning. The GCSFuse CSI Driver will ensure a clean after a restart by clearing stale files or sockets, and re-establishing the gcsfuse /dev/fuse file descriptor during the NodePublishVolume phase after a restart. Since GCSFuse had to restart, file and metadata caches will be empty.
 
 Known issues after a node restart:
-- Metrics will not be visible on Cloud Monitoring after node restart. If they become visible, assume that they will be malformed.
-- Metrics after a restart will only look at the time period after the node restart.
+- Metrics will not be visible on Cloud Monitoring after node restart. If they become visible, the metrics will always be malformed and should not be used. You will need to redeploy your pod if you want to continue collecting reliable metrics in the event of a restart.
 
 ### enabling debug logs
 
