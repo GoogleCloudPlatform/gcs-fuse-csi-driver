@@ -26,7 +26,7 @@ require (
 	k8s.io/kubernetes v1.29.1
 	k8s.io/mount-utils v0.29.1
 	k8s.io/pod-security-admission v0.29.1
-	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
+	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/boskos v0.0.0-20240212181944-5972d0cb4503
 	sigs.k8s.io/controller-runtime v0.17.1
 )
