@@ -82,15 +82,6 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 	}
 
-	// Cleanup stale /error file. This check is relevant in sidecar mounter because it:
-	// - Acts as in cases where NodePublishVolume fails to clean up /error file.
-	// - Does not block restart of gcsfuse process, as new gcsfuse process would need a fresh environment.
-	// - We only delete the /error file after we've successfully retrieved the fd from node server (retrieved in sidecarmounter.NewMountConfig).
-	err := util.CheckAndDeleteStaleFile(mc.TempDir, "/error")
-	if err != nil {
-		klog.Errorf("failed to check and delete stale /error file: %v", err)
-	}
-
 	args = append(args, mc.BucketName)
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
@@ -254,6 +245,8 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 	err := util.CheckAndDeleteStaleFile(tempDir, metrics.SocketName)
 	if err != nil {
 		klog.Errorf("failed to check and delete stale metrics socket file: %v", err)
+
+		return
 	}
 
 	klog.V(4).Infof("Start listen on metrics collector socket %s", socketPath)
@@ -371,6 +364,8 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, id
 	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
 	if err != nil {
 		klog.Errorf("failed to check and delete stale token server socket file: %v", err)
+
+		return
 	}
 
 	// Create a unix domain socket and listen for incoming connections.
