@@ -399,3 +399,46 @@ func TestGetSocketBasePath(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckAndDeleteStaleFile(t *testing.T) {
+
+	t.Parallel()
+	base, err := os.MkdirTemp("", "stale-file-test")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	testCases := []struct {
+		fileName      string
+		expectExist   bool
+		expectedError error
+	}{
+		{
+			fileName:      "socket",
+			expectExist:   false,
+			expectedError: nil,
+		},
+		{
+			fileName:      "token.sock",
+			expectExist:   true,
+			expectedError: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		filePath := filepath.Join(base, tc.fileName)
+		if tc.expectExist {
+			_, err := os.Create(filePath)
+			if err != nil {
+				t.Errorf("got error: %v", err)
+			}
+			defer os.Remove(filePath)
+		}
+
+		actualErr := CheckAndDeleteStaleFile(base, tc.fileName)
+		if actualErr != tc.expectedError {
+			t.Errorf("got error: %v but expected: %v", actualErr, tc.expectedError)
+		}
+	}
+}
