@@ -106,6 +106,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	klog.V(4).Infof("%v mounting the fuse filesystem", logPrefix)
 	err = m.MountSensitiveWithoutSystemdWithMountFlags(source, target, fstype, csiMountOptions, nil, []string{"--internal-only"})
 	if err != nil {
+		klog.V(4).ErrorS(err, "MountSensitiveWithoutSystemdWithMountFlags failed with error %v", err)
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
 	}
 
@@ -134,8 +135,26 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return err
 	}
 
+	// Clean up stale /error file for the fresh gcsfuse process to use.
+	// We put this cleanup step here because:
+	// 1. We can keep visibility into sidecar failures through subsequent NodePublishVolume calls.
+	// 2. SLOs report sidecar failures.
+	// 3. File gets cleaned up before sidecar starts to prevent false positives. These are cases where we report NodePublishVolume (NPV)
+	//    failures (due to stale error file) in scenarios where sidecar takes a while to start up after first NPV suceeded.
+	emptyDirBasePath, err := util.PrepareEmptyDir(target, false /* m.createSocket creates emptydir */)
+	if err != nil {
+		klog.Errorf("failed to get emptyDir path: %v", err)
+	}
+
+	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, "/error")
+	if err != nil {
+		klog.Errorf("failed to check and delete stale /error file: %v", err)
+	}
+
 	// Close the listener and fd after 1 hour timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	// Since we close the fd, we don't support standalone sidecar restarts.
+	// We support node restarts because a new fd is opened during first NodePublishVolme after restart.
 	go func() {
 		<-ctx.Done()
 		klog.V(4).Infof("%v closing the socket and fd", logPrefix)
@@ -210,6 +229,18 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 	}
 
 	// Create socket base path.
+	// To handle node restarts we need to:
+	// 1. Delete any stale socket
+	// 2. Create symlink (reasoning explained below)
+	// 3. Create socket
+
+	// Step 1: Attempt to remove a stale mount socket file before creating listener.
+	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, socketName)
+	if err != nil {
+		klog.Errorf("failed to check and delete stale fd mount socket file: %v", err)
+	}
+
+	// Step 2: Create the symlink.
 	// Need to create symbolic link of emptyDirBasePath to socketBasePath,
 	// because the socket absolute path is longer than 104 characters,
 	// which will cause "bind: invalid argument" errors.
@@ -218,26 +249,52 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 		return nil, fmt.Errorf("failed to create symbolic link to path %q: %w", socketBasePath, err)
 	}
 
+	// Step 3: Create the socket.
 	klog.V(4).Infof("%v create a listener using the socket", logPrefix)
 	l, err := net.Listen("unix", filepath.Join(socketBasePath, socketName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a listener using the socket: %w", err)
 	}
 
-	// Change the socket ownership
+	// We also need to change the socket ownership in 3 steps.
+	// 1. Change ownership of base of emptyDirBasePath.
+	// 2. Change ownership of sockets directory.
+	// 3. Change ownership of the mount socket itself.
+
 	targetSocketPath := filepath.Join(emptyDirBasePath, socketName)
-	if err = os.Chown(filepath.Dir(emptyDirBasePath), webhook.NobodyUID, webhook.NobodyGID); err != nil {
+	// First changing ownership of parent directory where socket resides.
+	// Full path: /var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/gke-gcsfuse-tmp/.volumes/
+	baseDir := filepath.Dir(emptyDirBasePath)
+	if err = os.Chown(baseDir, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %w", err)
 	}
+	klog.V(4).Infof("Chown on basedir %s done", baseDir)
+
+	// Changing ownership of base path directory.
+	// Full path: /var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/gke-gcsfuse-tmp/.volumes/my-vol
 	if err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on emptyDirBasePath: %w", err)
 	}
+	_, err = os.Stat(emptyDirBasePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify the emptyDirBasePath: %w", err)
+	}
+
+	klog.V(4).Infof("Chown on emptyDirBasePath %s success", emptyDirBasePath)
+
+	// Changing ownership of socket itself.
+	// Full path: /var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/gke-gcsfuse-tmp/.volumes/my-vol/socket
 	if err = os.Chown(targetSocketPath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on targetSocketPath: %w", err)
 	}
 
+	klog.V(4).Infof("Chown on targetSocketPath %s success", targetSocketPath)
 	if _, err = os.Stat(targetSocketPath); err != nil {
 		return nil, fmt.Errorf("failed to verify the targetSocketPath: %w", err)
+	}
+
+	if err = util.CheckAndDeleteStaleFile(emptyDirBasePath, "config.yaml"); err != nil {
+		klog.Errorf("checkAndDeleteConfigFile err %s", err)
 	}
 
 	return l, nil

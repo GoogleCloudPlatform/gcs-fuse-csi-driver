@@ -37,6 +37,7 @@ import (
 	"cloud.google.com/go/compute/metadata"
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
@@ -63,9 +64,8 @@ func New(mounterPath string) *Mounter {
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
 	if mc.TokenServerIdentityProvider != "" {
-		tp := filepath.Join(mc.TempDir, TokenFileName)
-		klog.Infof("Pod has hostNetwork enabled and token server feature is turned on. Starting Token Server on %s.", tp)
-		go StartTokenServer(ctx, tp, mc.TokenServerIdentityProvider)
+		klog.Infof("Pod has hostNetwork enabled and token server feature is turned on. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
+		go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
@@ -80,6 +80,15 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		if v != "" {
 			args = append(args, v)
 		}
+	}
+
+	// Cleanup stale /error file. This check is relevant in sidecar mounter because it:
+	// - Acts as in cases where NodePublishVolume fails to clean up /error file.
+	// - Does not block restart of gcsfuse process, as new gcsfuse process would need a fresh environment.
+	// - We only delete the /error file after we've successfully retrieved the fd from node server (retrieved in sidecarmounter.NewMountConfig).
+	err := util.CheckAndDeleteStaleFile(mc.TempDir, "/error")
+	if err != nil {
+		klog.Errorf("failed to check and delete stale /error file: %v", err)
 	}
 
 	args = append(args, mc.BucketName)
@@ -104,6 +113,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// so it is safe to force kill the gcsfuse process.
 	go func(cmd *exec.Cmd) {
 		<-ctx.Done()
+		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
 		time.Sleep(time.Second * 5)
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
@@ -239,6 +249,14 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 
 	// Create a unix domain socket and listen for incoming connections.
 	socketPath := filepath.Join(tempDir, metrics.SocketName)
+
+	// Cleanup any stale metrics path to handle container restart scenario.
+	err := util.CheckAndDeleteStaleFile(tempDir, metrics.SocketName)
+	if err != nil {
+		klog.Errorf("failed to check and delete stale metrics socket file: %v", err)
+	}
+
+	klog.V(4).Infof("Start listen on metrics collector socket %s", socketPath)
 	socket, err := net.Listen("unix", socketPath)
 	if err != nil {
 		klog.Errorf("failed to create socket %q: %v", socketPath, err)
@@ -348,8 +366,15 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 	return audience, nil
 }
 
-func StartTokenServer(ctx context.Context, tokenURLSocketPath string, identityProvider string) {
+func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, identityProvider string) {
+	// Clean up any stale socket file before creating a new one.
+	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
+	if err != nil {
+		klog.Errorf("failed to check and delete stale token server socket file: %v", err)
+	}
+
 	// Create a unix domain socket and listen for incoming connections.
+	tokenURLSocketPath := filepath.Join(tokenURLBasePath, tokenSocketName)
 	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)
 	if err != nil {
 		klog.Errorf("failed to create socket %q: %v", tokenURLSocketPath, err)
