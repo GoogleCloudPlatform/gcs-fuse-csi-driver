@@ -12,7 +12,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/kubernetes-csi/csi-lib-utils v0.18.1
 	github.com/prometheus/client_golang v1.18.0
-	github.com/prometheus/client_model v0.6.0
+	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.46.0
 	golang.org/x/mod v0.19.0
 	golang.org/x/net v0.38.0
@@ -97,7 +97,7 @@ require (
 	google.golang.org/genproto v0.0.0-20240730163845-b1a4ccb954bf // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240725223205-93522f1f2a9f // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240730163845-b1a4ccb954bf // indirect
-	google.golang.org/protobuf v1.36.5 // indirect
+	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/component-base v0.30.10 // indirect
