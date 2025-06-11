@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/storage v1.43.0
 	github.com/container-storage-interface/spec v1.10.0
 	github.com/distribution/reference v0.6.0
-	github.com/go-logr/logr v1.4.2
+	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
 	github.com/kubernetes-csi/csi-lib-utils v0.18.1
 	github.com/prometheus/client_golang v1.18.0
