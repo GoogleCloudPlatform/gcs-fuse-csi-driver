@@ -187,7 +187,7 @@ func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 	if deleteErr := os.Remove(filePath); deleteErr != nil {
 		return fmt.Errorf("failed to delete file '%s': %w", filePath, deleteErr)
 	}
-	klog.Infof("Stale file '%s' successfully deleted.", fileName)
+	klog.Infof("Stale file '%s' successfully deleted", fileName)
 
 	return nil
 }
