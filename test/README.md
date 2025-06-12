@@ -95,6 +95,7 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `E2E_TEST_GINKGO_PROCS`: default value is `5`. The value will be passed to `ginkgo run --procs` flag.
 - `E2E_TEST_GINKGO_TIMEOUT`: default value is `2h`. The value will be passed to `ginkgo run --timeout` flag.
 - `E2E_TEST_GINKGO_FLAKE_ATTEMPTS`: default value is `2`. The value will be passed to `ginkgo run --flake-attempts` flag.
+- `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket.
 
 ```bash
 # Run the test on an Autopilot cluster with the GcsFuseCsiDriver add-on enabled.
