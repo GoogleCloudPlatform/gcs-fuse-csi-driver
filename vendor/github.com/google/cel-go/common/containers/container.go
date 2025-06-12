@@ -19,9 +19,8 @@ package containers
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
-	"github.com/google/cel-go/common/ast"
+	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
 var (
@@ -213,13 +212,6 @@ type ContainerOption func(*Container) (*Container, error)
 func Abbrevs(qualifiedNames ...string) ContainerOption {
 	return func(c *Container) (*Container, error) {
 		for _, qn := range qualifiedNames {
-			qn = strings.TrimSpace(qn)
-			for _, r := range qn {
-				if !isIdentifierChar(r) {
-					return nil, fmt.Errorf(
-						"invalid qualified name: %s, wanted name of the form 'qualified.name'", qn)
-				}
-			}
 			ind := strings.LastIndex(qn, ".")
 			if ind <= 0 || ind >= len(qn)-1 {
 				return nil, fmt.Errorf(
@@ -286,10 +278,6 @@ func aliasAs(kind, qualifiedName, alias string) ContainerOption {
 	}
 }
 
-func isIdentifierChar(r rune) bool {
-	return r <= unicode.MaxASCII && (r == '.' || r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r))
-}
-
 // Name sets the fully-qualified name of the Container.
 func Name(name string) ContainerOption {
 	return func(c *Container) (*Container, error) {
@@ -309,19 +297,19 @@ func Name(name string) ContainerOption {
 
 // ToQualifiedName converts an expression AST into a qualified name if possible, with a boolean
 // 'found' value that indicates if the conversion is successful.
-func ToQualifiedName(e ast.Expr) (string, bool) {
-	switch e.Kind() {
-	case ast.IdentKind:
-		id := e.AsIdent()
-		return id, true
-	case ast.SelectKind:
-		sel := e.AsSelect()
+func ToQualifiedName(e *exprpb.Expr) (string, bool) {
+	switch e.GetExprKind().(type) {
+	case *exprpb.Expr_IdentExpr:
+		id := e.GetIdentExpr()
+		return id.GetName(), true
+	case *exprpb.Expr_SelectExpr:
+		sel := e.GetSelectExpr()
 		// Test only expressions are not valid as qualified names.
-		if sel.IsTestOnly() {
+		if sel.GetTestOnly() {
 			return "", false
 		}
-		if qual, found := ToQualifiedName(sel.Operand()); found {
-			return qual + "." + sel.FieldName(), true
+		if qual, found := ToQualifiedName(sel.GetOperand()); found {
+			return qual + "." + sel.GetField(), true
 		}
 	}
 	return "", false

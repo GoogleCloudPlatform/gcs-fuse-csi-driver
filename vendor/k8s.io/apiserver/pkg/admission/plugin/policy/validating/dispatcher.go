@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apiserver/pkg/admission"
-	admissionauthorizer "k8s.io/apiserver/pkg/admission/plugin/authorizer"
 	"k8s.io/apiserver/pkg/admission/plugin/policy/generic"
 	celmetrics "k8s.io/apiserver/pkg/admission/plugin/policy/validating/metrics"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
@@ -62,10 +61,6 @@ type policyDecisionWithMetadata struct {
 	PolicyDecision
 	Definition *admissionregistrationv1.ValidatingAdmissionPolicy
 	Binding    *admissionregistrationv1.ValidatingAdmissionPolicyBinding
-}
-
-func (c *dispatcher) Start(ctx context.Context) error {
-	return nil
 }
 
 // Dispatch implements generic.Dispatcher.
@@ -114,7 +109,7 @@ func (c *dispatcher) Dispatch(ctx context.Context, a admission.Attributes, o adm
 		}
 	}
 
-	authz := admissionauthorizer.NewCachingAuthorizer(c.authz)
+	authz := newCachingAuthorizer(c.authz)
 
 	for _, hook := range hooks {
 		// versionedAttributes will be set to non-nil inside of the loop, but
@@ -228,7 +223,7 @@ func (c *dispatcher) Dispatch(ctx context.Context, a admission.Attributes, o adm
 					switch decision.Action {
 					case ActionAdmit:
 						if decision.Evaluation == EvalError {
-							celmetrics.Metrics.ObserveAdmission(ctx, decision.Elapsed, definition.Name, binding.Name, ErrorType(&decision))
+							celmetrics.Metrics.ObserveAdmissionWithError(ctx, decision.Elapsed, definition.Name, binding.Name, "active")
 						}
 					case ActionDeny:
 						for _, action := range binding.Spec.ValidationActions {
@@ -239,13 +234,13 @@ func (c *dispatcher) Dispatch(ctx context.Context, a admission.Attributes, o adm
 									Binding:        binding,
 									PolicyDecision: decision,
 								})
-								celmetrics.Metrics.ObserveRejection(ctx, decision.Elapsed, definition.Name, binding.Name, ErrorType(&decision))
+								celmetrics.Metrics.ObserveRejection(ctx, decision.Elapsed, definition.Name, binding.Name, "active")
 							case admissionregistrationv1.Audit:
 								publishValidationFailureAnnotation(binding, i, decision, versionedAttr)
-								celmetrics.Metrics.ObserveAudit(ctx, decision.Elapsed, definition.Name, binding.Name, ErrorType(&decision))
+								celmetrics.Metrics.ObserveAudit(ctx, decision.Elapsed, definition.Name, binding.Name, "active")
 							case admissionregistrationv1.Warn:
 								warning.AddWarning(ctx, "", fmt.Sprintf("Validation failed for ValidatingAdmissionPolicy '%s' with binding '%s': %s", definition.Name, binding.Name, decision.Message))
-								celmetrics.Metrics.ObserveWarn(ctx, decision.Elapsed, definition.Name, binding.Name, ErrorType(&decision))
+								celmetrics.Metrics.ObserveWarn(ctx, decision.Elapsed, definition.Name, binding.Name, "active")
 							}
 						}
 					default:
@@ -264,7 +259,7 @@ func (c *dispatcher) Dispatch(ctx context.Context, a admission.Attributes, o adm
 						auditAnnotationCollector.add(auditAnnotation.Key, value)
 					case AuditAnnotationActionError:
 						// When failurePolicy=fail, audit annotation errors result in deny
-						d := policyDecisionWithMetadata{
+						deniedDecisions = append(deniedDecisions, policyDecisionWithMetadata{
 							Definition: definition,
 							Binding:    binding,
 							PolicyDecision: PolicyDecision{
@@ -273,9 +268,8 @@ func (c *dispatcher) Dispatch(ctx context.Context, a admission.Attributes, o adm
 								Message:    auditAnnotation.Error,
 								Elapsed:    auditAnnotation.Elapsed,
 							},
-						}
-						deniedDecisions = append(deniedDecisions, d)
-						celmetrics.Metrics.ObserveRejection(ctx, auditAnnotation.Elapsed, definition.Name, binding.Name, ErrorType(&d.PolicyDecision))
+						})
+						celmetrics.Metrics.ObserveRejection(ctx, auditAnnotation.Elapsed, definition.Name, binding.Name, "active")
 					case AuditAnnotationActionExclude: // skip it
 					default:
 						return fmt.Errorf("unsupported AuditAnnotation Action: %s", auditAnnotation.Action)

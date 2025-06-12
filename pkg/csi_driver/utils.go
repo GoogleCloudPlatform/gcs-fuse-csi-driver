@@ -392,11 +392,17 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 		return code, fmt.Errorf("failed to get emptyDir path: %w", err)
 	}
 
+	klog.V(4).Infof("checkGcsFuseErr read file %s", emptyDirBasePath+"/error")
+
 	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
 	if err != nil && !os.IsNotExist(err) {
 		return code, fmt.Errorf("failed to open error file %q: %w", emptyDirBasePath+"/error", err)
 	}
 	if err == nil && len(errMsg) > 0 {
+		// TODO: We need a standard for scraping errors from GCSFuse.
+		// A change in string format in GCSFuse would break this function.
+		// If we are aware of such change, its also tedious to catch and
+		// update tests that are hardcoded with this strings.
 		errMsgStr := string(errMsg)
 		code := codes.Internal
 		if strings.Contains(errMsgStr, "Incorrect Usage") ||
@@ -510,6 +516,7 @@ func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string
 	absolutePath := filepath.Dir(emptyDirBasePath) + "/" + fileName
 	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %q: %v", absolutePath, flagMap)
 
+	// This file is truncated/cleared if it already exists.
 	f, err := os.Create(absolutePath)
 	if err != nil {
 		return fmt.Errorf("failed to create defaulting-flag file: %w", err)

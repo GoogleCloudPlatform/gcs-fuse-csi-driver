@@ -8,7 +8,6 @@ package internal
 import (
 	"crypto/tls"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -63,8 +62,6 @@ type DialSettings struct {
 	AllowNonDefaultServiceAccount bool
 	DefaultUniverseDomain         string
 	UniverseDomain                string
-	AllowHardBoundTokens          []string
-	Logger                        *slog.Logger
 	// Google API system parameters. For more information please read:
 	// https://cloud.google.com/apis/docs/system-parameters
 	QuotaProject  string
@@ -73,9 +70,6 @@ type DialSettings struct {
 	// New Auth library Options
 	AuthCredentials      *auth.Credentials
 	EnableNewAuthLibrary bool
-
-	// TODO(b/372244283): Remove after b/358175516 has been fixed
-	EnableAsyncRefreshDryRun func()
 }
 
 // GetScopes returns the user-provided scopes, if set, or else falls back to the
@@ -210,7 +204,8 @@ func (ds *DialSettings) IsUniverseDomainGDU() bool {
 }
 
 // GetUniverseDomain returns the default service domain for a given Cloud
-// universe, from google.Credentials. This wrapper function should be removed
+// universe, from google.Credentials, for comparison with the value returned by
+// (*DialSettings).GetUniverseDomain. This wrapper function should be removed
 // to close https://github.com/googleapis/google-api-go-client/issues/2399.
 func GetUniverseDomain(creds *google.Credentials) (string, error) {
 	timer := time.NewTimer(time.Second)

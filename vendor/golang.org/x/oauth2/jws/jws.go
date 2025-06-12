@@ -116,12 +116,12 @@ func (h *Header) encode() (string, error) {
 // Decode decodes a claim set from a JWS payload.
 func Decode(payload string) (*ClaimSet, error) {
 	// decode returned id token to get expiry
-	_, claims, _, ok := parseToken(payload)
-	if !ok {
+	s := strings.Split(payload, ".")
+	if len(s) < 2 {
 		// TODO(jbd): Provide more context about the error.
 		return nil, errors.New("jws: invalid token received")
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(claims)
+	decoded, err := base64.RawURLEncoding.DecodeString(s[1])
 	if err != nil {
 		return nil, err
 	}
@@ -165,34 +165,18 @@ func Encode(header *Header, c *ClaimSet, key *rsa.PrivateKey) (string, error) {
 // Verify tests whether the provided JWT token's signature was produced by the private key
 // associated with the supplied public key.
 func Verify(token string, key *rsa.PublicKey) error {
-	header, claims, sig, ok := parseToken(token)
-	if !ok {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
 		return errors.New("jws: invalid token received, token must have 3 parts")
 	}
-	signatureString, err := base64.RawURLEncoding.DecodeString(sig)
+
+	signedContent := parts[0] + "." + parts[1]
+	signatureString, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
 		return err
 	}
 
 	h := sha256.New()
-	h.Write([]byte(header + tokenDelim + claims))
+	h.Write([]byte(signedContent))
 	return rsa.VerifyPKCS1v15(key, crypto.SHA256, h.Sum(nil), signatureString)
 }
-
-func parseToken(s string) (header, claims, sig string, ok bool) {
-	header, s, ok = strings.Cut(s, tokenDelim)
-	if !ok { // no period found
-		return "", "", "", false
-	}
-	claims, s, ok = strings.Cut(s, tokenDelim)
-	if !ok { // only one period found
-		return "", "", "", false
-	}
-	sig, _, ok = strings.Cut(s, tokenDelim)
-	if ok { // three periods found
-		return "", "", "", false
-	}
-	return header, claims, sig, true
-}
-
-const tokenDelim = "."
