@@ -42,6 +42,7 @@ import (
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sts/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
@@ -390,7 +391,7 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, id
 
 			return
 		}
-		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
+		stsToken, err = fetchIdentityBindingTokenWithRetry(ctx, k8stoken, identityProvider)
 		if err != nil {
 			klog.Errorf("failed to get sts token from path %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -419,4 +420,51 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, id
 	if err := server.Serve(tokenSocketListener); !errors.Is(err, http.ErrServerClosed) {
 		klog.Errorf("Server for %q returns unexpected error: %v", tokenURLSocketPath, err)
 	}
+}
+
+func fetchIdentityBindingTokenWithRetry(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
+	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
+	if err != nil {
+		return nil, fmt.Errorf("new STS service error: %w", err)
+	}
+
+	audience, err := getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get audience from the context: %w", err)
+	}
+
+	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
+		Audience:           audience,
+		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
+		Scope:              credentials.DefaultAuthScopes()[0],
+		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
+		SubjectToken:       k8sSAToken,
+	}
+
+	backoff := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Steps:    5,
+	}
+	var stsToken *sts.GoogleIdentityStsV1ExchangeTokenResponse
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(_ context.Context) (bool, error) {
+
+		stsResponse, err := stsService.V1.Token(stsRequest).Do()
+		if err != nil {
+			klog.Errorf("IdentityBindingToken exchange error with audience %q: %w, retrying...", audience, err)
+			return false, nil
+		}
+		stsToken = stsResponse
+		klog.Infof("Got the STS token successfully")
+		return true, nil
+	})
+	if err != nil || stsToken == nil {
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w, no more retires permitted, got token %q", audience, err, stsToken)
+	}
+	return &oauth2.Token{
+		AccessToken: stsToken.AccessToken,
+		TokenType:   stsToken.TokenType,
+		Expiry:      time.Now().Add(time.Second * time.Duration(stsToken.ExpiresIn)),
+	}, nil
 }
