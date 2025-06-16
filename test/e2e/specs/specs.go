@@ -760,6 +760,15 @@ func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ctx context.Context, ns *cor
 			},
 		})
 
+	// This is required to run the cloud profiler tests. See requirements here:
+	// https://g3doc.corp.google.com/cloud/storage/g3doc/team/sub_teams/clients/sub_teams/gcsfuse/resources/documentation/dev_guide.md#cpu-memory-goroutines-and-mutex-profiling-of-gcsfuse-using-cloud-profiler
+	policy.Bindings = append(policy.Bindings,
+		&iam.Binding{
+			Role: "roles/cloudprofiler.agent",
+			Members: []string{
+				fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", t.serviceAccount.ProjectId, ns.Name, K8sServiceAccountName),
+			},
+		})
 	iamPolicyRequest := &iam.SetIamPolicyRequest{Policy: policy}
 	_, err = iamService.Projects.ServiceAccounts.SetIamPolicy(t.serviceAccount.Name, iamPolicyRequest).Do()
 	framework.ExpectNoError(err)
