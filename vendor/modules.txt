@@ -419,6 +419,8 @@ golang.org/x/time/rate
 # gomodules.xyz/jsonpatch/v2 v2.4.0
 ## explicit; go 1.20
 gomodules.xyz/jsonpatch/v2
+# gomodules.xyz/jsonpatch/v3 v3.0.1
+## explicit; go 1.12
 # google.golang.org/api v0.190.0
 ## explicit; go 1.20
 google.golang.org/api/googleapi
