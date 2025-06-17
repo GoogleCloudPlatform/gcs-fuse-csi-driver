@@ -124,14 +124,18 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod1.Cleanup(ctx)
 	}
 
-	testCaseHostNetworkEnabled := func(configPrefix ...string) {
+	testCaseHostNetworkEnabledAndKSAOptIn := func(configPrefix ...string) {
 		init(configPrefix...)
 		defer cleanup()
 
 		ginkgo.By("Configuring hostnetwork enabled pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.EnableHostNetwork()
-		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Opting in to hostnetwork KSA feature. Setting up two volumes.")
+
+		tPod.SetupVolumeWithHostNetworkKSAOptIn(l.volumeResource, volumeName, mountPath, false)
+		tPod.SetupVolumeWithHostNetworkKSAOptIn(l.volumeResource, volumeName2, mountPath2, false)
 
 		ginkgo.By("Deploying hostnetwork enabled pod")
 		tPod.Create(ctx)
@@ -146,6 +150,7 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		// Create a new file B using gcsfuse.
 		testFile := "testfile"
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/%v", mountPath, testFile))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %v/%v", mountPath2, testFile))
 
 		// Check mounted volumes on pod
 		projectedSAVolMounted := false
@@ -161,6 +166,8 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		// Check the volume content.
 		volumeContents := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("ls %v", mountPath))
 		gomega.Expect(volumeContents).To(gomega.Equal(testFile))
+		volumeContents2 := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("ls %v", mountPath2))
+		gomega.Expect(volumeContents2).To(gomega.Equal(testFile))
 
 		ginkgo.By("Deleting pod")
 		tPod.Cleanup(ctx)
@@ -228,15 +235,13 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	})
 
 	ginkgo.It("should successfully mount for hostnetwork enabled pods", func() {
-		// TODO: remove this skip after we've rolled out the feature again
-		e2eskipper.Skipf("Skipping this test while hostnetwork support is rolled back")
-		if pattern.VolType == storageframework.DynamicPV {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		if pattern.VolType == storageframework.DynamicPV || pattern.VolType == storageframework.PreprovisionedPV {
+			e2eskipper.Skipf("skip for volume type %v", pattern.VolType)
 		}
 		if supportSAVolInjection {
-			testCaseHostNetworkEnabled()
+			testCaseHostNetworkEnabledAndKSAOptIn()
 		} else {
-			ginkgo.By("Skipping the hostnetwork test for cluster version < 1.33.0")
+			ginkgo.By("Skipping the hostnetwork test for cluster version < " + utils.SaTokenVolInjectionMinimumVersion.String())
 		}
 	})
 

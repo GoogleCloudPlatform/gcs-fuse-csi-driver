@@ -181,10 +181,11 @@ func Handle(testParams *TestParameters) error {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithNativeSidecarEnvVar, err)
 	}
 
-	supportSAVolInjection, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, saTokenVolInjectionMinimumVersion)
+	managedDriverVersionForHostNetworkTokenServerSatisfied, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, SaTokenVolInjectionMinimumVersion)
 	if err != nil {
-		klog.Fatalf(`SA Vol Injection support could not be determined: %v`, err)
+		klog.Fatalf(`managed driver version for host network token server support could not be determined: %v`, err)
 	}
+	supportSAVolInjection := !testParams.UseGKEManagedDriver || managedDriverVersionForHostNetworkTokenServerSatisfied
 	testParams.SupportSAVolInjection = supportSAVolInjection
 
 	if err = os.Setenv(TestWithSAVolumeInjectionEnvVar, strconv.FormatBool(supportSAVolInjection)); err != nil {

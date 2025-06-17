@@ -23,6 +23,9 @@ import (
 	"os"
 	"strconv"
 
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -34,13 +37,13 @@ import (
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
 	"k8s.io/utils/ptr"
-	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 )
 
 const (
-	mountPath  = "/mnt/test"
-	volumeName = "test-gcsfuse-volume"
+	mountPath   = "/mnt/test"
+	volumeName  = "test-gcsfuse-volume"
+	mountPath2  = "/mnt/test2"
+	volumeName2 = "test-gcsfuse-volume2"
 )
 
 type gcsFuseCSIVolumesTestSuite struct {

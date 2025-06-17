@@ -126,12 +126,12 @@ func TestIsSidecarVersionSupportedForTokenServer(t *testing.T) {
 		}{
 			{
 				name:              "should return true for supported sidecar version",
-				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.12.3-gke.2@sha256:abcd",
+				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.200.3-gke.2@sha256:abcd",
 				expectedSupported: true,
 			},
 			{
 				name:              "should return true for supported sidecar version in staging gcr",
-				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.12.2-gke.0@sha256:abcd",
+				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.200.2-gke.0@sha256:abcd",
 				expectedSupported: true,
 			},
 			{
@@ -212,6 +212,8 @@ func TestParseVolumeAttributes(t *testing.T) {
 			expectedMountOptions             []string
 			expectedSkipBucketAccessCheck    bool
 			expectedDisableMetricsCollection bool
+			expectedOptInHostNetworkKSA      bool
+			expectedIdentityProvider         string
 			expectedErr                      bool
 		}{
 			{
@@ -499,10 +501,36 @@ func TestParseVolumeAttributes(t *testing.T) {
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataTypeCacheCapacity] + "0",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
 				},
+				expectedOptInHostNetworkKSA: false,
+				expectedIdentityProvider:    "",
+			},
+			{
+				name: "should return correct mount options for hostnetwork pod ksa opt in",
+				volumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: util.TrueStr,
+				},
+				expectedMountOptions:        []string{},
+				expectedOptInHostNetworkKSA: true,
+				expectedIdentityProvider:    "",
+			},
+			{
+				name: "should return correct mount options for private sidecar user's hostnetwork pod ksa opt in",
+				volumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: util.TrueStr,
+					VolumeContextKeyIdentityProvider:  "https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c",
+				},
+				expectedMountOptions:        []string{},
+				expectedOptInHostNetworkKSA: true,
+				expectedIdentityProvider:    "https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c",
 			},
 			{
 				name:          "unexpected value for VolumeContextKeySkipCSIBucketAccessCheck",
 				volumeContext: map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: "blah"},
+				expectedErr:   true,
+			},
+			{
+				name:          "unexpected value for VolumeContextKeyHostNetworkPodKSA",
+				volumeContext: map[string]string{VolumeContextKeyHostNetworkPodKSA: "blah"},
 				expectedErr:   true,
 			},
 			{
@@ -532,7 +560,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Logf("test case: %s", tc.name)
-				output, skipCSIBucketAccessCheck, disableMetricsCollection, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 				if (err != nil) != tc.expectedErr {
 					t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 				}

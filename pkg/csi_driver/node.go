@@ -87,7 +87,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, err := parseRequestArguments(req)
+	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -138,9 +138,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
 
-	if s.shouldStartTokenServer(pod) && pod.Spec.HostNetwork {
-		identityProvider := s.driver.config.TokenManager.GetIdentityProvider()
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"token-server-identity-provider=" + identityProvider})
+	if s.shouldPopulateIdentifyProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
+		identityProvider := ""
+		if userSpecifiedIdentityProvider != "" {
+			identityProvider = userSpecifiedIdentityProvider
+		} else {
+			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
+		}
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -326,7 +331,15 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 	return storageService, nil
 }
 
-func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
+func (s *nodeServer) shouldPopulateIdentifyProvider(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {
+	if !optInHnwKSA {
+		return false
+	}
+
+	if !pod.Spec.HostNetwork {
+		return false
+	}
+
 	tokenVolumeInjected := false
 	for _, vol := range pod.Spec.Volumes {
 		if vol.Name == webhook.SidecarContainerSATokenVolumeName {
@@ -347,7 +360,7 @@ func (s *nodeServer) shouldStartTokenServer(pod *corev1.Pod) bool {
 		}
 	}
 
-	return tokenVolumeInjected && sidecarVersionSupported
+	return tokenVolumeInjected && (sidecarVersionSupported || userInput)
 }
 
 func (s *nodeServer) shouldPassDefaultingFlags(pod *corev1.Pod) bool {

@@ -340,6 +340,7 @@ func TestPrepareConfigFile(t *testing.T) {
 					"metadata-cache:type-cache-max-size-mb": "-1",
 					"cache-dir":                             "/gcsfuse-cache/.volumes/volume-name",
 				},
+				HostNetworkKSAOptIn:         true,
 				TokenServerIdentityProvider: "https://container.googleapis.com/v1/projects/fake-project/locations/us-central1/clusters/fake-cluster",
 			},
 			expectedConfig: map[string]interface{}{
