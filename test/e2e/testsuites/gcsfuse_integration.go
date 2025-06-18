@@ -71,6 +71,16 @@ func hnsEnabled(driver storageframework.TestDriver) bool {
 	return gcsfuseCSITestDriver.EnableHierarchicalNamespace
 }
 
+// zbEnabled checks if the Zonal Buckets feature is enabled for the given driver.
+// It is needs to be used in the integration test commands because gcsfuse tests parallelize and disabled tests based on this --zonal flag.
+// Gcsfuse team adds this in this commit https://github.com/GoogleCloudPlatform/gcsfuse/commit/c9a273daf6028ac90dd18f35e74014763d5aa03c.
+func zbEnabled(driver storageframework.TestDriver) bool {
+	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
+
+	return gcsfuseCSITestDriver.EnableZB
+}
+
 func getClientProtocol(driver storageframework.TestDriver) string {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
@@ -256,7 +266,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 
-		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go%v && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, mountPath)
+		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go%v && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --zonal=%t --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, zbEnabled(driver), mountPath)
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 
 		var finalTestCommand string
