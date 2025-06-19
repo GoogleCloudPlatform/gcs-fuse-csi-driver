@@ -25,6 +25,9 @@ import (
 	"strings"
 	"testing"
 
+	"local/test/e2e/specs"
+	"local/test/e2e/testsuites"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
@@ -33,8 +36,6 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
-	"local/test/e2e/specs"
-	"local/test/e2e/testsuites"
 )
 
 var (
@@ -115,10 +116,10 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
 		testsuites.InitGcsFuseMountTestSuite,
 	}
-
+	enableZB := false
 	//Disabling non hns tests because ZB is only valid for HNS enabled buckets
-	if !*enableZB {
-		testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *enableZB)
+	if !enableZB {
+		testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, enableZB)
 
 		ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 			storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
@@ -131,7 +132,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 	}
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *enableZB)
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, enableZB)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
