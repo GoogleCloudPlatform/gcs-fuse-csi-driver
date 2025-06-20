@@ -3,7 +3,7 @@ module github.com/googlecloudplatform/gcs-fuse-csi-driver
 go 1.23.0
 
 require (
-	cloud.google.com/go/compute/metadata v0.5.0
+	cloud.google.com/go/compute/metadata v0.7.0
 	cloud.google.com/go/iam v1.1.12
 	cloud.google.com/go/storage v1.43.0
 	github.com/container-storage-interface/spec v1.10.0
@@ -90,7 +90,7 @@ require (
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.32.0 // indirect
+	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
