@@ -5,7 +5,7 @@
   "prConcurrentLimit": 0,
   "packageRules": [
     {
-      "enabled": true,
+      "enabled": false,
       "matchPackagePatterns": ["*"]
     }
   ],
