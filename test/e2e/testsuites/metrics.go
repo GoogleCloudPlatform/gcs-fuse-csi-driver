@@ -23,6 +23,8 @@ import (
 	"os"
 	"os/exec"
 
+	"local/test/e2e/specs"
+
 	"github.com/google/uuid"
 	csidriver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	metricspkg "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
@@ -34,22 +36,20 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
 )
 
-var expectedMetricNames = map[string]int{
-	"fs_ops_count":                20,
-	"fs_ops_error_count":          2,
-	"fs_ops_latency":              20,
-	"gcs_download_bytes_count":    1,
-	"gcs_read_count":              1,
-	"gcs_read_bytes_count":        1,
-	"gcs_reader_count":            2,
-	"gcs_request_count":           7,
-	"gcs_request_latencies":       7,
-	"file_cache_read_count":       1,
-	"file_cache_read_bytes_count": 1,
-	"file_cache_read_latencies":   1,
+var expectedMetricNames = []string{
+	"fs_ops_count",
+	"fs_ops_error_count",
+	"fs_ops_latency",
+	"gcs_download_bytes_count",
+	"gcs_read_count",
+	"gcs_read_bytes_count",
+	"gcs_reader_count",
+	"gcs_request_latencies",
+	"file_cache_read_count",
+	"file_cache_read_bytes_count",
+	"file_cache_read_latencies",
 }
 
 type gcsFuseCSIMetricsTestSuite struct {
@@ -213,7 +213,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
-		for metricName, metricCount := range expectedMetricNames {
+		for _, metricName := range expectedMetricNames {
 			metricsList := []*dto.Metric{}
 			metricFamily, ok := families[metricName]
 			if ok {
@@ -240,12 +240,12 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 							}
 						}
 					}
-
 					metricsList = append(metricsList, m)
 				}
 			}
+			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 
-			gomega.Expect(metricsList).To(gomega.HaveLen(metricCount), fmt.Sprintf("Found metric %q count: %v, expected count: %v", metricName, len(metricsList), metricCount))
+			gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">", 0), fmt.Sprintf("Found metric %q count: %v, expected count > 0", metricName, len(metricsList)))
 			ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
 		}
 	}

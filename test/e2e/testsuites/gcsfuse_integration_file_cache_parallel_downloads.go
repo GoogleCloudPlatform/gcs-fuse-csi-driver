@@ -181,6 +181,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 
 		baseTestCommand := fmt.Sprintf("export GO_VERSION=$(%v) && export GOTOOLCHAIN=go$GO_VERSION && export PATH=$PATH:/usr/local/go/bin && cd %v/read_cache && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v --testbucket=%v -run %v", gcsfuseGoVersionCommand, gcsfuseIntegrationTestsBasePath, mountPath, bucketName, testName)
+		if zbEnabled(driver) {
+			baseTestCommand += " --zonal=true"
+		}
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
 

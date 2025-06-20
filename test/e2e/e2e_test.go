@@ -25,6 +25,9 @@ import (
 	"strings"
 	"testing"
 
+	"local/test/e2e/specs"
+	"local/test/e2e/testsuites"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
@@ -33,8 +36,6 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
-	"local/test/e2e/specs"
-	"local/test/e2e/testsuites"
 )
 
 var (
@@ -45,6 +46,7 @@ var (
 	bucketLocation = flag.String("test-bucket-location", "us-central1", "the test bucket location")
 	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
 	apiEnv         = flag.String("api-env", "prod", "cluster API env")
+	zbFlag         = *enableZB
 )
 
 var _ = func() bool {
@@ -116,11 +118,14 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseMountTestSuite,
 	}
 
-	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol)
+	//Disabling non hns tests because ZB is only valid for HNS enabled buckets
+	if !zbFlag {
+		testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, zbFlag)
 
-	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
-		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
-	})
+		ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
+			storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
+		})
+	}
 
 	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
@@ -128,7 +133,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 	}
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol)
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, zbFlag)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
