@@ -344,7 +344,7 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	Options string `json:"options,omitempty"`
 	// RequestedTokenType: Required. An identifier for the type of requested
 	// security token. Can be `urn:ietf:params:oauth:token-type:access_token` or
-	// `urn:ietf:params:oauth:token-type:access_boundary_intermediate_token`.
+	// `urn:ietf:params:oauth:token-type:access_boundary_intermediary_token`.
 	RequestedTokenType string `json:"requestedTokenType,omitempty"`
 	// Scope: The OAuth 2.0 scopes to include on the resulting access token,
 	// formatted as a list of space-delimited, case-sensitive strings. Required
@@ -467,10 +467,10 @@ func (s GoogleIdentityStsV1ExchangeTokenRequest) MarshalJSON() ([]byte, error) {
 // ExchangeToken.
 type GoogleIdentityStsV1ExchangeTokenResponse struct {
 	// AccessBoundarySessionKey: The access boundary session key. This key is used
-	// along with the access boundary intermediate token to generate Credential
+	// along with the access boundary intermediary token to generate Credential
 	// Access Boundary tokens at client side. This field is absent when the
 	// `requested_token_type` from the request is not
-	// `urn:ietf:params:oauth:token-type:access_boundary_intermediate_token`.
+	// `urn:ietf:params:oauth:token-type:access_boundary_intermediary_token`.
 	AccessBoundarySessionKey string `json:"access_boundary_session_key,omitempty"`
 	// AccessToken: An OAuth 2.0 security token, issued by Google, in response to
 	// the token exchange request. Tokens can vary in size, depending in part on
@@ -480,9 +480,9 @@ type GoogleIdentityStsV1ExchangeTokenResponse struct {
 	AccessToken string `json:"access_token,omitempty"`
 	// ExpiresIn: The amount of time, in seconds, between the time when the access
 	// token was issued and the time when the access token will expire. This field
-	// is absent when the `subject_token` in the request is a Google-issued,
-	// short-lived access token. In this case, the access token has the same
-	// expiration time as the `subject_token`.
+	// is absent when the `subject_token` in the request is a a short-lived access
+	// token for a Cloud Identity or Google Workspace user account. In this case,
+	// the access token has the same expiration time as the `subject_token`.
 	ExpiresIn int64 `json:"expires_in,omitempty"`
 	// IssuedTokenType: The token type. Always matches the value of
 	// `requested_token_type` from the request.
