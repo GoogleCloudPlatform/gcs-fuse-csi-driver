@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	clientutils "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util/goclientobjectcommands"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
@@ -37,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
@@ -1144,7 +1146,7 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func CreateImplicitDirInBucket(dirPath, bucketName string) {
+func CreateImplicitDirInBucket(ctx context.Context, dirPath, bucketName string, zbEnabled bool) {
 	// Use bucketName as the name of a temp file since bucketName is unique.
 	f, err := os.Create(bucketName)
 	if err != nil {
@@ -1158,10 +1160,26 @@ func CreateImplicitDirInBucket(dirPath, bucketName string) {
 		}
 	}()
 
-	//nolint:gosec
-	if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
-		framework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
+	// ZB does not currently support gcloud commands, so we use the go GCS client directly.
+	if zbEnabled {
+		storageClient, err := clientutils.NewGCSClient(ctx, true)
+		if err != nil {
+			klog.Fatalf("Could not initialize GCS client: %v", err)
+		}
+		defer storageClient.Close()
+
+		dstPrefix := fmt.Sprintf("%s/", dirPath)
+
+		if err := clientutils.UploadGcsObject(ctx, storageClient, bucketName, bucketName, dstPrefix, false, zbEnabled); err != nil {
+			klog.Fatalf("CopyBucketToPath failed: %v", err)
+		}
+	} else {
+		//nolint:gosec
+		if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
+			framework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
+		}
 	}
+
 }
 
 func CreateTestFileInBucket(fileName, bucketName string) {
