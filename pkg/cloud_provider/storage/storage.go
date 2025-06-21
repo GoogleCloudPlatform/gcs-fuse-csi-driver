@@ -21,11 +21,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"cloud.google.com/go/iam"
 	"cloud.google.com/go/storage"
+	"cloud.google.com/go/storage/experimental"
+	foUtils "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util/goclientobjectcommands"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -52,12 +55,13 @@ type Service interface {
 	SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	RemoveIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error)
+	UploadGcsObject(ctx context.Context, localPath, bucketName, objectName string, zbEnabled bool) error
 	Close()
 }
 
 type ServiceManager interface {
 	SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error)
-	SetupServiceWithDefaultCredential(ctx context.Context) (Service, error)
+	SetupServiceWithDefaultCredential(ctx context.Context, enableZB bool) (Service, error)
 }
 
 type gcsService struct {
@@ -92,8 +96,14 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 	return &gcsService{storageClient: storageClient}, nil
 }
 
-func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.Context) (Service, error) {
-	storageClient, err := storage.NewClient(ctx)
+func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.Context, enableZB bool) (Service, error) {
+	var storageClient *storage.Client
+	var err error
+	if enableZB {
+		storageClient, err = storage.NewGRPCClient(ctx, experimental.WithGRPCBidiReads())
+	} else {
+		storageClient, err = storage.NewClient(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -290,4 +300,34 @@ func ParseErrCode(err error) codes.Code {
 	}
 
 	return code
+}
+
+// UploadGcsObject uploads a local file to a specified GCS bucket and object.
+// Handles gzip compression if requested.
+func (service *gcsService) UploadGcsObject(ctx context.Context, filePathToUpload, bucketName, objectName string, zbEnabled bool) error {
+	// Create a writer to upload the object.
+	obj := service.storageClient.Bucket(bucketName).Object(objectName)
+	w := obj.NewWriter(ctx)
+	if zbEnabled {
+		w.Append = true
+		w.FinalizeOnClose = true
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			klog.Errorf("Failed to close GCS object gs://%s/%s: %v", bucketName, objectName, err)
+		}
+	}()
+
+	// Open the local file for reading.
+	f, err := foUtils.OpenFileAsReadonly(filePathToUpload)
+	if err != nil {
+		return fmt.Errorf("failed to open local file %s: %w", filePathToUpload, err)
+	}
+	defer foUtils.CloseFile(f)
+
+	// Copy the file contents to the object writer.
+	if _, err := io.Copy(w, f); err != nil {
+		return fmt.Errorf("failed to copy file %s to gs://%s/%s: %w", filePathToUpload, bucketName, objectName, err)
+	}
+	return nil
 }
