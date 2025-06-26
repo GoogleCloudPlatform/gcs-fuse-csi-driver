@@ -208,11 +208,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 		case ImplicitDirsVolumePrefix:
-			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
+			CreateImplicitDirInBucket(ctx, ImplicitDirsPath, bucketName, n.EnableZB)
 			mountOptions += ",implicit-dirs"
 		case SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
-			CreateImplicitDirInBucket(dirPath, bucketName)
+			CreateImplicitDirInBucket(ctx, dirPath, bucketName, n.EnableZB)
 			mountOptions += ",only-dir=" + dirPath
 		case EnableFileCachePrefix, EnableFileCacheForceNewBucketPrefix:
 			v.fileCacheCapacity = "100Mi"
@@ -230,7 +230,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",uid=1001"
 			v.skipBucketAccessCheck = true
 		case SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix:
-			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
+			CreateImplicitDirInBucket(ctx, ImplicitDirsPath, bucketName, n.EnableZB)
 			mountOptions += ",implicit-dirs"
 			v.skipBucketAccessCheck = true
 		case EnableMetadataPrefetchPrefix, EnableMetadataPrefetchAndFakeVolumePrefix:
