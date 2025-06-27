@@ -21,7 +21,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
+
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -35,8 +39,6 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 )
 
 type gcsFuseCSIFailedMountTestSuite struct {
@@ -212,16 +214,22 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		testCaseInvalidBucketName(specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix)
 	})
 
-	testCaseSAInsufficientAccess := func(configPrefix string) {
-		init(configPrefix)
+	testCaseSAInsufficientAccess := func(configPrefix ...string) {
+		init(configPrefix...)
 		defer cleanup()
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		if configPrefix == specs.EnableHostNetworkPrefix {
+		if slices.Contains(configPrefix, specs.EnableHostNetworkPrefix) {
 			tPod.EnableHostNetwork()
 		}
-		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		ksaOptIn := slices.Contains(configPrefix, specs.OptInHnwKSAPrefix)
+		if ksaOptIn {
+			ginkgo.By("Opting in to hostnetwork KSA feature")
+			tPod.SetupVolumeWithHostNetworkKSAOptIn(l.volumeResource, volumeName, mountPath, false)
+		} else {
+			tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		}
 
 		ginkgo.By("Deploying a Kubernetes service account without access to the GCS bucket")
 		saName := "sa-without-access"
@@ -241,7 +249,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		testK8sSA.Cleanup(ctx)
 
 		// For invalid SA testcase, The Unauthenticated error spawns from prepareStorageClient() in CSI NodePublish. When CSI skips bucket access check, this step is skipped.
-		if configPrefix == specs.SkipCSIBucketAccessCheckPrefix {
+		if slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
 			return
 		}
 
@@ -265,10 +273,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	})
 
 	ginkgo.It("[hostnetwork] should fail when the specified service account does not have access to the GCS bucket", func() {
+		if pattern.VolType == storageframework.DynamicPV || pattern.VolType == storageframework.PreprovisionedPV {
+			e2eskipper.Skipf("skip for volume type %v", pattern.VolType)
+		}
 		if supportSAVolInjection {
-			testCaseSAInsufficientAccess(specs.EnableHostNetworkPrefix)
+			testCaseSAInsufficientAccess(specs.EnableHostNetworkPrefix, specs.OptInHnwKSAPrefix)
 		} else {
-			ginkgo.By("Skipping the hostnetwork test for cluster version < 1.33.0")
+			ginkgo.By("Skipping the hostnetwork test for cluster version <  " + utils.SaTokenVolInjectionMinimumVersion.String())
 		}
 	})
 

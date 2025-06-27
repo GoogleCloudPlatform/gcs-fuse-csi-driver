@@ -75,6 +75,7 @@ const (
 	EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix   = "gcsfuse-csi-enable-metadata-prefetch-and-invalid-mount-options-volume"
 	ImplicitDirsPath                                           = "implicit-dir"
 	InvalidVolume                                              = "<invalid-name>"
+	OptInHnwKSAPrefix                                          = "opt-in-hnw-ksa"
 	SkipCSIBucketAccessCheckPrefix                             = "gcsfuse-csi-skip-bucket-access-check"
 	SkipCSIBucketAccessCheckAndFakeVolumePrefix                = "gcsfuse-csi-skip-bucket-access-check-fake-volume"
 	SkipCSIBucketAccessCheckAndInvalidVolumePrefix             = "gcsfuse-csi-skip-bucket-access-check-invalid-volume"
@@ -377,6 +378,31 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 	}
 
 	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, volume)
+}
+
+func (t *TestPod) SetupVolumeWithHostNetworkKSAOptIn(volumeResource *storageframework.VolumeResource, name string, mountPath string, readOnly bool, mountOptions ...string) {
+	volume := corev1.Volume{
+		Name: name,
+	}
+	if volumeResource.Pvc != nil {
+		volume.VolumeSource = corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: volumeResource.Pvc.Name,
+			},
+		}
+	} else if volumeResource.VolSource != nil {
+		volume.VolumeSource = *volumeResource.VolSource
+		if volumeResource.VolSource.CSI != nil {
+			volume.VolumeSource.CSI.VolumeAttributes["hostNetworkPodKSA"] = "true"
+			volume.VolumeSource.CSI.ReadOnly = &readOnly
+			if len(mountOptions) > 0 {
+				volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
+			}
+		}
+	}
+
+	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, volume)
+	t.setupVolumeMount(name, mountPath, readOnly, "", false)
 }
 
 func (t *TestPod) SetupCacheVolumeMount(mountPath string, subPath ...string) {

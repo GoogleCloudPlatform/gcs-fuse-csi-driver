@@ -35,11 +35,12 @@ import (
 )
 
 const (
-	GCSFuseAppName       = "gke-gcs-fuse-csi"
-	TempDir              = "/temp-dir"
-	unixSocketBasePath   = "unix://"
-	TokenFileName        = "token.sock" // #nosec G101
-	identityProviderFlag = "token-server-identity-provider"
+	GCSFuseAppName          = "gke-gcs-fuse-csi"
+	TempDir                 = "/temp-dir"
+	unixSocketBasePath      = "unix://"
+	TokenFileName           = "token.sock" // #nosec G101
+	identityProviderFlag    = "token-server-identity-provider"
+	hostNetworkKSAOptInFlag = "hnw-ksa"
 )
 
 // MountConfig contains the information gcsfuse needs.
@@ -56,6 +57,7 @@ type MountConfig struct {
 	FlagMap                     map[string]string     `json:"-"`
 	ConfigFileFlagMap           map[string]string     `json:"-"`
 	TokenServerIdentityProvider string                `json:"-"`
+	HostNetworkKSAOptIn         bool                  `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -187,6 +189,8 @@ func (mc *MountConfig) prepareMountArgs() {
 	invalidArgs := []string{}
 
 	for _, arg := range mc.Options {
+		klog.Infof("processing mount arg %v", arg)
+
 		if strings.Contains(arg, ":") && !strings.Contains(arg, "https") {
 			i := strings.LastIndex(arg, ":")
 			f, v := arg[:i], arg[i+1:]
@@ -233,7 +237,11 @@ func (mc *MountConfig) prepareMountArgs() {
 
 		if flag == identityProviderFlag {
 			mc.TokenServerIdentityProvider = value
+			continue
+		}
 
+		if flag == hostNetworkKSAOptInFlag {
+			mc.HostNetworkKSAOptIn = value == util.TrueStr
 			continue
 		}
 
@@ -299,7 +307,7 @@ func (mc *MountConfig) prepareConfigFile() error {
 			}
 		}
 	}
-	if mc.TokenServerIdentityProvider != "" {
+	if mc.TokenServerIdentityProvider != "" && mc.HostNetworkKSAOptIn {
 		configMap["gcs-auth"] = map[string]interface{}{
 			"token-url": unixSocketBasePath + filepath.Join(mc.TempDir, TokenFileName),
 		}

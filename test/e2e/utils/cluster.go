@@ -29,8 +29,9 @@ import (
 )
 
 var (
-	nativeSidecarMinimumVersion                 = version.MustParseGeneric("1.29.0")
-	saTokenVolInjectionMinimumVersion           = version.MustParseGeneric("1.33.0")
+	nativeSidecarMinimumVersion = version.MustParseGeneric("1.29.0")
+	// TODO(@siyanshen): to enable hostnetwork tests for managed drivers, update min version when GCW feature flag is on.
+	SaTokenVolInjectionMinimumVersion           = version.MustParseGeneric("1.100.0")
 	skipBucketCheckMinimumVersion               = version.MustParseGeneric("1.29.0")
 	kernelReadAheadMinimumVersion               = version.MustParseGeneric("1.32.0")
 	metadataPrefetchMinimumVersion              = version.MustParseGeneric("1.32.0")

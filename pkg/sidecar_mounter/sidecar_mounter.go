@@ -63,9 +63,14 @@ func New(mounterPath string) *Mounter {
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
-	if mc.TokenServerIdentityProvider != "" {
-		klog.Infof("Pod has hostNetwork enabled and token server feature is turned on. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
-		go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
+	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
+	if mc.HostNetworkKSAOptIn {
+		if mc.TokenServerIdentityProvider != "" {
+			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
+			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
+		} else {
+			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
+		}
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
