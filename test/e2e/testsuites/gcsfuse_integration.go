@@ -20,7 +20,11 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
+	"time"
+
+	"local/test/e2e/specs"
 
 	"local/test/e2e/specs"
 
@@ -52,6 +56,7 @@ const (
 	testNameConcurrentOperations  = "concurrent_operations"
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
+	testNameCloudProfiler         = "cloud_profiler"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -59,9 +64,16 @@ const (
 
 	defaultSidecarMemoryLimit   = "1Gi"
 	defaultSidecarMemoryRequest = "512Mi"
+
+	charset = "abcdefghijklmnopqrstuvwxyz" +
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
-var gcsfuseVersionStr = ""
+var (
+	gcsfuseVersionStr            = ""
+	seededRand        *rand.Rand = rand.New(
+		rand.NewSource(time.Now().UnixNano()))
+)
 
 const gcsfuseGoVersionCommand = `grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-`
 
@@ -87,6 +99,15 @@ func getClientProtocol(driver storageframework.TestDriver) string {
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
 
 	return gcsfuseCSITestDriver.ClientProtocol
+}
+
+// randomString generates a 12 character random string.
+func randomString() string {
+	b := make([]byte, 12)
+	for i := range b {
+		b[i] = charset[seededRand.Intn(len(charset))]
+	}
+	return string(b)
 }
 
 type gcsFuseCSIGCSFuseIntegrationTestSuite struct {
@@ -182,6 +203,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameEnableStreamingWrites, v.String())
 		}
 
+		// GCSFuse flag enable-cloud-profiling is supported after v3.0.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.0.0")) && testName == testNameCloudProfiler {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameCloudProfiler, v.String())
+		}
+
 		// tests are added or modified after v2.3.1 release and before v2.4.0 release
 		if !v.AtLeast(version.MustParseSemantic("v2.4.0")) && (testName == testNameListLargeDir || testName == testNameConcurrentOperations || testName == testNameKernelListCache || testName == testNameLocalFile) {
 			return "v2.4.0"
@@ -190,6 +216,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// By default, use the test code in the same release tag branch
 		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
 	}
+	randomProfileLabel := randomString()
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
 		testCase := ""
@@ -310,6 +337,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
 			}
+		case testNameCloudProfiler:
+			finalTestCommand = baseTestCommand + fmt.Sprintf(" --profile_label=%s", randomProfileLabel)
 		default:
 			finalTestCommand = baseTestCommand
 		}
@@ -657,6 +686,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-streaming-writes", testNameEnableStreamingWrites)
 		} else {
 			gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
+		}
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameCloudProfiler+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		if getClientProtocol(driver) == "grpc" {
+			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-cloud-profiling", testNameCloudProfiler)
+		} else {
+			gcsfuseIntegrationTest(testNameCloudProfiler, false, "enable-cloud-profiling", "implicit-dirs=true", "profiling-goroutines", "profiling-cpu", "profiling-heap", "profiling-allocated-heap", "profiling-mutex", fmt.Sprintf("profiling-label=%s", randomProfileLabel))
 		}
 	})
 }
