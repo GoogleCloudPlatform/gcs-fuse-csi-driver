@@ -62,14 +62,13 @@ const (
 
 	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
 	//nolint:gosec
-	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
-	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
-	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
-	VolumeContextKeyEphemeral           = "csi.storage.k8s.io/ephemeral"
-	VolumeContextKeyBucketName          = "bucketName"
-	// TODO(@siyanshen): update the minimum version when the sidecar image is updated.
-	tokenServerSidecarMinVersion           = "v1.100.2-gke.0" // #nosec G101
-	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0"  // #nosec G101
+	VolumeContextKeyServiceAccountToken    = "csi.storage.k8s.io/serviceAccount.tokens"
+	VolumeContextKeyPodName                = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace           = "csi.storage.k8s.io/pod.namespace"
+	VolumeContextKeyEphemeral              = "csi.storage.k8s.io/ephemeral"
+	VolumeContextKeyBucketName             = "bucketName"
+	tokenServerSidecarMinVersion           = "v1.17.0-gke.0" // #nosec G101
+	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 )
 

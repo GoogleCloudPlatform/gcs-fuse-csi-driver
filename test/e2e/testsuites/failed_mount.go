@@ -279,7 +279,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		if supportSAVolInjection {
 			testCaseSAInsufficientAccess(specs.EnableHostNetworkPrefix, specs.OptInHnwKSAPrefix)
 		} else {
-			ginkgo.By("Skipping the hostnetwork test for cluster version <  " + utils.SaTokenVolInjectionMinimumVersion.String())
+			ginkgo.By("Skipping the hostnetwork test for managed cluster version <  " + utils.SaTokenVolInjectionMinimumVersion.String() + " or cluster without init container support")
 		}
 	})
 
