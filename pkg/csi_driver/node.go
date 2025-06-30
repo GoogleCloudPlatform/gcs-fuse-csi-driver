@@ -139,6 +139,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	if s.shouldPopulateIdentifyProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
+		klog.V(4).Infof("NodePublishVolume populating identity provider in mount options")
 		identityProvider := ""
 		if userSpecifiedIdentityProvider != "" {
 			identityProvider = userSpecifiedIdentityProvider

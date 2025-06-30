@@ -192,7 +192,7 @@ func Handle(testParams *TestParameters) error {
 	if err != nil {
 		klog.Fatalf(`managed driver version for host network token server support could not be determined: %v`, err)
 	}
-	supportSAVolInjection := !testParams.UseGKEManagedDriver || managedDriverVersionForHostNetworkTokenServerSatisfied
+	supportSAVolInjection := (supportsNativeSidecar && !testParams.UseGKEManagedDriver) || managedDriverVersionForHostNetworkTokenServerSatisfied
 	testParams.SupportSAVolInjection = supportSAVolInjection
 
 	if err = os.Setenv(TestWithSAVolumeInjectionEnvVar, strconv.FormatBool(supportSAVolInjection)); err != nil {
