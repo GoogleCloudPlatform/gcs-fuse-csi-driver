@@ -126,22 +126,22 @@ func TestIsSidecarVersionSupportedForTokenServer(t *testing.T) {
 		}{
 			{
 				name:              "should return true for supported sidecar version",
-				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.200.3-gke.2@sha256:abcd",
+				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
 				expectedSupported: true,
 			},
 			{
 				name:              "should return true for supported sidecar version in staging gcr",
-				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.200.2-gke.0@sha256:abcd",
+				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0@sha256:abcd",
 				expectedSupported: true,
 			},
 			{
 				name:              "should return false for unsupported sidecar version",
-				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.8.7-gke.1@sha256:abcd",
+				imageName:         "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.16.7-gke.1@sha256:abcd",
 				expectedSupported: false,
 			},
 			{
 				name:              "should return false for private sidecar",
-				imageName:         "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.12.2-gke.0@sha256:abcd",
+				imageName:         "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0@sha256:abcd",
 				expectedSupported: false,
 			},
 		}
