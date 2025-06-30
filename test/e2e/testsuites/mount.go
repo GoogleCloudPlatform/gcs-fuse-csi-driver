@@ -241,7 +241,7 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		if supportSAVolInjection {
 			testCaseHostNetworkEnabledAndKSAOptIn()
 		} else {
-			ginkgo.By("Skipping the hostnetwork test for cluster version < " + utils.SaTokenVolInjectionMinimumVersion.String())
+			ginkgo.By("Skipping the hostnetwork test for cluster version < " + utils.SaTokenVolInjectionMinimumVersion.String() + " or cluster without init container support")
 		}
 	})
 
