@@ -190,6 +190,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Skip mount if the mount on target path already exists.
 	if mounted {
 		// Check if there is any error from the gcsfuse
+		// We only check for sidecar liveliness if the path is reported as mounted.
+		// This indicates the initial kernel mount is complete, and gcsfuse is ready to proceed.
+		// With this approach, NodePublishVolume will still report an error if gcsfuse itself fails.
 		code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
 		if code != codes.OK {
 			if code == codes.Canceled {
