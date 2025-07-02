@@ -430,3 +430,12 @@ spec:
 [Filestore CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/filestore-csi-driver) is a better option than Cloud Storage FUSE CSI driver for workloads that require high instantaneous input/output operations per second (IOPS) and lower latency.
 
 See GKE documentation [Storage for GKE clusters overview](https://cloud.google.com/kubernetes-engine/docs/concepts/storage-overview) for the storage options that GKE supports and some key considerations for selecting the best option for your business needs.
+
+### Node level restarts
+
+GCSFuse CSI Driver can now manage node restarts without impacting pods using GCSFuse-backed volumes. The driver ensures a clean slate by clearing stale files or sockets, and re-establishing the gcsfuse /dev/fuse file descriptor during the NodePublishVolume phase after a restart.
+
+Known issues after a node restart:
+- Metrics will not be visible on Cloud Monitoring after node restart. If they become visible, assume that they will be malformed.
+- Metrics after a restart will only look at the time period after the node restart.
+
