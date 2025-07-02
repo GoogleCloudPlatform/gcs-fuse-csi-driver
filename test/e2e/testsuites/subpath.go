@@ -135,8 +135,9 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		bucketName := l.config.Prefix
 
 		// Create sub-paths using gsutil
-		specs.CreateImplicitDirInBucket("subpath1", bucketName)
-		specs.CreateImplicitDirInBucket("subpath2", bucketName)
+		// Passing zb as false because this test does not run with HNS enabled buckets and ZB is only relevant when HNS is enabled.
+		specs.CreateImplicitDirInBucket(ctx, "subpath1", bucketName, false)
+		specs.CreateImplicitDirInBucket(ctx, "subpath2", bucketName, false)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
