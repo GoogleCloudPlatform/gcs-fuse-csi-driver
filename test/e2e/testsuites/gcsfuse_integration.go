@@ -52,6 +52,7 @@ const (
 	testNameConcurrentOperations  = "concurrent_operations"
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
+	testNameInactiveStreamTimeout = "inactive_stream_timeout"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -59,6 +60,9 @@ const (
 
 	defaultSidecarMemoryLimit   = "1Gi"
 	defaultSidecarMemoryRequest = "512Mi"
+
+	inactive_stream_timeout_log_dir="/tmp/inactive_stream_timeout_logs"
+	inactive_stream_timeout_log_file="/tmp/inactive_stream_timeout_logs/log.json"
 )
 
 var gcsfuseVersionStr = ""
@@ -182,6 +186,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameEnableStreamingWrites, v.String())
 		}
 
+		// GCSFuse flag enable-cloud-profiling is supported after v3.1.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.1.0")) && testName == testNameInactiveStreamTimeout {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameInactiveStreamTimeout, v.String())
+		}
+
 		// tests are added or modified after v2.3.1 release and before v2.4.0 release
 		if !v.AtLeast(version.MustParseSemantic("v2.4.0")) && (testName == testNameListLargeDir || testName == testNameConcurrentOperations || testName == testNameKernelListCache || testName == testNameLocalFile) {
 			return "v2.4.0"
@@ -193,7 +202,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
 		testCase := ""
-		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) {
+		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) || strings.HasPrefix(testName, testNameInactiveStreamTimeout) {
 			l := strings.Split(testName, ":")
 			testCase = l[1]
 			testName = l[0]
@@ -310,6 +319,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
 			}
+		case testNameInactiveStreamTimeout:
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "mkdir -p " + inactive_stream_timeout_log_dir)
+			finalTestCommand = baseTestCommandWithTestBucket + " -run " + testCase
 		default:
 			finalTestCommand = baseTestCommand
 		}
@@ -658,5 +670,21 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		} else {
 			gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
 		}
+	})
+	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", fmt.Sprintf("log-file=%s", inactive_stream_timeout_log_file), "log-severity=trace", "log-format=json")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "client-protocol=grpc", fmt.Sprintf("log-file=%s", inactive_stream_timeout_log_file), "log-severity=trace", "log-format=json")	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "client-protocol=grpc", fmt.Sprintf("log-file=%s", inactive_stream_timeout_log_file), "log-severity=trace", "log-format=json")
 	})
 }
