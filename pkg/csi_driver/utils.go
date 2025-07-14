@@ -67,12 +67,18 @@ const (
 	VolumeContextKeyPodNamespace           = "csi.storage.k8s.io/pod.namespace"
 	VolumeContextKeyEphemeral              = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName             = "bucketName"
-	tokenServerSidecarMinVersion           = "v1.17.0-gke.0" // #nosec G101
+	tokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 )
 
-var volumeIDRegEx = regexp.MustCompile(`:.*$`)
+var (
+	volumeIDRegEx            = regexp.MustCompile(`:.*$`)
+	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+\.*`
+	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
+	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
+)
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
 	return &csi.VolumeCapability_AccessMode{Mode: mode}
@@ -503,9 +509,8 @@ func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSuppor
 	if strings.Contains(imageName, "prow-gob-internal-boskos") {
 		return true
 	}
-	managedSidecarPattern := `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+.\d+.\d+-gke\.\d+.*`
-	re := regexp.MustCompile(managedSidecarPattern)
-	isManagedSidecar := re.MatchString(imageName)
+
+	isManagedSidecar := managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
 
 	if !isManagedSidecar {
 		klog.Warningf("sidecarMinSupportedVersion check skipped since this %q is not a GKE managed image", imageName)
@@ -513,7 +518,7 @@ func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSuppor
 	}
 	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
 	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
-		klog.Infof("sidecar version is supported for intelligent defaults on high-performance machine types")
+		klog.Infof("managed sidecar version satisfies the minimum required version %q", sidecarMinSupportedVersion)
 		return true
 	}
 

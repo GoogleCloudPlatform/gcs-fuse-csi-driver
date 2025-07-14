@@ -130,6 +130,21 @@ func TestIsSidecarVersionSupportedForTokenServer(t *testing.T) {
 				expectedSupported: true,
 			},
 			{
+				name:              "should return true for supported sidecar version with container registory gke.gcr.io",
+				imageName:         "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
+				expectedSupported: true,
+			},
+			{
+				name:              "should return false for unmanaged container registory with substring gke.gcr.io",
+				imageName:         "random-gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
+				expectedSupported: false,
+			},
+			{
+				name:              "should return false for unmanaged container registory with subdir gke.gcr.io",
+				imageName:         "randomhost.gcr.io/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
+				expectedSupported: false,
+			},
+			{
 				name:              "should return true for supported sidecar version in staging gcr",
 				imageName:         "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0@sha256:abcd",
 				expectedSupported: true,
@@ -158,7 +173,7 @@ func TestIsSidecarVersionSupportedForTokenServer(t *testing.T) {
 
 func TestIsSidecarVersionSupportedForDefaultingFlags(t *testing.T) {
 	t.Parallel()
-	t.Run("checking if sidecar version is supported for token server", func(t *testing.T) {
+	t.Run("checking if sidecar version is supported for defaulting flags", func(t *testing.T) {
 		t.Parallel()
 		testCases := []struct {
 			name              string
