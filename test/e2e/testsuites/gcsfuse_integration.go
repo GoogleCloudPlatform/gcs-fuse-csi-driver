@@ -52,6 +52,7 @@ const (
 	testNameConcurrentOperations  = "concurrent_operations"
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
+	testNameInactiveStreamTimeout = "inactive_stream_timeout"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -59,6 +60,10 @@ const (
 
 	defaultSidecarMemoryLimit   = "1Gi"
 	defaultSidecarMemoryRequest = "512Mi"
+
+	// In order to pass anything to the sidecar, you need to pass it via the mountPaths that the sidecar injects.
+	// So for temporary files, that would be mountPath: /gcsfuse-tmp, via the gke-gcsfuse-tmp volume.
+	inactive_stream_timeout_log_file = "/gcsfuse-tmp/log.json"
 )
 
 var gcsfuseVersionStr = ""
@@ -187,13 +192,18 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			return "v2.4.0"
 		}
 
+		// GCSFuse inactive_stream_timeout tests are supported after v3.1.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.1.0")) && testName == testNameInactiveStreamTimeout {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameInactiveStreamTimeout, v.String())
+		}
+
 		// By default, use the test code in the same release tag branch
 		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
 	}
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
 		testCase := ""
-		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) {
+		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) || strings.HasPrefix(testName, testNameInactiveStreamTimeout) {
 			l := strings.Split(testName, ":")
 			testCase = l[1]
 			testName = l[0]
@@ -251,6 +261,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			tPod.SetupVolumeForHNS(volumeName)
 		}
 
+		if testName == testNameInactiveStreamTimeout {
+			// This needs to match what gcsfuse sets here:
+			// https://github.com/GoogleCloudPlatform/gcsfuse/blob/bb28c11b229d5c2706cbb0abb9eb8634363b3799/tools/integration_tests/inactive_stream_timeout/setup_test.go#L45.
+			// The gcsfuse integration tests are run from the main container, which has this hardcoded value. After the tests are setup,
+			// the gcsfuse process is started in the sidecar container. Our webhook auto injects some volumeMounts into the sidecar, so we
+			// we need to use one of these volume mountPaths below. For this test, we use `/gcsfuse-tmp/<filename>` as the log file to the gcsfuse integration test below.
+			inactive_stream_timeout_log_dir := "/tmp/inactive_stream_timeout_logs"
+			tPod.SetupTmpVolumeMount(inactive_stream_timeout_log_dir)
+		}
+
 		ginkgo.By("Deploying the test pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
@@ -300,7 +320,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand
 			}
-		case testNameKernelListCache, testNameManagedFolders:
+		case testNameKernelListCache, testNameManagedFolders, testNameInactiveStreamTimeout:
 			finalTestCommand = baseTestCommandWithTestBucket + " -run " + testCase
 		case testNameListLargeDir, testNameWriteLargeFiles:
 			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 120m"
@@ -658,5 +678,23 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		} else {
 			gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
 		}
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
 	})
 }
