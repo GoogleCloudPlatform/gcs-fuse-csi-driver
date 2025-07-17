@@ -52,6 +52,7 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
             - --identity-provider=$(IDENTITY_PROVIDER)
+            - --identity-pool=$(IDENTITY_POOL)
             - --metrics-endpoint=:9920
             - --max-metric-collectors=10
           ports:
@@ -70,6 +71,8 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: IDENTITY_PROVIDER
+              value: ""
+            - name: IDENTITY_POOL
               value: ""
           volumeMounts:
             - name: kubelet-dir
