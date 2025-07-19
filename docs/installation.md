@@ -79,6 +79,11 @@ limitations under the License.
   make install REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version> PROJECT=<cluster-project-id>
   ```
 
+By default, the `Makefile` discovers the GKE cluster `IDENTITY_PROVIDER` and `IDENTITY_POOL` automatically. To override them, pass the variables with the `make` command (note: this custom override does not work for pods with host network yet). For example:
+```bash
+make install REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version> IDENTITY_PROVIDER=<your-identity-provider> IDENTITY_POOL=<your-identity-pool>
+```
+
 ## Check the Driver Status
 
 The output from the following command
