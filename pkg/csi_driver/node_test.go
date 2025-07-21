@@ -65,10 +65,10 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	}
 }
 
-func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.FakeClientset) *nodeServerTestEnv {
+func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.FakeClientset, skipWINodeLableCheck bool) *nodeServerTestEnv {
 	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
-	driver := initTestDriverWithCustomNodeServer(t, mounter, clientSet)
+	driver := initTestDriverWithCustomNodeServer(t, mounter, clientSet, skipWINodeLableCheck)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
@@ -249,7 +249,7 @@ func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 		fakeClientSet := &clientset.FakeClientset{}
 		fakeClientSet.CreateNode( /* workloadIdentityEnabled */ clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
 		fakeClientSet.CreatePod( /* hostNetworkEnabled */ test.hostNetworkEnabledOnPod)
-		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet)
+		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
 
 		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
 		if test.expectErr == nil && err != nil {
@@ -393,5 +393,63 @@ func TestConcurrentMapWrites(t *testing.T) {
 	// validate correct number of writes occurred
 	if int(sharedVSS.Size()) != numWrites {
 		t.Errorf("expected %d entries in the map, got %d", numWrites, sharedVSS.Size())
+	}
+}
+
+func TestNodePublishVolumeSkipWILabelCheck(t *testing.T) {
+	t.Parallel()
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
+	// Setup mount target path
+	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
+	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
+		t.Fatalf("failed to setup tmp dir path: %v", err)
+	}
+	base, err := os.MkdirTemp(tmpDir, "node-publish-")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	testTargetPath := filepath.Join(base, "mount")
+	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+		t.Fatalf("failed to setup target path: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:         testVolumeID,
+		TargetPath:       testTargetPath,
+		VolumeCapability: testVolumeCapability,
+	}
+
+	cases := []struct {
+		name                          string
+		skipWINodeLableCheck          bool
+		workloadIdentityEnabledOnNode bool
+		expectErr                     error
+	}{
+		{
+			name:                          "WI node label check is skipped, WI is disabled on node, should succeed",
+			skipWINodeLableCheck:          true,
+			workloadIdentityEnabledOnNode: false,
+		},
+		{
+			name:                          "WI node label check is not skipped, WI is disabled on node, should fail",
+			skipWINodeLableCheck:          false,
+			workloadIdentityEnabledOnNode: false,
+			expectErr:                     status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)"),
+		},
+	}
+	for _, test := range cases {
+		fakeClientSet := &clientset.FakeClientset{}
+		fakeClientSet.CreateNode(clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
+		fakeClientSet.CreatePod(false)
+		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, test.skipWINodeLableCheck)
+
+		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
+		if test.expectErr == nil && err != nil {
+			t.Errorf("test %q failed:got error %q, expected error nil", test.name, err)
+		}
+		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
+			t.Errorf("test %q failed:got error %q, expected error %q", test.name, err, test.expectErr)
+		}
 	}
 }
