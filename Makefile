@@ -18,6 +18,7 @@ export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
 export BUILD_ARM ?= false
+export SKIP_WI_NODE_LABEL_CHECK ?= false
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
@@ -228,13 +229,17 @@ generate-spec-yaml:
 	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"${IDENTITY_POOL}\"}]" > ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
+ifneq (${SKIP_WI_NODE_LABEL_CHECK}, false)
+	echo "[{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--skip-wi-node-label-check=${SKIP_WI_NODE_LABEL_CHECK}\"}]" > ./deploy/overlays/${OVERLAY}/skip_wi_node_label_check_patch.json
+	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add patch --path skip_wi_node_label_check_patch.json --kind DaemonSet --name gcsfusecsi-node --group apps --version v1;
+endif
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml > /dev/null
 	git restore ./deploy/overlays/${OVERLAY}/kustomization.yaml
 	git restore ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 	git restore ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	git restore ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
-
+	git restore ./deploy/overlays/${OVERLAY}/skip_wi_node_label_check_patch.json
 verify:
 	hack/verify-all.sh
 
