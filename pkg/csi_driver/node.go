@@ -154,11 +154,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get node: %v", err)
 	}
 
-	val, ok := node.Labels[clientset.GkeMetaDataServerKey]
-	// If Workload Identity is not enabled, the key should be missing; the check for "val == false" is just for extra caution
-	isWorkloadIdentityDisabled := val != "true" || !ok
-	if isWorkloadIdentityDisabled && !pod.Spec.HostNetwork {
-		return nil, status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)")
+	if !s.driver.config.SkipWINodeLabelCheck {
+		val, ok := node.Labels[clientset.GkeMetaDataServerKey]
+		// If Workload Identity is not enabled, the key should be missing; the check for "val == false" is just for extra caution
+		isWorkloadIdentityDisabled := val != "true" || !ok
+		if isWorkloadIdentityDisabled && !pod.Spec.HostNetwork {
+			return nil, status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)")
+		}
 	}
 
 	// Since the webhook mutating ordering is not definitive,
