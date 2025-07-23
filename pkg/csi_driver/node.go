@@ -154,7 +154,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get node: %v", err)
 	}
 
-	if !s.driver.config.SkipWINodeLabelCheck {
+	if s.driver.config.WINodeLabelCheck {
 		val, ok := node.Labels[clientset.GkeMetaDataServerKey]
 		// If Workload Identity is not enabled, the key should be missing; the check for "val == false" is just for extra caution
 		isWorkloadIdentityDisabled := val != "true" || !ok

@@ -84,6 +84,8 @@ By default, the `Makefile` discovers the GKE cluster `IDENTITY_PROVIDER` and `ID
 make install REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version> IDENTITY_PROVIDER=<your-identity-provider> IDENTITY_POOL=<your-identity-pool>
 ```
 
+By default, the CSI driver performs a Workload Identity node label check during NodePublishVolume to ensure the GKE metadata server is available on the node. To disable this check, set the `WI_NODE_LABEL_CHECK` environment variable to `false`:
+
 ## Check the Driver Status
 
 The output from the following command
@@ -117,4 +119,4 @@ pod/gcsfusecsi-node-t9zq5                          2/2     Running   0          
 
   ```bash
   make uninstall
-  ````
+  ```

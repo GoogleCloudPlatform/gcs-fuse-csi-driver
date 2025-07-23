@@ -47,3 +47,9 @@ patches:
     kind: DaemonSet
     name: gcsfusecsi-node
     version: v1
+- path: wi_node_label_check_patch.json
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1
