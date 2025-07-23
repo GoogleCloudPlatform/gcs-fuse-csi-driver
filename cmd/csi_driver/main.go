@@ -49,7 +49,7 @@ var (
 	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
 	maximumNumberOfCollectors = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
 	disableAutoconfig         = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type")
-	skipWINodeLabelCheck      = flag.Bool("skip-wi-node-label-check", false, "Skip Workload Identity node label check.")
+	wiNodeLabelCheck          = flag.Bool("wi-node-label-check", true, "Workload Identity node label check")
 	// These are set at compile time.
 	version = "unknown"
 )
@@ -128,7 +128,7 @@ func main() {
 		K8sClients:            clientset,
 		MetricsManager:        mm,
 		DisableAutoconfig:     *disableAutoconfig,
-		SkipWINodeLabelCheck:  *skipWINodeLabelCheck,
+		WINodeLabelCheck:      *wiNodeLabelCheck,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

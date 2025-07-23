@@ -46,7 +46,7 @@ type GCSDriverConfig struct {
 	K8sClients            clientset.Interface
 	MetricsManager        metrics.Manager
 	DisableAutoconfig     bool
-	SkipWINodeLabelCheck  bool
+	WINodeLabelCheck      bool
 }
 
 type GCSDriver struct {
