@@ -149,6 +149,8 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
 			if strings.Contains(errMsg, "signal: terminated") {
 				klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
+			} else if strings.Contains(errMsg, "signal: killed") {
+				klog.Infof("[%v] gcsfuse was killed.", mc.VolumeName)
 			} else {
 				mc.ErrWriter.WriteMsg(errMsg)
 			}
