@@ -46,7 +46,7 @@ var (
 	bucketLocation = flag.String("test-bucket-location", "us-central1", "the test bucket location")
 	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
 	apiEnv         = flag.String("api-env", "prod", "cluster API env")
-	zbFlag         = *enableZB
+	zbFlag         = flag.Bool("enable-zb", false, "use GKE Zonal Buckets in US-Central1-c for the tests")
 )
 
 var _ = func() bool {
@@ -119,8 +119,9 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 	}
 
 	//Disabling non hns tests because ZB is only valid for HNS enabled buckets
-	if !zbFlag {
-		testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, zbFlag)
+	fmt.Sprintf("ZB flag is set to %v, skipping non HNS tests", *zbFlag)
+	if !*zbFlag {
+		testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag)
 
 		ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 			storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
@@ -133,7 +134,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 	}
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, zbFlag)
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *zbFlag)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
