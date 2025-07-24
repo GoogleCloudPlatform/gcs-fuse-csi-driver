@@ -35,6 +35,10 @@ func (tm *fakeTokenManager) GetIdentityProvider() string {
 	return "fake.identity.provider"
 }
 
+func (tm *fakeTokenManager) GetIdentityPool() string {
+	return "fake.identity.pool"
+}
+
 type FakeGCPTokenSource struct {
 	k8sSAName      string
 	k8sSANamespace string

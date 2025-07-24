@@ -40,7 +40,7 @@ type FakeClientset struct {
 func NewFakeClientset() *FakeClientset {
 	fakeClientSet := &FakeClientset{}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
-	fakeClientSet.CreatePod( /*hostNetworkEnabled */ false)
+	fakeClientSet.CreatePod(false /* hostNetworkEnabled */, false /* injectSATokenVolume */, "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v9.9.9-gke.0", false)
 	fakeClientSet.CreateNode(FakeNodeConfig{IsWorkloadIdentityEnabled: true})
 
 	return fakeClientSet
@@ -50,17 +50,17 @@ func (c *FakeClientset) ConfigurePodLister(_ string) {}
 
 func (c *FakeClientset) ConfigureNodeLister(_ string) {}
 
-func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
+func (c *FakeClientset) CreatePod(hostNetworkEnabled bool, injectSATokenVolume bool, sidecarImage string, injectAsInitContainer bool) {
 	config := webhook.FakeConfig()
-	c.fakePod = &corev1.Pod{
+	sidecarContainer := webhook.GetSidecarContainerSpec(config)
+	sidecarContainer.Image = sidecarImage
+
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "",
 			Namespace: "",
 		},
 		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				webhook.GetSidecarContainerSpec(config),
-			},
 			Volumes: webhook.GetSidecarContainerVolumeSpec(),
 		},
 		Status: corev1.PodStatus{
@@ -75,9 +75,25 @@ func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
 		},
 	}
 
-	if hostNetworkEnabled {
-		c.fakePod.Spec.HostNetwork = true
+	if injectAsInitContainer {
+		pod.Spec.InitContainers = []corev1.Container{sidecarContainer}
+		pod.Spec.Containers = []corev1.Container{
+			{
+				Name:  "dummy-container",
+				Image: "dummy-image",
+			},
+		}
+	} else {
+		pod.Spec.Containers = []corev1.Container{sidecarContainer}
 	}
+
+	if hostNetworkEnabled {
+		pod.Spec.HostNetwork = true
+	}
+	if injectSATokenVolume {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, webhook.GetSATokenVolume("test-project"))
+	}
+	c.fakePod = pod
 }
 
 func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {

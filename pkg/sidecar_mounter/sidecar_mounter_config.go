@@ -40,6 +40,7 @@ const (
 	unixSocketBasePath      = "unix://"
 	TokenFileName           = "token.sock" // #nosec G101
 	identityProviderFlag    = "token-server-identity-provider"
+	identityPoolFlag        = "token-server-identity-pool"
 	hostNetworkKSAOptInFlag = "hnw-ksa"
 )
 
@@ -57,6 +58,7 @@ type MountConfig struct {
 	FlagMap                     map[string]string     `json:"-"`
 	ConfigFileFlagMap           map[string]string     `json:"-"`
 	TokenServerIdentityProvider string                `json:"-"`
+	TokenServerIdentityPool     string                `json:"-"`
 	HostNetworkKSAOptIn         bool                  `json:"-"`
 }
 
@@ -237,6 +239,11 @@ func (mc *MountConfig) prepareMountArgs() {
 
 		if flag == identityProviderFlag {
 			mc.TokenServerIdentityProvider = value
+			continue
+		}
+
+		if flag == identityPoolFlag {
+			mc.TokenServerIdentityPool = value
 			continue
 		}
 

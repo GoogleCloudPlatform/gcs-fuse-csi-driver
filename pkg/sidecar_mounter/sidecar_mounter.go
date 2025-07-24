@@ -67,7 +67,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	if mc.HostNetworkKSAOptIn {
 		if mc.TokenServerIdentityProvider != "" {
 			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
-			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
+			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider, mc.TokenServerIdentityPool)
 		} else {
 			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
 		}
@@ -318,13 +318,13 @@ func getK8sTokenFromFile(tokenPath string) (string, error) {
 	return strings.TrimSpace(string(token)), nil
 }
 
-func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
+func fetchIdentityBindingToken(ctx context.Context, k8sSAToken, identityProvider, identityPool string) (*oauth2.Token, error) {
 	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
 
-	audience, err := getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
+	audience, err := getAudience(ctx, identityProvider, identityPool)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audience from the context: %w", err)
 	}
@@ -350,7 +350,13 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 	}, nil
 }
 
-func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
+func getAudience(ctx context.Context, identityProvider, identityPool string) (string, error) {
+	if identityPool != "" {
+		audience := fmt.Sprintf("identitynamespace:%s:%s", identityPool, identityProvider)
+		klog.Infof("audience: %s", audience)
+		return audience, nil
+	}
+
 	projectID, err := metadata.ProjectIDWithContext(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get project ID: %w", err)
@@ -366,7 +372,7 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 	return audience, nil
 }
 
-func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, identityProvider string) {
+func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, identityProvider, identityPool string) {
 	// Clean up any stale socket file before creating a new one.
 	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
 	if err != nil {
@@ -397,7 +403,7 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, id
 
 			return
 		}
-		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
+		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider, identityPool)
 		if err != nil {
 			klog.Errorf("failed to get sts token from path %v", err)
 			w.WriteHeader(http.StatusInternalServerError)

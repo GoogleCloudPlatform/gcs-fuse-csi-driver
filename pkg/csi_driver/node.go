@@ -87,7 +87,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
+	targetPath, bucketName, userSpecifiedIdentityProvider, userSpecifiedIdentityPool, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -138,8 +138,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
 
+	identityProvider := ""
 	if s.shouldPopulateIdentifyProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
-		identityProvider := ""
 		if userSpecifiedIdentityProvider != "" {
 			identityProvider = userSpecifiedIdentityProvider
 		} else {
@@ -147,6 +147,20 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+	}
+
+	if s.shouldPopulateIdentityPool(pod, optInHostnetworkKSA, userSpecifiedIdentityPool != "") {
+		if identityProvider == "" {
+			// this should not happen, as both the GKE managed driver and OSS driver intiialize a default identity provider. However if there is any issue with install, this case can pop up
+			return nil, status.Error(codes.InvalidArgument, "identity provider is required")
+		}
+		identityPool := userSpecifiedIdentityPool
+		if identityPool == "" {
+			identityPool = s.driver.config.TokenManager.GetIdentityPool()
+		}
+		klog.V(6).Infof("NodePublishVolume populating identity pool %q in mount options", identityPool)
+		// identity provider is the trigger for passing hnw-ksa, hence this is not passed in this mount option.
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"token-server-identity-pool=" + identityPool})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -359,6 +373,35 @@ func (s *nodeServer) shouldPopulateIdentifyProvider(pod *corev1.Pod, optInHnwKSA
 		if container.Name == webhook.GcsFuseSidecarName {
 			sidecarVersionSupported = isSidecarVersionSupportedForTokenServer(container.Image)
 
+			break
+		}
+	}
+
+	return tokenVolumeInjected && (sidecarVersionSupported || userInput)
+}
+
+func (s *nodeServer) shouldPopulateIdentityPool(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {
+	if !optInHnwKSA {
+		return false
+	}
+
+	if !pod.Spec.HostNetwork {
+		return false
+	}
+
+	tokenVolumeInjected := false
+	for _, vol := range pod.Spec.Volumes {
+		if vol.Name == webhook.SidecarContainerSATokenVolumeName {
+			klog.V(6).Infof("Service Account Token Injection feature is turned on from webhook")
+			tokenVolumeInjected = true
+			break
+		}
+	}
+	var sidecarVersionSupported bool
+
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name == webhook.GcsFuseSidecarName {
+			sidecarVersionSupported = isSidecarVersionSupportedForTokenServer(container.Image)
 			break
 		}
 	}
