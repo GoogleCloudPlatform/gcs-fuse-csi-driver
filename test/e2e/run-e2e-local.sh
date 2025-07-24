@@ -72,5 +72,5 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --ginkgo-timeout=${ginkgo_timeout} \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
             --ginkgo-flake-attempts=${ginkgo_flake_attempts} \
-            --enable-zb=${enable_zb}"
+            --gcsfuse-enable-zb=${enable_zb}"
 eval "$base_cmd"
