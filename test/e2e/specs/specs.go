@@ -1170,26 +1170,6 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func CreateImplicitDirInBucket(dirPath, bucketName string) {
-	// Use bucketName as the name of a temp file since bucketName is unique.
-	f, err := os.Create(bucketName)
-	if err != nil {
-		framework.Failf("Failed to create an empty data file: %v", err)
-	}
-	f.Close()
-	defer func() {
-		err = os.Remove(bucketName)
-		if err != nil {
-			framework.Failf("Failed to delete the empty data file: %v", err)
-		}
-	}()
-
-	//nolint:gosec
-	if output, err := exec.Command("gsutil", "cp", bucketName, fmt.Sprintf("gs://%v/%v/", bucketName, dirPath)).CombinedOutput(); err != nil {
-		framework.Failf("Failed to create a implicit dir in GCS bucket: %v, output: %s", err, output)
-	}
-}
-
 func CreateTestFileInBucket(fileName, bucketName string) {
 	createTestFileInBucket(fileName, bucketName, []byte(fileName))
 }
