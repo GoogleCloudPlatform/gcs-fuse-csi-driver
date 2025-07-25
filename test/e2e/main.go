@@ -39,6 +39,7 @@ var (
 	apiEndpointOverride = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
 	nodeImageType       = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
 	istioVersion        = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
+	gcsfuseEnableZB     = flag.Bool("gcsfuse-enable-zb", false, "use GCS Zonal Buckets for the tests")
 
 	// Test infrastructure flags.
 	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
