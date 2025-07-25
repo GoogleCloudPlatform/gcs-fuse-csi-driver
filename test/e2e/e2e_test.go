@@ -43,6 +43,7 @@ var (
 	bucketLocation = flag.String("test-bucket-location", "us-central1", "the test bucket location")
 	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
 	apiEnv         = flag.String("api-env", "prod", "cluster API env")
+	zbFlag         = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
 )
 
 var _ = func() bool {

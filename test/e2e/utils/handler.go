@@ -187,6 +187,8 @@ func Handle(testParams *TestParameters) error {
 		"--provider", "skeleton",
 		"--test-bucket-location", testParams.GkeClusterRegion,
 		"--skip-gcp-sa-test", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest),
+		fmt.Sprintf("--enable-zb=%s", strconv.FormatBool(testParams.EnableZB)),
+		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
 		"--api-env", envAPIMap[testParams.APIEndpointOverride],
 	)
 
