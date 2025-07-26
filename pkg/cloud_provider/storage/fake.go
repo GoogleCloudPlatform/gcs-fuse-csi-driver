@@ -28,6 +28,11 @@ type fakeService struct {
 	sm fakeServiceManager
 }
 
+// UploadGCSObject implements Service.
+func (service *fakeService) UploadGCSObject(ctx context.Context, localPath string, bucketName string, objectName string) error {
+	return nil
+}
+
 type fakeServiceManager struct {
 	createdBuckets map[string]*ServiceBucket
 }
@@ -36,7 +41,7 @@ func (manager *fakeServiceManager) SetupService(_ context.Context, _ oauth2.Toke
 	return &fakeService{sm: *manager}, nil
 }
 
-func (manager *fakeServiceManager) SetupServiceWithDefaultCredential(_ context.Context) (Service, error) {
+func (manager *fakeServiceManager) SetupServiceWithDefaultCredential(_ context.Context, _ bool) (Service, error) {
 	return &fakeService{sm: *manager}, nil
 }
 

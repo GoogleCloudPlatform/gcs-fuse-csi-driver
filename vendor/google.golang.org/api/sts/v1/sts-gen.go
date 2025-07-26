@@ -1,4 +1,4 @@
-// Copyright 2024 Google LLC.
+// Copyright 2025 Google LLC.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -57,11 +57,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	"github.com/googleapis/gax-go/v2/internallog"
 	googleapi "google.golang.org/api/googleapi"
 	internal "google.golang.org/api/internal"
 	gensupport "google.golang.org/api/internal/gensupport"
@@ -85,6 +87,7 @@ var _ = strings.Replace
 var _ = context.Canceled
 var _ = internaloption.WithDefaultEndpoint
 var _ = internal.Version
+var _ = internallog.New
 
 const apiId = "sts:v1"
 const apiName = "sts"
@@ -103,10 +106,8 @@ func NewService(ctx context.Context, opts ...option.ClientOption) (*Service, err
 	if err != nil {
 		return nil, err
 	}
-	s, err := New(client)
-	if err != nil {
-		return nil, err
-	}
+	s := &Service{client: client, BasePath: basePath, logger: internaloption.GetLogger(opts)}
+	s.V1 = NewV1Service(s)
 	if endpoint != "" {
 		s.BasePath = endpoint
 	}
@@ -122,13 +123,12 @@ func New(client *http.Client) (*Service, error) {
 	if client == nil {
 		return nil, errors.New("client is nil")
 	}
-	s := &Service{client: client, BasePath: basePath}
-	s.V1 = NewV1Service(s)
-	return s, nil
+	return NewService(context.TODO(), option.WithHTTPClient(client))
 }
 
 type Service struct {
 	client    *http.Client
+	logger    *slog.Logger
 	BasePath  string // API endpoint base URL
 	UserAgent string // optional additional User-Agent fragment
 
@@ -344,7 +344,7 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	Options string `json:"options,omitempty"`
 	// RequestedTokenType: Required. An identifier for the type of requested
 	// security token. Can be `urn:ietf:params:oauth:token-type:access_token` or
-	// `urn:ietf:params:oauth:token-type:access_boundary_intermediate_token`.
+	// `urn:ietf:params:oauth:token-type:access_boundary_intermediary_token`.
 	RequestedTokenType string `json:"requestedTokenType,omitempty"`
 	// Scope: The OAuth 2.0 scopes to include on the resulting access token,
 	// formatted as a list of space-delimited, case-sensitive strings. Required
@@ -467,10 +467,10 @@ func (s GoogleIdentityStsV1ExchangeTokenRequest) MarshalJSON() ([]byte, error) {
 // ExchangeToken.
 type GoogleIdentityStsV1ExchangeTokenResponse struct {
 	// AccessBoundarySessionKey: The access boundary session key. This key is used
-	// along with the access boundary intermediate token to generate Credential
+	// along with the access boundary intermediary token to generate Credential
 	// Access Boundary tokens at client side. This field is absent when the
 	// `requested_token_type` from the request is not
-	// `urn:ietf:params:oauth:token-type:access_boundary_intermediate_token`.
+	// `urn:ietf:params:oauth:token-type:access_boundary_intermediary_token`.
 	AccessBoundarySessionKey string `json:"access_boundary_session_key,omitempty"`
 	// AccessToken: An OAuth 2.0 security token, issued by Google, in response to
 	// the token exchange request. Tokens can vary in size, depending in part on
@@ -480,9 +480,9 @@ type GoogleIdentityStsV1ExchangeTokenResponse struct {
 	AccessToken string `json:"access_token,omitempty"`
 	// ExpiresIn: The amount of time, in seconds, between the time when the access
 	// token was issued and the time when the access token will expire. This field
-	// is absent when the `subject_token` in the request is a Google-issued,
-	// short-lived access token. In this case, the access token has the same
-	// expiration time as the `subject_token`.
+	// is absent when the `subject_token` in the request is a a short-lived access
+	// token for a Cloud Identity or Google Workspace user account. In this case,
+	// the access token has the same expiration time as the `subject_token`.
 	ExpiresIn int64 `json:"expires_in,omitempty"`
 	// IssuedTokenType: The token type. Always matches the value of
 	// `requested_token_type` from the request.
@@ -746,8 +746,7 @@ func (c *V1TokenCall) Header() http.Header {
 
 func (c *V1TokenCall) doRequest(alt string) (*http.Response, error) {
 	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
-	var body io.Reader = nil
-	body, err := googleapi.WithoutDataWrapper.JSONReader(c.googleidentitystsv1exchangetokenrequest)
+	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.googleidentitystsv1exchangetokenrequest)
 	if err != nil {
 		return nil, err
 	}
@@ -760,6 +759,7 @@ func (c *V1TokenCall) doRequest(alt string) (*http.Response, error) {
 		return nil, err
 	}
 	req.Header = reqHeaders
+	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "sts.token", "request", internallog.HTTPRequest(req, body.Bytes()))
 	return gensupport.SendRequest(c.ctx_, c.s.client, req)
 }
 
@@ -795,8 +795,10 @@ func (c *V1TokenCall) Do(opts ...googleapi.CallOption) (*GoogleIdentityStsV1Exch
 		},
 	}
 	target := &ret
-	if err := gensupport.DecodeResponse(target, res); err != nil {
+	b, err := gensupport.DecodeResponseBytes(target, res)
+	if err != nil {
 		return nil, err
 	}
+	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "sts.token", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }

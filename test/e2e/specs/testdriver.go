@@ -20,6 +20,7 @@ package specs
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -48,7 +49,8 @@ type GCSFuseCSITestDriver struct {
 	ClientProtocol              string
 	skipGcpSaTest               bool
 	EnableHierarchicalNamespace bool
-	EnableZB                    bool // Enable Zonal Buckets
+	EnableZB                    bool             // Enable Zonal Buckets
+	storageService              *storage.Service // Client to interact with GCS
 }
 
 type gcsVolume struct {
@@ -208,11 +210,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 		case ImplicitDirsVolumePrefix:
-			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
+			n.CreateImplicitDirInBucket(ctx, ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
 		case SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
-			CreateImplicitDirInBucket(dirPath, bucketName)
+			n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
 			mountOptions += ",only-dir=" + dirPath
 		case EnableFileCachePrefix, EnableFileCacheForceNewBucketPrefix:
 			v.fileCacheCapacity = "100Mi"
@@ -230,7 +232,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",uid=1001"
 			v.skipBucketAccessCheck = true
 		case SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix:
-			CreateImplicitDirInBucket(ImplicitDirsPath, bucketName)
+			n.CreateImplicitDirInBucket(ctx, ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
 			v.skipBucketAccessCheck = true
 		case EnableMetadataPrefetchPrefix, EnableMetadataPrefetchAndFakeVolumePrefix:
@@ -390,7 +392,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 
 // prepareStorageService prepares the GCS Storage Service using the default GCP credentials.
 func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (storage.Service, error) {
-	storageService, err := n.storageServiceManager.SetupServiceWithDefaultCredential(ctx)
+	storageService, err := n.storageServiceManager.SetupServiceWithDefaultCredential(ctx, n.EnableZB)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
@@ -484,4 +486,28 @@ func prepareGcpSAName(ns string) string {
 	}
 
 	return ns
+}
+
+func (n *GCSFuseCSITestDriver) CreateImplicitDirInBucket(ctx context.Context, dirPath, bucketName string) {
+	storageService, err := n.prepareStorageService(ctx)
+	if err != nil {
+		e2eframework.Failf("failed to prepare storage service: %w", err)
+		return
+	}
+	// Use bucketName as the name of a temp file since bucketName is unique.
+	f, err := os.CreateTemp("", "empty-data-file-*")
+	if err != nil {
+		e2eframework.Failf("Failed to create an empty data file: %v", err)
+	}
+	fileName := f.Name()
+	f.Close()
+	defer func() {
+		err = os.Remove(fileName)
+		if err != nil {
+			e2eframework.Failf("Failed to delete the empty data file: %v", err)
+		}
+	}()
+	if err := storageService.UploadGCSObject(ctx, fileName, bucketName, fmt.Sprintf("%s/", dirPath)); err != nil {
+		e2eframework.Failf("UploadGCSObject failed: %v", err)
+	}
 }
