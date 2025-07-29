@@ -55,7 +55,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 }
 
 // Helper function for creating node server with a custom FakeClientset
-func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, clientSet *clientset.FakeClientset) *GCSDriver {
+func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
@@ -68,6 +68,7 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 		Mounter:               fm,
 		K8sClients:            clientSet,
 		MetricsManager:        &metrics.FakeMetricsManager{},
+		WINodeLabelCheck:      wiNodeLabelCheck,
 	}
 	driver, err := NewGCSDriver(config)
 	if err != nil {
