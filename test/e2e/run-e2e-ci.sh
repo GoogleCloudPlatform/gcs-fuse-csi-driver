@@ -80,6 +80,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --node-machine-type=${node_machine_type} \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
             --number-nodes=${number_nodes} \
-            --enable-zb=${enable_zb}"
+            --gcsfuse-enable-zb=${enable_zb}"
 
 eval "$base_cmd"
