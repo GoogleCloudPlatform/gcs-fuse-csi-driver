@@ -17,7 +17,7 @@ limitations under the License.
 
 # Cloud Storage FUSE CSI Driver Development Guide
 
-## Prerequisite
+## Prerequisites
 
 The following software are required for local development.
 
@@ -30,9 +30,53 @@ The following software are required for local development.
     sudo apt-get update && sudo apt-get install build-essential -y
     ```
 
+Create a registry to host a custom driver image. This is needed if you want to build and install a custom GCSFuse CSI Driver.  Here is how you would create an artifact registry:
+
+```bash
+export REGION='us-central1'
+export PROJECT_ID=$(gcloud config get project)
+gcloud artifacts repositories create csi-dev \
+--repository-format=docker \
+--location=$REGION  --project=$PROJECT_ID \
+--description="Docker repository"
+```
+
 ## Build
 
-Run the following command to build and push the images.
+You have two options for building a custom image for the Cloud Storage FUSE CSI Driver. You can use [Cloud build](#cloud-build), or [Makefile commands](#makefile-commands). Please note that building the image will take several minutes.
+
+### Prerequisites
+
+### Cloud Build
+
+Run the following command to build and push the images using cloud build. If you created an artifact registry according to the [Prerequisites](#prerequisites), your REGISTRY would be as shown below. The `_REGISTRY` substitution is currently required for Cloud Build. If you would like to override `STAGINGVERSION` , which is the version tag for the image, you can append `_STAGINGVERSION=<staging-version>` to the `--substitutions`. The default is `v999.999.999`. Please see the `cloudbuild-build-image.yaml` file for information on additional substitutions.
+
+#### Cloud Build on Google Internal projects
+
+For running cloud build from a Google Internal project, you can use the following command. This will use the gcsfuse version present in `cmd/sidecar_mounter/gcsfuse_binary` as the gcsfuse binary. You can change this to a different version, or use `_BUILD_GCSFUSE_FROM_SOURCE=true` to build gcsfuse from HEAD. Setting `GCSFUSE_BINARY_GCS_PATH` to the `gke-release-staging` bucket in `cmd/sidecar_mounter/gcsfuse_binary` is only allowed for Google Internal projects because artifacts in `gke-release-staging` are not publicly accessible.
+
+```bash
+export PROJECT_ID=$(gcloud config get project)
+export REGION='us-central1'
+export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
+export GCSFUSE_BINARY_GCS_PATH=$(cat cmd/sidecar_mounter/gcsfuse_binary)
+gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_GCSFUSE_BINARY_GCS_PATH=$GCSFUSE_BINARY_GCS_PATH
+```
+
+#### Cloud Build on NON Google Internal projects
+
+If you are running this from a non-google internal project, you must set `_BUILD_GCSFUSE_FROM_SOURCE=true`, because without this, gcsfuse is loaded from the binary in `gke-release-staging`, which is not publicly accessible.
+
+```bash
+export PROJECT_ID=$(gcloud config get project)
+export REGION='us-central1'
+export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
+gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_BUILD_GCSFUSE_FROM_SOURCE=true
+```
+
+### Makefile Commands
+
+Run the following command to build and push the images using the Makefile:
 
 ```bash
 # REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
