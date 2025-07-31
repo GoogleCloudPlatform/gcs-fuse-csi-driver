@@ -139,13 +139,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	if s.shouldPopulateIdentifyProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
-		klog.V(4).Infof("NodePublishVolume populating identity provider in mount options")
 		identityProvider := ""
 		if userSpecifiedIdentityProvider != "" {
 			identityProvider = userSpecifiedIdentityProvider
 		} else {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 		}
+		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
 	}
 
@@ -346,7 +346,7 @@ func (s *nodeServer) shouldPopulateIdentifyProvider(pod *corev1.Pod, optInHnwKSA
 	tokenVolumeInjected := false
 	for _, vol := range pod.Spec.Volumes {
 		if vol.Name == webhook.SidecarContainerSATokenVolumeName {
-			klog.Infof("Service Account Token Injection feature is turned on from webhook.")
+			klog.V(6).Infof("Service Account Token Injection feature is turned on from webhook")
 
 			tokenVolumeInjected = true
 
