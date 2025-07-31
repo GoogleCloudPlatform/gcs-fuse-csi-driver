@@ -1,0 +1,221 @@
+# Copyright 2018 The Kubernetes Authors.
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This Cloud Build file builds and pushes the GCS FUSE CSI driver images.
+# It simulates the `make build-image-and-push-multi-arch` command.
+
+substitutions:
+  # (Required) The Artifact Registry or GCR path to push the images to. MUST be provided at build time.
+  _REGISTRY: ''
+  # (Optional) The version tag for the images.
+  _STAGINGVERSION: 'v999.999.999'
+  # (Optional) Set to 'true' to build gcsfuse from its source repository.
+  _BUILD_GCSFUSE_FROM_SOURCE: 'false'
+  # (Optional) Set to 'true' to also build for arm64. Note, this is not yet supported with cloud build.
+  # TODO(amacaskill): Add support for building arm64 images with cloud build.
+  _BUILD_ARM: 'false'
+  # (Required if _BUILD_GCSFUSE_FROM_SOURCE is 'false')
+  # The GCS path to the directory with pre-built gcsfuse binaries.
+  # TODO(amacaskill): Add support to use gs://gke-release/gcsfuse once we add copy logic in Louhi. Note gke-release is not accessible by non-Google internal projects.
+  # TODO(amacaskill): Add support for _GCSFUSE_BINARY_GCS_PATH by fixing error: "prepare-gcsfuse-binary": bash: line 10: gsutil: command not found
+  _GCSFUSE_BINARY_GCS_PATH: ''
+
+steps:
+  # Validate required substitutions were provided.
+  - name: 'alpine'
+    id: 'validate-inputs'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -e
+        # Check 1: Ensure _REGISTRY is not empty.
+        if [ -z "${_REGISTRY}" ]; then
+          echo "❌ ERROR: The _REGISTRY substitution variable is required."
+          echo "Please provide it using the --substitutions flag following instructions in https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/main/docs/development.md#build"
+          exit 1
+        fi
+
+        # Check 2: If not building from source, ensure the GCS path is provided.
+        if [ "${_BUILD_GCSFUSE_FROM_SOURCE}" = "false" ] && [ -z "${_GCSFUSE_BINARY_GCS_PATH}" ]; then
+          echo "❌ ERROR: When _BUILD_GCSFUSE_FROM_SOURCE is 'false', the _GCSFUSE_BINARY_GCS_PATH variable is required. Set this using the --substitutions flag following instructions in https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/main/docs/development.md#build"
+          echo "Please provide a GCS path to the pre-built binaries."
+          exit 1
+        fi
+
+        echo "✅ All required inputs are validated."
+  # Set up QEMU to enable cross-platform builds (e.g., building ARM on an AMD64 worker).
+  - id: 'setup-qemu'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['run', '--rm', '--privileged', 'multiarch/qemu-user-static', '--reset', '-p', 'yes']
+  # Create a buildx builder that supports the docker exporter
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'create-buildx-builder'
+    waitFor: ['setup-qemu']
+    args:
+      - 'buildx'
+      - 'create'
+      - '--use'
+      - '--name'
+      - 'multiarch-builder'
+  # Build GCSFuse from source and save as an artifact
+  # This step only runs if _BUILD_GCSFUSE_FROM_SOURCE is true.
+  - id: 'build-gcsfuse-from-source'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['create-buildx-builder']
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      set -ex
+      # Exit immediately if we are not building from source
+      if [ "${_BUILD_GCSFUSE_FROM_SOURCE}" != "true" ]; then
+        echo "Skipping: Not building GCSFuse from source."
+        exit 0
+      fi
+
+      curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o Dockerfile.gcsfuse
+      GCSFUSE_VERSION="999.$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -f 1)"
+
+      # Build for AMD64 and save to a tar file
+      docker buildx build \
+        --file Dockerfile.gcsfuse \
+        --tag gcsfuse-release-amd \
+        --build-arg GCSFUSE_VERSION=$${GCSFUSE_VERSION} \
+        --build-arg BRANCH_NAME=master \
+        --build-arg ARCHITECTURE=amd64 \
+        --platform=linux/amd64 \
+        --output type=docker,dest=/workspace/gcsfuse-amd.tar .
+
+      # Build for ARM64 if needed and save to a tar file
+      if [ "${_BUILD_ARM}" = "true" ]; then
+        docker buildx build \
+          --file Dockerfile.gcsfuse \
+          --tag gcsfuse-release-arm \
+          --build-arg GCSFUSE_VERSION=$${GCSFUSE_VERSION} \
+          --build-arg BRANCH_NAME=master \
+          --build-arg ARCHITECTURE=arm64 \
+          --platform=linux/arm64 \
+          --output type=docker,dest=/workspace/gcsfuse-arm.tar .
+      fi
+
+  # Prepare final gcsfuse binary
+  # This step either downloads the binary or extracts it from the artifact created above.
+  - id: 'prepare-gcsfuse-binary'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor:
+      - 'validate-inputs'
+      - 'build-gcsfuse-from-source' # Wait for the build step to finish
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      set -ex
+      mkdir -p ./bin/linux/amd64
+
+      if [ "${_BUILD_GCSFUSE_FROM_SOURCE}" = "true" ]; then
+        # Load the tarball artifact and extract the binary
+        docker load < /workspace/gcsfuse-amd.tar
+        GCSFUSE_VERSION="999.$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -f 1)"
+        docker run --rm -v $(pwd)/bin/linux/amd64:/release gcsfuse-release-amd cp /gcsfuse_$${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
+      else
+        # Download pre-built binary
+        gsutil "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
+      fi
+      chmod 0555 ./bin/linux/amd64/gcsfuse
+
+      if [ "${_BUILD_ARM}" = "true" ]; then
+        mkdir -p ./bin/linux/arm64
+        if [ "${_BUILD_GCSFUSE_FROM_SOURCE}" = "true" ];
+        then
+          # Load the ARM tarball artifact and extract the binary
+          docker load < /workspace/gcsfuse-arm.tar
+          GCSFUSE_VERSION="999.$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -f 1)"
+          docker run --rm -v $(pwd)/bin/linux/arm64:/release gcsfuse-release-arm cp /gcsfuse_$${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
+        else
+          # Download pre-built ARM binary
+          gsutil "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
+        fi
+        chmod 0555 ./bin/linux/arm64/gcsfuse
+      fi
+  # Build and push the container images in parallel.
+  - id: 'build-and-push-driver'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['prepare-gcsfuse-binary']
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      set -ex
+      PLATFORM="linux/amd64"
+      [[ "${_BUILD_ARM}" == "true" ]] && PLATFORM="linux/amd64,linux/arm64"
+      
+      docker buildx build \
+        --platform $$PLATFORM --push --provenance=false --quiet \
+        --tag ${_REGISTRY}/gcs-fuse-csi-driver:${_STAGINGVERSION} \
+        --build-arg STAGINGVERSION=${_STAGINGVERSION} \
+        --file ./cmd/csi_driver/Dockerfile .
+
+  - id: 'build-and-push-sidecar'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['prepare-gcsfuse-binary']
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      set -ex
+      PLATFORM="linux/amd64"
+      [[ "${_BUILD_ARM}" == "true" ]] && PLATFORM="linux/amd64,linux/arm64"
+      
+      docker buildx build \
+        --platform $$PLATFORM --push --provenance=false --quiet \
+        --tag ${_REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${_STAGINGVERSION} \
+        --build-arg STAGINGVERSION=${_STAGINGVERSION} \
+        --build-arg TARGETPLATFORM=$$PLATFORM \
+        --file ./cmd/sidecar_mounter/Dockerfile .
+
+  - id: 'build-and-push-webhook'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['prepare-gcsfuse-binary']
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      set -ex
+      # Per the Makefile logic, the webhook is only built for amd64.
+      docker buildx build \
+        --platform linux/amd64 --push --provenance=false --quiet \
+        --tag ${_REGISTRY}/gcs-fuse-csi-driver-webhook:${_STAGINGVERSION} \
+        --build-arg STAGINGVERSION=${_STAGINGVERSION} \
+        --file ./cmd/webhook/Dockerfile .
+
+  - id: 'build-and-push-prefetch'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['prepare-gcsfuse-binary']
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      set -ex
+      PLATFORM="linux/amd64"
+      [[ "${_BUILD_ARM}" == "true" ]] && PLATFORM="linux/amd64,linux/arm64"
+      
+      docker buildx build \
+        --platform $$PLATFORM --push --provenance=false --quiet \
+        --tag ${_REGISTRY}/gcs-fuse-csi-driver-metadata-prefetch:${_STAGINGVERSION} \
+        --build-arg STAGINGVERSION=${_STAGINGVERSION} \
+        --build-arg TARGETPLATFORM=$$PLATFORM \
+        --file ./cmd/metadata_prefetch/Dockerfile .
+
