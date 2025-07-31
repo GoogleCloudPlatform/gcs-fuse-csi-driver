@@ -214,8 +214,12 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",implicit-dirs"
 		case SubfolderInBucketPrefix:
 			dirPath := uuid.NewString()
-			n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
-			mountOptions += ",only-dir=" + dirPath
+
+			//Temporarily disable only-dir mount option zonal bucket tests as it is not supported in gcsfuse tests yet.
+			if !n.EnableZB {
+				n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
+				mountOptions += ",only-dir=" + dirPath
+			}
 		case EnableFileCachePrefix, EnableFileCacheForceNewBucketPrefix:
 			v.fileCacheCapacity = "100Mi"
 		case EnableFileCacheAndMetricsPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
