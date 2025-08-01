@@ -105,19 +105,16 @@ gcloud builds submit . --config=cloudbuild-install.yaml \
 For non-GKE clusters (installing the driver on a self built k8s cluster), the installation process requires you to provide connection credentials and Workload Identity information that cannot be discovered automatically. You must set `_SELF_MANAGED_K8S` to `true`, and provide a Secret Manager secret containing your kubeconfig file following the instructions in [Creating a KUBECONFIG_SECRET](#creating-a-kubeconfig_secret). Additionally, you must explicitly set the `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` variables. Please note that custom overrides of `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` , is not supported for pods with host network yet. If you set a custom `STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `STAGINGVERSION` here. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `STAGING_VERSION` unset.
 
 ```bash
-# Replace with your cluster name
-export CLUSTER_NAME=<cluster-name>
-# Replace with your cluster location. This can be a zone, or a region depending on if your cluster is zonal or regional.
-export CLUSTER_LOCATION=<cluster-location>
 export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
-export IDENTITY_POOL="$PROJECT_ID.svc.id.goog"
-export IDENTITY_PROVIDER="https://container.googleapis.com/v1/projects/$PROJECT_ID/locations/$CLUSTER_LOCATION/clusters/$CLUSTER_NAME"
+export IDENTITY_POOL=<your identity pool>
+# Note this should be the full URI. For example, for GKE it would be:"https://container.googleapis.com/v1/projects/$PROJECT_ID/locations/$CLUSTER_LOCATION/clusters/$CLUSTER_NAME"
+export IDENTITY_PROVIDER=<your identity provider>
  # The name of the secret you created in the "Creating a KUBECONFIG_SECRET section" below.
 export KUBECONFIG_SECRET="gcsfuse-kubeconfig-secret"
 gcloud builds submit . --config=cloudbuild-install.yaml \
-  --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$IDENTITY_POOL,_IDENTITY_PROVIDER=$IDENTITY_PROVIDER,_CLUSTER_NAME=$CLUSTER_NAME,_CLUSTER_LOCATION=$CLUSTER_LOCATION,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
+  --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$IDENTITY_POOL,_IDENTITY_PROVIDER=$IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
 ```
 
 ##### Creating a KUBECONFIG_SECRET
