@@ -85,7 +85,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 #### Installing with Cloud Build on GKE Clusters
 
-For GKE clusters, the cloud build script discovers the GKE cluster `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` automatically, and these cannot be customized for GKE clusters. Note, the `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. If you set a custom `STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `STAGINGVERSION` here. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `STAGING_VERSION` unset.
+For GKE clusters, the cloud build script discovers the GKE cluster `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` automatically, and these cannot be customized for GKE clusters. Note, the `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `_STAGING_VERSION` unset.
 
 
 ```bash
@@ -102,22 +102,34 @@ gcloud builds submit . --config=cloudbuild-install.yaml \
 
 #### Installing with Cloud Build on self built K8s Clusters
 
-For non-GKE clusters (installing the driver on a self built k8s cluster), the installation process requires you to provide connection credentials and Workload Identity information that cannot be discovered automatically. You must set `_SELF_MANAGED_K8S` to `true`, and provide a Secret Manager secret containing your kubeconfig file following the instructions in [Creating a KUBECONFIG_SECRET](#creating-a-kubeconfig_secret). Additionally, you must explicitly set the `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` variables. Please note that custom overrides of `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` , is not supported for pods with host network yet. If you set a custom `STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `STAGINGVERSION` here. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `STAGING_VERSION` unset.
+For non-GKE clusters (installing the driver on a self built k8s cluster), the installation process requires you to provide connection credentials and Workload Identity information that cannot be discovered automatically. You must set up the following: 
+1. Set ``_SELF_MANAGED_K8S` to `true`
+2. Provide a Secret Manager secret with `_KUBECONFIG_SECRET` containing your kubeconfig file following the instructions in [Creating a KUBECONFIG_SECRET](#creating-a-kubeconfig_secret). 
+3. Explicitly set the `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` variables. 
+   - Please note that custom overrides of `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` , is not supported for pods with host network yet. 
+   - `_IDENTITY_PROVIDER` should be the full URI (e.g  `https://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID`). See [Configure Workload Identity Federation with other identity providers](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers) for details.
+4. Create a private pool of Cloud Build workers that runs inside your network, following instructions in [Creating a private pool](#creating-a-private-pool). Pass this private pool to the `--worker-pool` `gcloud builds submit` flag.
+   -  This is required for Cloud Build to access your cluster's API server. Failure to configure the private pool will cause the Cloud Build install job to fail with a `dial tcp <internal ip address>: i/o timeout` error because the Cloud Build Job can't access the self-managed Kubernetes cluster's API server at its private IP address.
+5. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. 
+   - If you used the default when you [built your custom image](development.md#cloud-build), you should leave `_STAGING_VERSION` unset.
+
 
 ```bash
 export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 export IDENTITY_POOL=<your identity pool>
-# Note this should be the full URI. For example, for GKE it would be:"https://container.googleapis.com/v1/projects/$PROJECT_ID/locations/$CLUSTER_LOCATION/clusters/$CLUSTER_NAME"
+# Note this should be the full URI (e.g. https://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID)
 export IDENTITY_PROVIDER=<your identity provider>
- # The name of the secret you created in the "Creating a KUBECONFIG_SECRET section" below.
+# The name of the secret you created in the "Creating a KUBECONFIG_SECRET section" below.
 export KUBECONFIG_SECRET="gcsfuse-kubeconfig-secret"
 gcloud builds submit . --config=cloudbuild-install.yaml \
+  # The worker pool is created and the WORKER_POOL variable is exported in the "Creating a private pool" section.
+  --worker-pool=$WORKER_POOL \
   --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$IDENTITY_POOL,_IDENTITY_PROVIDER=$IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
 ```
 
-##### Creating a KUBECONFIG_SECRET
+#### Creating a KUBECONFIG_SECRET
 
 Before running the build, you must create a secret in Google Secret Manager to securely store your `kubeconfig` file.
 
@@ -168,6 +180,73 @@ kubectl config view --flatten --minify > minimal-kubeconfig.yaml
 ```bash
 cat minimal-kubeconfig.yaml | gcloud secrets versions add gcsfuse-kubeconfig-secret --data-file=-
 ```
+
+
+#### Creating a private pool
+
+The following steps create a pool of Cloud Build workers that run inside your network, allowing them to connect to your cluster's private IP address. This process involves two major parts: setting up a private network connection and then creating the worker pool itself.
+
+
+**Part 1: Set up the Private Connection**
+
+These first three steps establish the private "bridge" between your VPC and Google's network. For the offical documentation and more details on setting parameters in the commands below, refer to [setting up a private connection](https://cloud.google.com/build/docs/private-pools/set-up-private-pool-to-use-in-vpc-network#setup-private-connection).
+
+1.  **Enable the Service Networking API.** This is a one-time setup step that grants your project permission to create private connections to Google services, including Cloud Build.
+
+    ```bash
+    export PROJECT_ID=$(gcloud config get project)
+    gcloud services enable servicenetworking.googleapis.com \
+      --project=$PROJECT_ID
+    ```
+
+2.  **Reserve an IP Range for the Peering Connection.** The private pool workers need their own IP addresses inside your network. This command explicitly reserves a block of addresses for Google's services to use, preventing future conflicts with your own resources. Replace `VPC_NAME` with the name of your VPC network you created during VPC configuration of your K8s on GCE cluster. To get the permissions that you need to set up a private connection, ask your administrator to grant you the Compute Engine Network Admin (`roles/compute.networkAdmin`) IAM role on the Google Cloud project in which the VPC network resides. 
+
+    A `/24` prefix provides 256 addresses, which is sufficient for most pools, but make sure to confirm the prefix-length is compatible with your VPC network.  
+
+    ```bash
+    export VPC_NAME=<your-vpc-name>
+    gcloud compute addresses create reserved-range-$VPC_NAME \
+        --global \
+        --purpose=VPC_PEERING \
+        --prefix-length=24 \
+        --network=$VPC_NAME \
+        --project=$PROJECT_ID
+    ```
+
+3.  **Create the VPC Peering Connection.** This command establishes the actual private bridge. It uses the IP range you reserved in the previous step as the on-ramp for the private pool workers. The IP range you specify here will be subject to firewall rules that are defined in the VPC network.
+
+    ```bash
+    # Replace YOUR_VPC_NAME with the name of your VPC network.
+    gcloud services vpc-peerings connect \
+        --service=servicenetworking.googleapis.com \
+        --network=$VPC_NAME \
+        --ranges=reserved-range-$VPC_NAME \
+        --project=$PROJECT_ID
+    ```
+
+
+**Part 2: Create the Private Pool**
+
+Now that the network bridge exists, this final step creates the pool of workers. For additional background, refer to the official documentation for [creating a new private pool](https://cloud.google.com/build/docs/private-pools/create-manage-private-pools#creating_a_new_private_pool).
+
+4.  **Create the Private Pool.** This command builds the pool and connects it to your VPC via the peering you just created. We recommend creating the pool in the same region as your Kubernetes cluster to ensure low latency and avoid network data transfer costs. Replace `WORKER_POOL_NAME` with a name for your pool,  `CLUSTER_LOCATION` with the region of your K8s cluster, and `VPC_NAME` with the name of your VPC network. To have permissionsn to create the private pool, ask your administrator to grant you the Cloud Build WorkerPool Owner role (`roles/cloudbuild.workerPoolOwner`).
+
+    ```bash
+    export WORKER_POOL_NAME=<your pool name>
+    export CLUSTER_LOCATION=<cluster-location>
+    gcloud builds worker-pools create $WORKER_POOL_NAME \
+      --project=$PROJECT_ID \
+      --region=$CLUSTER_LOCATION \
+      --peered-network=projects/$PROJECT_ID/global/networks/$VPC_NAME
+    ```
+
+5. **Save the Worker Pool Name for use in gcloud builds submit.** After completing these steps, you will use the `--worker-pool` flag with the resource name of the pool you just created for use in the `gcloud builds submit` command in [Installing with Cloud Build on self built K8s Clusters](#installing-with-cloud-build-on-self-built-k8s-clusters).
+
+    ```bash
+    export WORKER_POOL=$PROJECT_ID/locations/$CLUSTER_LOCATION/workerPools/$WORKER_POOL_NAME
+    ```
+
+***
 
 ### Makefile Commands
 
