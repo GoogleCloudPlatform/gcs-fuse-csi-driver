@@ -447,6 +447,11 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 			code = codes.NotFound
 		}
 
+		// Special case for harmless error message from gcsfuse stderr, gcsfuse cannot mute this because it stems from a needed library.
+		if strings.Contains(errMsgStr, "[xds] Attempt to set a bootstrap configuration even though one is already set via environment variables.") {
+			return codes.Unavailable, fmt.Errorf("benign grpc error: %s", errMsgStr)
+		}
+
 		return code, fmt.Errorf("gcsfuse failed with error: %v", errMsgStr)
 	}
 
