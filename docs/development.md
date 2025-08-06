@@ -49,7 +49,7 @@ You have two options for building a custom image for the Cloud Storage FUSE CSI 
 
 ### Cloud Build
 
-Run the following command to build and push the images using cloud build. If you created an artifact registry according to the [Prerequisites](#prerequisites), your REGISTRY would be as shown below. The `_REGISTRY` substitution is currently required for Cloud Build. If you would like to override `STAGINGVERSION` , which is the version tag for the image, you can append `_STAGINGVERSION=<staging-version>` to the `--substitutions`. The default is `v999.999.999`. Please see the `cloudbuild-build-image.yaml` file for information on additional substitutions.
+Run the following command to build and push the images using cloud build. If you created an artifact registry according to the [Prerequisites](#prerequisites), your REGISTRY would be as shown below. The `_REGISTRY` substitution is currently required for Cloud Build. If you would like to override `_STAGINGVERSION`, which is the version tag for the image, you can append `_STAGINGVERSION=<staging-version>` to the `--substitutions`. The default is `v999.999.999`. Please see the `cloudbuild-build-image.yaml` file for information on additional substitutions.
 
 #### Cloud Build on Google Internal projects
 
