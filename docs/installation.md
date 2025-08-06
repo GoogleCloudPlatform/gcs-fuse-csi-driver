@@ -126,6 +126,8 @@ export KUBECONFIG_SECRET="gcsfuse-kubeconfig-secret"
 gcloud builds submit . --config=cloudbuild-install.yaml \
   # The worker pool is created and the WORKER_POOL variable is exported in the "Creating a private pool" section.
   --worker-pool=$WORKER_POOL \
+  # Region must match the region where your private pool was created in the "Creating a private pool" section. This should be the same as your cluster region.
+  --region=$CLUSTER_LOCATION \
   --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$IDENTITY_POOL,_IDENTITY_PROVIDER=$IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
 ```
 
@@ -243,7 +245,7 @@ Now that the network bridge exists, this final step creates the pool of workers.
 5. **Save the Worker Pool Name for use in gcloud builds submit.** After completing these steps, you will use the `--worker-pool` flag with the resource name of the pool you just created for use in the `gcloud builds submit` command in [Installing with Cloud Build on self built K8s Clusters](#installing-with-cloud-build-on-self-built-k8s-clusters).
 
     ```bash
-    export WORKER_POOL=$PROJECT_ID/locations/$CLUSTER_LOCATION/workerPools/$WORKER_POOL_NAME
+    export WORKER_POOL=projects/$PROJECT_ID/locations/$CLUSTER_LOCATION/workerPools/$WORKER_POOL_NAME
     ```
 
 ***
