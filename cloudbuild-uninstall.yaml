@@ -1,0 +1,153 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This Cloud Build file uninstalls the GCS FUSE CSI driver from a GKE or self-managed Kubernetes cluster.
+#
+# Before running:
+# 1. Ensure you use the EXACT SAME substitutions (_REGISTRY, _STAGINGVERSION, etc.) that were used for installation.
+#    This is critical for correctly identifying the resources to delete.
+# 2. For GKE, the Cloud Build SA needs the "Kubernetes Engine Admin" IAM role.
+# 3. For self-managed K8s, the Cloud Build SA needs the "Secret Manager Secret Accessor" role.
+
+substitutions:
+  # (Required) The Artifact Registry or GCR path where your images are stored.
+  _REGISTRY: ''
+  # (Optional) The version tag for the images that were deployed. Must match the installed version.
+  _STAGINGVERSION: 'v999.999.999'
+  # (Conditionally Required) Required for self-managed K8s. Optional for GKE.
+  _IDENTITY_PROVIDER: ''
+  # (Conditionally Required) Required for self-managed K8s. Optional for GKE.
+  _IDENTITY_POOL: ''
+  # (Conditionally Required) Required for GKE. Optional for self-managed K8s.
+  _PROJECT_ID: ''
+  # (Conditionally Required) The name of the target GKE cluster.
+  _CLUSTER_NAME: ''
+  # (Conditionally Required) The location of the target GKE cluster.
+  _CLUSTER_LOCATION: ''
+  # (Optional) The Kustomize overlay to use. Defaults to 'stable'.
+  _OVERLAY: 'stable'
+  # (Optional) Set to 'true' if uninstalling from a non-GKE, self-managed cluster.
+  _SELF_MANAGED_K8S: 'false'
+  # (Conditionally Required) The name of the Secret Manager secret for the self-managed cluster's kubeconfig.
+  _KUBECONFIG_SECRET: ''
+
+steps:
+  # Step 1: Validate inputs and connect to the cluster.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    id: 'setup-and-validate'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
+          echo "🏁 Targeting self-managed Kubernetes cluster for uninstallation."
+          if [ -z "${_REGISTRY}" ] || [ -z "${_IDENTITY_PROVIDER}" ] || [ -z "${_IDENTITY_POOL}" ] || [ -z "${_KUBECONFIG_SECRET}" ]; then
+            echo "❌ ERROR: For self-managed clusters, _REGISTRY, _IDENTITY_PROVIDER, _IDENTITY_POOL, and _KUBECONFIG_SECRET must be set."
+            exit 1
+          fi
+          echo "🔐 Fetching kubeconfig from Secret Manager secret: ${_KUBECONFIG_SECRET}"
+          mkdir -p ~/.kube
+          gcloud secrets versions access latest --secret="${_KUBECONFIG_SECRET}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          echo "✅ kubectl configured for self-managed cluster."
+        else
+          echo "🏁 Targeting GKE cluster for uninstallation."
+          if [ -z "${_REGISTRY}" ] || [ -z "${_CLUSTER_NAME}" ] || [ -z "${_CLUSTER_LOCATION}" ]; then
+            echo "❌ ERROR: For GKE deployments, _REGISTRY, _CLUSTER_NAME, and _CLUSTER_LOCATION are required."
+            exit 1
+          fi
+          echo "🔄 Connecting to GKE cluster '${_CLUSTER_NAME}' in '${_CLUSTER_LOCATION}'..."
+          gcloud container clusters get-credentials "${_CLUSTER_NAME}" --location "${_CLUSTER_LOCATION}"
+          echo "✅ Successfully connected to GKE cluster."
+        fi
+        echo "✅ Input validation and setup complete."
+
+ # Step 2: Generate manifest and uninstall the driver.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    id: 'generate-and-uninstall'
+    waitFor: ['setup-and-validate']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -ex
+
+        echo "🔧 Installing Kustomize..."
+        ./deploy/install-kustomize.sh
+        KUSTOMIZE_PATH=$$(find /workspace -name kustomize -type f)
+        if [ -z "$${KUSTOMIZE_PATH}" ]; then
+          echo "❌ ERROR: kustomize binary not found."
+          exit 1
+        fi
+        mv "$${KUSTOMIZE_PATH}" /usr/local/bin/
+
+        echo "📝 Generating Kubernetes resource specs to identify resources for deletion..."
+        # This section is identical to the install script to ensure the generated manifest
+        # matches the one that was used for installation.
+        KUSTOMIZE_DIR="./deploy/overlays/${_OVERLAY}"
+        cd $$KUSTOMIZE_DIR
+        kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver=${_REGISTRY}/gcs-fuse-csi-driver:${_STAGINGVERSION}
+        kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${_REGISTRY}/gcs-fuse-csi-driver-webhook:${_STAGINGVERSION}
+        kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${_REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${_STAGINGVERSION}
+        kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${_REGISTRY}/gcs-fuse-csi-driver-metadata-prefetch:${_STAGINGVERSION}
+        cd -
+
+        EFFECTIVE_PROJECT_ID="${_PROJECT_ID}"
+        EFFECTIVE_IDENTITY_POOL="${_IDENTITY_POOL}"
+        EFFECTIVE_IDENTITY_PROVIDER="${_IDENTITY_PROVIDER}"
+
+        if [ "${_SELF_MANAGED_K8S}" != "true" ]; then
+            if [ -z "$${EFFECTIVE_PROJECT_ID}" ]; then
+              CURRENT_CONTEXT=$$(kubectl config current-context)
+              EFFECTIVE_PROJECT_ID=$$(echo $$CURRENT_CONTEXT | cut -d '_' -f 2)
+            fi
+            if [ -z "$${EFFECTIVE_IDENTITY_POOL}" ]; then
+              EFFECTIVE_IDENTITY_POOL="$${EFFECTIVE_PROJECT_ID}.svc.id.goog"
+            fi
+            if [ -z "$${EFFECTIVE_IDENTITY_PROVIDER}" ]; then
+              apt-get update -y && apt-get install -y jq
+              EFFECTIVE_IDENTITY_PROVIDER=$$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
+            fi
+        fi
+
+        if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
+          EFFECTIVE_WI_NODE_LABEL_CHECK="false"
+        else
+          EFFECTIVE_WI_NODE_LABEL_CHECK="true"
+        fi
+
+        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
+        echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/identity_provider_patch_csi_node.json
+        echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/identity_pool_patch_csi_node.json
+        echo "[{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--wi-node-label-check=$${EFFECTIVE_WI_NODE_LABEL_CHECK}\"}]" > $${KUSTOMIZE_DIR}/wi_node_label_check_patch.json
+
+        if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
+          CA_BUNDLE=$$(grep certificate-authority-data ~/.kube/config | head -n 1 | awk '{print $2}')
+        else
+          CA_BUNDLE=$$(kubectl config view --raw -o jsonpath='{.clusters[?(@.name=="'"`kubectl config current-context`"'")].cluster.certificate-authority-data}' | tr -d '"')
+        fi
+        echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"$${CA_BUNDLE}\"}]" > $${KUSTOMIZE_DIR}/caBundle_patch_MutatingWebhookConfiguration.json
+
+        echo "📦 Building the final manifest for deletion..."
+        kustomize build $${KUSTOMIZE_DIR} > /workspace/gcs-fuse-csi-driver-specs-generated.yaml
+        
+        echo "🗑️ Deleting the driver using the generated manifest..."
+        kubectl delete -f /workspace/gcs-fuse-csi-driver-specs-generated.yaml --ignore-not-found=true
+
+        echo "🛡️ Uninstalling the validating admission policy..."
+        chmod +x ./deploy/base/webhook/manage-validating_admission_policy.sh
+        ./deploy/base/webhook/manage-validating_admission_policy.sh --uninstall
+
+        echo "✅ Uninstallation complete."
