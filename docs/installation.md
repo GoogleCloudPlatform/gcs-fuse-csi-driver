@@ -307,8 +307,47 @@ You have two options for un-installing the Cloud Storage FUSE CSI Driver. You ca
 
 ### Cloud Build
 
-TODO(amacaskill): Add cloud build for uninstall.
+You can use Cloud Build to uninstall the GCS FUSE CSI driver from your cluster by using the `cloudbuild-uninstall.yaml` configuration file. This process works by generating the exact same Kubernetes manifest that was used for installation and then using that manifest to delete all the associated resources.
 
+Important: You must use the same substitution variables for the uninstall command that you used for the original installation. This is critical for ensuring that Cloud Build can correctly identify all the Kubernetes resources to be removed.
+
+#### Uninstalling from GKE Clusters
+
+The `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `_STAGING_VERSION` unset.
+
+```bash
+# Replace with your cluster name
+export CLUSTER_NAME=<cluster-name>
+# Replace with your cluster location. This can be a zone, or a region.
+export CLUSTER_LOCATION=<cluster-location>
+export PROJECT_ID=$(gcloud config get project)
+export REGION='us-central1'
+export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
+gcloud builds submit . --config=cloudbuild-uninstall.yaml \
+  --substitutions=_REGISTRY=$REGISTRY,_CLUSTER_NAME=$CLUSTER_NAME,_CLUSTER_LOCATION=$CLUSTER_LOCATION
+```
+
+
+#### Uninstalling with Cloud Build on self built K8s Clusters
+
+Uninstalling from a self-managed Kubernetes cluster requires providing credentials and configuration details so Cloud Build can connect to your cluster and generate the correct manifest for deletion. You must set `_SELF_MANAGED_K8S=true`. You must provide the same `_KUBECONFIG_SECRET`, `_IDENTITY_PROVIDER`, `_IDENTITY_POOL`, and `_STAGINGVERSION` variables that were used during installation. If your cluster is in a private network, you must use a Cloud Build private pool by specifying the `--worker-pool` and `--region` flags.
+
+```bash
+export PROJECT_ID=$(gcloud config get project)
+export REGION='us-central1'
+export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
+export IDENTITY_POOL=<your-identity-pool>
+# Note this should be the full URI (e.g. https://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID)
+export IDENTITY_PROVIDER=<your-identity-provider>
+# The name of the secret you created in the "Creating a KUBECONFIG_SECRET section" below.
+export KUBECONFIG_SECRET="gcsfuse-kubeconfig-secret"
+gcloud builds submit . --config=cloudbuild-uninstall.yaml \
+  # The worker pool is created and the WORKER_POOL variable is exported in the "Creating a private pool" section.
+  --worker-pool=$WORKER_POOL \
+    # Region must match the region where your private pool was created in the "Creating a private pool" section. This should be the same as your cluster region.
+  --region=$REGION \
+  --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$IDENTITY_POOL,_IDENTITY_PROVIDER=$IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
+```
 
 ### Makefile Commands
 - Run the following command to uninstall the driver.
