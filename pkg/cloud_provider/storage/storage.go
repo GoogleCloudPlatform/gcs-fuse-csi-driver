@@ -100,7 +100,7 @@ func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.
 	var storageClient *storage.Client
 	var err error
 	if enableZB {
-		storageClient, err = storage.NewGRPCClient(ctx, experimental.WithGRPCBidiReads())
+		storageClient, err = storage.NewGRPCClient(ctx, experimental.WithGRPCBidiReads(), storage.WithDisabledClientMetrics())
 	} else {
 		storageClient, err = storage.NewClient(ctx)
 	}
