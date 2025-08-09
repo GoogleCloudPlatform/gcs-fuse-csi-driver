@@ -248,7 +248,7 @@ func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 	for _, test := range cases {
 		fakeClientSet := &clientset.FakeClientset{}
 		fakeClientSet.CreateNode( /* workloadIdentityEnabled */ clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
-		fakeClientSet.CreatePod( /* hostNetworkEnabled */ test.hostNetworkEnabledOnPod)
+		fakeClientSet.CreatePod( /* hostNetworkEnabled */ test.hostNetworkEnabledOnPod, false, "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v9.9.9-gke.0", false /* init container */)
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, true)
 
 		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
@@ -446,7 +446,7 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 	for _, test := range cases {
 		fakeClientSet := &clientset.FakeClientset{}
 		fakeClientSet.CreateNode(clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
-		fakeClientSet.CreatePod(false)
+		fakeClientSet.CreatePod(false, false, "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v9.9.9-gke.0", true)
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, test.wiNodeLabelCheck)
 
 		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
@@ -456,5 +456,196 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
 			t.Errorf("test %q failed:got error %q, expected error %q", test.name, err, test.expectErr)
 		}
+	}
+}
+
+func TestNodePublishVolumeWithHnwKsa(t *testing.T) {
+	t.Parallel()
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
+	// Setup mount target path
+	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
+	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
+		t.Fatalf("failed to setup tmp dir path: %v", err)
+	}
+	base, err := os.MkdirTemp(tmpDir, "node-publish-")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	testTargetPath := filepath.Join(base, "mount")
+	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+		t.Fatalf("failed to setup target path: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	testCases := []struct {
+		name                string
+		usePodHostNW        bool
+		injectSATokenVolume bool
+		sidecarImage        string
+		req                 *csi.NodePublishVolumeRequest
+		expectedMount       *mount.MountPoint
+		expectErr           error
+	}{
+		{
+			name:                "should not add hnw-ksa mount option when host network is disabled",
+			usePodHostNW:        false,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{}},
+		},
+		{
+			name:                "should add hnw-ksa mount option when host network is enabled",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "test-provider",
+					VolumeContextKeyIdentityPool:      "test-pool",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"hnw-ksa=true", "token-server-identity-provider=test-provider", "token-server-identity-pool=test-pool"}},
+		},
+		{
+			name:                "should not add hnw-ksa mount option when SA token volume is not injected",
+			usePodHostNW:        true,
+			injectSATokenVolume: false,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{}},
+		},
+		{
+			name:                "should use default identity provider when only identity pool is provided",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityPool:      "test-pool",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"hnw-ksa=true", "token-server-identity-provider=fake.identity.provider", "token-server-identity-pool=test-pool"}},
+		},
+		{
+			name:                "should use default identity pool when only identity provider is provided",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "test-provider",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"hnw-ksa=true", "token-server-identity-provider=test-provider", "token-server-identity-pool=fake.identity.pool"}},
+		},
+		{
+			name:                "should use default identity provider when only identity pool is provided",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityPool:      "test-pool",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"hnw-ksa=true", "token-server-identity-provider=fake.identity.provider", "token-server-identity-pool=test-pool"}},
+		},
+		{
+			name:                "should use default values when neither identity provider nor pool is provided",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.2-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"hnw-ksa=true", "token-server-identity-provider=fake.identity.provider", "token-server-identity-pool=fake.identity.pool"}},
+		},
+		{
+			name:                "should not add hnw-ksa mount option when sidecar version is not supported",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.1-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{}},
+		},
+		{
+			name:                "should add hnw-ksa mount option when sidecar version is not supported but user provides identity info",
+			usePodHostNW:        true,
+			injectSATokenVolume: true,
+			sidecarImage:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.17.1-gke.0",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "test-provider",
+					VolumeContextKeyIdentityPool:      "test-pool",
+				},
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath, Type: "fuse", Opts: []string{"hnw-ksa=true", "token-server-identity-provider=test-provider", "token-server-identity-pool=test-pool"}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fakeClientSet := &clientset.FakeClientset{}
+			fakeClientSet.CreateNode(clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: true})
+			fakeClientSet.CreatePod(tc.usePodHostNW, tc.injectSATokenVolume, tc.sidecarImage, true)
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+
+			_, err := testEnv.ns.NodePublishVolume(context.TODO(), tc.req)
+			if tc.expectErr == nil && err != nil {
+				t.Errorf("test %q failed:got error %q, expected error nil", tc.name, err)
+			}
+			if tc.expectErr != nil && !errors.Is(err, tc.expectErr) {
+				t.Errorf("test %q failed:got error %q, expected error %q", tc.name, err, tc.expectErr)
+			}
+			validateMountPoint(t, tc.name, testEnv.fm, tc.expectedMount)
+		})
 	}
 }
