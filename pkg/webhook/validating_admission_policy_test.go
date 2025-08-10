@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,15 +90,17 @@ var admittedDecision = validating.PolicyDecision{
 }
 
 var missingRestartPolicyDecision = validating.PolicyDecision{
-	Action:  validating.ActionDeny,
-	Message: "the native gcsfuse sidecar init container must have restartPolicy:Always.",
-	Reason:  metav1.StatusReasonInvalid,
+	Action:     validating.ActionDeny,
+	Evaluation: validating.EvalDeny,
+	Message:    "the native gcsfuse sidecar init container must have restartPolicy:Always.",
+	Reason:     metav1.StatusReasonInvalid,
 }
 
 var missingEnvVarDecision = validating.PolicyDecision{
-	Action:  validating.ActionDeny,
-	Message: "the native gcsfuse sidecar init container must have env var NATIVE_SIDECAR with value TRUE.",
-	Reason:  metav1.StatusReasonInvalid,
+	Action:     validating.ActionDeny,
+	Evaluation: validating.EvalDeny,
+	Message:    "the native gcsfuse sidecar init container must have env var NATIVE_SIDECAR with value TRUE.",
+	Reason:     metav1.StatusReasonInvalid,
 }
 
 var testCases = []struct {
@@ -157,14 +160,19 @@ func TestValidatingAdmissionPolicy(t *testing.T) {
 	}
 
 	validator := compilePolicy(policy)
+	// Add a cmp.Option to ignore the non-deterministic Elapsed field.
+	opts := []cmp.Option{
+		cmpopts.IgnoreFields(validating.PolicyDecision{}, "Elapsed"),
+	}
 
 	for _, tc := range testCases {
 		fakeAttr := admission.NewAttributesRecord(tc.pod, nil, schema.GroupVersionKind{}, "", "", schema.GroupVersionResource{}, "", "", nil, false, nil)
 		fakeVersionedAttr, _ := admission.NewVersionedAttributes(fakeAttr, schema.GroupVersionKind{}, nil)
 		validateResult := validator.Validate(context.TODO(), fakeVersionedAttr.GetResource(), fakeVersionedAttr, nil, nil, celconfig.RuntimeCELCostBudget, nil)
 
-		if diff := cmp.Diff(validateResult, tc.expectedResult); diff != "" {
-			t.Errorf("unexpected options args (-got, +want)\n%s", diff)
+		// Use the option in the comparison.
+		if diff := cmp.Diff(tc.expectedResult, validateResult, opts...); diff != "" {
+			t.Errorf("unexpected validation result (-want +got):\n%s", diff)
 		}
 	}
 }
@@ -205,12 +213,12 @@ func compilePolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) va
 		matchExpressionAccessors[i] = (*matchconditions.MatchCondition)(&matchConditions[i])
 	}
 
-	matcher := matchconditions.NewMatcher(filterCompiler.Compile(matchExpressionAccessors, optionalVars, environment.StoredExpressions), failurePolicy, "policy", "validate", policy.Name)
+	matcher := matchconditions.NewMatcher(filterCompiler.CompileCondition(matchExpressionAccessors, optionalVars, environment.StoredExpressions), failurePolicy, "policy", "validate", policy.Name)
 	res := validating.NewValidator(
-		filterCompiler.Compile(convertv1Validations(policy.Spec.Validations), optionalVars, environment.StoredExpressions),
+		filterCompiler.CompileCondition(convertv1Validations(policy.Spec.Validations), optionalVars, environment.StoredExpressions),
 		matcher,
-		filterCompiler.Compile(convertv1AuditAnnotations(policy.Spec.AuditAnnotations), optionalVars, environment.StoredExpressions),
-		filterCompiler.Compile(convertv1MessageExpressions(policy.Spec.Validations), expressionOptionalVars, environment.StoredExpressions),
+		filterCompiler.CompileCondition(convertv1AuditAnnotations(policy.Spec.AuditAnnotations), optionalVars, environment.StoredExpressions),
+		filterCompiler.CompileCondition(convertv1MessageExpressions(policy.Spec.Validations), expressionOptionalVars, environment.StoredExpressions),
 		failurePolicy,
 	)
 
