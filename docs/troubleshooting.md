@@ -77,9 +77,11 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
   - > MountVolume.SetUp failed for volume "xxx" : kubernetes.io/csi: mounter.SetUpAt failed to get CSI client: driver name gcsfuse.csi.storage.gke.io not found in the list of registered CSI drivers
 
+  - > MountVolume.SetUp failed for volume "xxx" : kubernetes.io/csi: Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+
 - Solutions:
 
-  This warning indicates that the CSI driver is not enabled, or the CSI driver is not up and running. Double check if the CSI driver is enabled on your cluster. See [Enable the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver#enable) for details. If the CSI is enabled, on each node you should see a Pod called `gcsfusecsi-node-xxxxx` up and running. If the cluster was just scaled, updated, or upgraded, this warning is normal and should be transient because it takes a few minutes for the CSI driver Pods to be functional after the cluster operations.
+  This warning indicates that the CSI driver is not enabled, CSI driver prerequisite conditions have not been met, or the CSI driver is not up and running. Double check if the CSI driver is enabled on your cluster. See [Enable the Cloud Storage FUSE CSI driver](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver#enable) for details. If the CSI is enabled, on each node you should see a Pod called `gcsfusecsi-node-xxxxx` up and running. If the cluster was just scaled, updated, or upgraded, this warning is normal and should be transient because it takes a few minutes for the CSI driver Pods to be functional after the cluster operations. If you enabled the driver and workload identity on an existing nodepool, please make sure to follow all steps in [Configure access to Cloud Storage buckets](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-setup#authentication).
 
 ### MountVolume.SetUp failures
 
