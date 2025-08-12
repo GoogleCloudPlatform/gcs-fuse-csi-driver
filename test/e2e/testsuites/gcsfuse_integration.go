@@ -223,6 +223,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetResource("1", "5Gi", "5Gi")
 		sidecarMemoryLimit := defaultSidecarMemoryLimit
 
+		if testName == testNameWriteLargeFiles && zbEnabled {
+			mountOptions = append(mountOptions, "enable-streaming-writes=false")
+			mountOptions = append(mountOptions, "write-max-blocks-per-file=2")
+			mountOptions = append(mountOptions, "write-global-max-blocks=2")
+		}
 		if testName == testNameWriteLargeFiles || testName == testNameReadLargeFiles {
 			tPod.SetResource("1", "6Gi", "5Gi")
 			sidecarMemoryLimit = "1Gi"
