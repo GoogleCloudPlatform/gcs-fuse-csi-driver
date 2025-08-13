@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 
+	"local/test/e2e/specs"
+
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -30,7 +32,6 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
 )
 
 type gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite struct {
@@ -115,7 +116,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 	gcsfuseIntegrationFileCacheTest := func(testName string, readOnly bool, fileCacheCapacity, fileCacheForRangeRead, metadataCacheTTLSeconds string, mountOptions ...string) {
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
 		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
 		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)

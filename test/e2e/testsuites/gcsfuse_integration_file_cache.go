@@ -116,7 +116,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 	gcsfuseIntegrationFileCacheTest := func(testName string, readOnly bool, fileCacheCapacity, fileCacheForRangeRead, metadataCacheTTLSeconds string, mountOptions ...string) {
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
 		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
 		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
