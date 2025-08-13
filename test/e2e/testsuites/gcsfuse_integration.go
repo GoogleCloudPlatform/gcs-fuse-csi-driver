@@ -211,7 +211,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
 		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f.ClientSet)
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
 		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)

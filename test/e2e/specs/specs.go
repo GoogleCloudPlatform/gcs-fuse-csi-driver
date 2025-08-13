@@ -1145,9 +1145,9 @@ func (t *TestJob) WaitForJobPodsSucceeded(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func (t *TestJob) WaitForJobFailed() {
+func (t *TestJob) WaitForJobFailed(ctx context.Context) {
 	framework.Logf("Waiting Job %s to fail", t.job.Name)
-	err := e2ejob.WaitForJobFailed(t.client, t.namespace.Name, t.job.Name)
+	err := e2ejob.WaitForJobFailed(ctx, t.client, t.namespace.Name, t.job.Name)
 	framework.ExpectNoError(err)
 }
 
@@ -1196,7 +1196,8 @@ func createTestFileInBucket(fileName, bucketName string, fileContent []byte) {
 	}
 }
 
-func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
+func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
+	client := f.ClientSet
 	configMaps, err := client.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=gcsfusecsi-image-config",
 	})
@@ -1207,10 +1208,6 @@ func GetGCSFuseVersion(ctx context.Context, client clientset.Interface) string {
 	image := sidecarImageConfig.Data["sidecar-image"]
 	gomega.Expect(image).ToNot(gomega.BeEmpty())
 
-	f := &framework.Framework{
-		ClientSet: client,
-		Namespace: &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
-	}
 	tPod := NewTestPod(client, f.Namespace)
 	tPod.pod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
