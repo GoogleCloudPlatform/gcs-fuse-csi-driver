@@ -75,7 +75,6 @@ steps:
           echo "✅ Successfully connected to GKE cluster."
         fi
         echo "✅ Input validation and setup complete."
-
   # Step 2: Generate Kubernetes manifest and apply it to the cluster.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
     id: 'generate-and-install'
@@ -85,7 +84,6 @@ steps:
       - '-c'
       - |
         set -ex
-
         echo "🔧 Installing Kustomize..."
         ./deploy/install-kustomize.sh
         KUSTOMIZE_PATH=$$(find /workspace -name kustomize -type f)
@@ -94,7 +92,6 @@ steps:
           exit 1
         fi
         mv "$${KUSTOMIZE_PATH}" /usr/local/bin/
-
         echo "📝 Generating Kubernetes resource specs..."
         KUSTOMIZE_DIR="./deploy/overlays/${_OVERLAY}"
         cd $$KUSTOMIZE_DIR
@@ -103,12 +100,10 @@ steps:
         kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${_REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${_STAGINGVERSION}
         kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${_REGISTRY}/gcs-fuse-csi-driver-metadata-prefetch:${_STAGINGVERSION}
         cd -
-
         # --- Begin Variable Derivation ---
         EFFECTIVE_PROJECT_ID="${_PROJECT_ID}"
         EFFECTIVE_IDENTITY_POOL="${_IDENTITY_POOL}"
         EFFECTIVE_IDENTITY_PROVIDER="${_IDENTITY_PROVIDER}"
-
         if [ "${_SELF_MANAGED_K8S}" != "true" ]; then
             if [ -z "$${EFFECTIVE_PROJECT_ID}" ]; then
               CURRENT_CONTEXT=$$(kubectl config current-context)
@@ -125,7 +120,6 @@ steps:
               echo "✅ Discovered Identity Provider for GKE: $${EFFECTIVE_IDENTITY_PROVIDER}"
             fi
         fi
-
         # Determine the effective setting for the WI node label check.
         # It should be 'false' for self-managed clusters and 'true' for GKE.
         if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
@@ -136,13 +130,11 @@ steps:
           echo "ℹ️ WI Node Label Check is enabled for GKE."
         fi
         # --- End Variable Derivation ---
-
         echo "📄 Creating configuration patches..."
-        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
+        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
         echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/identity_provider_patch_csi_node.json
         echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/identity_pool_patch_csi_node.json
         echo "[{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--wi-node-label-check=$${EFFECTIVE_WI_NODE_LABEL_CHECK}\"}]" > $${KUSTOMIZE_DIR}/wi_node_label_check_patch.json
-
         # Conditionally determine the CA_BUNDLE based on the cluster type.
         if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
           echo "🔎 Using grep to find CA Bundle for self-managed Kubernetes..."
@@ -153,13 +145,11 @@ steps:
           CA_BUNDLE=$$(kubectl config view --raw -o jsonpath='{.clusters[?(@.name=="'"`kubectl config current-context`"'")].cluster.certificate-authority-data}' | tr -d '"')
         fi
         echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"$${CA_BUNDLE}\"}]" > $${KUSTOMIZE_DIR}/caBundle_patch_MutatingWebhookConfiguration.json
-
         echo "📦 Building the final manifest..."
         kustomize build $${KUSTOMIZE_DIR} > /workspace/gcs-fuse-csi-driver-specs-generated.yaml
         
         echo "🚀 Applying the generated manifest to the cluster..."
         kubectl apply -f /workspace/gcs-fuse-csi-driver-specs-generated.yaml
-
         echo "🔐 Creating webhook certificate..."
         chmod +x ./deploy/base/webhook/create-cert.sh
         ./deploy/base/webhook/create-cert.sh --namespace gcs-fuse-csi-driver --service gcs-fuse-csi-driver-webhook --secret gcs-fuse-csi-driver-webhook-secret
@@ -167,9 +157,7 @@ steps:
         echo "🛡️ Installing the validating admission policy..."
         chmod +x ./deploy/base/webhook/manage-validating_admission_policy.sh
         ./deploy/base/webhook/manage-validating_admission_policy.sh --install
-
         echo "✅ Installation complete."
-
   # Step 3: Verify the driver installation
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
     id: 'verify-installation'
@@ -189,4 +177,3 @@ steps:
         kubectl get pods -n gcs-fuse-csi-driver | grep Running
         
         echo "✅ Verification step complete."
-

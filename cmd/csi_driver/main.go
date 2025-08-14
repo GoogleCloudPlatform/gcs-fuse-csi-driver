@@ -41,6 +41,7 @@ var (
 	runController             = flag.Bool("controller", false, "run controller service")
 	runNode                   = flag.Bool("node", false, "run node service")
 	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	customAudience            = flag.String("custom-audience", "", "The custom Identity Pool to authenticate with GCS API.")
 	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
@@ -84,7 +85,7 @@ func main() {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
-	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider, *customAudience)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}

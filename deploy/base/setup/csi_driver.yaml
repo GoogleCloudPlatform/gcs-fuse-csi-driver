@@ -25,5 +25,13 @@ spec:
     - Ephemeral
   requiresRepublish: true
   fsGroupPolicy: None
+# The spec.tokenRequests field instructs Kubernetes to generate a service account token and make it available to the CSI driver's pod.
+# Then it is used in WI handshake:
+#  - The kubelet on the node creates a JWT service account token for the driver's pod with the audience specified in the CSIDriver resource. 
+#  - The GCS FUSE CSI driver reads this token, and sends this token to the Google STS to exchange it for a short-lived Google Cloud access token.
+#  - The Google STS verifies the token (validates that the aud claim in the token matches the identity provider it expects), and if the token is valid, the STS provides a Google Cloud access token.
+#  - The driver then uses this Google Cloud token to access GCS buckets.
   tokenRequests:
+    # When you use the cloudbuild-install.yaml script, it automatically patches this audience value to match the discovered or provided IDENTITY_PROVIDER for your cluster. 
     - audience: <project-id>.svc.id.goog
+    # - audience: //iam.googleapis.com/projects/326181500027/locations/global/workloadIdentityPools/wi-pool-amacaskill-k8s-cluster-3/providers/wi-p-amacaskill-k8s-cluster-3

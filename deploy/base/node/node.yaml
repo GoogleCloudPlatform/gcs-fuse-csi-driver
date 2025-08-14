@@ -52,6 +52,12 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
             - --identity-provider=$(IDENTITY_PROVIDER)
+            # See https://cloud.google.com/iam/docs/reference/sts/rest/v1/TopLevel/token for how to format. 
+            # It should be the full resource name of the identity provider; for example: //iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<pool-id>/providers/<provider-id> for workload identity pool providers
+            # For pool-id, use the name of what you used for gcloud iam workload-identity-pools create
+            # For provider-id , use the name of what you used for gcloud iam workload-identity-pools providers create
+            # You don't need this if you dont need to use hostnetwork or if you are using skipCSIBucketAccessCheck
+            # - --custom-audience=//iam.googleapis.com/projects/326181500027/locations/global/workloadIdentityPools/wi-pool-amacaskill-k8s-cluster-3/providers/wi-p-amacaskill-k8s-cluster-3
             - --identity-pool=$(IDENTITY_POOL)
             - --metrics-endpoint=:9920
             - --max-metric-collectors=10

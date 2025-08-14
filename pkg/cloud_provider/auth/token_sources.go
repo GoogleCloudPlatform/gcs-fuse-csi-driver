@@ -69,13 +69,25 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API.
+// Skip this code path by using skipCSIBucketAccessCheck: "true".
 func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, error) {
 	if ts.k8sSAToken != "" {
 		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
 		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
 		}
-		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
+
+		klog.Infof("logging tokenMap: %v", tokenMap)
+
+		//  For self-managed clusters using a custom audience, the token is keyed
+		// by that audience (the full identity provider URI), not the identity pool.
+		audienceKey := ts.meta.GetIdentityPool()
+		if customAudience := ts.meta.GetCustomAudience(); customAudience != "" {
+			klog.Infof("customAudience is set to %q", customAudience)
+			audienceKey = customAudience
+		}
+
+		if trs, ok := tokenMap[audienceKey]; ok {
 			return &oauth2.Token{
 				AccessToken: trs.Token,
 				Expiry:      trs.ExpirationTimestamp.Time,
@@ -119,6 +131,11 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSATo
 		ts.meta.GetIdentityPool(),
 		ts.meta.GetIdentityProvider(),
 	)
+	customAudience := ts.meta.GetCustomAudience()
+	if customAudience != "" {
+		audience = customAudience
+	}
+
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",

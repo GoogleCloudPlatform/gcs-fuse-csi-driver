@@ -33,11 +33,13 @@ type fakeServiceManager struct {
 	projectID        string
 	identityPool     string
 	identityProvider string
+	projectNumber    string
+	customAudience   string
 }
 
 var _ Service = &fakeServiceManager{}
 
-func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, error) {
+func NewFakeService(projectID, projectNumber, location, clusterName, gkeEnv, customAudience string) (Service, error) {
 	var gkeAPIEndpoint string
 	if _, ok := envAPIMap[gkeEnv]; !ok {
 		if gkeEnv == "sandbox" {
@@ -50,8 +52,10 @@ func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, e
 	}
 
 	s := fakeServiceManager{
-		projectID:    projectID,
-		identityPool: projectID + ".svc.id.goog",
+		projectID:      projectID,
+		projectNumber:  projectNumber,
+		customAudience: customAudience,
+		identityPool:   projectID + ".svc.id.goog",
 		identityProvider: fmt.Sprintf(
 			"%sv1/projects/%s/locations/%s/clusters/%s",
 			gkeAPIEndpoint,
@@ -68,10 +72,17 @@ func (manager *fakeServiceManager) GetProjectID() string {
 	return manager.projectID
 }
 
+func (manager *fakeServiceManager) GetProjectNumber() string {
+	return manager.projectNumber
+}
+
 func (manager *fakeServiceManager) GetIdentityPool() string {
 	return manager.identityPool
 }
 
 func (manager *fakeServiceManager) GetIdentityProvider() string {
 	return manager.identityProvider
+}
+func (manager *fakeServiceManager) GetCustomAudience() string {
+	return manager.customAudience
 }

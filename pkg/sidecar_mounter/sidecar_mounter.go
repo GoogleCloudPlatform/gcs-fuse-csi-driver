@@ -321,6 +321,7 @@ func getK8sTokenFromFile(tokenPath string) (string, error) {
 func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
 	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
 	if err != nil {
+
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
 
@@ -350,11 +351,13 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 	}, nil
 }
 
+// TODO, add support for  custom audience to support hostnetork
 func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
 	projectID, err := metadata.ProjectIDWithContext(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get project ID: %w", err)
 	}
+	klog.V(4).Infof("logging identityProvider: %s", identityProvider)
 
 	audience := fmt.Sprintf(
 		"identitynamespace:%s.svc.id.goog:%s",

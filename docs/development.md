@@ -55,6 +55,8 @@ Run the following command to build and push the images using cloud build. If you
 
 For running cloud build from a Google Internal project, you can use the following command. This will use the gcsfuse version present in `cmd/sidecar_mounter/gcsfuse_binary` as the gcsfuse binary. You can change this to a different version, or use `_BUILD_GCSFUSE_FROM_SOURCE=true` to build gcsfuse from HEAD. Setting `GCSFUSE_BINARY_GCS_PATH` to the `gke-release-staging` bucket in `cmd/sidecar_mounter/gcsfuse_binary` is only allowed for Google Internal projects because artifacts in `gke-release-staging` are not publicly accessible.
 
+Note that this currently doesn't work for _GCSFUSE_BINARY_GCS_PATH (fails because gcloud isn't in the prepare-gcsfuse-binary step image ), so use the make install command if you want to run at the GCSFuse version in _GCSFUSE_BINARY_GCS_PATH.
+
 ```bash
 export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
