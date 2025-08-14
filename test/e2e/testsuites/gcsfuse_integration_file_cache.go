@@ -100,7 +100,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		}
 
 		// check if the given gcsfuse version supports the test case
-		if !v.AtLeast(version.MustParseSemantic("v2.0.0")) {
+		if !v.AtLeast(version.MustParseSemantic("v2.0.0-gke.0")) {
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testName, v.String())
 		}
 
@@ -137,7 +137,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
 		cacheDir := "cache-dir"
-		if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
+		if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 			if hnsEnabled(driver) {
 				cacheDir = "cache-dir-read-cache-hns-true"
 			} else {
