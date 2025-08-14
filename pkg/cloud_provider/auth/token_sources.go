@@ -69,12 +69,29 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API.
+// Skip this code path by using skipCSIBucketAccessCheck: "true".
 func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, error) {
 	if ts.k8sSAToken != "" {
 		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
 		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
 		}
+		// To fix this without using skipCSIBucketAccessCheck, we should change this to use customAudience as the lookup key when it's available instead of using GetIdentityPool() (the short identity pool name as the key).
+		// Without this fix, is why we see the "could not find token" error when customAudience is used.
+
+		// The fix would be something like this:
+		// // --- BEGIN FIX ---
+		// // For self-managed clusters using a custom audience, the token is keyed
+		// // by that audience (the full identity provider URI), not the identity pool.
+		// audienceKey := ts.meta.GetIdentityPool()
+		// if customAudience := ts.meta.GetCustomAudience(); customAudience != "" {
+		// 	audienceKey = customAudience
+		// }
+
+		// Then we would use audienceKey instead of ts.meta.GetIdentityPool() below:
+		// if trs, ok := tokenMap[audienceKey]; ok {
+		// // --- END FIX ---
+
 		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
 			return &oauth2.Token{
 				AccessToken: trs.Token,
@@ -119,6 +136,11 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSATo
 		ts.meta.GetIdentityPool(),
 		ts.meta.GetIdentityProvider(),
 	)
+	customAudience := ts.meta.GetCustomAudience()
+	if customAudience != "" {
+		audience = customAudience
+	}
+
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",

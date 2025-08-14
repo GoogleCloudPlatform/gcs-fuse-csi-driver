@@ -12,39 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This Cloud Build file installs the GCS FUSE CSI driver to a GKE cluster or a self-managed Kubernetes cluster.
-#
-# Before running:
-# 1. For GKE, ensure the Cloud Build SA has the "Kubernetes Engine Admin" IAM role.
-# 2. For self-managed K8s:
-#    a. Store your kubeconfig file as a secret in Google Secret Manager.
-#    b. Grant the Cloud Build SA the "Secret Manager Secret Accessor" role.
-# 3. Provide all the required substitutions at build time.
-
 substitutions:
-  # (Required) The Artifact Registry or GCR path where your images are stored.
   _REGISTRY: ''
-  # (Optional) The version tag for the images to be deployed.
   _STAGINGVERSION: 'v999.999.999'
-  # (Conditionally Required) Required for self-managed K8s. Optional for GKE (will be auto-discovered).
   _IDENTITY_PROVIDER: ''
-  # (Conditionally Required) Required for self-managed K8s. Optional for GKE (will be derived).
   _IDENTITY_POOL: ''
-  # (Conditionally Required) Required for GKE. Optional for self-managed K8s.
   _PROJECT_ID: ''
-  # (Conditionally Required) The name of the target GKE cluster. Not used for self-managed K8s.
   _CLUSTER_NAME: ''
-  # (Conditionally Required) The location of the target GKE cluster. Not used for self-managed K8s.
   _CLUSTER_LOCATION: ''
-  # (Optional) The Kustomize overlay to use. Defaults to 'stable'.
   _OVERLAY: 'stable'
-  # (Optional) Set to 'true' if deploying to a non-GKE, self-managed Kubernetes cluster.
   _SELF_MANAGED_K8S: 'false'
-  # (Conditionally Required) The name of the Secret Manager secret holding the kubeconfig for a self-managed cluster.
   _KUBECONFIG_SECRET: ''
 
 steps:
-  # Step 1: Validate inputs and connect to the cluster.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
     id: 'setup-and-validate'
     entrypoint: 'bash'
@@ -52,7 +32,6 @@ steps:
       - '-c'
       - |
         set -e
-        # --- Connection Logic ---
         if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
           echo "🏁 Targeting self-managed Kubernetes cluster."
           if [ -z "${_REGISTRY}" ] || [ -z "${_IDENTITY_PROVIDER}" ] || [ -z "${_IDENTITY_POOL}" ] || [ -z "${_KUBECONFIG_SECRET}" ]; then
@@ -76,7 +55,6 @@ steps:
         fi
         echo "✅ Input validation and setup complete."
 
-  # Step 2: Generate Kubernetes manifest and apply it to the cluster.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
     id: 'generate-and-install'
     waitFor: ['setup-and-validate']
@@ -104,7 +82,6 @@ steps:
         kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${_REGISTRY}/gcs-fuse-csi-driver-metadata-prefetch:${_STAGINGVERSION}
         cd -
 
-        # --- Begin Variable Derivation ---
         EFFECTIVE_PROJECT_ID="${_PROJECT_ID}"
         EFFECTIVE_IDENTITY_POOL="${_IDENTITY_POOL}"
         EFFECTIVE_IDENTITY_PROVIDER="${_IDENTITY_PROVIDER}"
@@ -126,8 +103,6 @@ steps:
             fi
         fi
 
-        # Determine the effective setting for the WI node label check.
-        # It should be 'false' for self-managed clusters and 'true' for GKE.
         if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
           EFFECTIVE_WI_NODE_LABEL_CHECK="false"
           echo "ℹ️ WI Node Label Check is disabled for self-managed Kubernetes."
@@ -135,18 +110,15 @@ steps:
           EFFECTIVE_WI_NODE_LABEL_CHECK="true"
           echo "ℹ️ WI Node Label Check is enabled for GKE."
         fi
-        # --- End Variable Derivation ---
 
         echo "📄 Creating configuration patches..."
-        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
+        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
         echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/identity_provider_patch_csi_node.json
         echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/identity_pool_patch_csi_node.json
         echo "[{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--wi-node-label-check=$${EFFECTIVE_WI_NODE_LABEL_CHECK}\"}]" > $${KUSTOMIZE_DIR}/wi_node_label_check_patch.json
 
-        # Conditionally determine the CA_BUNDLE based on the cluster type.
         if [ "${_SELF_MANAGED_K8S}" = "true" ]; then
           echo "🔎 Using grep to find CA Bundle for self-managed Kubernetes..."
-          # This assumes the kubeconfig is in the default location ~/.kube/config.
           CA_BUNDLE=$$(grep certificate-authority-data ~/.kube/config | head -n 1 | awk '{print $2}')
         else
           echo "🔎 Using kubectl to find CA Bundle for GKE..."
@@ -170,7 +142,6 @@ steps:
 
         echo "✅ Installation complete."
 
-  # Step 3: Verify the driver installation
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
     id: 'verify-installation'
     waitFor: ['generate-and-install']
@@ -189,4 +160,3 @@ steps:
         kubectl get pods -n gcs-fuse-csi-driver | grep Running
         
         echo "✅ Verification step complete."
-

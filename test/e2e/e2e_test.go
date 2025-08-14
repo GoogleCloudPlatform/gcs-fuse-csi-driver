@@ -77,7 +77,8 @@ var _ = func() bool {
 	if len(l) < 4 || l[0] != "gke" {
 		klog.Fatalf("Got invalid cluster name %v, please make sure the cluster is created on GKE", currentCluster)
 	}
-	m, err = metadata.NewFakeService(l[1], l[2], l[3], *apiEnv)
+	// TODO: add project number from kubeconfig
+	m, err = metadata.NewFakeService(l[1] /* project number*/, "123456789", "random-audicence", l[2], l[3], *apiEnv)
 	if err != nil {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
