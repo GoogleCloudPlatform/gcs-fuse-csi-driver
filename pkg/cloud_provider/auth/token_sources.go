@@ -119,6 +119,11 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSATo
 		ts.meta.GetIdentityPool(),
 		ts.meta.GetIdentityProvider(),
 	)
+	customAudience := ts.meta.GetCustomAudience()
+	if customAudience != "" {
+		audience = customAudience
+	}
+
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",

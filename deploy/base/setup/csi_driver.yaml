@@ -26,4 +26,5 @@ spec:
   requiresRepublish: true
   fsGroupPolicy: None
   tokenRequests:
-    - audience: <project-id>.svc.id.goog
+    # Set this to the custom audience also. This isn't strictly necessary, because you can use skiCSIBucketAccessCheck, but I will add.
+    - audience: //iam.googleapis.com/projects/326181500027/locations/global/workloadIdentityPools/wi-pool-amacaskill-k8s-cluster/providers/wi-p-amacaskill-k8s-cluster
