@@ -64,7 +64,6 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GCP service account token fetch error: %w", err)
 	}
-
 	return token, nil
 }
 
@@ -113,7 +112,6 @@ func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSATo
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
-
 	audience := fmt.Sprintf(
 		"identitynamespace:%s:%s",
 		ts.meta.GetIdentityPool(),

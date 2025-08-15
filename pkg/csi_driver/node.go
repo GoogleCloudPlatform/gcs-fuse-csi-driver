@@ -87,7 +87,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
+	targetPath, bucketName, userSpecifiedIdentityProvider, identityPool, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -145,8 +145,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		} else {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 		}
-		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+		klog.V(6).Infof("NodePublishVolume populating identity provider %q and identity pool %q in mount options", identityProvider, identityPool)
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider, "identity-pool=" + identityPool})
+	}
+
+	if s.driver.config.EnableSidecarBucketAccessCheckFlag {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
+			"pod-namespace=" + vc[VolumeContextKeyPodNamespace],
+			"service-account-name=" + vc[VolumeContextKeyServiceAccountName],
+			"enable-sidecar-bucket-access-check-flag=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheckFlag)})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)

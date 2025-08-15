@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -38,6 +39,9 @@ const (
 
 	// mount options that both CSI mounter and sidecar mounter should understand.
 	DisableMetricsForGKE = "disable-metrics-for-gke"
+	// VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
+	// VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
+	// VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
 )
 
 var (
@@ -204,4 +208,11 @@ func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 	klog.Infof("Stale file '%s' successfully deleted", fileName)
 
 	return nil
+}
+func ParseStringToBool(s string) (bool, error) {
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return b, err
+	}
+	return b, nil
 }
