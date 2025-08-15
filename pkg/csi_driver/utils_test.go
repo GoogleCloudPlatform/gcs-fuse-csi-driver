@@ -229,6 +229,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 			expectedDisableMetricsCollection bool
 			expectedOptInHostNetworkKSA      bool
 			expectedIdentityProvider         string
+			expectedIdentityPool             string
 			expectedErr                      bool
 		}{
 			{
@@ -516,8 +517,6 @@ func TestParseVolumeAttributes(t *testing.T) {
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataTypeCacheCapacity] + "0",
 					volumeAttributesToMountOptionsMapping[VolumeContextKeyMetadataCacheTTLSeconds] + "3600",
 				},
-				expectedOptInHostNetworkKSA: false,
-				expectedIdentityProvider:    "",
 			},
 			{
 				name: "should return correct mount options for hostnetwork pod ksa opt in",
@@ -526,17 +525,28 @@ func TestParseVolumeAttributes(t *testing.T) {
 				},
 				expectedMountOptions:        []string{},
 				expectedOptInHostNetworkKSA: true,
-				expectedIdentityProvider:    "",
 			},
 			{
 				name: "should return correct mount options for private sidecar user's hostnetwork pod ksa opt in",
 				volumeContext: map[string]string{
 					VolumeContextKeyHostNetworkPodKSA: util.TrueStr,
 					VolumeContextKeyIdentityProvider:  "https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c",
+					VolumeContextKeyIdentityPool:      "projects/123/locations/global/workloadIdentityPools/pool/mypool",
 				},
 				expectedMountOptions:        []string{},
 				expectedOptInHostNetworkKSA: true,
 				expectedIdentityProvider:    "https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c",
+				expectedIdentityPool:        "projects/123/locations/global/workloadIdentityPools/pool/mypool",
+			},
+			{
+				name: "should return correct mount options for identity pool and provider",
+				volumeContext: map[string]string{
+					VolumeContextKeyIdentityProvider: "https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c",
+					VolumeContextKeyIdentityPool:     "projects/123/locations/global/workloadIdentityPools/pool/mypool",
+				},
+				expectedMountOptions:     []string{},
+				expectedIdentityProvider: "https://container.googleapis.com/v1/projects/p/locations/us-central1/clusters/c",
+				expectedIdentityPool:     "projects/123/locations/global/workloadIdentityPools/pool/mypool",
 			},
 			{
 				name:          "unexpected value for VolumeContextKeySkipCSIBucketAccessCheck",
@@ -575,7 +585,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Logf("test case: %s", tc.name)
-				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+				output, identityProvider, identityPool, skipCSIBucketAccessCheck, disableMetricsCollection, optInHostNetworkKSA, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 				if (err != nil) != tc.expectedErr {
 					t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 				}
@@ -588,6 +598,15 @@ func TestParseVolumeAttributes(t *testing.T) {
 				}
 				if tc.expectedDisableMetricsCollection != disableMetricsCollection {
 					t.Errorf("Got disableMetricsCollection %v, but expected %v", disableMetricsCollection, tc.expectedDisableMetricsCollection)
+				}
+				if tc.expectedOptInHostNetworkKSA != optInHostNetworkKSA {
+					t.Errorf("Got optInHostNetworkKSA %v, but expected %v", optInHostNetworkKSA, tc.expectedOptInHostNetworkKSA)
+				}
+				if tc.expectedIdentityProvider != identityProvider {
+					t.Errorf("Got identityProvider %v, but expected %v", identityProvider, tc.expectedIdentityProvider)
+				}
+				if tc.expectedIdentityPool != identityPool {
+					t.Errorf("Got identityPool %v, but expected %v", identityPool, tc.expectedIdentityPool)
 				}
 
 				less := func(a, b string) bool { return a > b }
