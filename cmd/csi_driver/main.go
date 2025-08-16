@@ -31,6 +31,8 @@ import (
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/scanner"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
@@ -41,10 +43,15 @@ var (
 	runController             = flag.Bool("controller", false, "run controller service")
 	runNode                   = flag.Bool("node", false, "run node service")
 	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	kubeAPIQPS                = flag.Float64("kube-api-qps", 5, "QPS to use while communicating with the kubernetes apiserver. Defaults to 5.0.")
+	kubeAPIBurst              = flag.Int("kube-api-burst", 10, "Burst to use while communicating with the kubernetes apiserver. Defaults to 10.")
 	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
+	featureScanner            = flag.Bool("scanner", false, "enable the bucket scanner feature")
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	retryIntervalStart        = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
+	retryIntervalMax          = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
 	fuseSocketDir             = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
 	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
 	maximumNumberOfCollectors = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
@@ -116,6 +123,19 @@ func main() {
 		}
 	}
 
+	featureOptions := &driver.GCFSDriverFeatureOptions{
+		FeatureScanner: &driver.FeatureScanner{
+			Enabled: *featureScanner,
+			Config: &scanner.ScannerConfig{
+				KubeAPIQPS:     *kubeAPIQPS,
+				KubeAPIBurst:   *kubeAPIBurst,
+				ResyncPeriod:   time.Duration(*informerResyncDurationSec),
+				KubeConfigPath: *kubeconfigPath,
+				RateLimiter:    workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+			},
+		},
+	}
+
 	config := &driver.GCSDriverConfig{
 		Name:                  driver.DefaultName,
 		Version:               version,
@@ -129,6 +149,7 @@ func main() {
 		MetricsManager:        mm,
 		DisableAutoconfig:     *disableAutoconfig,
 		WINodeLabelCheck:      *wiNodeLabelCheck,
+		FeatureOptions:        featureOptions,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

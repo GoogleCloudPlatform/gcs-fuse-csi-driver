@@ -18,21 +18,33 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
-	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/scanner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
+
+	csi "github.com/container-storage-interface/spec/lib/go/csi"
 )
 
 const DefaultName = "gcsfuse.csi.storage.gke.io"
+
+type FeatureScanner struct {
+	Enabled bool
+	Config  *scanner.ScannerConfig
+}
+
+type GCFSDriverFeatureOptions struct {
+	FeatureScanner *FeatureScanner
+}
 
 type GCSDriverConfig struct {
 	Name                  string // Driver name
@@ -47,6 +59,7 @@ type GCSDriverConfig struct {
 	MetricsManager        metrics.Manager
 	DisableAutoconfig     bool
 	WINodeLabelCheck      bool
+	FeatureOptions        *GCFSDriverFeatureOptions
 }
 
 type GCSDriver struct {
@@ -104,7 +117,11 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 		driver.addControllerServiceCapabilities(csc)
 
 		// Configure controller server
-		driver.cs = newControllerServer(driver, config.StorageServiceManager)
+		cs, err := newControllerServer(driver, config.StorageServiceManager, config.FeatureOptions)
+		if err != nil {
+			return nil, err
+		}
+		driver.cs = cs
 	}
 
 	return driver, nil
@@ -196,5 +213,9 @@ func (driver *GCSDriver) Run(endpoint string) {
 
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
+	if driver.config.RunController && driver.config.FeatureOptions.FeatureScanner.Enabled {
+		// Start the scanner on controller driver.
+		driver.cs.(*controllerServer).scanner.Run(context.Background())
+	}
 	s.Wait()
 }
