@@ -51,6 +51,7 @@ const (
 	testNameConcurrentOperations  = "concurrent_operations"
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
+	testNameRenameSymlink         = "rename_symlink"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -165,6 +166,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			return "v2.4.0"
 		}
 
+		// Rename_symlink tests are in separat test package only of v2.11.4 for now
+		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0"))) {
+			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
+		}
 		// By default, use the test code in the same release tag branch
 		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
 	}
@@ -285,6 +290,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
 			}
+		case testNameRenameSymlink:
+			finalTestCommand = baseTestCommandWithTestBucket
 		default:
 			finalTestCommand = baseTestCommand
 		}
@@ -621,6 +628,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-streaming-writes", testNameEnableStreamingWrites)
 		} else {
 			gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2")
+		}
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		if getClientProtocol(driver) == "grpc" {
+			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with rename-symlink", testNameRenameSymlink)
+		} else {
+			gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
 		}
 	})
 }
