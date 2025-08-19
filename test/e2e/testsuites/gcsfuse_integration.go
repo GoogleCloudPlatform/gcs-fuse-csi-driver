@@ -53,6 +53,7 @@ const (
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
 	testNameInactiveStreamTimeout = "inactive_stream_timeout"
+	testNameRenameSymlink         = "rename_symlink"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -197,6 +198,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameInactiveStreamTimeout, v.String())
 		}
 
+		// Rename_symlink tests are in separat test package only of v2.11.4 for now
+		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0"))) {
+			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
+		}
 		// By default, use the test code in the same release tag branch
 		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
 	}
@@ -330,6 +335,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
 			}
+		case testNameRenameSymlink:
+			finalTestCommand = baseTestCommandWithTestBucket
 		default:
 			finalTestCommand = baseTestCommand
 		}
@@ -696,5 +703,15 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		if getClientProtocol(driver) == "grpc" {
+			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with rename-symlink", testNameRenameSymlink)
+		} else {
+			gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
+		}
 	})
 }
