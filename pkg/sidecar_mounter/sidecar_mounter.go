@@ -475,23 +475,24 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 }
 
 // prepareStorageService prepares the GCS Storage 	Service using the Kubernetes Service Account from VolumeContext.
-func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager) (storage.Service, error) {
+func (m *Mounter) prepareStorageServiceWithRetry(_ context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager) (storage.Service, error) {
+	newCtx := context.Background()
 	backoff := wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
 		Cap:      60 * time.Minute,
 		Jitter:   0.1, // Adds randomness, this will give +/- 10% of the current delay
 	}
-	if deadline, ok := ctx.Deadline(); ok {
+	if deadline, ok := newCtx.Deadline(); ok {
 		klog.Infof("Context deadline before backoff: %v, Time now: %v", deadline, time.Now())
 	} else {
 		klog.Info("Context has no deadline before backoff.")
 	}
-	if ctx.Err() != nil {
-		klog.Errorf("Context error before backoff: %v", ctx.Err())
+	if newCtx.Err() != nil {
+		klog.Errorf("Context error before backoff: %v", newCtx.Err())
 	}
 	var storageService storage.Service
-	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+	err := wait.ExponentialBackoffWithContext(newCtx, backoff, func(ctx context.Context) (bool, error) {
 		klog.Info("Attempting to fetch token and setup storage service...")
 		// Verify token exchange before attempting storage client creation, token exchange might cause issues in storage API calls if not verified
 		token, err := fetchStsToken(ctx, tm)
