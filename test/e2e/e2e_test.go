@@ -118,15 +118,11 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseMountTestSuite,
 	}
 
-	//Disabling non hns tests because ZB is only valid for HNS enabled buckets
-	fmt.Sprintf("ZB flag is set to %v, skipping non HNS tests", *zbFlag)
-	if !*zbFlag {
-		testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag)
+	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag)
 
-		ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
-			storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
-		})
-	}
+	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
+		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
+	})
 
 	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,

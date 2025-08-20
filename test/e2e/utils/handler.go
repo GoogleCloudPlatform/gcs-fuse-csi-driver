@@ -83,10 +83,6 @@ const (
 
 func Handle(testParams *TestParameters) error {
 	// Validating the test parameters.
-	// ZB uses gRPC as the client protocol, so if ZB is enabled, the client protocol must be gRPC.
-	if testParams.GcsfuseClientProtocol != "grpc" && testParams.EnableZB {
-		klog.Fatalf("EnableZB %t is not supported with GcsfuseClientProtocol %q. Zonal buckets only supports GcsfuseClientProtocol grpc", testParams.EnableZB, testParams.GcsfuseClientProtocol)
-	}
 
 	oldMask := syscall.Umask(0o000)
 	defer syscall.Umask(oldMask)
