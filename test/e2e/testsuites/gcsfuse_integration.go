@@ -227,10 +227,15 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetImage(specs.GolangImage)
 		tPod.SetResource("1", "5Gi", "5Gi")
 		sidecarMemoryLimit := defaultSidecarMemoryLimit
+		sidecarMemoryRequest := defaultSidecarMemoryRequest
 
 		if testName == testNameWriteLargeFiles || testName == testNameReadLargeFiles {
 			tPod.SetResource("1", "6Gi", "5Gi")
 			sidecarMemoryLimit = "1Gi"
+			if zbEnabled(driver) {
+				sidecarMemoryRequest = "1Gi"
+				sidecarMemoryLimit = "2Gi"
+			}
 		}
 
 		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
@@ -243,7 +248,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "1",
-			"gke-gcsfuse/memory-request":          defaultSidecarMemoryRequest,
+			"gke-gcsfuse/memory-request":          sidecarMemoryRequest,
 			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})

@@ -119,6 +119,9 @@ func main() {
 		testParams.NumNodes = 1
 		testParams.NodeMachineType = "n2-standard-32"
 	}
+	if *gcsfuseEnableZB {
+		testParams.NodeMachineType = "n2-standard-8"
+	}
 
 	if err := utils.Handle(testParams); err != nil {
 		klog.Fatalf("Failed to run e2e test: %v", err)
