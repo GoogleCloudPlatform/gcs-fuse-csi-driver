@@ -208,3 +208,12 @@ func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 
 	return nil
 }
+
+func FetchK8sTokenFromFile(tokenPath string) (string, error) {
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading token file: %w", err)
+	}
+
+	return strings.TrimSpace(string(token)), nil
+}

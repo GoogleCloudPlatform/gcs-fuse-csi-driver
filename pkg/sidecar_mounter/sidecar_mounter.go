@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -38,15 +39,11 @@ import (
 	csimetadata "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 
-	"cloud.google.com/go/compute/metadata"
-	credentials "cloud.google.com/go/iam/credentials/apiv1"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/oauth2"
-	"google.golang.org/api/option"
-	"google.golang.org/api/sts/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -83,13 +80,15 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 	}
 	if mc.EnableSidecarBucketAccessCheckFlag {
-		err, tokenSource := m.fetchTokenSource(mc.ServiceAccountName, mc.PodNamespace)
+		err, tokenSource := m.fetchTokenSource(m.TokenManager)
 		if err != nil {
 			return fmt.Errorf("Failed to create token source, got error %q", err)
 		}
+
+		klog.Infof("Got token source %v", tokenSource)
 		storageService, err := m.prepareStorageServiceWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager)
 		if err != nil {
-			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service for service-account %s and namespace %s, failed with error: %v", mc.ServiceAccountName, mc.PodNamespace, err)
+			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
 		}
 
 		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: mc.BucketName}); !exist {
@@ -188,12 +187,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	return nil
 }
 
-func (m *Mounter) fetchTokenSource(serviceAccountName, podNamespace string) (error, oauth2.TokenSource) {
-	k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+func (m *Mounter) fetchTokenSource(tm auth.TokenManager) (error, oauth2.TokenSource) {
+	k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
 	if err != nil {
 		return fmt.Errorf("failed to get k8s token from path %v", err), nil
 	}
-	return nil, m.TokenManager.GetTokenSourceFromK8sServiceAccount(podNamespace, serviceAccountName, k8stoken)
+	return nil, m.TokenManager.GetTokenSourceFromK8sServiceAccountForSidecar(k8stoken, tm)
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.
@@ -343,78 +342,14 @@ func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWr
 	return nil
 }
 
-func getK8sTokenFromFile(tokenPath string) (string, error) {
-	token, err := os.ReadFile(tokenPath)
-	if err != nil {
-		return "", fmt.Errorf("error reading token file: %w", err)
-	}
-
-	return strings.TrimSpace(string(token)), nil
-}
-
-func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, tm auth.TokenManager) (*oauth2.Token, error) {
-	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
-	if err != nil {
-		return nil, fmt.Errorf("new STS service error: %w", err)
-	}
-	identityProvider := tm.GetIdentityProvider()
-	audience := fmt.Sprintf(
-		"identitynamespace:%s:%s",
-		tm.GetIdentityPool(),
-		identityProvider,
-	)
-	if identityProvider != "" {
-		audience, err = getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get audience from the context: %w", err)
-		}
-	}
-
-	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
-		Audience:           audience,
-		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
-		Scope:              credentials.DefaultAuthScopes()[0],
-		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
-		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		SubjectToken:       k8sSAToken,
-	}
-
-	stsResponse, err := stsService.V1.Token(stsRequest).Do()
-	if err != nil {
-		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w", audience, err)
-	}
-
-	return &oauth2.Token{
-		AccessToken: stsResponse.AccessToken,
-		TokenType:   stsResponse.TokenType,
-		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
-	}, nil
-}
-
-func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
-	projectID, err := metadata.ProjectIDWithContext(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get project ID: %w", err)
-	}
-
-	audience := fmt.Sprintf(
-		"identitynamespace:%s.svc.id.goog:%s",
-		projectID,
-		identityProvider,
-	)
-	klog.Infof("audience: %s", audience)
-
-	return audience, nil
-}
-
 func fetchStsToken(ctx context.Context, tm auth.TokenManager) (*oauth2.Token, error) {
 	var stsToken *oauth2.Token
-	k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+	k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
 	if err != nil {
 		klog.Errorf("failed to get k8s token from path %v", err)
 		return nil, err
 	}
-	stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, tm)
+	stsToken, err = auth.FetchIdentityBindingToken(ctx, k8stoken, tm)
 	if err != nil {
 		klog.Errorf("failed to get sts token %v", err)
 		return nil, err
@@ -475,47 +410,38 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 }
 
 // prepareStorageService prepares the GCS Storage 	Service using the Kubernetes Service Account from VolumeContext.
-func (m *Mounter) prepareStorageServiceWithRetry(_ context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager) (storage.Service, error) {
-	newCtx := context.Background()
+func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager) (storage.Service, error) {
 	backoff := wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
 		Cap:      60 * time.Minute,
-		Jitter:   0.1, // Adds randomness, this will give +/- 10% of the current delay
+		Steps:    math.MaxInt32, // Effectively infinite retry steps
+		Jitter:   0.1,           // Adds randomness, this will give +/- 10% of the current delay
 	}
-	if deadline, ok := newCtx.Deadline(); ok {
-		klog.Infof("Context deadline before backoff: %v, Time now: %v", deadline, time.Now())
-	} else {
-		klog.Info("Context has no deadline before backoff.")
-	}
-	if newCtx.Err() != nil {
-		klog.Errorf("Context error before backoff: %v", newCtx.Err())
-	}
-	var storageService storage.Service
-	err := wait.ExponentialBackoffWithContext(newCtx, backoff, func(ctx context.Context) (bool, error) {
-		klog.Info("Attempting to fetch token and setup storage service...")
+
+	var storageService *storage.Service
+	storageServiceCreationFunc := func(ctx context.Context) (bool, error) {
 		// Verify token exchange before attempting storage client creation, token exchange might cause issues in storage API calls if not verified
-		token, err := fetchStsToken(ctx, tm)
+		_, err := fetchStsToken(ctx, tm)
 		if err != nil {
-			klog.Errorf("error fetching initial token: %v, retrying...", err)
+			klog.Warningf("error fetching initial token: %v, retrying...", err)
 			return false, nil
 		}
-		klog.Warningf("Got token %+v", token)
 		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 		if err != nil {
-			klog.Warningf("Failed to setup storage service got error %q, retrying...", err)
+			fmt.Errorf("Failed to setup storage service got error %q, retrying...", err)
 			return false, nil
 		}
-		klog.Infof("Got storage service %v", ss)
-		storageService = ss
+		storageService = &ss
+		klog.Infof("Created storage service %v", storageService)
 		return true, nil
-	})
+	}
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, storageServiceCreationFunc)
 	if err != nil {
-		klog.Warningf("Returning from here, gor error %v and storage service %v", err, storageService)
 		return nil, err
 	}
 	klog.Infof("Successfully setup storage service")
-	return storageService, nil
+	return *storageService, nil
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {

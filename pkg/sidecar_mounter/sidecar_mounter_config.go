@@ -35,37 +35,37 @@ import (
 )
 
 const (
-	GCSFuseAppName                     = "gke-gcs-fuse-csi"
-	TempDir                            = "/temp-dir"
-	unixSocketBasePath                 = "unix://"
-	TokenFileName                      = "token.sock" // #nosec G101
-	identityProviderFlag               = "token-server-identity-provider"
-	identityPoolFlag                   = "token-server-identity-pool"
-	podNamespace                       = "pod-namespace"
-	serviceAccountName                 = "service-account-name"
+	GCSFuseAppName       = "gke-gcs-fuse-csi"
+	TempDir              = "/temp-dir"
+	unixSocketBasePath   = "unix://"
+	TokenFileName        = "token.sock" // #nosec G101
+	identityProviderFlag = "token-server-identity-provider"
+	identityPoolFlag     = "token-server-identity-pool"
+	// podNamespace                       = "pod-namespace"
+	// serviceAccountName                 = "service-account-name"
 	enableSidecarBucketAccessCheckFlag = "enable-sidecar-bucket-access-check-flag"
 	hostNetworkKSAOptInFlag            = "hnw-ksa"
 )
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor                     int                   `json:"-"`
-	VolumeName                         string                `json:"volumeName,omitempty"`
-	BucketName                         string                `json:"bucketName,omitempty"`
-	BufferDir                          string                `json:"-"`
-	CacheDir                           string                `json:"-"`
-	TempDir                            string                `json:"-"`
-	ConfigFile                         string                `json:"-"`
-	Options                            []string              `json:"options,omitempty"`
-	ErrWriter                          stderrWriterInterface `json:"-"`
-	FlagMap                            map[string]string     `json:"-"`
-	ConfigFileFlagMap                  map[string]string     `json:"-"`
-	TokenServerIdentityProvider        string                `json:"-"`
-	HostNetworkKSAOptIn                bool                  `json:"-"`
-	PodNamespace                       string                `json:"-"`
-	ServiceAccountName                 string                `json:"-"`
-	EnableSidecarBucketAccessCheckFlag bool                  `json:"-"`
-	TokenServerIdentityPool            string                `json:"-"`
+	FileDescriptor              int                   `json:"-"`
+	VolumeName                  string                `json:"volumeName,omitempty"`
+	BucketName                  string                `json:"bucketName,omitempty"`
+	BufferDir                   string                `json:"-"`
+	CacheDir                    string                `json:"-"`
+	TempDir                     string                `json:"-"`
+	ConfigFile                  string                `json:"-"`
+	Options                     []string              `json:"options,omitempty"`
+	ErrWriter                   stderrWriterInterface `json:"-"`
+	FlagMap                     map[string]string     `json:"-"`
+	ConfigFileFlagMap           map[string]string     `json:"-"`
+	TokenServerIdentityProvider string                `json:"-"`
+	HostNetworkKSAOptIn         bool                  `json:"-"`
+	// PodNamespace                       string                `json:"-"`
+	// ServiceAccountName                 string                `json:"-"`
+	EnableSidecarBucketAccessCheckFlag bool   `json:"-"`
+	TokenServerIdentityPool            string `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -263,12 +263,14 @@ func (mc *MountConfig) prepareMountArgs() {
 			continue
 		}
 
-		if flag == podNamespace {
-			mc.PodNamespace = value
-		}
-		if flag == serviceAccountName {
-			mc.ServiceAccountName = value
-		}
+		// if flag == podNamespace {
+		// 	mc.PodNamespace = value
+		// 	continue
+		// }
+		// if flag == serviceAccountName {
+		// 	mc.ServiceAccountName = value
+		// 	continue
+		// }
 
 		switch {
 		case boolFlags[flag] && value != "":

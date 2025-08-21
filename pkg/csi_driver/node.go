@@ -157,8 +157,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 		identityPool = s.driver.config.TokenManager.GetIdentityPool()
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
-			"pod-namespace=" + vc[VolumeContextKeyPodNamespace],
-			"service-account-name=" + vc[VolumeContextKeyServiceAccountName],
 			"enable-sidecar-bucket-access-check-flag=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheckFlag),
 			"token-server-identity-pool=" + identityPool})
 	}
