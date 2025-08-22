@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/profiler"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -47,6 +48,16 @@ func main() {
 	flag.Parse()
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
+	cfg := profiler.Config{
+		Service:        "gke-gcsfuse-sidecar",
+		ServiceVersion: "0.1.0",
+	}
+	if err := profiler.Start(cfg); err != nil {
+		klog.Errorf("Errored while starting cloud profiler, got %v", err)
+	} else {
+		klog.Infof("Running cloud profiler on %s", cfg.Service)
+	}
+
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPaths, err := filepath.Glob(socketPathPattern)
 	if err != nil {

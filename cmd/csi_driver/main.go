@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"cloud.google.com/go/profiler"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
@@ -50,6 +51,7 @@ var (
 	maximumNumberOfCollectors = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
 	disableAutoconfig         = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type")
 	wiNodeLabelCheck          = flag.Bool("wi-node-label-check", true, "Workload Identity node label check")
+	enableCloudProfiler       = flag.Bool("enable-cloud-profiler", false, "Enable cloud profiler to collect analysis data")
 	// These are set at compile time.
 	version = "unknown"
 )
@@ -57,6 +59,19 @@ var (
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	if *enableCloudProfiler {
+		cfg := profiler.Config{
+			Service:        "gcs-fuse-csi-driver",
+			ServiceVersion: "0.1.0",
+		}
+		if err := profiler.Start(cfg); err != nil {
+			klog.Errorf("Errored while starting cloud profiler, got %v", err)
+		} else {
+			klog.Infof("Running cloud profiler on %s", cfg.Service)
+		}
+
+	}
 
 	if *enableProfiling {
 		mux := http.NewServeMux()
