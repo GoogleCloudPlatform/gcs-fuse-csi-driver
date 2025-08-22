@@ -229,6 +229,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 			expectedDisableMetricsCollection bool
 			expectedOptInHostNetworkKSA      bool
 			expectedIdentityProvider         string
+			expectedIdentityPool         string
 			expectedErr                      bool
 		}{
 			{
@@ -575,7 +576,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Logf("test case: %s", tc.name)
-				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, _, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 				if (err != nil) != tc.expectedErr {
 					t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 				}

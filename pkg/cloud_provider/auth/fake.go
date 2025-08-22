@@ -35,11 +35,27 @@ func (tm *fakeTokenManager) GetIdentityProvider() string {
 	return "fake.identity.provider"
 }
 
+func (tm *fakeTokenManager) GetIdentityPool() string {
+	return "fake.identity.pool"
+}
+
 type FakeGCPTokenSource struct {
 	k8sSAName      string
 	k8sSANamespace string
 }
 
+type FakeGCPSidecarTokenSource struct {
+	tokenManager TokenManager
+}
+
 func (ts *FakeGCPTokenSource) Token() (*oauth2.Token, error) {
 	return &oauth2.Token{}, nil
+}
+
+func (ts *FakeGCPSidecarTokenSource) Token() (*oauth2.Token, error) {
+	return &oauth2.Token{}, nil
+}
+
+func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccountForSidecar(_ string, tokenManager TokenManager) oauth2.TokenSource {
+	return &FakeGCPSidecarTokenSource{tokenManager: tokenManager}
 }

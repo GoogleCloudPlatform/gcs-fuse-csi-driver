@@ -35,12 +35,16 @@ import (
 )
 
 const (
-	GCSFuseAppName          = "gke-gcs-fuse-csi"
-	TempDir                 = "/temp-dir"
-	unixSocketBasePath      = "unix://"
-	TokenFileName           = "token.sock" // #nosec G101
-	identityProviderFlag    = "token-server-identity-provider"
-	hostNetworkKSAOptInFlag = "hnw-ksa"
+	GCSFuseAppName       = "gke-gcs-fuse-csi"
+	TempDir              = "/temp-dir"
+	unixSocketBasePath   = "unix://"
+	TokenFileName        = "token.sock" // #nosec G101
+	identityProviderFlag = "token-server-identity-provider"
+	identityPoolFlag     = "token-server-identity-pool"
+	// podNamespace                       = "pod-namespace"
+	// serviceAccountName                 = "service-account-name"
+	enableSidecarBucketAccessCheckFlag = "enable-sidecar-bucket-access-check-flag"
+	hostNetworkKSAOptInFlag            = "hnw-ksa"
 )
 
 // MountConfig contains the information gcsfuse needs.
@@ -58,6 +62,10 @@ type MountConfig struct {
 	ConfigFileFlagMap           map[string]string     `json:"-"`
 	TokenServerIdentityProvider string                `json:"-"`
 	HostNetworkKSAOptIn         bool                  `json:"-"`
+	// PodNamespace                       string                `json:"-"`
+	// ServiceAccountName                 string                `json:"-"`
+	EnableSidecarBucketAccessCheckFlag bool   `json:"-"`
+	TokenServerIdentityPool            string `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -240,10 +248,29 @@ func (mc *MountConfig) prepareMountArgs() {
 			continue
 		}
 
+		if flag == identityPoolFlag {
+			mc.TokenServerIdentityPool = value
+			continue
+		}
+
 		if flag == hostNetworkKSAOptInFlag {
 			mc.HostNetworkKSAOptIn = value == util.TrueStr
 			continue
 		}
+
+		if flag == enableSidecarBucketAccessCheckFlag {
+			mc.EnableSidecarBucketAccessCheckFlag = value == util.TrueStr
+			continue
+		}
+
+		// if flag == podNamespace {
+		// 	mc.PodNamespace = value
+		// 	continue
+		// }
+		// if flag == serviceAccountName {
+		// 	mc.ServiceAccountName = value
+		// 	continue
+		// }
 
 		switch {
 		case boolFlags[flag] && value != "":

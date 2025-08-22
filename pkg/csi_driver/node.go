@@ -87,7 +87,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
+	targetPath, bucketName, userSpecifiedIdentityProvider, identityPool, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -137,16 +137,28 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
-
-	if s.shouldPopulateIdentifyProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
-		identityProvider := ""
+	identityProvider := ""
+	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
 		if userSpecifiedIdentityProvider != "" {
 			identityProvider = userSpecifiedIdentityProvider
 		} else {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 		}
-		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
+		klog.V(6).Infof("NodePublishVolume populating identity provider %q and identity pool %q in mount options", identityProvider, identityPool)
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+	}
+
+	if s.driver.config.EnableSidecarBucketAccessCheckFlag {
+		if identityProvider == "" {
+			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
+			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"token-server-identity-provider=" + identityProvider})
+		}
+		klog.Infof("Got identity provider %s", identityProvider)
+
+		identityPool = s.driver.config.TokenManager.GetIdentityPool()
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
+			"enable-sidecar-bucket-access-check-flag=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheckFlag),
+			"token-server-identity-pool=" + identityPool})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -334,7 +346,7 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 	return storageService, nil
 }
 
-func (s *nodeServer) shouldPopulateIdentifyProvider(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {
+func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {
 	if !optInHnwKSA {
 		return false
 	}

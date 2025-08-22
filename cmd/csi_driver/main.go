@@ -36,20 +36,22 @@ import (
 )
 
 var (
-	endpoint                  = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID                    = flag.String("nodeid", "", "node id")
-	runController             = flag.Bool("controller", false, "run controller service")
-	runNode                   = flag.Bool("node", false, "run node service")
-	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
-	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
-	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
-	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
-	fuseSocketDir             = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
-	metricsEndpoint           = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
-	maximumNumberOfCollectors = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
-	disableAutoconfig         = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type")
-	wiNodeLabelCheck          = flag.Bool("wi-node-label-check", true, "Workload Identity node label check")
+	endpoint                           = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID                             = flag.String("nodeid", "", "node id")
+	runController                      = flag.Bool("controller", false, "run controller service")
+	runNode                            = flag.Bool("node", false, "run node service")
+	kubeconfigPath                     = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	identityPool                       = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider                   = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	enableProfiling                    = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
+	informerResyncDurationSec          = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	fuseSocketDir                      = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
+	metricsEndpoint                    = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
+	maximumNumberOfCollectors          = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
+	disableAutoconfig                  = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type")
+	wiNodeLabelCheck                   = flag.Bool("wi-node-label-check", true, "Workload Identity node label check")
+	enableSidecarBucketAccessCheckFlag = flag.Bool("enable-sidecar-bucket-access-check-flag", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver")
+
 	// These are set at compile time.
 	version = "unknown"
 )
@@ -117,18 +119,19 @@ func main() {
 	}
 
 	config := &driver.GCSDriverConfig{
-		Name:                  driver.DefaultName,
-		Version:               version,
-		NodeID:                *nodeID,
-		RunController:         *runController,
-		RunNode:               *runNode,
-		StorageServiceManager: ssm,
-		TokenManager:          tm,
-		Mounter:               mounter,
-		K8sClients:            clientset,
-		MetricsManager:        mm,
-		DisableAutoconfig:     *disableAutoconfig,
-		WINodeLabelCheck:      *wiNodeLabelCheck,
+		Name:                               driver.DefaultName,
+		Version:                            version,
+		NodeID:                             *nodeID,
+		RunController:                      *runController,
+		RunNode:                            *runNode,
+		StorageServiceManager:              ssm,
+		TokenManager:                       tm,
+		Mounter:                            mounter,
+		K8sClients:                         clientset,
+		MetricsManager:                     mm,
+		DisableAutoconfig:                  *disableAutoconfig,
+		WINodeLabelCheck:                   *wiNodeLabelCheck,
+		EnableSidecarBucketAccessCheckFlag: *enableSidecarBucketAccessCheckFlag,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)
