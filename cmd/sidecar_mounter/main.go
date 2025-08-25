@@ -49,8 +49,7 @@ func main() {
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 	cfg := profiler.Config{
-		Service:        "gke-gcsfuse-sidecar",
-		ServiceVersion: "0.1.0",
+		Service: "gke-gcsfuse-sidecar",
 	}
 	if err := profiler.Start(cfg); err != nil {
 		klog.Errorf("Errored while starting cloud profiler, got %v", err)
