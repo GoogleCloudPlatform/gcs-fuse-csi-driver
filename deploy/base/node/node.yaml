@@ -55,7 +55,7 @@ spec:
             - --identity-pool=$(IDENTITY_POOL)
             - --metrics-endpoint=:9920
             - --max-metric-collectors=10
-            - --enable-cloud-profiler=true
+            - --enable-cloud-profiler-for-driver=false
           ports:
           - containerPort: 9920
             name: metrics

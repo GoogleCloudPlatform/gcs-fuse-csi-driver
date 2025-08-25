@@ -222,14 +222,15 @@ func TestParseVolumeAttributes(t *testing.T) {
 	t.Run("parsing volume attributes into mount options", func(t *testing.T) {
 		t.Parallel()
 		testCases := []struct {
-			name                             string
-			volumeContext                    map[string]string
-			expectedMountOptions             []string
-			expectedSkipBucketAccessCheck    bool
-			expectedDisableMetricsCollection bool
-			expectedOptInHostNetworkKSA      bool
-			expectedIdentityProvider         string
-			expectedErr                      bool
+			name                                  string
+			volumeContext                         map[string]string
+			expectedMountOptions                  []string
+			expectedSkipBucketAccessCheck         bool
+			expectedDisableMetricsCollection      bool
+			expectedOptInHostNetworkKSA           bool
+			expectedIdentityProvider              string
+			expectedErr                           bool
+			expectedEnableCloudProfilerForSidecar bool
 		}{
 			{
 				name:                 "should return correct fileCacheCapacity 1",
@@ -570,12 +571,18 @@ func TestParseVolumeAttributes(t *testing.T) {
 				expectedMountOptions:             []string{volumeAttributesToMountOptionsMapping[VolumeContextKeyDisableMetrics] + util.FalseStr},
 				expectedDisableMetricsCollection: false,
 			},
+			{
+				name:                                  "value set to true for VolumeContextEnableCloudProfilerForSidecar",
+				volumeContext:                         map[string]string{VolumeContextEnableCloudProfilerForSidecar: util.TrueStr},
+				expectedMountOptions:                  []string{},
+				expectedEnableCloudProfilerForSidecar: true,
+			},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Logf("test case: %s", tc.name)
-				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, enableCloudProfilerForSidecar, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 				if (err != nil) != tc.expectedErr {
 					t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 				}
@@ -588,6 +595,9 @@ func TestParseVolumeAttributes(t *testing.T) {
 				}
 				if tc.expectedDisableMetricsCollection != disableMetricsCollection {
 					t.Errorf("Got disableMetricsCollection %v, but expected %v", disableMetricsCollection, tc.expectedDisableMetricsCollection)
+				}
+				if tc.expectedEnableCloudProfilerForSidecar != enableCloudProfilerForSidecar {
+					t.Errorf("Got enableCloudProfilerForSidecar %v, but expected %v", enableCloudProfilerForSidecar, tc.expectedEnableCloudProfilerForSidecar)
 				}
 
 				less := func(a, b string) bool { return a > b }
