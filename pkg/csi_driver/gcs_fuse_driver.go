@@ -35,18 +35,19 @@ import (
 const DefaultName = "gcsfuse.csi.storage.gke.io"
 
 type GCSDriverConfig struct {
-	Name                  string // Driver name
-	Version               string // Driver version
-	NodeID                string // Node name
-	RunController         bool   // Run CSI controller service
-	RunNode               bool   // Run CSI node service
-	StorageServiceManager storage.ServiceManager
-	TokenManager          auth.TokenManager
-	Mounter               mount.Interface
-	K8sClients            clientset.Interface
-	MetricsManager        metrics.Manager
-	DisableAutoconfig     bool
-	WINodeLabelCheck      bool
+	Name                          string // Driver name
+	Version                       string // Driver version
+	NodeID                        string // Node name
+	RunController                 bool   // Run CSI controller service
+	RunNode                       bool   // Run CSI node service
+	StorageServiceManager         storage.ServiceManager
+	TokenManager                  auth.TokenManager
+	Mounter                       mount.Interface
+	K8sClients                    clientset.Interface
+	MetricsManager                metrics.Manager
+	DisableAutoconfig             bool
+	WINodeLabelCheck              bool
+	EnableCloudProfilerForSidecar bool
 }
 
 type GCSDriver struct {
