@@ -36,8 +36,11 @@ const (
 func initTestController(t *testing.T) csi.ControllerServer {
 	t.Helper()
 	driver := initTestDriver(t, nil)
-
-	return newControllerServer(driver, driver.config.StorageServiceManager)
+	cs, err := newControllerServer(driver, driver.config.StorageServiceManager, &GCSDriverFeatureOptions{FeatureScanner: &FeatureScanner{}})
+	if err != nil {
+		t.Fatalf("newControllerServer failed: %v", err)
+	}
+	return cs
 }
 
 func TestCreateVolume(t *testing.T) {

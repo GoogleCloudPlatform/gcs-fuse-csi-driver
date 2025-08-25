@@ -18,6 +18,7 @@ limitations under the License.
 package sanitytest
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -70,6 +71,7 @@ func TestSanity(t *testing.T) {
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
 		K8sClients:            clientset.NewFakeClientset(),
 		MetricsManager:        &metrics.FakeMetricsManager{},
+		FeatureOptions:        &driver.GCSDriverFeatureOptions{FeatureScanner: &driver.FeatureScanner{}},
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(driverConfig)
@@ -78,7 +80,7 @@ func TestSanity(t *testing.T) {
 	}
 
 	go func() {
-		gcfsDriver.Run(endpoint)
+		gcfsDriver.Run(context.Background(), endpoint)
 	}()
 
 	// Run test
