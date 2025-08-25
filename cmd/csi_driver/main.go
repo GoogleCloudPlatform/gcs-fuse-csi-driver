@@ -73,8 +73,7 @@ func main() {
 
 	if *enableCloudProfiler {
 		cfg := profiler.Config{
-			Service:        "gcs-fuse-csi-driver",
-			ServiceVersion: "0.1.0",
+			Service: "gcs-fuse-csi-driver",
 		}
 		if err := profiler.Start(cfg); err != nil {
 			klog.Errorf("Errored while starting cloud profiler, got %v", err)
