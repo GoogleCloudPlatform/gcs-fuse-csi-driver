@@ -41,7 +41,8 @@ import (
 const (
 	UmountTimeout = time.Second * 5
 
-	FuseMountType = "fuse"
+	FuseMountType                      = "fuse"
+	EnableCloudProfilerForSidecarConst = "enable-cloud-profiler-for-sidecar"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -150,7 +151,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	if enableCloudProfilerForSidecar {
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"enable-cloud-profiler-for-sidecar=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
