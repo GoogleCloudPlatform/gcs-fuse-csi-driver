@@ -27,6 +27,14 @@ spec:
   csi:
     driver: gcsfuse.csi.storage.gke.io
     volumeHandle: test-bucket
+    volumeAttributes:
+      # Optional: The timeout for the bucket scan operation before giving up and delivering
+      # partial results. The default is 2m.
+      # bucketScanTimeout: 2m 
+      # Optional: The TTL for the the bucket scan operation. New PV / Pod creation events won't
+      # trigger the scanner until at least this amount of time has passed since the previous
+      # scan. The default is 168h (7 days).
+      # bucketScanTTL: 168h
   mountOptions:
   - only-dir=/my-folder/
 ---
