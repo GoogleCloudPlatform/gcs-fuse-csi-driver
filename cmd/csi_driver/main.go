@@ -47,6 +47,7 @@ var (
 	kubeAPIQPS                = flag.Float64("kube-api-qps", 5, "QPS to use while communicating with the kubernetes apiserver. Defaults to 5.0.")
 	kubeAPIBurst              = flag.Int("kube-api-burst", 10, "Burst to use while communicating with the kubernetes apiserver. Defaults to 10.")
 	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	customAudience            = flag.String("custom-audience", "", "The custom Identity Pool to authenticate with GCS API.")
 	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling           = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 	enableBucketScanner       = flag.Bool("enable-bucket-scanner", false, "enable the bucket scanner feature")
@@ -95,7 +96,7 @@ func main() {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
-	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider, *customAudience)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}
