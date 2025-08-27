@@ -162,6 +162,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		klog.V(4).Infof("%v closing the socket and fd", logPrefix)
 		listener.Close()
 		syscall.Close(fd)
+
 	}()
 
 	// Asynchronously waiting for the sidecar container to connect to the listener
