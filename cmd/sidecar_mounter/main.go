@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/profiler"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -47,6 +48,7 @@ func main() {
 	flag.Parse()
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
+
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPaths, err := filepath.Glob(socketPathPattern)
 	if err != nil {
@@ -75,6 +77,16 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
+		if mc.EnableCloudProfilerForSidecar {
+			cfg := profiler.Config{
+				Service: "gke-gcsfuse-sidecar",
+			}
+			if err := profiler.Start(cfg); err != nil {
+				klog.Errorf("Errored while starting cloud profiler, got %v", err)
+			} else {
+				klog.Infof("Running cloud profiler on %s", cfg.Service)
+			}
+		}
 		if mc != nil {
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))

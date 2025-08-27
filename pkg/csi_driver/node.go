@@ -41,7 +41,8 @@ import (
 const (
 	UmountTimeout = time.Second * 5
 
-	FuseMountType = "fuse"
+	FuseMountType                      = "fuse"
+	EnableCloudProfilerForSidecarConst = "enable-cloud-profiler-for-sidecar"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -87,7 +88,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
+	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -147,6 +148,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+	}
+
+	if enableCloudProfilerForSidecar {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
