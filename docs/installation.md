@@ -37,15 +37,15 @@ limitations under the License.
   ```
 
 - Create a standard GKE cluster with [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) enabled. Autopilot clusters are not supported for manual installation.
-- Run the following commands to create a n2-standard-4 GKE cluster with Workload Identity enabled. Note other machine types may experience out of memory failures when running e2e tests.
+- Run the following commands to create a n2-standard-8 GKE cluster with Workload Identity enabled. Note other machine types may experience out of memory failures when running e2e tests.
 
   ```bash
   CLUSTER_PROJECT_ID=<cluster-project-id>
   CLUSTER_NAME=<cluster-name>
-  gcloud container clusters create ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog --machine-type=n2-standard-4
+  gcloud container clusters create ${CLUSTER_NAME} --workload-pool=${CLUSTER_PROJECT_ID}.svc.id.goog --machine-type=n2-standard-8
   ```
 
-- For an existing cluster, run the following commands to enable Workload Identity. Make sure machine type has enough memory if running e2e tests. Consider using machine type n2-standard-4.
+- For an existing cluster, run the following commands to enable Workload Identity. Make sure machine type has enough memory if running e2e tests. Consider using machine type n2-standard-8.
 
   ```bash
   CLUSTER_PROJECT_ID=<cluster-project-id>

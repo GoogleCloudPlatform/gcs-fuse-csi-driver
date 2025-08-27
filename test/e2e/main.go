@@ -35,7 +35,7 @@ var (
 	gkeClusterVersion   = flag.String("gke-cluster-version", "", "GKE cluster worker master and node version")
 	gkeReleaseChannel   = flag.String("gke-release-channel", "rapid", "GKE cluster release channel")
 	gkeNodeVersion      = flag.String("gke-node-version", "", "GKE cluster worker node version")
-	nodeMachineType     = flag.String("node-machine-type", "n1-standard-2", "GKE cluster worker node machine type")
+	nodeMachineType     = flag.String("node-machine-type", "n2-standard-8", "GKE cluster worker node machine type")
 	numNodes            = flag.Int("number-nodes", 3, "number of nodes in the test cluster")
 	useGKEAutopilot     = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
 	apiEndpointOverride = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
@@ -118,9 +118,6 @@ func main() {
 		testParams.GinkgoTimeout = "180m"
 		testParams.NumNodes = 1
 		testParams.NodeMachineType = "n2-standard-32"
-	}
-	if *gcsfuseEnableZB {
-		testParams.NodeMachineType = "n2-standard-8"
 	}
 
 	if err := utils.Handle(testParams); err != nil {
