@@ -65,6 +65,7 @@ type Service interface {
 type ServiceManager interface {
 	SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error)
 	SetupServiceWithDefaultCredential(ctx context.Context, enableZB bool) (Service, error)
+	SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error)
 }
 
 type gcsService struct {
@@ -383,4 +384,17 @@ func isBucketAZonalBucket(ctx context.Context, client *storage.Client, bucketNam
 		return false, fmt.Errorf("failed to get attributes for bucket %q: %w", bucketName, err)
 	}
 	return attrs.StorageClass == "RAPID", nil
+}
+
+func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
+	var err error
+	var storageClient *storage.Client
+	client := oauth2.NewClient(ctx, ts)
+	storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		klog.Errorf("Errored while creating with tokensource %v", err)
+		return nil, err
+	}
+	klog.Infof("Storage service client created successfully, %v", storageClient)
+	return &gcsService{storageClient: storageClient}, nil
 }
