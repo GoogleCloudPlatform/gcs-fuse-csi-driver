@@ -27,12 +27,16 @@ func NewFakeTokenManager() TokenManager {
 	return &fakeTokenManager{}
 }
 
-func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, _ string) oauth2.TokenSource {
+func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, _, _ string, _ bool) oauth2.TokenSource {
 	return &FakeGCPTokenSource{k8sSAName: saName, k8sSANamespace: saNamespace}
 }
 
 func (tm *fakeTokenManager) GetIdentityProvider() string {
 	return "fake.identity.provider"
+}
+
+func (tm *fakeTokenManager) GetIdentityPool() string {
+	return "fake.identity.pool"
 }
 
 type FakeGCPTokenSource struct {
