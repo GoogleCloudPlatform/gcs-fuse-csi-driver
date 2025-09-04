@@ -50,3 +50,45 @@ spec:
       storage: 10Gi
   volumeName: my-pv
   storageClassName: gcsfusecsi-inference 
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+        # TODO(urielguzman): Remove when mutating webhook injects this.
+        gke-gcsfuse/profile-managed: "true"
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        # Feature flag
+        gke-gcsfuse/profiles: "true"
+    spec:
+      serviceAccountName: my-ksa
+      containers:
+      - name: my-container
+        image: nginx:latest
+        volumeMounts:
+        - name: my-gcs-volume
+          mountPath: "/data/gcs"
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 80Mi
+      volumes:
+      - name: my-gcs-volume
+        persistentVolumeClaim:
+          claimName: my-pvc
+      schedulingGates:
+        # TODO(urielguzman): Remove when mutating webhook injects this.
+        - name: "gke-gcsfuse/bucket-scan-pending"
