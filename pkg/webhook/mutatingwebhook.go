@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"cloud.google.com/go/compute/metadata"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -44,6 +45,7 @@ const (
 	ephemeralStorageRequestAnnotation       = "gke-gcsfuse/ephemeral-storage-request"
 	metadataPrefetchMemoryLimitAnnotation   = "gke-gcsfuse/metadata-prefetch-memory-limit"
 	metadataPrefetchMemoryRequestAnnotation = "gke-gcsfuse/metadata-prefetch-memory-request"
+	GcsfuseProfilesAnnotation               = "gke-gcsfuse/profiles"
 )
 
 type SidecarInjector struct {
@@ -127,10 +129,132 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
+	if si.Config.EnableGcsfuseProfiles {
+		klog.Infof("GCSFuse profiles feature flag is enabled")
+		// Handle gcsfuse profiles spec modifications if using gcsfuse profile enabled buckets
+		areProfilesEnabled, err := IsGCSFuseProfilesEnabled(pod)
+		if err != nil {
+			return admission.Errored(http.StatusBadRequest, err)
+		}
+		if areProfilesEnabled {
+			err = ModifyPodSpecForGCSFuseProfiles(pod)
+			if err != nil {
+				return admission.Errored(http.StatusBadRequest, err)
+			}
+		}
+	}
+
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
+}
+
+// Modifies the pod spec to add gcsfuse profile related features. This includes adding a label, scheduling gate, and placeholder file cache volumes
+func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod) error {
+	// Always apply the gcsfuse profile label when gcsfuse profiles are enabled for pod informer's Kubernetes API efficient filtering
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[GcsfuseProfilesManagedLabel] = "true"
+
+	// Always apply the scheduling gate when the gcsfuse profiles are enabled. The controller will handle the logistics if its not needed
+	profilesGate := corev1.PodSchedulingGate{Name: BucketScanPendingSchedulingGate}
+
+	// Check if the gate is already present.
+	gateExists := slices.ContainsFunc(pod.Spec.SchedulingGates, func(gate corev1.PodSchedulingGate) bool {
+		return gate.Name == profilesGate.Name
+	})
+
+	// Only append the gate if it does not already exist
+	if !gateExists {
+		pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, profilesGate)
+	} else {
+		klog.Warningf("Pod %s/%s already has the %s scheduling gate, skipping injection of gcsfuse profiles scheduling gate.", pod.Namespace, pod.Name, BucketScanPendingSchedulingGate)
+	}
+
+	// Inject placeholder file cache volumes
+	if !volumeExists(pod.Spec.Volumes, SidecarContainerFileCacheEphemeralDiskVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name:         SidecarContainerFileCacheEphemeralDiskVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	} else {
+		klog.Warningf("Pod %s/%s already has a volume named %s, skipping injection of ephemeral file cache volume for gcsfuse sidecar.", pod.Namespace, pod.Name, SidecarContainerFileCacheEphemeralDiskVolumeName)
+	}
+	if !volumeExists(pod.Spec.Volumes, SidecarContainerFileCacheRamDiskVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: SidecarContainerFileCacheRamDiskVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium: corev1.StorageMediumMemory,
+				},
+			},
+		})
+	} else {
+		klog.Warningf("Pod %s/%s already has a volume named %s, skipping injection of ram file cache volume for gcsfuse sidecar.", pod.Namespace, pod.Name, SidecarContainerFileCacheRamDiskVolumeName)
+	}
+
+	// Apply file cache volume mounts to side car container
+	mountsToAdd := []corev1.VolumeMount{ephemeralFileCacheVolumeMount, ramFileCacheVolumeMount}
+
+	addMounts := func(c *corev1.Container) {
+		for _, mount := range mountsToAdd {
+			if !volumeMountExists(c.VolumeMounts, mount.Name) {
+				c.VolumeMounts = append(c.VolumeMounts, mount)
+			} else {
+				klog.Warningf("Pod %s/%s gcsfuse sidecar container already has a volume mount named %s, skipping injection of file cache mount in gcsfuse sidecar.", pod.Namespace, pod.Name, mount.Name)
+			}
+		}
+	}
+
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == GcsFuseSidecarName {
+			// Found the sidecar as an init container, now add mounts safely
+			addMounts(&pod.Spec.InitContainers[i])
+			return nil
+		}
+	}
+	for i := range pod.Spec.Containers {
+		if pod.Spec.Containers[i].Name == GcsFuseSidecarName {
+			// Found the sidecar as a container, now add mounts safely
+			addMounts(&pod.Spec.Containers[i])
+			return nil
+		}
+	}
+	klog.Errorf("Could not find gcsfuse sidecar container in pod %s/%s to add gcsfuse profile file cache mounts.", pod.Namespace, pod.Name)
+	return fmt.Errorf("could not find gcsfuse sidecar container in pod %s/%s to add gcsfuse profile file cache mounts.", pod.Namespace, pod.Name)
+}
+
+// Checks if the pod has gcsfuse profiles annotation. returns true if the annotation is present and set to "true" (case insensitive), false otherwise
+func IsGCSFuseProfilesEnabled(pod *corev1.Pod) (bool, error) {
+	// Check if pod has gcsfuse profiles annotation set to true
+	if pod.Annotations == nil {
+		return false, nil
+	}
+	value, ok := pod.Annotations[GcsfuseProfilesAnnotation]
+	if !ok {
+		return false, nil
+	}
+	valueAsBool, err := ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", GcsfuseProfilesAnnotation)
+	}
+	return valueAsBool, nil
+}
+
+// volumeExists checks if a volume with a specific name already exists in the pod's volumes
+func volumeExists(volumes []corev1.Volume, name string) bool {
+	return slices.ContainsFunc(volumes, func(v corev1.Volume) bool {
+		return v.Name == name
+	})
+}
+
+// volumeMountExists checks if a volume mount with a specific name already exists in a slice of volume mounts
+func volumeMountExists(volumeMounts []corev1.VolumeMount, name string) bool {
+	return slices.ContainsFunc(volumeMounts, func(vm corev1.VolumeMount) bool {
+		return vm.Name == name
+	})
 }

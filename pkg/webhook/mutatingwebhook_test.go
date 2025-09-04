@@ -42,6 +42,8 @@ import (
 var istioContainer = corev1.Container{
 	Name: IstioSidecarName,
 }
+var testNamespace = "default"
+var csiDriverName = "gcs-fuse-csi.storage.gke.io"
 
 func TestPrepareConfig(t *testing.T) {
 	t.Parallel()
@@ -944,5 +946,452 @@ func skewVersionNodes() []corev1.Node {
 				},
 			},
 		},
+	}
+}
+
+func TestIsGCSFuseProfilesEnabled(t *testing.T) {
+
+	tests := []struct {
+		name      string
+		pod       *corev1.Pod
+		spEnabled bool
+		expectErr bool
+	}{
+		{
+			name: "pod with profiles enabled",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsfuseProfilesAnnotation: "true",
+					},
+				},
+
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+				},
+			},
+			spEnabled: true,
+		},
+		{
+			name: "pod with profiles enabled but TRUE",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsfuseProfilesAnnotation: "TRUE",
+					},
+				},
+
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+				},
+			},
+			spEnabled: false,
+			expectErr: true,
+		},
+		{
+			name: "pod with profiles annotation set to false",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsfuseProfilesAnnotation: "False",
+					},
+				},
+
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+				},
+			},
+			spEnabled: false,
+		},
+		{
+			name: "pod with wrong annotation",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						"some other label": "true",
+					},
+				},
+
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+				},
+			},
+			spEnabled: false,
+		},
+		{
+			name: "pod with no annotation",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+				},
+
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+				},
+			},
+			spEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsGCSFuseProfilesEnabled(tt.pod)
+			if err != nil && tt.expectErr == false {
+				t.Errorf("IsGCSFuseProfilesEnabled() unexpected error: %v", err)
+			}
+			if tt.expectErr == true && err == nil {
+				t.Errorf("IsGCSFuseProfilesEnabled() expected error but didn't get one")
+			}
+			if got != tt.spEnabled {
+				t.Errorf("IsGCSFuseProfilesEnabled() = %v, want %v", got, tt.spEnabled)
+			}
+		})
+	}
+}
+
+// Only testing modification logic on a pod with a sidecar already injected because when this method is called if the sidecar is not present it would have already failed
+func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
+	// Define common structures to be added
+	expectedGate := corev1.PodSchedulingGate{Name: BucketScanPendingSchedulingGate}
+	expectedEphemeralVolume := corev1.Volume{
+		Name:         SidecarContainerFileCacheEphemeralDiskVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+	expectedRAMVolume := corev1.Volume{
+		Name: SidecarContainerFileCacheRamDiskVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium: corev1.StorageMediumMemory,
+		}},
+	}
+	expectedEphemeralMount := corev1.VolumeMount{
+		Name:      SidecarContainerFileCacheEphemeralDiskVolumeName,
+		MountPath: SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
+	}
+	expectedRAMMount := corev1.VolumeMount{
+		Name:      SidecarContainerFileCacheRamDiskVolumeName,
+		MountPath: SidecarContainerFileCacheRamDiskVolumeMountPath,
+	}
+
+	testCases := []struct {
+		name      string
+		inputPod  *corev1.Pod
+		wantPod   *corev1.Pod
+		expectErr bool
+	}{
+		{
+			name: "pod with sidecar in containers list, already has existing scheduling gate",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{Name: GcsFuseSidecarName},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in containers list",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{Name: GcsFuseSidecarName},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: GcsFuseSidecarName},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list but has existing volume mounts",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: GcsFuseSidecarName, VolumeMounts: []corev1.VolumeMount{
+							expectedEphemeralMount, expectedRAMMount,
+						}},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list but has existing volume mounts - missing one mount",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: GcsFuseSidecarName, VolumeMounts: []corev1.VolumeMount{
+							expectedEphemeralMount,
+						}},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list but has existing volume - missing one",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{expectedEphemeralVolume},
+					InitContainers: []corev1.Container{
+						{Name: GcsFuseSidecarName},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with no sidecar",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{expectedEphemeralVolume},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a deep copy to avoid modifying the original test case data
+			podToModify := tc.inputPod.DeepCopy()
+
+			// The function doesn't actually use the client or context,
+			// so we can pass in nil or empty values.
+			err := ModifyPodSpecForGCSFuseProfiles(podToModify)
+			if err != nil || tc.expectErr {
+				if !tc.expectErr {
+					t.Fatalf("ModifyPodSpecForGcsfuseProfiles() returned an unexpected error: %v", err)
+				}
+				// If we expected an error and got one, the test passes.
+				if err == nil {
+					t.Fatalf("ModifyPodSpecForGcsfuseProfiles() expected to return an error but got nil")
+				}
+				return
+			}
+			if diff := cmp.Diff(tc.wantPod, podToModify); diff != "" {
+				t.Errorf("ModifyPodSpecForGcsfuseProfiles() mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

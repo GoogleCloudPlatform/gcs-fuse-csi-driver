@@ -30,6 +30,7 @@ patchesStrategicMerge:
 - node_always_pull.yaml
 - webhook_always_pull.yaml
 - controller.yaml
+- webhook_deployment.yaml
 patches:
 - path: project_patch_csi_driver.json
   target:

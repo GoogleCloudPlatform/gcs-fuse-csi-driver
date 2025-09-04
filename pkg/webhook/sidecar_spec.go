@@ -41,6 +41,14 @@ const (
 	// Webhook relevant volume attributes.
 	gcsFuseMetadataPrefetchOnMountVolumeAttribute = "gcsfuseMetadataPrefetchOnMount"
 
+	// gcsfuse profiles constants
+	GcsfuseProfilesManagedLabel                           = "gke-gcsfuse/profile-managed"
+	BucketScanPendingSchedulingGate                       = "gke-gcsfuse/bucket-scan-pending"
+	SidecarContainerFileCacheEphemeralDiskVolumeName      = "gcsfuse-file-cache-ephemeral-disk"
+	SidecarContainerFileCacheEphemeralDiskVolumeMountPath = "/gcsfuse-file-cache-ephemeral-disk"
+	SidecarContainerFileCacheRamDiskVolumeName            = "gcsfuse-file-cache-ram-disk"
+	SidecarContainerFileCacheRamDiskVolumeMountPath       = "/gcsfuse-file-cache-ram-disk"
+
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID           = 65534
 	NobodyGID           = 65534
@@ -89,6 +97,17 @@ var (
 	saTokenVolumeMount = corev1.VolumeMount{
 		Name:      SidecarContainerSATokenVolumeName,
 		MountPath: SidecarContainerSATokenVolumeMountPath,
+	}
+
+	// gcsfuse profiles related vars.
+	ramFileCacheVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerFileCacheRamDiskVolumeName,
+		MountPath: SidecarContainerFileCacheRamDiskVolumeMountPath,
+	}
+
+	ephemeralFileCacheVolumeMount = corev1.VolumeMount{
+		Name:      SidecarContainerFileCacheEphemeralDiskVolumeName,
+		MountPath: SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
 	}
 )
 

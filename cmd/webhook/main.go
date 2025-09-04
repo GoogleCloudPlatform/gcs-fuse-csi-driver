@@ -54,6 +54,7 @@ var (
 	sidecarImage                            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
 	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
+	enableGcsfuseProfiles                   = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
 	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
 	metadataMemoryLimit                     = flag.String("metadata-sidecar-memory-limit", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory limit.")
 	metadataPrefetchCPURequest              = flag.String("metadata-sidecar-cpu-request", "10m", "The default cpu request for gcsfuse memory prefetch sidecar container cpu request.")
@@ -82,6 +83,9 @@ func main() {
 	fuseSideCarConfig := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
 	fuseSideCarConfig.ShouldInjectSAVolume = *injectSAVol
 	klog.Infof("Webhook should inject SA volume: %t", fuseSideCarConfig.ShouldInjectSAVolume)
+
+	fuseSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
+	klog.Infof("Webhook should enable gcsfuse profiles: %t", fuseSideCarConfig.EnableGcsfuseProfiles)
 
 	metadataPrefetchSideCarConfig := wh.LoadConfig(*metadataSidecarImage, *imagePullPolicy, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit)
 
