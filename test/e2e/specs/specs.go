@@ -20,8 +20,6 @@ package specs
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -1168,32 +1166,6 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 	d := metav1.DeletePropagationBackground
 	err := t.client.BatchV1().Jobs(t.namespace.Name).Delete(ctx, t.job.Name, metav1.DeleteOptions{PropagationPolicy: &d})
 	framework.ExpectNoError(err)
-}
-
-func CreateTestFileInBucket(fileName, bucketName string) {
-	createTestFileInBucket(fileName, bucketName, []byte(fileName))
-}
-
-func CreateTestFileWithSizeInBucket(fileName, bucketName string, fileSize int) {
-	createTestFileInBucket(fileName, bucketName, make([]byte, fileSize))
-}
-
-func createTestFileInBucket(fileName, bucketName string, fileContent []byte) {
-	err := os.WriteFile(fileName, fileContent, 0o600)
-	if err != nil {
-		framework.Failf("Failed to create a test file: %v", err)
-	}
-	defer func() {
-		err = os.Remove(fileName)
-		if err != nil {
-			framework.Failf("Failed to delete the empty data file: %v", err)
-		}
-	}()
-
-	//nolint:gosec
-	if output, err := exec.Command("gsutil", "cp", fileName, fmt.Sprintf("gs://%v", bucketName)).CombinedOutput(); err != nil {
-		framework.Failf("Failed to create a test file in GCS bucket: %v, output: %s", err, output)
-	}
 }
 
 func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {

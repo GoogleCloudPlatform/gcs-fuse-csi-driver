@@ -28,6 +28,11 @@ type fakeService struct {
 	sm fakeServiceManager
 }
 
+// DownloadGCSObject implements Service.
+func (service *fakeService) DownloadGCSObject(ctx context.Context, bucketName string, objectName string, localPath string) error {
+	return nil
+}
+
 // UploadGCSObject implements Service.
 func (service *fakeService) UploadGCSObject(ctx context.Context, localPath string, bucketName string, objectName string) error {
 	return nil

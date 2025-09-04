@@ -173,8 +173,12 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		// Create files using gsutil
 		file1 := uuid.NewString()
 		file2 := uuid.NewString()
-		specs.CreateTestFileInBucket(file1, bucketName)
-		specs.CreateTestFileInBucket(file2, bucketName)
+		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok {
+			driver.CreateTestFileInBucket(ctx, file1, bucketName)
+			driver.CreateTestFileInBucket(ctx, file2, bucketName)
+		} else {
+			framework.Failf("Driver is not of type GCSFuseCSITestDriver, cannot create implicit directories")
+		}
 
 		ginkgo.By("Configuring the pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)

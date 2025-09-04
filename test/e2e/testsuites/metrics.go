@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"local/test/e2e/specs"
 
@@ -79,6 +78,11 @@ func (t *gcsFuseCSIMetricsTestSuite) SkipUnsupportedTests(_ storageframework.Tes
 
 //nolint:maintidx
 func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	gcsfuseDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	if !ok {
+		framework.Failf("This test requires a GCSFuseCSITestDriver but received a %T", driver)
+	}
+
 	type local struct {
 		config             *storageframework.PerTestConfig
 		volumeResourceList []*storageframework.VolumeResource
@@ -132,8 +136,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 		fileName := uuid.NewString()
-		specs.CreateTestFileInBucket(fileName, bucketName)
-
+		gcsfuseDriver.CreateTestFileInBucket(ctx, fileName, bucketName)
 		// Read file A.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat %v/%v", mountPath, fileName))
 
@@ -193,8 +196,8 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		promFile := fmt.Sprintf("%v/%v/metrics.prom", l.artifactsDir, f.Namespace.Name)
 
 		//nolint:gosec
-		if output, err := exec.Command("gsutil", "cp", fmt.Sprintf("gs://%v/metrics.prom", bucketName), promFile).CombinedOutput(); err != nil {
-			framework.Failf("Failed to download the Prometheus metrics data from GCS bucket %q: %v, output: %s", bucketName, err, output)
+		if err := gcsfuseDriver.DownloadGCSObject(ctx, bucketName, "metrics.prom", promFile); err != nil {
+			framework.Failf("Failed to download the Prometheus metrics data from GCS bucket %q: %v", bucketName, err)
 		}
 
 		ginkgo.By("Parsing Prometheus metrics")
