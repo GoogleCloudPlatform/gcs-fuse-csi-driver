@@ -41,6 +41,15 @@ const (
 	// Webhook relevant volume attributes.
 	gcsFuseMetadataPrefetchOnMountVolumeAttribute = "gcsfuseMetadataPrefetchOnMount"
 
+	// gcsfuse profiles constants
+	gcsfuseProfilesManagedLabel      = "gke-gcsfuse/profile-managed"
+	bucketScanPendingSchedulingGate  = "gke-gcsfuse/bucket-scan-pending"
+	fileCacheEphemeralDiskVolumeName = "gcsfuse-file-cache-ephemeral-disk"
+	fileCacheEphemeralDiskMntPath    = "/gcsfuse-file-cache-ephemeral-disk"
+	fileCacheRamDiskVolumeName       = "gcsfuse-file-cache-ram-disk"
+	fileCacheRamDiskMntPath          = "/gcsfuse-file-cache-ram-disk"
+	workloadTypeParamKey             = "workloadType"
+
 	// See the nonroot user discussion: https://github.com/GoogleContainerTools/distroless/issues/443
 	NobodyUID           = 65534
 	NobodyGID           = 65534
@@ -90,6 +99,19 @@ var (
 		Name:      SidecarContainerSATokenVolumeName,
 		MountPath: SidecarContainerSATokenVolumeMountPath,
 	}
+
+	ramFileCacheMount = corev1.VolumeMount{
+		Name:      fileCacheRamDiskVolumeName,
+		MountPath: fileCacheRamDiskMntPath,
+	}
+
+	epehemeralFileCacheMount = corev1.VolumeMount{
+		Name:      fileCacheEphemeralDiskVolumeName,
+		MountPath: fileCacheEphemeralDiskMntPath,
+	}
+
+	// gcsfuse profiles constants
+	workloadTypeParamValues = []string{"training", "checkpointing", "inference"}
 )
 
 func GetNativeSidecarContainerSpec(c *Config) corev1.Container {

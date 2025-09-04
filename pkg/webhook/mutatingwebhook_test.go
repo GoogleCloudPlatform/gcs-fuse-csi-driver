@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +43,8 @@ import (
 var istioContainer = corev1.Container{
 	Name: IstioSidecarName,
 }
+var testNamespace = "default"
+var csiDriverName = "gcs-fuse-csi.storage.gke.io"
 
 func TestPrepareConfig(t *testing.T) {
 	t.Parallel()
@@ -944,5 +947,540 @@ func skewVersionNodes() []corev1.Node {
 				},
 			},
 		},
+	}
+}
+
+func TestIsStorageProfilesEnabled(t *testing.T) {
+
+	tests := []struct {
+		name        string
+		pvs         []*corev1.PersistentVolume
+		pvcs        []*corev1.PersistentVolumeClaim
+		scs         []*storagev1.StorageClass
+		pod         *corev1.Pod
+		spEnabled   bool
+		expectedErr error
+	}{
+		{
+			name: "pod with no pvc volumes",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
+				},
+			},
+			spEnabled: false,
+		},
+		{
+			name: "pod with one valid pvc",
+			pvs: []*corev1.PersistentVolume{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv1"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc1", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{
+								Driver:       csiDriverName,
+								VolumeHandle: "bucket-1",
+							},
+						},
+					},
+				},
+			},
+			pvcs: []*corev1.PersistentVolumeClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pvc1", Namespace: testNamespace},
+
+					Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv1", StorageClassName: ptr.To("gcsfusecsi-checkpointing")},
+				},
+			},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+					Namespace: testNamespace,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc1"}}},
+					},
+				},
+			},
+			spEnabled: true,
+		},
+		{
+			name: "pod with multiple valid pvcs",
+			pvs: []*corev1.PersistentVolume{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv1"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc1", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{Driver: csiDriverName, VolumeHandle: "bucket-1"},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv2"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc2", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{Driver: csiDriverName, VolumeHandle: "bucket-2"},
+						},
+					},
+				},
+			},
+			pvcs: []*corev1.PersistentVolumeClaim{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pvc1", Namespace: testNamespace}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv1", StorageClassName: ptr.To("gcsfusecsi-checkpointing")}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pvc2", Namespace: testNamespace}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv2", StorageClassName: ptr.To("gcsfusecsi-checkpointing")}},
+			},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+					Namespace: testNamespace,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc1"}}},
+						{Name: "vol2", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc2"}}},
+					},
+				},
+			},
+			spEnabled: true,
+		},
+		{
+			name: "pod with multiple pvcs but 1 not in storage profile",
+			pvs: []*corev1.PersistentVolume{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv1"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc1", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{Driver: csiDriverName, VolumeHandle: "bucket-1"},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv2"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc2", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{Driver: csiDriverName, VolumeHandle: "bucket-2"},
+						},
+					},
+				},
+			},
+			pvcs: []*corev1.PersistentVolumeClaim{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pvc1", Namespace: testNamespace}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv1", StorageClassName: ptr.To("gcsfusecsi-checkpointing")}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pvc2", Namespace: testNamespace}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv2", StorageClassName: ptr.To("non-sp-storage-class")}},
+			},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+					Namespace: testNamespace,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc1"}}},
+						{Name: "vol2", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc2"}}},
+					},
+				},
+			},
+			spEnabled: true,
+		},
+		{
+			name: "pod with multiple pvcs, 1 is gcsfuse profiles enabled but the storage class is invalid ",
+			pvs: []*corev1.PersistentVolume{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv1"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc1", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{Driver: csiDriverName, VolumeHandle: "bucket-1"},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "pv2"},
+					Spec: corev1.PersistentVolumeSpec{
+						ClaimRef: &corev1.ObjectReference{Name: "pvc2", Namespace: testNamespace},
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{Driver: csiDriverName, VolumeHandle: "bucket-2"},
+						},
+					},
+				},
+			},
+			pvcs: []*corev1.PersistentVolumeClaim{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pvc1", Namespace: testNamespace}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv1", StorageClassName: ptr.To("gcsfusecsi-checkpointing-broken")}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pvc2", Namespace: testNamespace}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv2", StorageClassName: ptr.To("non-sp-storage-class")}},
+			},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+					Namespace: testNamespace,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{Name: "vol1", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc1"}}},
+						{Name: "vol2", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc2"}}},
+					},
+				},
+			},
+			spEnabled:   true,
+			expectedErr: errors.New("StorageClass: gcsfusecsi-checkpointing-broken for pvc: pvc1 has unsupported workloadType: wrong"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := fake.NewSimpleClientset()
+
+			//preload Resources
+			for _, pvc := range tt.pvcs {
+				client.CoreV1().PersistentVolumeClaims(testNamespace).Create(ctx, pvc, metav1.CreateOptions{})
+			}
+			for _, pv := range tt.pvs {
+				client.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{})
+			}
+
+			informerFactory := informers.NewSharedInformerFactoryWithOptions(client, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
+			lister := informerFactory.Core().V1().Nodes().Lister()
+			pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
+			pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
+			scLister := informerFactory.Storage().V1().StorageClasses().Lister()
+
+			for _, pv := range tt.pvs {
+				informerFactory.Core().V1().PersistentVolumes().Informer().GetIndexer().Add(pv)
+			}
+			for _, pvc := range tt.pvcs {
+				informerFactory.Core().V1().PersistentVolumeClaims().Informer().GetIndexer().Add(pvc)
+			}
+			checkpointSC := storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "gcsfusecsi-checkpointing",
+				},
+				Provisioner: "gcsfuse.csi.storage.gke.io",
+				Parameters: map[string]string{
+					// Set the workloadType parameter here
+					"workloadType": "checkpointing",
+					// You can add other parameters as needed
+					"csiDriverConfig": "skipCSIBucketAccessCheck=true",
+				},
+			}
+			nonSpSC := storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "non-sp-storage-class",
+				},
+				Provisioner: "gcsfuse.csi.storage.gke.io",
+				Parameters: map[string]string{
+					// You can add other parameters as needed
+					"csiDriverConfig": "skipCSIBucketAccessCheck=true",
+				},
+			}
+			invalidProfileSC := storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "gcsfusecsi-checkpointing-broken",
+				},
+				Provisioner: "gcsfuse.csi.storage.gke.io",
+				Parameters: map[string]string{
+					// You can add other parameters as needed
+					"workloadType":    "wrong",
+					"csiDriverConfig": "skipCSIBucketAccessCheck=true",
+				},
+			}
+
+			client.StorageV1().StorageClasses().Create(ctx, &checkpointSC, metav1.CreateOptions{})
+			client.StorageV1().StorageClasses().Create(ctx, &nonSpSC, metav1.CreateOptions{})
+			client.StorageV1().StorageClasses().Create(ctx, &invalidProfileSC, metav1.CreateOptions{})
+
+			stopCh := make(<-chan struct{})
+			informerFactory.Start(stopCh)
+			informerFactory.WaitForCacheSync(stopCh)
+
+			si := SidecarInjector{
+				Client:     nil,
+				Decoder:    admission.NewDecoder(runtime.NewScheme()),
+				NodeLister: lister,
+				PvLister:   pvLister,
+				PvcLister:  pvcLister,
+				SCLister:   scLister,
+			}
+
+			gotSpEnabled, err := si.IsGCSFuseProfilesEnabled(ctx, tt.pod)
+			if err != nil && tt.expectedErr == nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if err == nil && tt.expectedErr != nil {
+				t.Fatalf("expected error but got none: wanted %q", tt.expectedErr)
+			}
+
+			if err != nil && tt.expectedErr != nil && err.Error() != tt.expectedErr.Error() {
+				t.Fatalf("error mismatch:\n an\twanted: %q\n\tgot:    %q", tt.expectedErr, err)
+			}
+			if gotSpEnabled != tt.spEnabled {
+				t.Errorf("spEnabled bool mismatch got: %t, wanted: %t", gotSpEnabled, tt.spEnabled)
+			}
+		})
+	}
+}
+
+// Only testing modification logic on a pod with a sidecar already injected because when this method is called if the sidecar is not present it would have alreasdy failed
+func TestModifyPodSpecForStorageProfiles(t *testing.T) {
+	// Define common structures to be added
+	expectedGate := corev1.PodSchedulingGate{Name: "gke-gcsfuse/bucket-scan-pending"}
+	expectedEphemeralVolume := corev1.Volume{
+		Name:         "gcsfuse-file-cache-ephemeral-disk",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+	expectedRAMVolume := corev1.Volume{
+		Name: "gcsfuse-file-cache-ram-disk",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium: corev1.StorageMediumMemory,
+		}},
+	}
+	expectedEphemeralMount := corev1.VolumeMount{
+		Name:      "gcsfuse-file-cache-ephemeral-disk",
+		MountPath: "/gcsfuse-file-cache-ephemeral-disk",
+	}
+	expectedRAMMount := corev1.VolumeMount{
+		Name:      "gcsfuse-file-cache-ram-disk",
+		MountPath: "/gcsfuse-file-cache-ram-disk",
+	}
+
+	testCases := []struct {
+		name     string
+		inputPod *corev1.Pod
+		wantPod  *corev1.Pod
+	}{
+		{
+			name: "pod with sidecar in containers list",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{Name: "gke-gcsfuse-sidecar"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile-managed": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{
+							Name: "gke-gcsfuse-sidecar",
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: "gke-gcsfuse-sidecar"},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile-managed": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: "gke-gcsfuse-sidecar",
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list but has existing volume mounts",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: "gke-gcsfuse-sidecar", VolumeMounts: []corev1.VolumeMount{
+							expectedEphemeralMount,
+						}},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile-managed": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: "gke-gcsfuse-sidecar",
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list but has existing volume mounts - missing one mount",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: "gke-gcsfuse-sidecar", VolumeMounts: []corev1.VolumeMount{
+							expectedEphemeralMount,
+						}},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile-managed": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: "gke-gcsfuse-sidecar",
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod with sidecar in init containers list but has existing volume - missing one",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{expectedEphemeralVolume},
+					InitContainers: []corev1.Container{
+						{Name: "gke-gcsfuse-sidecar"},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile-managed": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: "gke-gcsfuse-sidecar",
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a deep copy to avoid modifying the original test case data
+			podToModify := tc.inputPod.DeepCopy()
+
+			// The function doesn't actually use the client or context,
+			// so we can pass in nil or empty values.
+			si := &SidecarInjector{}
+			si.ModifyPodSpecForGCSFuseProfiles(context.Background(), podToModify)
+
+			if diff := cmp.Diff(tc.wantPod, podToModify); diff != "" {
+				t.Errorf("ModifyPodSpecForStorageProfiles() mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

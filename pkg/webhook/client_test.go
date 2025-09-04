@@ -24,6 +24,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
@@ -410,6 +411,102 @@ func TestGetPVC(t *testing.T) {
 
 		if response.String() != testcase.expectedResponse.String() {
 			t.Error("for test: ", testcase.testName, ", want: ", testcase.expectedResponse, " but got: ", response)
+		}
+	}
+}
+
+func TestGetSC(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		testName         string
+		scName           string
+		scNamespace      string
+		scInK8s          []storagev1.StorageClass
+		expectedResponse *storagev1.StorageClass
+		expectedError    error
+	}{
+		{
+			testName:         "sc not in k8s",
+			scName:           "sc-5678",
+			scNamespace:      metav1.NamespaceAll,
+			scInK8s:          []storagev1.StorageClass{},
+			expectedResponse: nil,
+			expectedError:    errors.New(`storageclass.storage.k8s.io "sc-5678" not found`),
+		},
+		{
+			testName: "sc in k8s",
+			scName:   "sc-12345",
+			scInK8s: []storagev1.StorageClass{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "sc-13",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "sc-12345",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "sc-124",
+					},
+				},
+			},
+			expectedResponse: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "sc-12345",
+				},
+			},
+			expectedError: nil,
+		},
+	}
+
+	for _, testcase := range testcases {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		fakeClient := fake.NewSimpleClientset()
+		for _, scInK8s := range testcase.scInK8s {
+			_, err := fakeClient.StorageV1().StorageClasses().Create(context.TODO(), &scInK8s, metav1.CreateOptions{})
+			if err != nil {
+				klog.Errorf("failed to setup test: %v", err)
+			}
+		}
+
+		csiGroupClient := SidecarInjector{}
+
+		informer := informers.NewSharedInformerFactoryWithOptions(fakeClient, resyncDuration, informers.WithNamespace(metav1.NamespaceAll))
+		csiGroupClient.SCLister = informer.Storage().V1().StorageClasses().Lister()
+
+		informer.Start(ctx.Done())
+		informer.WaitForCacheSync(ctx.Done())
+
+		response, err := csiGroupClient.GetSC(testcase.scName)
+		if err != nil && testcase.expectedError == nil {
+			t.Fatalf("unexpected error:\n\twant: nil\n\tgot:  %v", err)
+		}
+
+		// Case: An expected error was missing.
+		if err == nil && testcase.expectedError != nil {
+			t.Fatalf("expected an error but got nil:\n\twant: %v", testcase.expectedError)
+		}
+
+		// Case: Both errors exist, but their content doesn't match.
+		if err != nil && testcase.expectedError != nil {
+			if err.Error() != testcase.expectedError.Error() {
+				t.Fatalf("error mismatch:\n\twant: %q\n\tgot:  %q", testcase.expectedError.Error(), err.Error())
+			}
+			// If errors match, we're done with this test case.
+			return
+		}
+
+		// --- Step 2: Only check the response if there were no errors ---
+
+		if response.String() != testcase.expectedResponse.String() {
+			// Using cmp.Diff is highly recommended here for better output
+			t.Errorf("response mismatch:\n\twant: %v\n\tgot:  %v", testcase.expectedResponse, response)
 		}
 	}
 }

@@ -29,6 +29,7 @@ import (
 
 type Config struct {
 	ShouldInjectSAVolume  bool   `json:"-"`
+	EnableGcsfuseProfiles bool   `json:"-"`
 	PodHostNetworkSetting bool   `json:"-"`
 	ContainerImage        string `json:"-"`
 	ImagePullPolicy       string `json:"-"`
