@@ -91,7 +91,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		bucketLocation:              bl,
 		skipGcpSaTest:               skipGcpSaTest,
 		ClientProtocol:              clientProtocol,
-		EnableHierarchicalNamespace: enableHierarchicalNamespace,
+		EnableHierarchicalNamespace: enableHierarchicalNamespace || enableZB,
 		EnableZB:                    enableZB, // Enable Zonal Buckets
 	}
 }
@@ -510,4 +510,50 @@ func (n *GCSFuseCSITestDriver) CreateImplicitDirInBucket(ctx context.Context, di
 	if err := storageService.UploadGCSObject(ctx, fileName, bucketName, fmt.Sprintf("%s/", dirPath)); err != nil {
 		e2eframework.Failf("UploadGCSObject failed: %v", err)
 	}
+}
+
+func (n *GCSFuseCSITestDriver) CreateTestFileInBucket(ctx context.Context, fileName, bucketName string) {
+	n.createTestFileInBucket(ctx, fileName, bucketName, []byte(fileName))
+}
+
+func (n *GCSFuseCSITestDriver) CreateTestFileWithSizeInBucket(ctx context.Context, fileName, bucketName string, fileSize int) {
+	n.createTestFileInBucket(ctx, fileName, bucketName, make([]byte, fileSize))
+}
+
+func (n *GCSFuseCSITestDriver) createTestFileInBucket(ctx context.Context, fileName, bucketName string, fileContent []byte) {
+	storageService, err := n.prepareStorageService(ctx)
+	if err != nil {
+		e2eframework.Failf("failed to prepare storage service: %w", err)
+		return
+	}
+
+	err = os.WriteFile(fileName, fileContent, 0o600)
+	if err != nil {
+		e2eframework.Failf("Failed to create a test file: %v", err)
+	}
+	defer func() {
+		err = os.Remove(fileName)
+		if err != nil {
+			e2eframework.Failf("Failed to delete the empty data file: %v", err)
+		}
+	}()
+
+	if err := storageService.UploadGCSObject(ctx, fileName, bucketName, fileName); err != nil {
+		e2eframework.Failf("Failed to upload test file %q to GCS bucket %q: %v", fileName, bucketName, err)
+	}
+}
+
+func (n *GCSFuseCSITestDriver) DownloadGCSObject(ctx context.Context, bucketName, objectName, localPath string) error {
+	storageService, err := n.prepareStorageService(ctx)
+	if err != nil {
+		fmt.Errorf("failed to prepare storage service: %w", err)
+		return err
+	}
+
+	if err := storageService.DownloadGCSObject(ctx, bucketName, objectName, localPath); err != nil {
+		e2eframework.Logf("Failed to download test file %q to local path %q: %v", objectName, localPath, err)
+		return err
+	}
+
+	return nil
 }

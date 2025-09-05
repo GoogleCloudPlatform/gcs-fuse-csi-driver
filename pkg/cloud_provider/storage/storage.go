@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,6 +58,7 @@ type Service interface {
 	RemoveIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error)
 	UploadGCSObject(ctx context.Context, localPath, bucketName, objectName string) error
+	DownloadGCSObject(ctx context.Context, bucketName, objectName, localPath string) error
 	Close()
 }
 
@@ -341,6 +344,36 @@ func (service *gcsService) UploadGCSObject(ctx context.Context, filePathToUpload
 	if _, err := io.Copy(w, f); err != nil {
 		return fmt.Errorf("failed to copy file %s to gs://%s/%s: %w", filePathToUpload, bucketName, objectName, err)
 	}
+	return nil
+}
+
+// DownloadGCSObject downloads a GCS object to a specified local file path.
+func (service *gcsService) DownloadGCSObject(ctx context.Context, bucketName, objectName, filePathToDownload string) error {
+	// 1. Create a reader for the GCS object.
+	obj := service.storageClient.Bucket(bucketName).Object(objectName)
+	r, err := obj.NewReader(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create reader for gs://%s/%s: %w", bucketName, objectName, err)
+	}
+	defer r.Close()
+
+	dir := filepath.Dir(filePathToDownload)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %q: %w", dir, err)
+	}
+
+	// 2. Create the local destination file.
+	f, err := os.Create(filePathToDownload)
+	if err != nil {
+		return fmt.Errorf("failed to create local file %q: %w", filePathToDownload, err)
+	}
+	defer f.Close()
+
+	// 3. Copy the contents from the GCS object reader to the local file.
+	if _, err := io.Copy(f, r); err != nil {
+		return fmt.Errorf("failed to copy content to local file %q: %w", filePathToDownload, err)
+	}
+
 	return nil
 }
 

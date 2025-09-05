@@ -59,6 +59,10 @@ func (t *gcsFuseCSIFileCacheTestSuite) SkipUnsupportedTests(_ storageframework.T
 }
 
 func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	gcsfuseDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	if !ok {
+		framework.Failf("This test requires a GCSFuseCSITestDriver but received a %T", driver)
+	}
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
@@ -94,9 +98,9 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create files using go client
 		fileName := uuid.NewString()
-		specs.CreateTestFileInBucket(fileName, bucketName)
+		gcsfuseDriver.CreateTestFileInBucket(ctx, fileName, bucketName)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -129,9 +133,9 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create files using go client
 		fileName := uuid.NewString()
-		specs.CreateTestFileInBucket(fileName, bucketName)
+		gcsfuseDriver.CreateTestFileInBucket(ctx, fileName, bucketName)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -170,9 +174,9 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create files using go client
 		fileName := uuid.NewString()
-		specs.CreateTestFileInBucket(fileName, bucketName)
+		gcsfuseDriver.CreateTestFileInBucket(ctx, fileName, bucketName)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -212,9 +216,9 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create files using go client
 		fileName := uuid.NewString()
-		specs.CreateTestFileInBucket(fileName, bucketName)
+		gcsfuseDriver.CreateTestFileInBucket(ctx, fileName, bucketName)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -246,7 +250,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// Create files using gsutil
 		fileName := uuid.NewString()
 		// The file size 110 MB is larger than the 100 MB fileCacheCapacity
-		specs.CreateTestFileWithSizeInBucket(fileName, bucketName, 110*1024*1024)
+		gcsfuseDriver.CreateTestFileWithSizeInBucket(ctx, fileName, bucketName, 110*1024*1024)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
@@ -276,7 +280,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// Create files using gsutil
 		fileName := uuid.NewString()
 		// The file size 2 GB is larger than the 1 GB PD
-		specs.CreateTestFileWithSizeInBucket(fileName, bucketName, 2*1024*1024*1024)
+		gcsfuseDriver.CreateTestFileWithSizeInBucket(ctx, fileName, bucketName, 2*1024*1024*1024)
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)

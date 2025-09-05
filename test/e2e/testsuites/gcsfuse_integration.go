@@ -179,7 +179,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 
 		// HNS is supported after v2.5.0
-		if !v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0")) && hnsEnabled(driver) {
+		if !v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0")) && (hnsEnabled(driver) || zbEnabled(driver)) {
 			e2eskipper.Skipf("skip gcsfuse integration HNS tests on gcsfuse version %v", v.String())
 		}
 
