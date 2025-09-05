@@ -41,6 +41,7 @@ const (
 )
 
 var (
+	volumeIDRegEx          = regexp.MustCompile(`:.*$`)
 	targetPathRegexp       = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
 	emptyReplacementRegexp = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
 )
@@ -204,4 +205,11 @@ func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 	klog.Infof("Stale file '%s' successfully deleted", fileName)
 
 	return nil
+}
+
+// The format allows customers to specify a fake volume handle for static provisioning,
+// enabling multiple PVs in the same pod to mount the same bucket. This prevents Kubelet from
+// skipping mounts of volumes with the same volume handle, which can cause the pod to be stuck in container creation.
+func ParseVolumeID(bucketHandle string) string {
+	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
 }

@@ -64,8 +64,6 @@ spec:
     metadata:
       labels:
         app: my-app
-        # TODO(urielguzman): Remove when mutating webhook injects this.
-        gke-gcsfuse/profile-managed: "true"
       annotations:
         gke-gcsfuse/volumes: "true"
         # Feature flag
@@ -89,6 +87,3 @@ spec:
       - name: my-gcs-volume
         persistentVolumeClaim:
           claimName: my-pvc
-      schedulingGates:
-        # TODO(urielguzman): Remove when mutating webhook injects this.
-        - name: "gke-gcsfuse/bucket-scan-pending"
