@@ -27,3 +27,15 @@ spec:
             - "--endpoint=unix:/csi/csi.sock"
             - "--controller=true"
             - "--enable-bucket-scanner=true"
+            - "--dataflux-batch-size=25000"
+            - "--dataflux-parallelism=0"
+          resources:
+            limits:
+              # It is recommended to leave CPU limits unset for master Pods.
+              # Setting to a high number, otherwise the Kustomize strategic
+              # merge logic will not unset the CPU limit specified in base.
+              cpu: "2"
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 80Mi

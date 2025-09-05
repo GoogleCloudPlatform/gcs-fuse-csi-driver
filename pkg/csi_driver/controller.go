@@ -89,7 +89,7 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 	// Validate arguments
 	volumeID := req.GetVolumeId()
 	if req.GetVolumeContext()[VolumeContextKeyEphemeral] != util.TrueStr {
-		volumeID = parseVolumeID(volumeID)
+		volumeID = util.ParseVolumeID(volumeID)
 	}
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "ValidateVolumeCapabilities volumeID must be provided")

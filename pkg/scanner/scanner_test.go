@@ -22,9 +22,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
+	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
+	"cloud.google.com/go/storage"
+	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -54,6 +58,7 @@ const (
 	newAnnotationKey      = "new"
 	newAnnotationVal      = "newval"
 	onlyDirMountOptPrefix = "only-dir="
+	testProjectNumber     = "123456"
 )
 
 var (
@@ -66,7 +71,45 @@ var (
 		totalSizeBytes: 567890,
 		isHNSEnabled:   true,
 	}
+	origbucketAttrs            = bucketAttrs
+	origScanBucketWithMetrics  = scanBucketWithMetrics
+	origScanBucketWithDataflux = scanBucketWithDataflux
 )
+
+type fakeScanFunc struct {
+	called bool
+	// Forced outputs.
+	err            error
+	numObjects     int64
+	totalSizeBytes int64
+}
+
+func (f *fakeScanFunc) scan(bucketI *bucketInfo) error {
+	f.called = true
+	if f.err != nil {
+		return f.err
+	}
+	bucketI.numObjects = f.numObjects
+	bucketI.totalSizeBytes = f.totalSizeBytes
+	return nil
+}
+
+func (f *fakeScanFunc) scanBucketWithMetrics(ctx context.Context, metricClient *monitoring.MetricClient, bucketI *bucketInfo) error {
+	return f.scan(bucketI)
+}
+
+func (f *fakeScanFunc) scanBucketWithDataflux(ctx context.Context, gcsClient *storage.Client, bucketI *bucketInfo, scanTimeout time.Duration, datafluxConfig *DatafluxConfig) error {
+	return f.scan(bucketI)
+}
+
+type fakebucketAttrsFunc struct {
+	attrs *storage.BucketAttrs
+	err   error
+}
+
+func (f *fakebucketAttrsFunc) getBucketAttributes(ctx context.Context, gcsClient *storage.Client, bucketName string) (*storage.BucketAttrs, error) {
+	return f.attrs, f.err
+}
 
 // mockTime allows controlling the time in tests.
 // This is useful for testing time-dependent logic, such as TTLs.
@@ -79,24 +122,24 @@ func (m *mockTime) Now() time.Time {
 	return m.currentTime
 }
 
-// fakeScanBucketFunc provides a mock implementation of the scanBucket function.
+// fakeScanBucketImplFunc provides a mock implementation of the scanBucketImpl function.
 // It allows simulating different scan outcomes, including errors and timeouts.
-type fakeScanBucketFunc struct {
-	info *bucketInfo
-	err  error
+type fakeScanBucketImplFunc struct {
+	bucketI *bucketInfo
+	err     error
 }
 
-// Scan is the mock implementation of the scanBucket function.
+// Scan is the mock implementation of the scanBucketImpl function.
 // It checks for context cancellation (like timeouts) before returning the predefined info and error.
-func (f *fakeScanBucketFunc) Scan(ctx context.Context, bucketInfo *bucketInfo, scanTimeout time.Duration) (*bucketInfo, error) {
+func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return f.info, context.DeadlineExceeded
+			return context.DeadlineExceeded
 		}
-		return nil, ctx.Err()
+		return ctx.Err()
 	default:
-		return f.info, f.err
+		return f.err
 	}
 }
 
@@ -111,7 +154,7 @@ type testFixture struct {
 	podLister    corelisters.PodLister
 	recorder     *record.FakeRecorder
 	mockTimeImpl *mockTime
-	scanBucketFn *fakeScanBucketFunc
+	scanBucketFn *fakeScanBucketImplFunc
 	stopCh       chan struct{}
 }
 
@@ -172,14 +215,11 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 	origTimeNow := timeNow
 	timeNow = mt.Now
 
-	fsb := &fakeScanBucketFunc{}
-	origScanBucket := scanBucket
-	scanBucket = fsb.Scan
+	fsb := &fakeScanBucketImplFunc{}
 	stopCh := make(chan struct{})
 
 	t.Cleanup(func() {
 		timeNow = origTimeNow
-		scanBucket = origScanBucket
 		close(stopCh)
 	})
 
@@ -200,6 +240,8 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		eventRecorder:      recorder,
 		trackedPVs:         make(map[string]struct{}),
 		lastSuccessfulScan: make(map[string]time.Time),
+		datafluxConfig:     &DatafluxConfig{}, // Use default or test-specific config
+		scanBucketImpl:     fsb.Scan,          // Inject the fake scan function
 	}
 
 	factory.Start(stopCh)
@@ -395,29 +437,29 @@ func TestCheckPVRelevance(t *testing.T) {
 			}
 			f := newTestFixture(t, objs...)
 			f.mockTimeImpl.currentTime = now
-			info, err := f.scanner.checkPVRelevance(tc.pv)
+			bucketI, err := f.scanner.checkPVRelevance(tc.pv)
 
 			if tc.wantErr {
 				if err == nil {
-					t.Errorf("checkPVRelevance(%v) = %v, nil, want error", tc.pv.Name, info)
+					t.Errorf("checkPVRelevance(%v) = %v, nil, want error", tc.pv.Name, bucketI)
 				}
 			} else {
 				if err != nil {
-					t.Errorf("checkPVRelevance(%v) = %v, %v, want no error", tc.pv.Name, info, err)
+					t.Errorf("checkPVRelevance(%v) = %v, %v, want no error", tc.pv.Name, bucketI, err)
 				}
 			}
 
-			isRelevant := info != nil
+			isRelevant := bucketI != nil
 			if isRelevant != tc.wantRelevant {
 				t.Errorf("checkPVRelevance(%v) relevant = %v, want %v", tc.pv.Name, isRelevant, tc.wantRelevant)
 			}
 
-			if tc.wantRelevant && info != nil {
-				if info.name != tc.wantBucket {
-					t.Errorf("checkPVRelevance(%v) bucket = %q, want %q", tc.pv.Name, info.name, tc.wantBucket)
+			if tc.wantRelevant && bucketI != nil {
+				if bucketI.name != tc.wantBucket {
+					t.Errorf("checkPVRelevance(%v) bucket = %q, want %q", tc.pv.Name, bucketI.name, tc.wantBucket)
 				}
-				if info.dir != tc.wantDir {
-					t.Errorf("checkPVRelevance(%v) dir = %q, want %q", tc.pv.Name, info.dir, tc.wantDir)
+				if bucketI.dir != tc.wantDir {
+					t.Errorf("checkPVRelevance(%v) dir = %q, want %q", tc.pv.Name, bucketI.dir, tc.wantDir)
 				}
 			}
 		})
@@ -438,7 +480,7 @@ func TestSyncPV(t *testing.T) {
 		name           string
 		key            string
 		initialObjects []runtime.Object
-		scanInfo       *bucketInfo
+		bucketI        *bucketInfo
 		scanErr        error
 		patchErr       error
 		wantErr        bool
@@ -449,7 +491,7 @@ func TestSyncPV(t *testing.T) {
 			name:           "Successful Sync",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
-			scanInfo:       scanResult,
+			bucketI:        scanResult,
 			wantErr:        false,
 			expectAnnotate: true,
 			expectedStatus: scanCompleted,
@@ -465,7 +507,7 @@ func TestSyncPV(t *testing.T) {
 			name:           "Scan Timeout",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
-			scanInfo:       scanResult,
+			bucketI:        scanResult,
 			scanErr:        context.DeadlineExceeded,
 			wantErr:        false,
 			expectAnnotate: true,
@@ -475,7 +517,7 @@ func TestSyncPV(t *testing.T) {
 			name:           "Patch Error",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
-			scanInfo:       scanResult,
+			bucketI:        scanResult,
 			patchErr:       fmt.Errorf("patch failed"),
 			wantErr:        true,
 		},
@@ -498,7 +540,7 @@ func TestSyncPV(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTestFixture(t, tc.initialObjects...)
 
-			f.scanBucketFn.info = tc.scanInfo
+			f.scanBucketFn.bucketI = tc.bucketI
 			f.scanBucketFn.err = tc.scanErr
 
 			if tc.patchErr != nil {
@@ -510,7 +552,7 @@ func TestSyncPV(t *testing.T) {
 			err := f.scanner.syncPV(context.Background(), tc.key)
 
 			if tc.wantErr != (err != nil) {
-				t.Errorf("syncPV(%s) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
+				t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
 			}
 
 			if tc.expectAnnotate {
@@ -522,10 +564,10 @@ func TestSyncPV(t *testing.T) {
 					t.Errorf("Expected annotations to be set")
 				}
 				if status := updatedPV.Annotations[annotationStatus]; status != tc.expectedStatus {
-					t.Errorf("Annotation %s: got %v, want %v", annotationStatus, status, tc.expectedStatus)
+					t.Errorf("Annotation %q: got %v, want %v", annotationStatus, status, tc.expectedStatus)
 				}
 				if _, exists := updatedPV.Annotations[annotationLastUpdatedTime]; !exists {
-					t.Errorf("Annotation %s not found", annotationLastUpdatedTime)
+					t.Errorf("Annotation %q not found", annotationLastUpdatedTime)
 				}
 			}
 		})
@@ -623,13 +665,13 @@ func TestSyncPod(t *testing.T) {
 
 			hasErr := err != nil
 			if hasErr != (tc.wantErr || tc.expectRequeueErr) {
-				t.Errorf("syncPod(%s) returned error: %v, wantErr: %v, wantRequeueErr: %v", key, err, tc.wantErr, tc.expectRequeueErr)
+				t.Errorf("syncPod(%q) returned error: %v, wantErr: %v, wantRequeueErr: %v", key, err, tc.wantErr, tc.expectRequeueErr)
 			}
 
 			if err != nil {
 				isRequeueErr := errors.Is(err, errRequeuePod)
 				if isRequeueErr != tc.expectRequeueErr {
-					t.Errorf("syncPod(%s) error type: got requeue %v, want requeue %v (err: %v)", key, isRequeueErr, tc.expectRequeueErr, err)
+					t.Errorf("syncPod(%q) error type: got requeue %v, want requeue %v (err: %v)", key, isRequeueErr, tc.expectRequeueErr, err)
 				}
 			}
 
@@ -644,7 +686,7 @@ func TestSyncPod(t *testing.T) {
 					f.scanner.queue.Done(item)
 				}
 				if !found {
-					t.Errorf("Expected PV %s to be enqueued, but not found in queue", tc.expectPVEnqueued)
+					t.Errorf("Expected PV %q to be enqueued, but not found in queue", tc.expectPVEnqueued)
 				}
 			}
 
@@ -661,7 +703,7 @@ func TestSyncPod(t *testing.T) {
 					}
 				}
 				if gateExists {
-					t.Errorf("Scheduling gate %s was not removed from Pod %s", schedulingGateName, key)
+					t.Errorf("Scheduling gate %q was not removed from Pod %q", schedulingGateName, key)
 				}
 			}
 		})
@@ -692,7 +734,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 		name              string
 		keyToAdd          string
 		initialObjects    []runtime.Object
-		scanInfo          *bucketInfo // For PV sync
+		bucketI           *bucketInfo // For PV sync
 		scanErr           error       // For PV sync
 		patchErr          error       // For PV or Pod sync
 		expectRequeue     bool
@@ -705,7 +747,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 			name:           "PV Sync Successful",
 			keyToAdd:       pvQueueKey,
 			initialObjects: []runtime.Object{pvRelevant, scValid},
-			scanInfo:       scanResult,
+			bucketI:        scanResult,
 			expectRequeue:  false,
 			expectAnnotate: true,
 			expectedStatus: scanCompleted,
@@ -721,7 +763,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 			name:           "PV Sync Patch Error",
 			keyToAdd:       pvQueueKey,
 			initialObjects: []runtime.Object{pvRelevant, scValid},
-			scanInfo:       scanResult,
+			bucketI:        scanResult,
 			patchErr:       fmt.Errorf("patch failed"),
 			expectRequeue:  true,
 		},
@@ -751,7 +793,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 			f := newTestFixture(t, tc.initialObjects...)
 
 			// Setup for PV sync parts
-			f.scanBucketFn.info = tc.scanInfo
+			f.scanBucketFn.bucketI = tc.bucketI
 			f.scanBucketFn.err = tc.scanErr
 
 			if tc.patchErr != nil {
@@ -780,7 +822,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 					t.Fatalf("Failed to get PV: %v", err)
 				}
 				if status := updatedPV.Annotations[annotationStatus]; status != tc.expectedStatus {
-					t.Errorf("Annotation %s: got %v, want %v", annotationStatus, status, tc.expectedStatus)
+					t.Errorf("Annotation %q: got %v, want %v", annotationStatus, status, tc.expectedStatus)
 				}
 			}
 
@@ -789,7 +831,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 				updatedPod, err := f.kubeClient.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 				if err != nil {
 					if apierrors.IsNotFound(err) {
-						t.Fatalf("Pod %s not found, but expected to exist for gate check", podName)
+						t.Fatalf("Pod %q not found, but expected to exist for gate check", podName)
 					}
 					t.Fatalf("Failed to get Pod: %v", err)
 				}
@@ -801,7 +843,7 @@ func TestProcessNextWorkItem(t *testing.T) {
 					}
 				}
 				if gateExists {
-					t.Errorf("Scheduling gate %s was not removed from Pod %s", schedulingGateName, podName)
+					t.Errorf("Scheduling gate %q was not removed from Pod %q", schedulingGateName, podName)
 				}
 			}
 		})
@@ -822,7 +864,7 @@ func TestAddPV(t *testing.T) {
 	}
 	key, _ := cache.MetaNamespaceKeyFunc(pvRelevant)
 	if _, exists := f.scanner.trackedPVs[key]; !exists {
-		t.Errorf("PV %s not tracked after add", key)
+		t.Errorf("PV %q not tracked after add", key)
 	}
 
 	// Adding the same PV again should not change the queue length (it's a set).
@@ -848,15 +890,15 @@ func TestDeletePV(t *testing.T) {
 
 	// PV should no longer be in the tracked set.
 	if _, exists := f.scanner.trackedPVs[pvName]; exists {
-		t.Errorf("PV %s still tracked after deletePV() call", pvName)
+		t.Errorf("PV %q still tracked after deletePV() call", pvName)
 	}
 	if _, exists := f.scanner.lastSuccessfulScan[pvName]; exists {
-		t.Errorf("PV %s still in lastSuccessfulScan map after deletePV() call", pvName)
+		t.Errorf("PV %q still in lastSuccessfulScan map after deletePV() call", pvName)
 	}
 
 	// Check if the key was forgotten
 	if f.scanner.queue.NumRequeues(queueKey) != 0 {
-		t.Errorf("NumRequeues for %s: got %d, want 0 after deletePV/Forget", key, f.scanner.queue.NumRequeues(queueKey))
+		t.Errorf("NumRequeues for %q: got %d, want 0 after deletePV/Forget", key, f.scanner.queue.NumRequeues(queueKey))
 	}
 }
 
@@ -889,7 +931,7 @@ func TestDeletePod(t *testing.T) {
 
 	// After deletePod, the key should be "forgotten", resetting its rate limiting.
 	if f.scanner.queue.NumRequeues(queueKey) != 0 {
-		t.Errorf("NumRequeues for %s: got %d, want 0 after deletePod/Forget", key, f.scanner.queue.NumRequeues(queueKey))
+		t.Errorf("NumRequeues for %q: got %d, want 0 after deletePod/Forget", key, f.scanner.queue.NumRequeues(queueKey))
 	}
 }
 
@@ -978,7 +1020,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	now := time.Date(2025, 9, 1, 10, 0, 0, 0, time.UTC)
 	f.mockTimeImpl.currentTime = now
 
-	info := &bucketInfo{
+	bucketI := &bucketInfo{
 		numObjects:     999,
 		totalSizeBytes: 8888,
 		isHNSEnabled:   true,
@@ -986,7 +1028,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	status := scanCompleted
 
 	// Call the function to update annotations.
-	if err := f.scanner.updatePVScanResult(context.Background(), pv, info, status); err != nil {
+	if err := f.scanner.updatePVScanResult(context.Background(), pv, bucketI, status); err != nil {
 		t.Fatalf("updatePVScanResult() returned error: %v", err)
 	}
 
@@ -1014,7 +1056,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	for key, want := range expectedAnnotations {
 		got := annotations[key]
 		if got != want {
-			t.Errorf("Annotation %s: got %v, want %v", key, got, want)
+			t.Errorf("Annotation %q: got %v, want %v", key, got, want)
 		}
 	}
 
@@ -1062,8 +1104,8 @@ func TestGetOnlyDirValue(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "Valid mount option with dir name",
-			input: onlyDirMountOptPrefix + testDirName,
+			name:  "Valid mount option with dir name surrounded by '/'",
+			input: onlyDirMountOptPrefix + "/" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
@@ -1081,9 +1123,162 @@ func TestGetOnlyDirValue(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		got, ok := getOnlyDirValue(tc.input)
-		if ok != tc.ok || got != tc.want {
-			t.Errorf("getOnlyDirValue(%q) = %q, %v, want %q, %v", tc.input, got, ok, tc.want, tc.ok)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := onlyDirValue(tc.input)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("getOnlyDirValue(%q) = %q, %v, want %q, %v", tc.input, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestDefaultScanBucket(t *testing.T) {
+	testPV := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
+	datafluxConfig := &DatafluxConfig{Parallelism: 1, BatchSize: 10}
+
+	projectNumber, err := strconv.ParseUint(testProjectNumber, 10, 64)
+	if err != nil {
+		t.Fatalf("strconv.ParseUint() error = %v", err)
+	}
+	hnsEnabledAttrs := &storage.BucketAttrs{
+		Name:                  testBucketName,
+		ProjectNumber:         projectNumber,
+		HierarchicalNamespace: &storage.HierarchicalNamespace{Enabled: true},
+	}
+	hnsDisabledAttrs := &storage.BucketAttrs{
+		Name:          testBucketName,
+		ProjectNumber: projectNumber,
+	}
+
+	tests := []struct {
+		name string
+		// Input to defaultScanBucket
+		inputBucketI *bucketInfo
+		// Mock setup
+		fakeGetAttrs fakebucketAttrsFunc
+		fakeMetrics  fakeScanFunc
+		fakeDataflux fakeScanFunc
+		// Expectations
+		wantBucketI        *bucketInfo
+		wantErr            bool
+		expectMetricsCall  bool
+		expectDatafluxCall bool
+	}{
+		{
+			name:         "onlyDir - Dataflux success",
+			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeDataflux: fakeScanFunc{
+				numObjects:     200,
+				totalSizeBytes: 2000,
+			},
+			wantBucketI: &bucketInfo{
+				name: testBucketName, dir: testDirName, onlyDirSpecified: true,
+				numObjects: 200, totalSizeBytes: 2000, isHNSEnabled: true, projectNumber: testProjectNumber,
+			},
+			expectMetricsCall:  false,
+			expectDatafluxCall: true,
+		},
+		{
+			name:               "onlyDir - Dataflux error",
+			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
+			fakeGetAttrs:       fakebucketAttrsFunc{attrs: hnsDisabledAttrs},
+			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
+			wantErr:            true,
+			expectMetricsCall:  false,
+			expectDatafluxCall: true,
+		},
+		{
+			name:         "no onlyDir - Metrics success",
+			inputBucketI: &bucketInfo{name: testBucketName},
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeMetrics: fakeScanFunc{
+				numObjects:     100,
+				totalSizeBytes: 1000,
+			},
+			wantBucketI: &bucketInfo{
+				name: testBucketName, numObjects: 100, totalSizeBytes: 1000, isHNSEnabled: true, projectNumber: testProjectNumber,
+			},
+			expectMetricsCall:  true,
+			expectDatafluxCall: false,
+		},
+		{
+			name:         "no onlyDir - Metrics error, Dataflux success (Fallback)",
+			inputBucketI: &bucketInfo{name: testBucketName},
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: hnsDisabledAttrs},
+			fakeMetrics: fakeScanFunc{
+				numObjects:     100,
+				totalSizeBytes: 1000,
+				err:            errors.New("metrics failed"),
+			},
+			fakeDataflux: fakeScanFunc{
+				numObjects:     200,
+				totalSizeBytes: 2000,
+			},
+			wantBucketI: &bucketInfo{
+				name: testBucketName, numObjects: 200, totalSizeBytes: 2000, isHNSEnabled: false, projectNumber: testProjectNumber,
+			},
+			expectMetricsCall:  true,
+			expectDatafluxCall: true,
+		},
+		{
+			name:               "no onlyDir - Metrics error, Dataflux error (Fallback Fails)",
+			inputBucketI:       &bucketInfo{name: testBucketName},
+			fakeGetAttrs:       fakebucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeMetrics:        fakeScanFunc{err: errors.New("metrics failed")},
+			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
+			wantErr:            true,
+			expectMetricsCall:  true,
+			expectDatafluxCall: true,
+		},
+		{
+			name:               "Bucket Attrs error",
+			inputBucketI:       &bucketInfo{name: testBucketName},
+			fakeGetAttrs:       fakebucketAttrsFunc{err: errors.New("attrs failed")},
+			wantErr:            true,
+			expectMetricsCall:  false,
+			expectDatafluxCall: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(t)
+			f.scanner.datafluxConfig = datafluxConfig
+
+			// Setup fakes
+			bucketAttrs = tc.fakeGetAttrs.getBucketAttributes
+			scanBucketWithMetrics = tc.fakeMetrics.scanBucketWithMetrics
+			scanBucketWithDataflux = tc.fakeDataflux.scanBucketWithDataflux
+
+			t.Cleanup(func() {
+				bucketAttrs = origbucketAttrs
+				scanBucketWithMetrics = origScanBucketWithMetrics
+				scanBucketWithDataflux = origScanBucketWithDataflux
+			})
+
+			bucketICopy := *tc.inputBucketI
+			gotBucketI := &bucketICopy
+			err := defaultScanBucket(f.scanner, context.Background(), gotBucketI, time.Minute, testPV)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("defaultScanBucket() error = %v, wantErr %v", err, tc.wantErr)
+			}
+
+			if !tc.wantErr {
+				if diff := cmp.Diff(tc.wantBucketI, gotBucketI, cmp.AllowUnexported(bucketInfo{})); diff != "" {
+					t.Errorf("defaultScanBucket() info diff (-want +got):\n%q", diff)
+				}
+			}
+
+			// Check if fakes were called as expected
+			if tc.fakeMetrics.called != tc.expectMetricsCall {
+				t.Errorf("scanBucketWithMetrics called = %v, want %v", tc.fakeMetrics.called, tc.expectMetricsCall)
+			}
+
+			if tc.fakeDataflux.called != tc.expectDatafluxCall {
+				t.Errorf("scanBucketWithDataflux called = %v, want %v", tc.fakeDataflux.called, tc.expectDatafluxCall)
+			}
+		})
 	}
 }

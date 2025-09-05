@@ -74,7 +74,6 @@ const (
 )
 
 var (
-	volumeIDRegEx            = regexp.MustCompile(`:.*$`)
 	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+\.*`
 	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
 	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
@@ -299,7 +298,7 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, s
 	}
 
 	vc := req.GetVolumeContext()
-	bucketName := parseVolumeID(req.GetVolumeId())
+	bucketName := util.ParseVolumeID(req.GetVolumeId())
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
@@ -327,13 +326,6 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, s
 	}
 
 	return targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, nil
-}
-
-// The format allows customers to specify a fake volume handle for static provisioning,
-// enabling multiple PVs in the same pod to mount the same bucket. This prevents Kubelet from
-// skipping mounts of volumes with the same volume handle, which can cause the pod to be stuck in container creation.
-func parseVolumeID(bucketHandle string) string {
-	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {
