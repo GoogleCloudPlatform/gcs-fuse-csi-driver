@@ -84,10 +84,10 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			if err != nil {
 				return fmt.Errorf("failed to get audience from the context: %w", err)
 			}
-		}
-		err, tokenSource = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
-		if err != nil {
-			return fmt.Errorf("Failed to create token source, got error %q", err)
+			err, tokenSource = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
+			if err != nil {
+				return fmt.Errorf("Failed to create token source, got error %q", err)
+			}
 		}
 	}
 	if mc.HostNetworkKSAOptIn {
@@ -99,8 +99,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 	}
 	if mc.EnableSidecarBucketAccessCheckFlag {
-		klog.Infof("Got token source %v", tokenSource)
-		_, err := m.prepareStorageServiceWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName)
+		err := m.checkBucketAccessWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName, mc.TokenServerIdentityProvider)
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
 		}
@@ -416,7 +415,7 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 }
 
 // prepareStorageService prepares the GCS Storage 	Service using the Kubernetes Service Account from VolumeContext.
-func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string) (storage.Service, error) {
+func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string, tokenProvider string) error {
 	backoff := wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
@@ -425,30 +424,26 @@ func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageSer
 		Jitter:   0.1,           // Adds randomness, this will give +/- 10% of the current delay
 	}
 
-	var storageService *storage.Service
 	storageServiceCreationFunc := func(ctx context.Context) (bool, error) {
 		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 		if err != nil {
 			klog.Errorf("Failed to setup storage service got error %q, retrying...", err)
 			return false, nil
 		}
-		klog.Infof("Created storage service %v", ss)
-
+		klog.V(4).Infof("Created storage service %v", ss)
 		if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-			klog.Errorf("failed to get GCS bucket %q: %v", bucketName, err)
+			klog.Errorf("Failed to get GCS bucket %q: %v", bucketName, err)
 			return false, nil
 		}
-		storageService = &ss
-		klog.Infof("Bucket access check passed for bucket %s", bucketName)
+		klog.V(4).Infof("Bucket access check passed for bucket %s", bucketName)
 		return true, nil
 	}
 	err := wait.ExponentialBackoffWithContext(ctx, backoff, storageServiceCreationFunc)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	klog.Infof("Successfully setup storage service")
-	return *storageService, nil
+	klog.V(4).Infof("Completed access check for bucket %s", bucketName)
+	return nil
 }
 func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
 	projectID, err := metadata.ProjectIDWithContext(ctx)
@@ -461,8 +456,6 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 		projectID,
 		identityProvider,
 	)
-	klog.Infof("audience: %s", audience)
-
 	return audience, nil
 }
 
@@ -506,6 +499,52 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
 	if err != nil {
 		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w", audience, err)
+	}
+
+	return &oauth2.Token{
+		AccessToken: stsResponse.AccessToken,
+		TokenType:   stsResponse.TokenType,
+		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
+	}, nil
+}
+
+func fetchStsToken(ctx context.Context, identityProvider string) (*oauth2.Token, error) {
+	k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+	var stsToken *oauth2.Token
+	if err != nil {
+		return stsToken, fmt.Errorf("failed to get k8s token from path %v", err)
+	}
+
+	stsToken, err = fetchIdentityBindingTokenDefaultClient(ctx, k8stoken, identityProvider)
+	if err != nil {
+		return stsToken, fmt.Errorf("failed to get sts token from path %v", err)
+	}
+	return stsToken, nil
+}
+
+func fetchIdentityBindingTokenDefaultClient(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
+	stsService, err := sts.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("new STS service error for default credential: %w", err)
+	}
+
+	audience, err := getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get audience from the contextfor default credential: %w", err)
+	}
+
+	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
+		Audience:           audience,
+		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
+		Scope:              credentials.DefaultAuthScopes()[0],
+		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
+		SubjectToken:       k8sSAToken,
+	}
+
+	stsResponse, err := stsService.V1.Token(stsRequest).Do()
+	if err != nil {
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q for default credential: %w", audience, err)
 	}
 
 	return &oauth2.Token{

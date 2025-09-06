@@ -578,6 +578,20 @@ func TestParseVolumeAttributes(t *testing.T) {
 				expectedMountOptions:                  []string{},
 				expectedEnableCloudProfilerForSidecar: true,
 			},
+			{
+				name:                     "value set to true for VolumeContextKeyIdentityProvider",
+				volumeContext:            map[string]string{VolumeContextKeyIdentityProvider: "some-string"},
+				expectedErr:              false,
+				expectedMountOptions:     []string{},
+				expectedIdentityProvider: "some-string",
+			},
+			{
+				name:                 "value set to true for VolumeContextKeyIdentityPool",
+				volumeContext:        map[string]string{VolumeContextKeyIdentityProvider: "some-string"},
+				expectedErr:          false,
+				expectedMountOptions: []string{},
+				expectedIdentityPool: "some-string",
+			},
 		}
 
 		for _, tc := range testCases {

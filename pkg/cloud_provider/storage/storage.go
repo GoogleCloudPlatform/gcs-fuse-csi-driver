@@ -389,10 +389,15 @@ func isBucketAZonalBucket(ctx context.Context, client *storage.Client, bucketNam
 func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
 	var err error
 	var storageClient *storage.Client
-	client := oauth2.NewClient(ctx, ts)
-	storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))
-	if err != nil {
-		klog.Errorf("Errored while creating with tokensource %v", err)
+
+	if ts != nil {
+		client := oauth2.NewClient(ctx, ts)
+		storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))
+	} else {
+		storageClient, err = storage.NewClient(ctx)
+	}
+	if err != nil || storageClient == nil {
+		klog.Errorf("Errored while creating with tokensource %v, got storage client %v", err, storageClient)
 		return nil, err
 	}
 	klog.Infof("Storage service client created successfully, %v", storageClient)
