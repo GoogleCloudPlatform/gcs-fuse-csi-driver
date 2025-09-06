@@ -22,12 +22,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"cloud.google.com/go/compute/metadata"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	storagelisters "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -55,6 +57,7 @@ type SidecarInjector struct {
 	NodeLister             listersv1.NodeLister
 	PvcLister              listersv1.PersistentVolumeClaimLister
 	PvLister               listersv1.PersistentVolumeLister
+	SCLister               storagelisters.StorageClassLister
 	ServerVersion          *version.Version
 }
 
@@ -63,6 +66,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	// Validate injection request
 	pod := &corev1.Pod{}
 
+	// GCSFuse Profiles TODO: if request is a PV, validate user has applied iam rules required for gcsfuse profiles.
 	if err := si.Decoder.Decode(req, pod); err != nil {
 		klog.Errorf("Could not decode request: name %q, namespace %q, error: %v", req.Name, req.Namespace, err)
 
@@ -127,10 +131,151 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
+	if si.Config.EnableGcsfuseProfiles {
+		klog.Infof("GCSFuse profiles are enabled for Pod: Name %q, GenerateName %q, Namespace %q", pod.Name, pod.GenerateName, pod.Namespace)
+		isUsingGcsfuseProfiles, err := si.IsGCSFuseProfilesEnabled(ctx, pod)
+		if err != nil {
+			return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to check gcsfuse profiles support: %w", err))
+		}
+
+		// Handle gcsfuse profiles spec modifications if using gcsfuse profile enabled buckets.
+		if isUsingGcsfuseProfiles {
+			si.ModifyPodSpecForGCSFuseProfiles(ctx, pod)
+		}
+	}
+
 	marshaledPod, err := json.Marshal(pod)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
+}
+
+// Modifies the pod spec to add gcsfuse profile related features. This includes adding a label, scheduling gate, and placeholder file cache volumes.
+func (si *SidecarInjector) ModifyPodSpecForGCSFuseProfiles(ctx context.Context, pod *corev1.Pod) {
+	// Always apply the gcsfuse profile label when gcsfuse profiles are enabled for pod informer's Kubernetes API efficient filtering.
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[gcsfuseProfilesManagedLabel] = "true"
+
+	// Always apply the scheduling gate when the gcsfuse profiles are enabled. The controller will handle the logistics if its not needed.
+	profilesGate := corev1.PodSchedulingGate{Name: bucketScanPendingSchedulingGate}
+	pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, profilesGate)
+
+	// Inject placeholder file cache volumes.
+	if !volumeExists(pod.Spec.Volumes, fileCacheEphemeralDiskVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name:         fileCacheEphemeralDiskVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	} else {
+		klog.Warningf("Pod %s/%s already has a volume named %s, skipping injection of ephemeral file cache volume for gcsfuse sidecar.", pod.Namespace, pod.Name, fileCacheEphemeralDiskVolumeName)
+	}
+	if !volumeExists(pod.Spec.Volumes, fileCacheRamDiskVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: fileCacheRamDiskVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium: corev1.StorageMediumMemory,
+				},
+			},
+		})
+	} else {
+		klog.Warningf("Pod %s/%s already has a volume named %s, skipping injection of ram file cache volume for gcsfuse sidecar.", pod.Namespace, pod.Name, fileCacheRamDiskVolumeName)
+	}
+
+	// Apply file cache volume mounts to side car container.
+	mountsToAdd := []corev1.VolumeMount{epehemeralFileCacheMount, ramFileCacheMount}
+
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == GcsFuseSidecarName {
+			// Found the sidecar as a init container, now add mounts safely
+			for _, mount := range mountsToAdd {
+				if !volumeMountExists(pod.Spec.InitContainers[i].VolumeMounts, mount.Name) {
+					pod.Spec.InitContainers[i].VolumeMounts = append(pod.Spec.InitContainers[i].VolumeMounts, mount)
+				} else {
+					klog.Warningf("Pod %s/%s gcsfuse sidecar init container already has a volume mount named %s, skipping injection of file cache mount in gcsfuse sidecar.", pod.Namespace, pod.Name, mount.Name)
+				}
+			}
+			return
+		}
+	}
+	for i := range pod.Spec.Containers {
+		if pod.Spec.Containers[i].Name == GcsFuseSidecarName {
+			// Found the sidecar as a container, now add mounts safely
+			for _, mount := range mountsToAdd {
+				if !volumeMountExists(pod.Spec.Containers[i].VolumeMounts, mount.Name) {
+					pod.Spec.Containers[i].VolumeMounts = append(pod.Spec.Containers[i].VolumeMounts, mount)
+				} else {
+					klog.Warningf("Pod %s/%s gcsfuse sidecar container already has a volume mount named %s, skipping injection of file cache mount in gcsfuse sidecar.", pod.Namespace, pod.Name, mount.Name)
+				}
+			}
+			return
+		}
+	}
+	klog.Warning("Could not find gcsfuse sidecar container to add gcsfuse profile file cache mounts.")
+}
+
+// Checks if the pod has ANY pvc backed by a gcsfuse profile enabled storage class. gcsfuse profile enabled means the storage class uses a valid workloadType parameter.
+// If none are found, this implies gcsfuse profiles are not enabled for the pod.
+func (si *SidecarInjector) IsGCSFuseProfilesEnabled(ctx context.Context, pod *corev1.Pod) (bool, error) {
+	// Check if pod has volumes
+	if pod.Spec.Volumes == nil {
+		return false, nil
+	}
+
+	for _, vol := range pod.Spec.Volumes {
+		if vol.PersistentVolumeClaim != nil {
+			pvcName := vol.PersistentVolumeClaim.ClaimName
+
+			// Fetch the PVC from storage class informer
+			pvc, err := si.GetPVC(pod.Namespace, pvcName)
+			if err != nil {
+				klog.Warningf("failed to get PVC %s in namespace %s while mutating pod %s: %v", pvcName, pod.Namespace, pod.Name, err)
+				continue
+			}
+			if pvc.Spec.StorageClassName == nil {
+				// If the PVC does not have a storage class, skip it.
+				continue
+			}
+			sc, error := si.GetSC(*pvc.Spec.StorageClassName)
+			if error != nil {
+				klog.Warningf("failed to get StorageClass %s for pvc %s : %v", *pvc.Spec.StorageClassName, pvcName, error)
+				continue
+			}
+			wt, ok := sc.Parameters[workloadTypeParamKey]
+			if ok {
+				if slices.Contains(workloadTypeParamValues, wt) {
+					return true, nil
+				} else {
+					klog.Errorf("StorageClass: %s for pvc: %s has unsupported workloadType: %s", *pvc.Spec.StorageClassName, pvcName, wt)
+					return true, fmt.Errorf("StorageClass: %s for pvc: %s has unsupported workloadType: %s", *pvc.Spec.StorageClassName, pvcName, wt)
+				}
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// volumeExists checks if a volume with a specific name already exists in the pod's volumes.
+func volumeExists(volumes []corev1.Volume, name string) bool {
+	for _, v := range volumes {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// volumeMountExists checks if a volume mount with a specific name already exists in a slice of volume mounts.
+func volumeMountExists(volumeMounts []corev1.VolumeMount, name string) bool {
+	for _, vm := range volumeMounts {
+		if vm.Name == name {
+			return true
+		}
+	}
+	return false
 }
