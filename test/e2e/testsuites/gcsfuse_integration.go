@@ -53,6 +53,7 @@ const (
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
 	testNameInactiveStreamTimeout = "inactive_stream_timeout"
+	testNameBufferedReads         = "buffered_read"
 	testNameRenameSymlink         = "rename_symlink"
 
 	testNamePrefixSucceed = "should succeed in "
@@ -65,6 +66,7 @@ const (
 	// In order to pass anything to the sidecar, you need to pass it via the mountPaths that the sidecar injects.
 	// So for temporary files, that would be mountPath: /gcsfuse-tmp, via the gke-gcsfuse-tmp volume.
 	inactive_stream_timeout_log_file = "/gcsfuse-tmp/log.json"
+	buffered_reads_log_file          = "/gcsfuse-tmp/log.json"
 )
 
 var gcsfuseVersionStr = ""
@@ -198,6 +200,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameInactiveStreamTimeout, v.String())
 		}
 
+		// GCSFuse buffered_read tests are supported after v3.3.0-gke.1.
+		if !v.AtLeast(version.MustParseSemantic("v3.3.0-gke.1")) && testName == testNameBufferedReads {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameBufferedReads, v.String())
+		}
+
 		// Rename_symlink tests are in separat test package only of v2.11.4 for now
 		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0"))) {
 			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
@@ -208,7 +215,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
 		testCase := ""
-		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) || strings.HasPrefix(testName, testNameInactiveStreamTimeout) {
+		if strings.HasPrefix(testName, testNameKernelListCache) || strings.HasPrefix(testName, testNameManagedFolders) || strings.HasPrefix(testName, testNameInactiveStreamTimeout) || strings.HasPrefix(testName, testNameBufferedReads) {
 			l := strings.Split(testName, ":")
 			testCase = l[1]
 			testName = l[0]
@@ -281,6 +288,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			tPod.SetupTmpVolumeMount(inactive_stream_timeout_log_dir)
 		}
 
+		if testName == testNameBufferedReads {
+			// This needs to match what gcsfuse sets here:
+			// https://github.com/GoogleCloudPlatform/gcsfuse/blob/94e4ade71cfa056bc3dd18a573bfbbb7cc4ae765/tools/integration_tests/buffered_read/setup_test.go#L36.
+			// The gcsfuse integration tests are run from the main container, which has this hardcoded value. After the tests are setup,
+			// the gcsfuse process is started in the sidecar container. Our webhook auto injects some volumeMounts into the sidecar, so we
+			// we need to use one of these volume mountPaths below. For this test, we use `/gcsfuse-tmp/<filename>` as the log file to the gcsfuse integration test below.
+			buffered_reads_log_dir := "/tmp/gcsfuse_buffered_read_test_logs"
+			tPod.SetupTmpVolumeMount(buffered_reads_log_dir)
+		}
+
 		ginkgo.By("Deploying the test pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
@@ -330,7 +347,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand
 			}
-		case testNameKernelListCache, testNameManagedFolders, testNameInactiveStreamTimeout:
+		case testNameKernelListCache, testNameManagedFolders, testNameInactiveStreamTimeout, testNameBufferedReads:
 			finalTestCommand = baseTestCommandWithTestBucket + " -run " + testCase
 		case testNameListLargeDir, testNameWriteLargeFiles:
 			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 120m"
@@ -708,6 +725,32 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	})
+
+	// These buffered_read tests are set up in consistency with gcsfuse integration tests defined here:
+	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/94e4ade71cfa056bc3dd18a573bfbbb7cc4ae765/tools/integration_tests/run_tests_mounted_directory.sh#L713-L745
+	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
