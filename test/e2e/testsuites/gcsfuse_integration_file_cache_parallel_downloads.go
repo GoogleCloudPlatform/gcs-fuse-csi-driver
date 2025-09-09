@@ -137,7 +137,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
 		cacheDir := "cache-dir"
-		if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1")) {
+		if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 			if hnsEnabled(driver) {
 				cacheDir = "cache-dir-read-cache-hns-true"
 			} else {

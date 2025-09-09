@@ -1212,7 +1212,11 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 	// Before GCSFuse v2.4.1, the output of is saved in stderr
 	l := strings.Split(stdout+stderr, " ")
 	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
-
+	if len(strings.Split(l[2], "-")) < 2 {
+		// All the version comparison operations in driver expect the GCS Fuse version in X.Y.Z-gke.V format.
+		// Versioning package (https://semver.org/#spec-item-9) treats `-gke.V` as pre release packages which can lead to comparison erros like v3.1.0 > v3.1.0-gke.0 (not considered same)
+		framework.Logf("Received GCS Fuse version %s does not follow to x.y.z-gke.v format which might lead to unprecedented test skips, continuing with %s", l[2])
+	}
 	return l[2]
 }
 
