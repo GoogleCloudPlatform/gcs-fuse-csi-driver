@@ -339,8 +339,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket)
 			}
-		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameConcurrentOperations, testNameEnableStreamingWrites:
+		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameEnableStreamingWrites:
 			finalTestCommand = baseTestCommandWithTestBucket
+		case testNameConcurrentOperations:
+			// Only run selected tests until gcsfuse team optimizes memory usage of their new sub-tests.
+			// https://github.com/GoogleCloudPlatform/gcsfuse/tree/master/tools/integration_tests/concurrent_operations
+			finalTestCommand = baseTestCommandWithTestBucket + " -run TestConcurrentListing/.*"
 		case testNameRenameDirLimit:
 			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 				finalTestCommand = baseTestCommandWithTestBucket
