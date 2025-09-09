@@ -414,7 +414,7 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 	}
 }
 
-// prepareStorageService prepares the GCS Storage 	Service using the Kubernetes Service Account from VolumeContext.
+// checkBucketAccessWithRetry prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext and validates bucket access.
 func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string, tokenProvider string) error {
 	backoff := wait.Backoff{
 		Duration: 5 * time.Second,
@@ -499,52 +499,6 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
 	if err != nil {
 		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w", audience, err)
-	}
-
-	return &oauth2.Token{
-		AccessToken: stsResponse.AccessToken,
-		TokenType:   stsResponse.TokenType,
-		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
-	}, nil
-}
-
-func fetchStsToken(ctx context.Context, identityProvider string) (*oauth2.Token, error) {
-	k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
-	var stsToken *oauth2.Token
-	if err != nil {
-		return stsToken, fmt.Errorf("failed to get k8s token from path %v", err)
-	}
-
-	stsToken, err = fetchIdentityBindingTokenDefaultClient(ctx, k8stoken, identityProvider)
-	if err != nil {
-		return stsToken, fmt.Errorf("failed to get sts token from path %v", err)
-	}
-	return stsToken, nil
-}
-
-func fetchIdentityBindingTokenDefaultClient(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
-	stsService, err := sts.NewService(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("new STS service error for default credential: %w", err)
-	}
-
-	audience, err := getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get audience from the contextfor default credential: %w", err)
-	}
-
-	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
-		Audience:           audience,
-		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
-		Scope:              credentials.DefaultAuthScopes()[0],
-		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
-		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		SubjectToken:       k8sSAToken,
-	}
-
-	stsResponse, err := stsService.V1.Token(stsRequest).Do()
-	if err != nil {
-		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q for default credential: %w", audience, err)
 	}
 
 	return &oauth2.Token{
