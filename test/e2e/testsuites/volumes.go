@@ -346,16 +346,33 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		}
 	}
 
+	isZBEnabled := false
+	if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok {
+		isZBEnabled = driver.EnableZB
+	}
+
 	ginkgo.It("should store data using custom sidecar container image", func() {
+		if isZBEnabled {
+			e2eskipper.Skipf("skip for zb, this sidecar image does not contain a gcsfuse verision that supports zb %v", storageframework.DynamicPV)
+		}
 		testCaseStoreDataCustomContainerImage("")
 	})
 	ginkgo.It("should gcsfuse process succeed without missing flag error for hostnetwork enabled pods using custom sidecar container image", func() {
+		if isZBEnabled {
+			e2eskipper.Skipf("skip for zb, this sidecar image does not contain a gcsfuse verision that supports zb %v", storageframework.DynamicPV)
+		}
 		testCaseStoreDataCustomContainerImage(specs.EnableHostNetworkPrefix)
 	})
 	ginkgo.It("[csi-skip-bucket-access-check] should store data using custom sidecar container image", func() {
+		if isZBEnabled {
+			e2eskipper.Skipf("skip for zb, this sidecar image does not contain a gcsfuse verision that supports zb %v", storageframework.DynamicPV)
+		}
 		testCaseStoreDataCustomContainerImage(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 	ginkgo.It("[metadata prefetch] should store data using custom sidecar container image", func() {
+		if isZBEnabled {
+			e2eskipper.Skipf("skip for zb, this sidecar image does not contain a gcsfuse verision that supports zb %v", storageframework.DynamicPV)
+		}
 		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
