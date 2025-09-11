@@ -209,15 +209,15 @@ func (driver *GCSDriver) ValidateControllerServiceRequest(c csi.ControllerServic
 	return status.Error(codes.InvalidArgument, "Invalid controller service request")
 }
 
-func (driver *GCSDriver) Run(ctx context.Context, endpoint string) {
+func (driver *GCSDriver) Run(ctx context.Context, cancel context.CancelFunc, endpoint string) {
 	klog.Infof("Running driver: %v", driver.config.Name)
+
+	if driver.config.RunController && driver.config.FeatureOptions.FeatureScanner.Enabled {
+		go driver.cs.(*controllerServer).scanner.Start(ctx, cancel)
+	}
 
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
-	if driver.config.RunController && driver.config.FeatureOptions.FeatureScanner.Enabled {
-		// Start the scanner on controller driver.
-		// TODO(urielguzman): Enable leader election.
-		go driver.cs.(*controllerServer).scanner.Run(ctx)
-	}
-	s.Wait()
+	<-ctx.Done()
+	s.Stop()
 }
