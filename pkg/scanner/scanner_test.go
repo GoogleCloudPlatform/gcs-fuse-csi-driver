@@ -22,9 +22,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
+	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
+	"cloud.google.com/go/storage"
+	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -54,6 +58,7 @@ const (
 	newAnnotationKey      = "new"
 	newAnnotationVal      = "newval"
 	onlyDirMountOptPrefix = "only-dir="
+	testProjectNumber     = "123456"
 )
 
 var (
@@ -66,7 +71,45 @@ var (
 		totalSizeBytes: 567890,
 		isHNSEnabled:   true,
 	}
+	origGetBucketAttrs         = getBucketAttrs
+	origScanBucketWithMetrics  = scanBucketWithMetrics
+	origScanBucketWithDataflux = scanBucketWithDataflux
 )
+
+type fakeScanFunc struct {
+	called bool
+	// Forced outputs.
+	err            error
+	numObjects     int64
+	totalSizeBytes int64
+}
+
+func (f *fakeScanFunc) scan(info *bucketInfo) error {
+	f.called = true
+	if f.err != nil {
+		return f.err
+	}
+	info.numObjects = f.numObjects
+	info.totalSizeBytes = f.totalSizeBytes
+	return nil
+}
+
+func (f *fakeScanFunc) scanBucketWithMetrics(ctx context.Context, metricClient *monitoring.MetricClient, info *bucketInfo) error {
+	return f.scan(info)
+}
+
+func (f *fakeScanFunc) scanBucketWithDataflux(ctx context.Context, gcsClient *storage.Client, info *bucketInfo, scanTimeout time.Duration, datafluxConfig *DatafluxConfig) error {
+	return f.scan(info)
+}
+
+type fakeGetBucketAttrsFunc struct {
+	attrs *storage.BucketAttrs
+	err   error
+}
+
+func (f *fakeGetBucketAttrsFunc) getBucketAttributes(ctx context.Context, gcsClient *storage.Client, bucketName string) (*storage.BucketAttrs, error) {
+	return f.attrs, f.err
+}
 
 // mockTime allows controlling the time in tests.
 // This is useful for testing time-dependent logic, such as TTLs.
@@ -79,24 +122,24 @@ func (m *mockTime) Now() time.Time {
 	return m.currentTime
 }
 
-// fakeScanBucketFunc provides a mock implementation of the scanBucket function.
+// fakeScanBucketImplFunc provides a mock implementation of the scanBucketImpl function.
 // It allows simulating different scan outcomes, including errors and timeouts.
-type fakeScanBucketFunc struct {
+type fakeScanBucketImplFunc struct {
 	info *bucketInfo
 	err  error
 }
 
-// Scan is the mock implementation of the scanBucket function.
+// Scan is the mock implementation of the scanBucketImpl function.
 // It checks for context cancellation (like timeouts) before returning the predefined info and error.
-func (f *fakeScanBucketFunc) Scan(ctx context.Context, bucketInfo *bucketInfo, scanTimeout time.Duration) (*bucketInfo, error) {
+func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, info *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return f.info, context.DeadlineExceeded
+			return context.DeadlineExceeded
 		}
-		return nil, ctx.Err()
+		return ctx.Err()
 	default:
-		return f.info, f.err
+		return f.err
 	}
 }
 
@@ -111,7 +154,7 @@ type testFixture struct {
 	podLister    corelisters.PodLister
 	recorder     *record.FakeRecorder
 	mockTimeImpl *mockTime
-	scanBucketFn *fakeScanBucketFunc
+	scanBucketFn *fakeScanBucketImplFunc
 	stopCh       chan struct{}
 }
 
@@ -172,14 +215,11 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 	origTimeNow := timeNow
 	timeNow = mt.Now
 
-	fsb := &fakeScanBucketFunc{}
-	origScanBucket := scanBucket
-	scanBucket = fsb.Scan
+	fsb := &fakeScanBucketImplFunc{}
 	stopCh := make(chan struct{})
 
 	t.Cleanup(func() {
 		timeNow = origTimeNow
-		scanBucket = origScanBucket
 		close(stopCh)
 	})
 
@@ -200,6 +240,8 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		eventRecorder:      recorder,
 		trackedPVs:         make(map[string]struct{}),
 		lastSuccessfulScan: make(map[string]time.Time),
+		datafluxConfig:     &DatafluxConfig{}, // Use default or test-specific config
+		scanBucketImpl:     fsb.Scan,          // Inject the fake scan function
 	}
 
 	factory.Start(stopCh)
@@ -1062,8 +1104,8 @@ func TestGetOnlyDirValue(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "Valid mount option with dir name",
-			input: onlyDirMountOptPrefix + testDirName,
+			name:  "Valid mount option with dir name surrounded by '/'",
+			input: onlyDirMountOptPrefix + "/" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
@@ -1081,9 +1123,162 @@ func TestGetOnlyDirValue(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		got, ok := getOnlyDirValue(tc.input)
-		if ok != tc.ok || got != tc.want {
-			t.Errorf("getOnlyDirValue(%q) = %q, %v, want %q, %v", tc.input, got, ok, tc.want, tc.ok)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := getOnlyDirValue(tc.input)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("getOnlyDirValue(%q) = %q, %v, want %q, %v", tc.input, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestDefaultScanBucket(t *testing.T) {
+	testPV := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
+	datafluxConfig := &DatafluxConfig{Parallelism: 1, BatchSize: 10}
+
+	projectNumber, err := strconv.ParseUint(testProjectNumber, 10, 64)
+	if err != nil {
+		t.Fatalf("strconv.ParseUint() error = %v", err)
+	}
+	hnsEnabledAttrs := &storage.BucketAttrs{
+		Name:                  testBucketName,
+		ProjectNumber:         projectNumber,
+		HierarchicalNamespace: &storage.HierarchicalNamespace{Enabled: true},
+	}
+	hnsDisabledAttrs := &storage.BucketAttrs{
+		Name:          testBucketName,
+		ProjectNumber: projectNumber,
+	}
+
+	tests := []struct {
+		name string
+		// Input to defaultScanBucket
+		inputInfo *bucketInfo
+		// Mock setup
+		fakeGetAttrs fakeGetBucketAttrsFunc
+		fakeMetrics  fakeScanFunc
+		fakeDataflux fakeScanFunc
+		// Expectations
+		wantInfo           *bucketInfo
+		wantErr            bool
+		expectMetricsCall  bool
+		expectDatafluxCall bool
+	}{
+		{
+			name:         "onlyDir - Dataflux success",
+			inputInfo:    &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
+			fakeGetAttrs: fakeGetBucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeDataflux: fakeScanFunc{
+				numObjects:     200,
+				totalSizeBytes: 2000,
+			},
+			wantInfo: &bucketInfo{
+				name: testBucketName, dir: testDirName, onlyDirSpecified: true,
+				numObjects: 200, totalSizeBytes: 2000, isHNSEnabled: true, projectNumber: testProjectNumber,
+			},
+			expectMetricsCall:  false,
+			expectDatafluxCall: true,
+		},
+		{
+			name:               "onlyDir - Dataflux error",
+			inputInfo:          &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
+			fakeGetAttrs:       fakeGetBucketAttrsFunc{attrs: hnsDisabledAttrs},
+			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
+			wantErr:            true,
+			expectMetricsCall:  false,
+			expectDatafluxCall: true,
+		},
+		{
+			name:         "no onlyDir - Metrics success",
+			inputInfo:    &bucketInfo{name: testBucketName},
+			fakeGetAttrs: fakeGetBucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeMetrics: fakeScanFunc{
+				numObjects:     100,
+				totalSizeBytes: 1000,
+			},
+			wantInfo: &bucketInfo{
+				name: testBucketName, numObjects: 100, totalSizeBytes: 1000, isHNSEnabled: true, projectNumber: testProjectNumber,
+			},
+			expectMetricsCall:  true,
+			expectDatafluxCall: false,
+		},
+		{
+			name:         "no onlyDir - Metrics error, Dataflux success (Fallback)",
+			inputInfo:    &bucketInfo{name: testBucketName},
+			fakeGetAttrs: fakeGetBucketAttrsFunc{attrs: hnsDisabledAttrs},
+			fakeMetrics: fakeScanFunc{
+				numObjects:     100,
+				totalSizeBytes: 1000,
+				err:            errors.New("metrics failed"),
+			},
+			fakeDataflux: fakeScanFunc{
+				numObjects:     200,
+				totalSizeBytes: 2000,
+			},
+			wantInfo: &bucketInfo{
+				name: testBucketName, numObjects: 200, totalSizeBytes: 2000, isHNSEnabled: false, projectNumber: testProjectNumber,
+			},
+			expectMetricsCall:  true,
+			expectDatafluxCall: true,
+		},
+		{
+			name:               "no onlyDir - Metrics error, Dataflux error (Fallback Fails)",
+			inputInfo:          &bucketInfo{name: testBucketName},
+			fakeGetAttrs:       fakeGetBucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeMetrics:        fakeScanFunc{err: errors.New("metrics failed")},
+			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
+			wantErr:            true,
+			expectMetricsCall:  true,
+			expectDatafluxCall: true,
+		},
+		{
+			name:               "Bucket Attrs error",
+			inputInfo:          &bucketInfo{name: testBucketName},
+			fakeGetAttrs:       fakeGetBucketAttrsFunc{err: errors.New("attrs failed")},
+			wantErr:            true,
+			expectMetricsCall:  false,
+			expectDatafluxCall: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(t)
+			f.scanner.datafluxConfig = datafluxConfig
+
+			// Setup fakes
+			getBucketAttrs = tc.fakeGetAttrs.getBucketAttributes
+			scanBucketWithMetrics = tc.fakeMetrics.scanBucketWithMetrics
+			scanBucketWithDataflux = tc.fakeDataflux.scanBucketWithDataflux
+
+			t.Cleanup(func() {
+				getBucketAttrs = origGetBucketAttrs
+				scanBucketWithMetrics = origScanBucketWithMetrics
+				scanBucketWithDataflux = origScanBucketWithDataflux
+			})
+
+			infoCopy := *tc.inputInfo
+			gotInfo := &infoCopy
+			err := defaultScanBucket(f.scanner, context.Background(), gotInfo, time.Minute, testPV)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("defaultScanBucket() error = %v, wantErr %v", err, tc.wantErr)
+			}
+
+			if !tc.wantErr {
+				if diff := cmp.Diff(tc.wantInfo, gotInfo, cmp.AllowUnexported(bucketInfo{})); diff != "" {
+					t.Errorf("defaultScanBucket() info diff (-want +got):\n%s", diff)
+				}
+			}
+
+			// Check if fakes were called as expected
+			if tc.fakeMetrics.called != tc.expectMetricsCall {
+				t.Errorf("scanBucketWithMetrics called = %v, want %v", tc.fakeMetrics.called, tc.expectMetricsCall)
+			}
+
+			if tc.fakeDataflux.called != tc.expectDatafluxCall {
+				t.Errorf("scanBucketWithDataflux called = %v, want %v", tc.fakeDataflux.called, tc.expectDatafluxCall)
+			}
+		})
 	}
 }

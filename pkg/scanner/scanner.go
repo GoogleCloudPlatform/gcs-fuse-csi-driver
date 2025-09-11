@@ -27,6 +27,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"google.golang.org/api/iterator"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -41,6 +43,14 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"cloud.google.com/go/storage"
+	"cloud.google.com/go/storage/dataflux"
+	"google.golang.org/genproto/googleapis/api/metric"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
+	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,6 +81,7 @@ const (
 	reasonScanOperationStartError     = "ScanOperationStartError"
 	reasonScanOperationStartSucceeded = "ScanOperationStartSucceeded"
 	reasonScanOperationFailed         = "ScanOperationFailed"
+	reasonScanOperationWarning        = "ScanOperationWarning"
 	reasonScanOperationSucceeded      = "ScanOperationSucceeded"
 	reasonScanOperationTimedOut       = "ScanOperationTimedOut"
 
@@ -88,6 +99,10 @@ const (
 	// Label for filtering Pods
 	profileManagedLabelKey   = "gke-gcsfuse/profile-managed"
 	profileManagedLabelValue = "true"
+
+	// Cloud Monitoring metrics
+	objectCountMetric = "storage.googleapis.com/storage/object_count"
+	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
 )
 
 var (
@@ -100,11 +115,12 @@ var (
 	// To allow mocking time in tests
 	timeNow = time.Now
 
-	// scanBucket is a function to scan the bucket, can be overridden in tests.
-	scanBucket = defaultScanBucket
-
 	// Fake error to signal worker to re-queue the Pod without emitting an error log.
 	errRequeuePod = errors.New("requeuing pod")
+
+	getBucketAttrs         = defaultGetBucketAttrs
+	scanBucketWithMetrics  = defaultScanBucketWithMetrics
+	scanBucketWithDataflux = defaultScanBucketWithDataflux
 )
 
 // stringPtr returns a pointer to the passed string.
@@ -116,6 +132,13 @@ func boolPtr(b bool) *string { return stringPtr(strconv.FormatBool(b)) }
 // int64Ptr returns a pointer to the string representation of the passed int64.
 func int64Ptr(i int64) *string { return stringPtr(strconv.FormatInt(i, 10)) }
 
+// DatafluxConfig holds the configuration for the Dataflux lister.
+type DatafluxConfig struct {
+	Parallelism          int
+	BatchSize            int
+	SkipDirectoryObjects bool
+}
+
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
 	KubeAPIQPS     float64       // QPS limit for Kubernetes API client.
@@ -123,32 +146,41 @@ type ScannerConfig struct {
 	ResyncPeriod   time.Duration // Resync period for informers.
 	KubeConfigPath string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
 	RateLimiter    workqueue.TypedRateLimiter[string]
+	DatafluxConfig *DatafluxConfig
 }
 
 // bucketInfo holds the results of a bucket scan.
 type bucketInfo struct {
-	name           string
-	dir            string
-	numObjects     int64
-	totalSizeBytes int64
-	isHNSEnabled   bool
+	name             string
+	dir              string
+	projectNumber    string
+	onlyDirSpecified bool
+	numObjects       int64
+	totalSizeBytes   int64
+	isHNSEnabled     bool
 }
 
 // Scanner is the main controller structure.
 type Scanner struct {
-	kubeClient    kubernetes.Interface
-	pvLister      v1listers.PersistentVolumeLister
-	pvcLister     v1listers.PersistentVolumeClaimLister
-	scLister      storagelisters.StorageClassLister
-	podLister     v1listers.PodLister
-	pvSynced      cache.InformerSynced
-	pvcSynced     cache.InformerSynced
-	scSynced      cache.InformerSynced
-	podSynced     cache.InformerSynced
-	factory       informers.SharedInformerFactory
-	podFactory    informers.SharedInformerFactory
-	queue         workqueue.TypedRateLimitingInterface[string]
-	eventRecorder record.EventRecorder
+	kubeClient     kubernetes.Interface
+	pvLister       v1listers.PersistentVolumeLister
+	pvcLister      v1listers.PersistentVolumeClaimLister
+	scLister       storagelisters.StorageClassLister
+	podLister      v1listers.PodLister
+	pvSynced       cache.InformerSynced
+	pvcSynced      cache.InformerSynced
+	scSynced       cache.InformerSynced
+	podSynced      cache.InformerSynced
+	factory        informers.SharedInformerFactory
+	podFactory     informers.SharedInformerFactory
+	queue          workqueue.TypedRateLimitingInterface[string]
+	eventRecorder  record.EventRecorder
+	datafluxConfig *DatafluxConfig
+	gcsClient      *storage.Client
+	metricClient   *monitoring.MetricClient
+
+	// scanBucket is a function to scan the bucket, can be overridden in tests.
+	scanBucketImpl func(scanner *Scanner, ctx context.Context, info *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
 
 	// pvMutex protects trackedPVs.
 	pvMutex sync.RWMutex
@@ -276,6 +308,8 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		trackedPVs:         make(map[string]struct{}),
 		lastSuccessfulScan: make(map[string]time.Time),
 		eventRecorder:      eventRecorder,
+		datafluxConfig:     config.DatafluxConfig,
+		scanBucketImpl:     defaultScanBucket,
 	}
 
 	klog.Info("Setting up event handlers for PersistentVolumes")
@@ -299,6 +333,22 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 func (s *Scanner) Run(ctx context.Context) {
 	defer runtime.HandleCrash()
 	defer s.queue.ShutDown()
+
+	gcsClient, err := storage.NewClient(ctx)
+	if err != nil {
+		klog.Errorf("Failed to create GCS client: %v", err)
+		return
+	}
+	s.gcsClient = gcsClient
+	defer gcsClient.Close()
+
+	metricClient, err := monitoring.NewMetricClient(ctx)
+	if err != nil {
+		klog.Errorf("Failed to create metric client: %v", err)
+		return
+	}
+	s.metricClient = metricClient
+	defer metricClient.Close()
 
 	stopCh := ctx.Done()
 
@@ -565,7 +615,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		klog.V(6).Infof("PV %q is no longer relevant, skipping sync", key)
 		return nil // Remove irrelevant PV from queue
 	}
-	klog.Infof("PV %q is relevant, bucket: %s, dir: %s", key, bucketInfo.name, bucketInfo.dir)
+	klog.Infof("PV %q is relevant, bucket: %s, dir: %s, onlyDirSpecified: %v", key, bucketInfo.name, bucketInfo.dir, bucketInfo.onlyDirSpecified)
 
 	// ----- At this stage, the PV has been considered eligible for a scan. -----
 
@@ -579,15 +629,15 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationStartSucceeded, "Started bucket scan for PV %s, bucket %s, directory '%s', with timeout %s", pv.Name, bucketInfo.name, bucketInfo.dir, currentScanTimeout)
 	klog.Infof("Bucket scan operation starting for PV %s, bucket %s, dir %s, timeout %s", pv.Name, bucketInfo.name, bucketInfo.dir, currentScanTimeout)
 
-	info, err := scanBucket(ctx, bucketInfo, *currentScanTimeout)
+	err = s.scanBucket(ctx, bucketInfo, *currentScanTimeout, pv)
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			// A bucket scan timeout is benign and expected if the bucket has a large number of objects.
 			// We send a warning only to inform the customer about the timeout.
 			duration := timeNow().Sub(syncStartTime)
-			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationTimedOut, "Bucket scan timed out after %s for bucket %s, directory '%s' (%v). Updating with partial results. Consider increasing timeout if bucket size is big", currentScanTimeout, bucketInfo.name, bucketInfo.dir, duration)
-			if patchErr := s.updatePVScanResult(ctx, pv, info, scanTimeout); patchErr != nil {
+			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationTimedOut, "Bucket scan timed out after %s for bucket %s, directory '%s' (%v). Updating with partial results: %d objects, %d bytes", currentScanTimeout, bucketInfo.name, bucketInfo.dir, duration.Round(time.Second), bucketInfo.numObjects, bucketInfo.totalSizeBytes)
+			if patchErr := s.updatePVScanResult(ctx, pv, bucketInfo, scanTimeout); patchErr != nil {
 				return fmt.Errorf("failed to patch PV %s after timeout, err: %w", pv.Name, patchErr)
 			}
 			return nil // Remove since we still consider this a successful scan.
@@ -600,48 +650,212 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 
 	// The scan has been successful and complete results have been used.
 	duration := timeNow().Sub(syncStartTime)
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Bucket scan completed successfully for bucket %s, directory '%s' (%v)", bucketInfo.name, bucketInfo.dir, duration)
-	if patchErr := s.updatePVScanResult(ctx, pv, info, scanCompleted); patchErr != nil {
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Bucket scan completed successfully for bucket %s, directory '%s' (%v): %d objects, %d bytes", bucketInfo.name, bucketInfo.dir, duration.Round(time.Second), bucketInfo.numObjects, bucketInfo.totalSizeBytes)
+	if patchErr := s.updatePVScanResult(ctx, pv, bucketInfo, scanCompleted); patchErr != nil {
 		return fmt.Errorf("failed to patch PV %s results, err: %w", pv.Name, patchErr)
 	}
 	return nil // Remove since this is a complete and successful scan.
 }
 
-// defaultScanBucket simulates scanning a GCS bucket to gather metadata.
+func (s *Scanner) scanBucket(ctx context.Context, info *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
+	return s.scanBucketImpl(s, ctx, info, scanTimeout, pv)
+}
+
+func defaultGetBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketName string) (*storage.BucketAttrs, error) {
+	attrs, err := gcsClient.Bucket(bucketName).Attrs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bucket attributes for '%s': %w", bucketName, err)
+	}
+	return attrs, nil
+}
+
+// defaultScanBucket performs a bucket scan.
 // It collects the number of objects, total size, and HNS status.
 // This function respects the provided context and the scanTimeout.
 // It returns partial results if the timeout is reached (context.DeadlineExceeded).
-// TODO(urielguzman): Add real Dataflux and bucket metrics fallback logic in subsequent PR.
-func defaultScanBucket(ctx context.Context, info *bucketInfo, scanTimeout time.Duration) (*bucketInfo, error) {
-	klog.Infof("Simulating scan for bucket: %s, dir: %s, timeout: %s", info.name, info.dir, scanTimeout)
+//
+// If the `only-dir` mount option is specified, the bucket will be scanned using the
+// GCS Dataflux client library for the specified directory. Otherwise, Google Cloud Metrics
+// will be used and fallback to the GCS Dataflux client library in the case of any errors or
+// unavailable metrics.
+//
+// Optionally, GCS Dataflux client scanning on the entire bucket can be forced by specifying `only-dir=/`
+func defaultScanBucket(s *Scanner, ctx context.Context, info *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
+	// Get bucket attributes to determine HNS status and project number.
+	// Use the parent context for this, as it's a quick metadata call.
+	bucketAttrs, err := getBucketAttrs(ctx, s.gcsClient, info.name)
+	if err != nil {
+		return err
+	}
+	info.isHNSEnabled = bucketAttrs.HierarchicalNamespace != nil && bucketAttrs.HierarchicalNamespace.Enabled
+	info.projectNumber = fmt.Sprint(bucketAttrs.ProjectNumber)
+	klog.Infof("Bucket %s HNS enabled: %v", info.name, info.isHNSEnabled)
+
+	if info.onlyDirSpecified {
+		klog.Infof("onlyDirSpecified is true for bucket %s, dir '%s'. Scanning with Dataflux.", info.name, info.dir)
+		dfErr := scanBucketWithDataflux(ctx, s.gcsClient, info, scanTimeout, s.datafluxConfig)
+		if dfErr != nil {
+			klog.Errorf("Dataflux scan failed for bucket %s, dir '%s': %v", info.name, info.dir, dfErr)
+			// No fallback, as metrics are not applicable for a specific directory.
+		}
+		return dfErr
+	} else {
+		klog.Infof("onlyDirSpecified is false for bucket %s. Attempting scan with GCS Bucket Metrics first.", info.name)
+		mErr := scanBucketWithMetrics(ctx, s.metricClient, info)
+		if mErr == nil {
+			klog.Infof("Successfully scanned bucket %s using GCS Bucket Metrics: %d objects, %d bytes", info.name, info.numObjects, info.totalSizeBytes)
+			return nil
+		}
+
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationWarning, "Failed to scan bucket %s using GCS Bucket Metrics, falling back to Dataflux: %v", info.name, mErr)
+		// Fallback to Dataflux for the whole bucket
+		dfErr := scanBucketWithDataflux(ctx, s.gcsClient, info, scanTimeout, s.datafluxConfig)
+		if dfErr != nil {
+			klog.Errorf("Dataflux scan (fallback) failed for bucket %s: %v", info.name, dfErr)
+			return dfErr
+		}
+		klog.Infof("Successfully scanned bucket %s using Dataflux fallback.", info.name)
+		return nil
+	}
+}
+
+// defaultScanBucketWithMetrics fetches bucket size and object count from Cloud Monitoring.
+func defaultScanBucketWithMetrics(ctx context.Context, metricClient *monitoring.MetricClient, info *bucketInfo) error {
+	klog.V(6).Infof("Fetching metrics for bucket %s in project %s", info.name, info.projectNumber)
+
+	objectCount, err := fetchMetricValue(ctx, metricClient, info.projectNumber, info, objectCountMetric)
+	if err != nil {
+		return fmt.Errorf("failed to fetch object count metric: %w", err)
+	}
+
+	totalBytes, err := fetchMetricValue(ctx, metricClient, info.projectNumber, info, totalBytesMetric)
+	if err != nil {
+		return fmt.Errorf("failed to fetch total bytes metric: %w", err)
+	}
+
+	info.numObjects = objectCount
+	info.totalSizeBytes = totalBytes
+	return nil
+}
+
+// fetchMetricValue retrieves the latest value for a given metric type from Cloud Monitoring.
+func fetchMetricValue(ctx context.Context, metricClient *monitoring.MetricClient, projectNumber string, info *bucketInfo, metricType string) (int64, error) {
+	filter := fmt.Sprintf(`metric.type="%s" AND resource.type="gcs_bucket" AND resource.labels.bucket_name="%s"`, metricType, info.name)
+
+	now := time.Now()
+	// Metrics are published daily, look back up to 48 hours to be safe.
+	startTime := now.Add(-48 * time.Hour)
+	interval := &monitoringpb.TimeInterval{
+		EndTime:   timestamppb.New(now),
+		StartTime: timestamppb.New(startTime),
+	}
+
+	req := &monitoringpb.ListTimeSeriesRequest{
+		Name:     fmt.Sprintf("projects/%s", projectNumber),
+		Filter:   filter,
+		Interval: interval,
+		Aggregation: &monitoringpb.Aggregation{
+			AlignmentPeriod:  durationpb.New(24 * time.Hour), // Align over a day
+			PerSeriesAligner: monitoringpb.Aggregation_ALIGN_NEXT_OLDER,
+		},
+	}
+
+	it := metricClient.ListTimeSeries(ctx, req)
+	if it == nil {
+		return 0, fmt.Errorf("ListTimeSeries returned nil iterator for metric %s", metricType)
+	}
+
+	resp, err := it.Next()
+	if err == iterator.Done {
+		return 0, fmt.Errorf("no time series data found for metric '%s' in bucket '%s'", metricType, info.name)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("error iterating over time series for metric %s: %w", metricType, err)
+	}
+
+	if len(resp.Points) == 0 {
+		return 0, fmt.Errorf("no points found in time series for metric '%s' in bucket '%s'", metricType, info.name)
+	}
+
+	latestPoint := resp.Points[0]
+	if resp.ValueType == metric.MetricDescriptor_INT64 {
+		return latestPoint.Value.GetInt64Value(), nil
+	}
+	if resp.ValueType == metric.MetricDescriptor_DOUBLE {
+		return int64(latestPoint.Value.GetDoubleValue()), nil
+	}
+
+	return 0, fmt.Errorf("unsupported value type for metric '%s': %v", metricType, resp.ValueType)
+}
+
+// defaultScanBucketWithDataflux performs a bucket scan using the GCS Dataflux library.
+func defaultScanBucketWithDataflux(ctx context.Context, gcsClient *storage.Client, info *bucketInfo, scanTimeout time.Duration, datafluxConfig *DatafluxConfig) error {
+	klog.Infof("Starting Dataflux scan for bucket: %s, dir: '%s', timeout: %s", info.name, info.dir, scanTimeout)
 	scanCtx, cancel := context.WithTimeout(ctx, scanTimeout)
 	defer cancel()
 
-	result := &bucketInfo{
-		name:         info.name,
-		dir:          info.dir,
-		isHNSEnabled: true, // Example
+	if datafluxConfig == nil {
+		return fmt.Errorf("datafluxConfig is nil")
 	}
 
-	// Simulate work in ticks
-	tickDuration := 200 * time.Millisecond
-	ticker := time.NewTicker(tickDuration)
-	defer ticker.Stop()
+	dfInput := &dataflux.ListerInput{
+		BucketName:           info.name,
+		Parallelism:          datafluxConfig.Parallelism,
+		BatchSize:            datafluxConfig.BatchSize,
+		Query:                storage.Query{},
+		SkipDirectoryObjects: datafluxConfig.SkipDirectoryObjects,
+	}
 
+	// Optimize resource consumption by filtering only relevant fields.
+	dfInput.Query.SetAttrSelection([]string{"Name", "Size"})
+
+	// Only scan for objects under this directory, if defined.
+	if info.dir != "" && info.dir != "/" {
+		// Ensure that the directory name ends with "/" to avoid picking up
+		// files with prefixes of other directories, since GCS "nested"
+		// objects are just file names with "/" in the names.
+		dfInput.Query.Prefix = strings.Trim(info.dir, "/") + "/"
+	}
+
+	klog.Infof("Dataflux ListerInput created: %+v", dfInput)
+	df := dataflux.NewLister(gcsClient, dfInput)
+	defer df.Close()
+
+	var numObjects int64
+	var totalSizeBytes int64
+
+	accumulate := func(objects []*storage.ObjectAttrs) {
+		numObjects += int64(len(objects))
+		for _, obj := range objects {
+			totalSizeBytes += obj.Size
+		}
+	}
+
+	startTime := timeNow()
 	for {
-		select {
-		case <-scanCtx.Done():
-			// This is the scanTimeout
-			klog.Warningf("Scan for bucket %s, dir %s timed out after %s. Returning partial results: %+v", result.name, result.dir, scanTimeout, result)
-			return result, context.DeadlineExceeded
-		case <-ctx.Done():
-			// This means the caller cancelled the operation.
-			klog.Infof("Scan for bucket %s, dir %s cancelled by caller", result.name, result.dir)
-			return nil, ctx.Err()
-		case <-ticker.C:
-			// Simulate incremental discovery of objects and size
-			result.numObjects += 1000
-			result.totalSizeBytes += 1000000
+		objects, err := df.NextBatch(scanCtx)
+		switch {
+		case errors.Is(err, iterator.Done):
+			// The scan is completed. Accumulate the last batch.
+			accumulate(objects)
+			klog.Infof("Dataflux listing complete for bucket %s, dir '%s'. Found %d objects, total size %d bytes in %s", info.name, info.dir, numObjects, totalSizeBytes, time.Since(startTime).Round(time.Millisecond))
+			info.numObjects = numObjects
+			info.totalSizeBytes = totalSizeBytes
+			return nil
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+			// The scan has timed out. Accumulate the last batch.
+			accumulate(objects)
+			klog.Warningf("Scan for bucket %s, dir '%s' timed out or was cancelled after %s: %v. Returning partial results: %d objects, %d bytes", info.name, info.dir, time.Since(startTime).Round(time.Millisecond), err, numObjects, totalSizeBytes)
+			info.numObjects = numObjects
+			info.totalSizeBytes = totalSizeBytes
+			return context.DeadlineExceeded
+		case err == nil:
+			// The scan is not yet finished. Continue accumulating metadata.
+			accumulate(objects)
+			klog.V(6).Infof("Bucket %s, dir '%s': Scanned %d objects, total size %d bytes so far", info.name, info.dir, numObjects, totalSizeBytes)
+		default:
+			klog.Errorf("Error getting next batch from dataflux for bucket %s, dir '%s': %v", info.name, info.dir, err)
+			return err
 		}
 	}
 }
@@ -747,14 +961,13 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 	case paramWorkloadTypeInferenceKey, paramWorkloadTypeTrainingKey, paramWorkloadTypeCheckpointingKey:
 	default:
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Found invalid '%s' parameter %q in StorageClass %s for PV %s", paramWorkloadTypeKey, workloadType, scName, pv.Name)
-		return nil, nil // Avoid re-queuing on static customer misconfig.
+		return nil, nil // Avoid re-queueing on static customer misconfig.
 	}
 
-	// Check if the scan should be skipped based on TTL
 	currentScanTTL, err := s.getDurationAttribute(pv, volumeAttributeScanTTLKey, defaultScanTTLDuration)
 	if err != nil {
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Bucket scan TTL configuration error: %v", err)
-		return nil, nil // Avoid re-queuing on static customer misconfig.
+		return nil, nil // Avoid re-queueing on static customer misconfig.
 	}
 
 	var lastScanTime time.Time
@@ -795,25 +1008,31 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 		klog.V(6).Infof("PV %s: No last scan time found in memory or annotations. Proceeding with scan", pv.Name)
 	}
 
-	bucketName := pv.Spec.CSI.VolumeHandle
+	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
 	var dir string
+	var onlyDirSpecified bool
 	for _, mountOption := range pv.Spec.MountOptions {
 		if val, ok := getOnlyDirValue(mountOption); ok {
 			dir = val
+			onlyDirSpecified = true
 			break
 		}
 	}
 	return &bucketInfo{
-		name: bucketName,
-		dir:  dir}, nil
+		name:             bucketName,
+		dir:              dir,
+		onlyDirSpecified: onlyDirSpecified,
+	}, nil
 }
 
 // getOnlyDirValue parses a mount option string to extract the value of "only-dir".
 // It returns the directory value and true if the prefix is found, otherwise empty string and false.
+// The directory value is trimmed to exclude leading or trailing '/'.
 func getOnlyDirValue(s string) (string, bool) {
 	prefix := "only-dir="
 	if strings.HasPrefix(s, prefix) {
-		return strings.TrimPrefix(s, prefix), true
+		val := strings.TrimPrefix(s, prefix)
+		return strings.Trim(val, "/"), true
 	}
 	return "", false
 }
