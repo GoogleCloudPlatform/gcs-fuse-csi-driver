@@ -21,6 +21,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -37,11 +38,13 @@ import (
 )
 
 var (
-	gcsfusePath               = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath            = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	_                         = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
-	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	gcsfusePath                        = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath                     = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
+	_                                  = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	kubeconfigPath                     = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	informerResyncDurationSec          = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	storageServiceAndBucketAccessCap   = flag.Duration("storage-service-check-retry-cap", 60*time.Minute, "storage service creation and bucket access check exponential retry cap")
+	storageServiceAndBucketAccessSteps = flag.Int("storage-service-check-retry-steps", math.MaxInt, "storage service creation and bucket access check exponential retry cap") // Effectively infinite retry steps
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -93,7 +96,7 @@ func main() {
 			}
 		}
 		if mc != nil {
-			if mc.EnableSidecarBucketAccessCheckFlag {
+			if mc.EnableSidecarBucketAccessCheck {
 				tm, ssm, err := mounter.SetupTokenAndStorageManager(clientset, mc)
 				if err != nil {
 					klog.Errorf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %q", err)
@@ -101,7 +104,7 @@ func main() {
 				mounter.TokenManager = tm
 				mounter.StorageServiceManager = ssm
 			}
-			if err := mounter.Mount(ctx, mc); err != nil {
+			if err := mounter.Mount(ctx, mc, *storageServiceAndBucketAccessCap, *storageServiceAndBucketAccessSteps); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
 		}

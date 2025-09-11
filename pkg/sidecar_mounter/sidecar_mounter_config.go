@@ -35,39 +35,32 @@ import (
 )
 
 const (
-	GCSFuseAppName                     = "gke-gcs-fuse-csi"
-	TempDir                            = "/temp-dir"
-	unixSocketBasePath                 = "unix://"
-	TokenFileName                      = "token.sock" // #nosec G101
-	identityProviderFlag               = "token-server-identity-provider"
-	identityPoolFlag                   = "token-server-identity-pool"
-	podNamespace                       = "pod-namespace"
-	serviceAccountName                 = "service-account-name"
-	enableSidecarBucketAccessCheckFlag = "enable-sidecar-bucket-access-check-flag"
-	hostNetworkKSAOptInFlag            = "hnw-ksa"
-	enableCloudProfilerForSidecar      = "enable-clooud-profiler-for-sidecar"
+	GCSFuseAppName     = "gke-gcs-fuse-csi"
+	TempDir            = "/temp-dir"
+	unixSocketBasePath = "unix://"
+	TokenFileName      = "token.sock" // #nosec G101
 )
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor                     int                   `json:"-"`
-	VolumeName                         string                `json:"volumeName,omitempty"`
-	BucketName                         string                `json:"bucketName,omitempty"`
-	BufferDir                          string                `json:"-"`
-	CacheDir                           string                `json:"-"`
-	TempDir                            string                `json:"-"`
-	ConfigFile                         string                `json:"-"`
-	Options                            []string              `json:"options,omitempty"`
-	ErrWriter                          stderrWriterInterface `json:"-"`
-	FlagMap                            map[string]string     `json:"-"`
-	ConfigFileFlagMap                  map[string]string     `json:"-"`
-	TokenServerIdentityProvider        string                `json:"-"`
-	HostNetworkKSAOptIn                bool                  `json:"-"`
-	EnableCloudProfilerForSidecar      bool                  `json:"-"`
-	PodNamespace                       string                `json:"-"`
-	ServiceAccountName                 string                `json:"-"`
-	EnableSidecarBucketAccessCheckFlag bool                  `json:"-"`
-	TokenServerIdentityPool            string                `json:"-"`
+	FileDescriptor                 int                   `json:"-"`
+	VolumeName                     string                `json:"volumeName,omitempty"`
+	BucketName                     string                `json:"bucketName,omitempty"`
+	BufferDir                      string                `json:"-"`
+	CacheDir                       string                `json:"-"`
+	TempDir                        string                `json:"-"`
+	ConfigFile                     string                `json:"-"`
+	Options                        []string              `json:"options,omitempty"`
+	ErrWriter                      stderrWriterInterface `json:"-"`
+	FlagMap                        map[string]string     `json:"-"`
+	ConfigFileFlagMap              map[string]string     `json:"-"`
+	TokenServerIdentityProvider    string                `json:"-"`
+	HostNetworkKSAOptIn            bool                  `json:"-"`
+	EnableCloudProfilerForSidecar  bool                  `json:"-"`
+	PodNamespace                   string                `json:"-"`
+	ServiceAccountName             string                `json:"-"`
+	EnableSidecarBucketAccessCheck bool                  `json:"-"`
+	TokenServerIdentityPool        string                `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -245,35 +238,35 @@ func (mc *MountConfig) prepareMountArgs() {
 			value = argPair[1]
 		}
 
-		if flag == identityProviderFlag {
+		if flag == util.TokenServerIdentityProviderConst {
 			mc.TokenServerIdentityProvider = value
 			continue
 		}
 
-		if flag == identityPoolFlag {
+		if flag == util.TokenServerIdentityPoolConst {
 			mc.TokenServerIdentityPool = value
 			continue
 		}
 
-		if flag == hostNetworkKSAOptInFlag {
+		if flag == util.OptInHnw {
 			mc.HostNetworkKSAOptIn = value == util.TrueStr
 			continue
 		}
 
-		if flag == enableSidecarBucketAccessCheckFlag {
-			mc.EnableSidecarBucketAccessCheckFlag = value == util.TrueStr
+		if flag == util.EnableSidecarBucketAccessCheckConst {
+			mc.EnableSidecarBucketAccessCheck = value == util.TrueStr
 			continue
 		}
 
-		if flag == podNamespace {
+		if flag == util.PodNamespaceConst {
 			mc.PodNamespace = value
 			continue
 		}
-		if flag == serviceAccountName {
+		if flag == util.ServiceAccountNameConst {
 			mc.ServiceAccountName = value
 			continue
 		}
-		if flag == enableCloudProfilerForSidecar {
+		if flag == util.EnableCloudProfilerForSidecarConst {
 			mc.EnableCloudProfilerForSidecar = value == util.TrueStr
 			continue
 		}

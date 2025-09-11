@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -38,7 +37,7 @@ import (
 	"cloud.google.com/go/compute/metadata"
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
-	csimetadata "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
+	cpmeta "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -72,38 +71,37 @@ func New(mounterPath string) *Mounter {
 	}
 }
 
-func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+func (m *Mounter) Mount(ctx context.Context, mc *MountConfig, storageServiceAndBucketAccessCap time.Duration, storageServiceAndBucketAccessSteps int) error {
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
 	var tokenSource oauth2.TokenSource
 	var audience string
 	var err error
-	if mc.EnableSidecarBucketAccessCheckFlag {
-		if mc.HostNetworkKSAOptIn {
+
+	if mc.HostNetworkKSAOptIn {
+		if mc.TokenServerIdentityProvider != "" {
+			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
+			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
+		} else {
+			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
+		}
+		if mc.EnableSidecarBucketAccessCheck {
+			// Fetch custom tokensource and audience for host network path, for workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
 			audience, err = getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
 			if err != nil {
 				return fmt.Errorf("failed to get audience from the context: %w", err)
 			}
-			err, tokenSource = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
+			tokenSource, err = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
 			if err != nil {
 				return fmt.Errorf("Failed to create token source, got error %q", err)
 			}
 		}
 	}
-	if mc.HostNetworkKSAOptIn {
-		if mc.TokenServerIdentityProvider != "" {
-			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
-			go StartTokenServer(ctx, mc.TempDir, TokenFileName, m.TokenManager, tokenSource, mc.TokenServerIdentityProvider)
-		} else {
-			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
-		}
-	}
-	if mc.EnableSidecarBucketAccessCheckFlag {
-		err := m.checkBucketAccessWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName, mc.TokenServerIdentityProvider)
+	if mc.EnableSidecarBucketAccessCheck {
+		err := m.checkBucketAccessWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName, mc.TokenServerIdentityProvider, storageServiceAndBucketAccessCap, storageServiceAndBucketAccessSteps)
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
 		}
-
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
@@ -195,12 +193,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	return nil
 }
 
-func (m *Mounter) fetchTokenSource(saNamespace, saName string, audience string) (error, oauth2.TokenSource) {
+func (m *Mounter) fetchTokenSource(saNamespace, saName string, audience string) (oauth2.TokenSource, error) {
 	k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
 	if err != nil {
-		return fmt.Errorf("failed to get k8s token from path %v", err), nil
+		return nil, fmt.Errorf("failed to get k8s token from path %v", err)
 	}
-	return nil, m.TokenManager.GetTokenSourceFromK8sServiceAccount(saNamespace, saName, k8stoken, audience, true)
+	return m.TokenManager.GetTokenSourceFromK8sServiceAccount(saNamespace, saName, k8stoken, audience, true), nil
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.
@@ -350,7 +348,7 @@ func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWr
 	return nil
 }
 
-func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, tm auth.TokenManager, tokenSource oauth2.TokenSource, identityProvider string) {
+func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, identityProvider string) {
 	// Clean up any stale socket file before creating a new one.
 	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
 	if err != nil {
@@ -415,16 +413,16 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 }
 
 // checkBucketAccessWithRetry prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext and validates bucket access.
-func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string, tokenProvider string) error {
+func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string, tokenProvider string, storageServiceAndBucketAccessCap time.Duration, storageServiceAndBucketAccessSteps int) error {
 	backoff := wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
-		Cap:      60 * time.Minute,
-		Steps:    math.MaxInt32, // Effectively infinite retry steps
-		Jitter:   0.1,           // Adds randomness, this will give +/- 10% of the current delay
+		Cap:      storageServiceAndBucketAccessCap,
+		Steps:    storageServiceAndBucketAccessSteps,
+		Jitter:   0.1, // Adds randomness, this will give +/- 10% of the current delay
 	}
 
-	storageServiceCreationFunc := func(ctx context.Context) (bool, error) {
+	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
 		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 		if err != nil {
 			klog.Errorf("Failed to setup storage service got error %q, retrying...", err)
@@ -438,7 +436,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 		klog.V(4).Infof("Bucket access check passed for bucket %s", bucketName)
 		return true, nil
 	}
-	err := wait.ExponentialBackoffWithContext(ctx, backoff, storageServiceCreationFunc)
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, ssCreateAndBucketCheckFunc)
 	if err != nil {
 		return err
 	}
@@ -461,7 +459,7 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 
 func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {
 	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
-		meta, err := csimetadata.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+		meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 		if err != nil {
 			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 		}

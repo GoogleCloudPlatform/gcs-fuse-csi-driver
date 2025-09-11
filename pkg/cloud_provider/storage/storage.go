@@ -389,13 +389,16 @@ func isBucketAZonalBucket(ctx context.Context, client *storage.Client, bucketNam
 func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
 	var err error
 	var storageClient *storage.Client
-
+	// For workload identity enabled resources we need to create the storage service with default credentials so as to not consume more STS quota.
+	// The token source thus is only shared for host network enabled workload. If token source is nil then create storage client with default credentials else use the tokenSource.
+	// This is needed as the storage API checks calls TokenSource.Token() function (defined above) which leads to increased STS quota since we are directly hittingthe STS API.
 	if ts != nil {
 		client := oauth2.NewClient(ctx, ts)
 		storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))
 	} else {
 		storageClient, err = storage.NewClient(ctx)
 	}
+	// Storage client is expected to be created by either path, return the error if storage client creation fails
 	if err != nil || storageClient == nil {
 		klog.Errorf("Errored while creating with tokensource %v, got storage client %v", err, storageClient)
 		return nil, err

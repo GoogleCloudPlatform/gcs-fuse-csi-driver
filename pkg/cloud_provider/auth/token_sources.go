@@ -46,7 +46,7 @@ type GCPTokenSource struct {
 	k8sSAToken         string
 	k8sClients         clientset.Interface
 	audience           string
-	fetchTokenfromFile bool
+	fetchTokenfromFile bool // This is set for sidecar where pod doesn't have access to get service account details
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.
@@ -55,15 +55,17 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	defer cancel()
 	var k8sSAToken string
 	var err error
+	// If fetchTokenfromFile is set we assume the request is coming from sidecar, as the sidecar (user pod) doesn't have access to get service account details we fetch the service account from file.
 	if !ts.fetchTokenfromFile {
 		k8sSAToken, err = ts.fetchK8sSAToken(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("k8s service account token fetch error: %w", err)
 		}
 	} else {
-		k8sSAToken, err = util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+		tokenPath := webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath
+		k8sSAToken, err = util.FetchK8sTokenFromFile(tokenPath)
 		if err != nil {
-			return nil, fmt.Errorf("k8s service account token fetch error: %w", err)
+			return nil, fmt.Errorf("k8s service account token fetch error: %w from path %s", err, tokenPath)
 		}
 	}
 
@@ -71,8 +73,11 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity binding token fetch error: %w", err)
 	}
+	// GCP SA Token was needed in pre WI world where we linked GCP SA Token and K8s SA token through annotation.
+	// In the fetchGCPSAToken too we check if there's any annotation on tha SA and return IdentityBindingToken if no annotation specified.
+	// If however fetchTokenfromFile is set we assume the request is coming from sidecar, as it doesn't have access to Get SA API we skip the check assuming the sidecar follows new setup.
+	// The new setup is the default with WI
 	if !ts.fetchTokenfromFile {
-
 		token, err := ts.fetchGCPSAToken(ctx, identityBindingToken)
 		if err != nil {
 			return nil, fmt.Errorf("GCP service account token fetch error: %w", err)
