@@ -335,6 +335,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
 		var finalTestCommand string
 		switch testName {
 		case testNameReadonly:
@@ -350,7 +351,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			// https://github.com/GoogleCloudPlatform/gcsfuse/tree/master/tools/integration_tests/concurrent_operations
 			finalTestCommand = baseTestCommandWithTestBucket + " -run TestConcurrentListing/.*"
 		case testNameRenameDirLimit:
-			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
+			if gcsfuseTestBranch == masterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 				finalTestCommand = baseTestCommandWithTestBucket
 			} else {
 				finalTestCommand = baseTestCommand
@@ -360,7 +361,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		case testNameListLargeDir, testNameWriteLargeFiles:
 			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 120m"
 		case testNameReadLargeFiles:
-			if gcsfuseTestBranch == masterBranchName || version.MustParseSemantic(gcsfuseTestBranch).AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
+			if gcsfuseTestBranch == masterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 				finalTestCommand = baseTestCommandWithTestBucket + " -timeout 60m"
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
