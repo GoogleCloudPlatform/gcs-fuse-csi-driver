@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,7 @@ import (
 	"google.golang.org/api/iterator"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -39,6 +40,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -54,6 +57,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	v1listers "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
@@ -68,6 +72,7 @@ const (
 	paramWorkloadTypeCheckpointingKey = "checkpointing"
 	volumeAttributeScanTimeoutKey     = "bucketScanTimeout"
 	volumeAttributeScanTTLKey         = "bucketScanTTL"
+	leaseName                         = "gke-gcsfuse-scanner-lease"
 
 	// Annotation keys
 	annotationPrefix          = "gke-gcsfuse"
@@ -141,12 +146,17 @@ type DatafluxConfig struct {
 
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
-	KubeAPIQPS     float64       // QPS limit for Kubernetes API client.
-	KubeAPIBurst   int           // Burst limit for Kubernetes API client.
-	ResyncPeriod   time.Duration // Resync period for informers.
-	KubeConfigPath string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
-	RateLimiter    workqueue.TypedRateLimiter[string]
-	DatafluxConfig *DatafluxConfig
+	KubeAPIQPS                  float64       // QPS limit for Kubernetes API client.
+	KubeAPIBurst                int           // Burst limit for Kubernetes API client.
+	ResyncPeriod                time.Duration // Resync period for informers.
+	KubeConfigPath              string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
+	RateLimiter                 workqueue.TypedRateLimiter[string]
+	DatafluxConfig              *DatafluxConfig
+	LeaderElection              bool
+	LeaderElectionNamespace     string
+	LeaderElectionLeaseDuration time.Duration
+	LeaderElectionRenewDeadline time.Duration
+	LeaderElectionRetryPeriod   time.Duration
 }
 
 // bucketInfo holds the results of a bucket scan.
@@ -178,6 +188,7 @@ type Scanner struct {
 	datafluxConfig *DatafluxConfig
 	gcsClient      *storage.Client
 	metricClient   *monitoring.MetricClient
+	config         *ScannerConfig
 
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
 	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
@@ -197,6 +208,10 @@ type Scanner struct {
 	// and removes the key from trackedPVs, potentially resulting in multiple
 	// scans not seeing the PV's annotationLastUpdatedTime.
 	lastSuccessfulScan map[string]time.Time
+
+	// Identity of this controller, generated at creation time and not persisted
+	// across restarts. Useful only for debugging, for seeing the source of events.
+	id string
 }
 
 // buildConfig creates a Kubernetes rest.Config for the client.
@@ -252,6 +267,14 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to build kubeconfig: %w", err)
 	}
+
+	// Add a uniquifier so that two processes on the same host don't accidentally both become active.
+	hostname, err := os.Hostname()
+	if err != nil {
+		klog.Errorf("Failed to get hostname for scanner controller: %v", err)
+		return nil, err
+	}
+	id := hostname + "_" + string(uuid.NewUUID())
 
 	kubeconfig.QPS = float32(config.KubeAPIQPS)
 	kubeconfig.Burst = config.KubeAPIBurst
@@ -310,6 +333,8 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		eventRecorder:      eventRecorder,
 		datafluxConfig:     config.DatafluxConfig,
 		scanBucketImpl:     defaultScanBucket,
+		config:             config,
+		id:                 id,
 	}
 
 	klog.Info("Setting up event handlers for PersistentVolumes")
@@ -329,9 +354,11 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	return scanner, nil
 }
 
-// Run starts the scanner controller.
-func (s *Scanner) Run(ctx context.Context) {
-	defer runtime.HandleCrash()
+// run is the main function of the Scanner. It initializes necessary clients,
+// starts Kubernetes informers, waits for caches to sync, and then runs the worker loop.
+// This function blocks until the context is cancelled.
+func (s *Scanner) run(ctx context.Context) {
+	defer utilruntime.HandleCrash()
 	defer s.queue.ShutDown()
 
 	gcsClient, err := storage.NewClient(ctx)
@@ -369,6 +396,52 @@ func (s *Scanner) Run(ctx context.Context) {
 	klog.Info("Scanner started")
 	<-stopCh
 	klog.Info("Scanner shutting down")
+}
+
+// runWithLeaderElection wraps the run function with leader election logic.
+// It ensures that only one instance of the Scanner is active in the cluster.
+// The scanner's main logic (s.run) is executed only if this instance becomes the leader.
+// This function blocks until leader election fails or the context is cancelled.
+func (s *Scanner) runWithLeaderElection(ctx context.Context) {
+	rl, err := resourcelock.New(
+		resourcelock.LeasesResourceLock,
+		s.config.LeaderElectionNamespace,
+		leaseName,
+		nil,
+		s.kubeClient.CoordinationV1(),
+		resourcelock.ResourceLockConfig{
+			Identity: s.id,
+		})
+	if err != nil {
+		klog.Fatalf("Error creating resourcelock: %v", err)
+	}
+
+	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
+		Lock:          rl,
+		LeaseDuration: s.config.LeaderElectionLeaseDuration,
+		RenewDeadline: s.config.LeaderElectionRenewDeadline,
+		RetryPeriod:   s.config.LeaderElectionRetryPeriod,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				klog.Infof("Scanner controller %q started leading", s.id)
+				s.run(ctx)
+			},
+			OnStoppedLeading: func() {
+				klog.Fatalf("%q is no longer the leader", s.id)
+			},
+		},
+	})
+}
+
+// Start begins the Scanner process in a new goroutine.
+// It will use leader election if s.config.LeaderElection is true,
+// otherwise it starts the scanner directly.
+func (s *Scanner) Start(ctx context.Context) {
+	if !s.config.LeaderElection {
+		go s.run(ctx)
+	} else {
+		go s.runWithLeaderElection(ctx)
+	}
 }
 
 // runWorker runs a worker thread that processes items from the queue.
@@ -1042,7 +1115,7 @@ func onlyDirValue(s string) (string, bool) {
 func (s *Scanner) enqueuePV(pv *v1.PersistentVolume) {
 	key, err := cache.MetaNamespaceKeyFunc(pv)
 	if err != nil {
-		runtime.HandleError(fmt.Errorf("couldn't get key for object %#v: %w", pv, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %w", pv, err))
 		return
 	}
 	klog.V(6).Infof("Enqueuing PV %q", key)
@@ -1169,7 +1242,7 @@ func (s *Scanner) deletePod(obj any) {
 func (s *Scanner) enqueuePod(pod *v1.Pod) {
 	key, err := cache.MetaNamespaceKeyFunc(pod)
 	if err != nil {
-		runtime.HandleError(fmt.Errorf("couldn't get key for object %#v: %w", pod, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %w", pod, err))
 		return
 	}
 	klog.V(6).Infof("Enqueuing Pod %q", key)

@@ -215,9 +215,7 @@ func (driver *GCSDriver) Run(ctx context.Context, endpoint string) {
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
 	if driver.config.RunController && driver.config.FeatureOptions.FeatureScanner.Enabled {
-		// Start the scanner on controller driver.
-		// TODO(urielguzman): Enable leader election.
-		go driver.cs.(*controllerServer).scanner.Run(ctx)
+		driver.cs.(*controllerServer).scanner.Start(ctx)
 	}
 	s.Wait()
 }
