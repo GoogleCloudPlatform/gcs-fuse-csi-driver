@@ -19,10 +19,13 @@ package main
 
 import (
 	"flag"
+	"io"
 	"os"
 	"strings"
 
 	"local/test/e2e/utils"
+
+	"github.com/onsi/ginkgo/v2"
 
 	"k8s.io/klog/v2"
 )
@@ -71,6 +74,7 @@ func main() {
 		klog.Warningf("Failed to set flags: %v", err)
 	}
 	flag.Parse()
+	klog.SetOutput(io.MultiWriter(ginkgo.GinkgoWriter))
 
 	if *inProw {
 		utils.EnsureVariable(boskosResourceType, true, "'boskos-resource-type' must be set when running in prow")

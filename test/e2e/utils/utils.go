@@ -24,6 +24,26 @@ import (
 	"k8s.io/klog/v2"
 )
 
+type TestCase struct {
+	Name string `yaml:"name"`
+}
+type TestPackage struct {
+	PackageName string `yaml:"packageName"`
+	TestBucket  string `yaml:"test_bucket"`
+	RunOnGke    bool   `yaml:"run_on_gke"`
+	Configs     map[string]string
+	// Tests       []TestCase `yaml:"tests"`
+}
+
+type TestConfig struct {
+	Flags      []string   `yaml:"flags"`
+	Compatible TestBucket `yaml:"compatible"`
+}
+
+type TestBucket string
+
+var TestPackages []TestPackage
+
 func EnsureVariable(v *string, set bool, msgOnError string) {
 	if set && len(*v) == 0 {
 		klog.Fatal(msgOnError)
@@ -52,3 +72,28 @@ func runCommand(action string, cmd *exec.Cmd) error {
 
 	return cmd.Wait()
 }
+
+// func loadTestSuiteConfig(path string) (*TestSuiteConfig, error) {
+// 	data, err := os.ReadFile(path)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	var config TestSuiteConfig
+// 	if err := yaml.Unmarshal(data, &config); err != nil {
+// 		return nil, err
+// 	}
+// 	return &config, nil
+// }
+
+// func GetTestsForSuite(suiteName string) [string][]string {
+// 	return suiteTestMap[suiteName]
+// }
+
+// func IsTestEnabled(suiteName, testName string) bool {
+// 	for _, name := range suiteTestMap[suiteName] {
+// 		if name == testName {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }

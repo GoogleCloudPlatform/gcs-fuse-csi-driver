@@ -23,11 +23,13 @@ import (
 	"strings"
 
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -103,6 +105,7 @@ type gcsFuseCSIGCSFuseIntegrationTestSuite struct {
 
 // InitGcsFuseCSIGCSFuseIntegrationTestSuite returns gcsFuseCSIGCSFuseIntegrationTestSuite that implements TestSuite interface.
 func InitGcsFuseCSIGCSFuseIntegrationTestSuite() storageframework.TestSuite {
+
 	return &gcsFuseCSIGCSFuseIntegrationTestSuite{
 		tsInfo: storageframework.TestSuiteInfo{
 			Name: "gcsfuseIntegration",
@@ -370,7 +373,43 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		return fmt.Sprintf(" test %v", i)
 	}
 
-	// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
+	// // 1. Clone the gcsfuse repository
+	// repoPath := "/tmp-gcsfuse"
+
+	// // Check if the directory already exists to prevent re-cloning on every test run
+	// // if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+	// cmd := exec.Command("git", "clone", "--branch", "main", "https://github.com/GoogleCloudPlatform/gcsfuse.git", repoPath)
+	// cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
+
+	// fmt.Fprintln(ginkgo.GinkgoWriter, "Cloning gcsfuse repository...")
+	// if err := cmd.Run(); err != nil {
+	// 	fmt.Fprintln(ginkgo.GinkgoWriter, "Failed to clone gcsfuse repository: %v", err)
+	// }
+	// fmt.Fprintln(ginkgo.GinkgoWriter, "Repository cloned successfully.")
+	// // } else {
+	// // 	fmt.Println("gcsfuse repository already exists, skipping clone.")
+	// // }
+
+	// // The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
+
+	test_names := utils.TestPackages
+	klog.Infof("test_names: %v", test_names)
+	for _, tn := range test_names {
+		ginkgo.It(testNamePrefixSucceed+tn.PackageName, func() {
+			// Check if HNS enabled and do we need to skip the test
+			if hnsEnabled(driver) && strings.Contains("skip-for-hns", tn.PackageName) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+			}
+
+			// If only_dir flag set then send
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(tn.PackageName, false, "implicit-dirs=true")
+		})
+
+	}
 
 	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(1), func() {
 		if hnsEnabled(driver) {

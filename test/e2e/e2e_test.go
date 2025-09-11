@@ -21,17 +21,20 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -96,6 +99,8 @@ func TestE2E(t *testing.T) {
 
 	suiteConfig, reporterConfig := framework.CreateGinkgoConfig()
 	klog.Infof("Starting e2e run %q on Ginkgo node %d", framework.RunID, suiteConfig.ParallelProcess)
+	klog.Infof("Cloning gcsfuse repository...")
+	fetchTestConfig()
 	ginkgo.RunSpecs(t, "Cloud Storage FUSE CSI Driver", suiteConfig, reporterConfig)
 }
 
@@ -136,3 +141,32 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
 	})
 })
+
+func fetchTestConfig() {
+	repoPath := "tmp-gcsfuse-repo"
+	tempDir, err := os.MkdirTemp("", repoPath)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create temp dir: %v", err))
+	}
+	cmd := exec.Command("git", "clone", "--branch", "main", "https://github.com/GoogleCloudPlatform/gcsfuse.git", repoPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		klog.Errorf("Failed to clone gcsfuse repository: %v", err)
+		return
+	}
+	// Read and parse the YAML
+	yamlPath := filepath.Join(tempDir, "tools", "integration_tests", "test_config.yaml")
+	yamlBytes, err := os.ReadFile(yamlPath)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to read YAML file: %v", err))
+	}
+	var loadedTestPackages []utils.TestPackage
+	err = yaml.Unmarshal(yamlBytes, &loadedTestPackages)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to unmarshal YAML: %v", err))
+	}
+	utils.TestPackages = loadedTestPackages
+	klog.Infof("Loaded test packages %v", loadedTestPackages)
+}
