@@ -21,6 +21,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/profiler"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -36,9 +38,13 @@ import (
 )
 
 var (
-	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	_              = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	gcsfusePath                        = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath                     = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
+	_                                  = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	kubeconfigPath                     = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	informerResyncDurationSec          = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	storageServiceAndBucketAccessCap   = flag.Duration("storage-service-check-retry-cap", 60*time.Minute, "storage service creation and bucket access check exponential retry cap")
+	storageServiceAndBucketAccessSteps = flag.Int("storage-service-check-retry-steps", math.MaxInt, "storage service creation and bucket access check exponential retry cap") // Effectively infinite retry steps
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -55,9 +61,12 @@ func main() {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
 
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec)
+	if err != nil {
+		klog.Fatalf("Failed to configure k8s client: %v", err)
+	}
 	mounter := sidecarmounter.New(*gcsfusePath)
 	ctx, cancel := context.WithCancel(context.Background())
-
 	flagsFromDriver := map[string]string{}
 	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
 	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
@@ -69,7 +78,6 @@ func main() {
 		fileContent := string(machineTypeBytes)
 		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
 	}
-
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
@@ -88,7 +96,15 @@ func main() {
 			}
 		}
 		if mc != nil {
-			if err := mounter.Mount(ctx, mc); err != nil {
+			if mc.EnableSidecarBucketAccessCheck {
+				tm, ssm, err := mounter.SetupTokenAndStorageManager(clientset, mc)
+				if err != nil {
+					klog.Errorf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %q", err)
+				}
+				mounter.TokenManager = tm
+				mounter.StorageServiceManager = ssm
+			}
+			if err := mounter.Mount(ctx, mc, *storageServiceAndBucketAccessCap, *storageServiceAndBucketAccessSteps); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
 		}

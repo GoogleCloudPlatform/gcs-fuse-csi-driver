@@ -56,6 +56,7 @@ const (
 	VolumeContextKeyHostNetworkPodKSA          = "hostNetworkPodKSA"
 	VolumeContextKeyIdentityProvider           = "identityProvider"
 	VolumeContextKeyDisableMetrics             = "disableMetrics"
+	VolumeContextKeyIdentityPool               = "identityPool"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
 
 	//nolint:revive,stylecheck
