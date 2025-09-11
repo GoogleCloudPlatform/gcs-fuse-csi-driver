@@ -29,6 +29,8 @@ spec:
             - "--enable-bucket-scanner=true"
             - "--dataflux-batch-size=25000"
             - "--dataflux-parallelism=0"
+            - "--leader-election=true"
+            - "--leader-election-namespace=$(CLOUDSTORAGECSI_NAMESPACE)"
           resources:
             limits:
               # It is recommended to leave CPU limits unset for master Pods.
@@ -39,3 +41,8 @@ spec:
             requests:
               cpu: 10m
               memory: 80Mi
+          env:
+            - name: CLOUDSTORAGECSI_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
