@@ -229,7 +229,6 @@ func TestParseVolumeAttributes(t *testing.T) {
 			expectedDisableMetricsCollection      bool
 			expectedOptInHostNetworkKSA           bool
 			expectedIdentityProvider              string
-			expectedIdentityPool                  string
 			expectedErr                           bool
 			expectedEnableCloudProfilerForSidecar bool
 		}{
@@ -585,19 +584,12 @@ func TestParseVolumeAttributes(t *testing.T) {
 				expectedMountOptions:     []string{},
 				expectedIdentityProvider: "some-string",
 			},
-			{
-				name:                 "value set to true for VolumeContextKeyIdentityPool",
-				volumeContext:        map[string]string{VolumeContextKeyIdentityProvider: "some-string"},
-				expectedErr:          false,
-				expectedMountOptions: []string{},
-				expectedIdentityPool: "some-string",
-			},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Logf("test case: %s", tc.name)
-				output, _, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, enableCloudProfilerForSidecar, err := parseVolumeAttributes([]string{}, tc.volumeContext)
+				output, _, skipCSIBucketAccessCheck, disableMetricsCollection, _, enableCloudProfilerForSidecar, err := parseVolumeAttributes([]string{}, tc.volumeContext)
 				if (err != nil) != tc.expectedErr {
 					t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
 				}

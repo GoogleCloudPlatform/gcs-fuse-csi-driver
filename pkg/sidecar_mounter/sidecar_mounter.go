@@ -429,12 +429,18 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 			return false, nil
 		}
 		klog.V(4).Infof("Created storage service %v", ss)
-		if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-			klog.Errorf("Failed to get GCS bucket %q: %v", bucketName, err)
-			return false, nil
+		if bucketName != "_" {
+			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
+				klog.Errorf("Failed to get GCS bucket %q: %v", bucketName, err)
+				return false, nil
+			}
+			klog.V(4).Infof("Bucket access check passed for bucket %s", bucketName)
+			return true, nil
+		} else {
+			// Access check fro multi-bucket is not supported, this is in-line with current bucket access check logic in CSI node driver
+			klog.V(4).Infof("Skipping bucket check, access check will not be performed on multi-buckets with bucket name %s", bucketName)
+			return true, nil
 		}
-		klog.V(4).Infof("Bucket access check passed for bucket %s", bucketName)
-		return true, nil
 	}
 	err := wait.ExponentialBackoffWithContext(ctx, backoff, ssCreateAndBucketCheckFunc)
 	if err != nil {
