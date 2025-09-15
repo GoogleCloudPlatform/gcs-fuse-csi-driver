@@ -218,8 +218,6 @@ func Handle(testParams *TestParameters) error {
 		"--output-dir", artifactsDir,
 		testParams.PkgDir+"/test/e2e/",
 		"--",
-		"--ginkgo.v",
-		"--ginkgo.output-interceptor-mode=none",
 		"--client-protocol", testParams.GcsfuseClientProtocol,
 		"--provider", "skeleton",
 		"--test-bucket-location", testParams.GkeClusterRegion,

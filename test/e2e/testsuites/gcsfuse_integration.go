@@ -29,7 +29,6 @@ import (
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -369,436 +368,419 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, finalTestCommand)
 	}
 
-	testNameSuffix := func(i int) string {
-		return fmt.Sprintf(" test %v", i)
-	}
-
-	// // 1. Clone the gcsfuse repository
-	// repoPath := "/tmp-gcsfuse"
-
-	// // Check if the directory already exists to prevent re-cloning on every test run
-	// // if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-	// cmd := exec.Command("git", "clone", "--branch", "main", "https://github.com/GoogleCloudPlatform/gcsfuse.git", repoPath)
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
-
-	// fmt.Fprintln(ginkgo.GinkgoWriter, "Cloning gcsfuse repository...")
-	// if err := cmd.Run(); err != nil {
-	// 	fmt.Fprintln(ginkgo.GinkgoWriter, "Failed to clone gcsfuse repository: %v", err)
+	// testNameSuffix := func(i int) string {
+	// 	return fmt.Sprintf(" test %v", i)
 	// }
-	// fmt.Fprintln(ginkgo.GinkgoWriter, "Repository cloned successfully.")
-	// // } else {
-	// // 	fmt.Println("gcsfuse repository already exists, skipping clone.")
-	// // }
 
-	// // The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
+	// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
 
-	test_names := utils.TestPackages
-	klog.Infof("test_names: %v", test_names)
-	for _, tn := range test_names {
-		ginkgo.It(testNamePrefixSucceed+tn.PackageName, func() {
-			// Check if HNS enabled and do we need to skip the test
-			if hnsEnabled(driver) && strings.Contains("skip-for-hns", tn.PackageName) {
+	test_names := utils.LoadedYAMLTestConfigs
+	ginkgo.GinkgoWriter.Printf("Got test_names: %v", test_names)
+	for k, _ := range test_names {
+		ginkgo.GinkgoWriter.Printf("Got test_names k value: %v", k)
+		ginkgo.It(testNamePrefixSucceed+k, func() {
+			// TODO: Check if HNS enabled and do we need to skip the test
+			if hnsEnabled(driver) && strings.Contains("skip-for-hns", k) {
 				e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
 			}
 
-			// If only_dir flag set then send
+			// TODO: If only_dir flag set then send
 			init()
 			defer cleanup()
-
-			gcsfuseIntegrationTest(tn.PackageName, false, "implicit-dirs=true")
+			// TODO: Check if readOnly
+			gcsfuseIntegrationTest(k, false, "implicit-dirs=true")
 		})
 
 	}
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(1), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
-		}
+	// ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(1), func() {
+	// 	if hnsEnabled(driver) {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+	// 	}
 
-		init()
-		defer cleanup()
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
-	})
+	// 	gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(3), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
-		}
+	// ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(3), func() {
+	// 	if hnsEnabled(driver) {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+	// 	}
 
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(4), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(4), func() {
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
-	})
+	// 	gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(5), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(5), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "write:create-empty-file:true")
-	})
+	// 	gcsfuseIntegrationTest(testNameOperations, false, "write:create-empty-file:true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(3), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(3), func() {
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(4), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(4), func() {
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(1), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
-		}
+	// ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(1), func() {
+	// 	if hnsEnabled(driver) {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
+	// 	}
 
-		init()
-		defer cleanup()
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
-	})
+	// 	gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(3), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
-		}
+	// ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(3), func() {
+	// 	if hnsEnabled(driver) {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
+	// 	}
 
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(4), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(2), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(1), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
-		}
-
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(2), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
-		}
-
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameListLargeDir+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameListLargeDir, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true")
-	})
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(4), func() {
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(2), func() {
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(1), func() {
+	// 	if hnsEnabled(driver) {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
+	// 	}
+
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(2), func() {
+	// 	if hnsEnabled(driver) {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
+	// 	}
+
+	// 	// passing only-dir flags
+	// 	init(specs.SubfolderInBucketPrefix)
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameListLargeDir+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameListLargeDir, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "implicit-dirs=true")
-	})
+	// 	gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "implicit-dirs=true")
+	// })
 
-	ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+	// ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
 
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if (err != nil || v.AtLeast(version.MustParseSemantic("2.9.0-gke.0"))) && getClientProtocol(driver) != "grpc" {
-			gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "enable-streaming-writes", "implicit-dirs=true")
-		} else {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with enable-streaming-writes", testNameWriteLargeFiles)
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameGzip+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameGzip, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameLocalFile+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
-
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if err != nil || v.AtLeast(version.MustParseSemantic("3.0.0-gke.0")) {
-			ginkgo.By("Running test supported for gcsfuse v3.0.0+")
-			// I needed to disable streaming writes the config file method, to
-			// avoid gcsfuse exiting with Error: accepts between 2 and 3 arg(s), received 4.
-			gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3", "write:enable-streaming-writes:false")
-		} else {
-			ginkgo.By("Running test supported before gcsfuse v3.0.0")
-			gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_AlwaysCacheHit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(3), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(4), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnFileRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(5), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_EvictCacheEntryOfOnlyDirectParent", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(6), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(7), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(8), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDirectoryRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(9), func() {
-		init()
-		defer cleanup()
-
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
-			ginkgo.By("Running test supported for gcsfuse v2.7.0+")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
-		} else {
-			ginkgo.By("Running test supported before gcsfuse v2.7.0")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
-		init()
-		defer cleanup()
-
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
-			ginkgo.By("Running test supported for gcsfuse v2.7.0+")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
-		} else {
-			ginkgo.By("Running test supported before gcsfuse v2.7.0-gke.0")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(12), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestDisabledKernelListCacheTest/TestKernelListCache_AlwaysCacheMiss", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=0")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameManagedFolders+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameManagedFolders+":TestEnableEmptyManagedFoldersTrue", false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameEnableStreamingWrites+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		if getClientProtocol(driver) == "grpc" {
-			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-streaming-writes", testNameEnableStreamingWrites)
-		} else {
-			gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
-	})
-
-	// These buffered_read tests are set up in consistency with gcsfuse integration tests defined here:
-	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/94e4ade71cfa056bc3dd18a573bfbbb7cc4ae765/tools/integration_tests/run_tests_mounted_directory.sh#L713-L745
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
-		init()
-		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		if getClientProtocol(driver) == "grpc" {
-			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with rename-symlink", testNameRenameSymlink)
-		} else {
-			gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
-		}
-	})
+	// 	v, err := version.ParseSemantic(gcsfuseVersionStr)
+	// 	// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+	// 	// Otherise, we have a valid tag, and we compare against the supported release.
+	// 	if (err != nil || v.AtLeast(version.MustParseSemantic("2.9.0-gke.0"))) && getClientProtocol(driver) != "grpc" {
+	// 		gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "enable-streaming-writes", "implicit-dirs=true")
+	// 	} else {
+	// 		e2eskipper.Skipf("skip gcsfuse integration test %v with enable-streaming-writes", testNameWriteLargeFiles)
+	// 	}
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameGzip+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameGzip, false, "implicit-dirs=true")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameLocalFile+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	v, err := version.ParseSemantic(gcsfuseVersionStr)
+
+	// 	// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+	// 	// Otherise, we have a valid tag, and we compare against the supported release.
+	// 	if err != nil || v.AtLeast(version.MustParseSemantic("3.0.0-gke.0")) {
+	// 		ginkgo.By("Running test supported for gcsfuse v3.0.0+")
+	// 		// I needed to disable streaming writes the config file method, to
+	// 		// avoid gcsfuse exiting with Error: accepts between 2 and 3 arg(s), received 4.
+	// 		gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3", "write:enable-streaming-writes:false")
+	// 	} else {
+	// 		ginkgo.By("Running test supported before gcsfuse v3.0.0")
+	// 		gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3")
+	// 	}
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_AlwaysCacheHit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(3), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(4), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnFileRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(5), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_EvictCacheEntryOfOnlyDirectParent", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(6), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(7), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(8), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDirectoryRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(9), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	v, err := version.ParseSemantic(gcsfuseVersionStr)
+	// 	// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+	// 	// Otherise, we have a valid tag, and we compare against the supported release.
+	// 	if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
+	// 		ginkgo.By("Running test supported for gcsfuse v2.7.0+")
+	// 		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
+	// 	} else {
+	// 		ginkgo.By("Running test supported before gcsfuse v2.7.0")
+	// 		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// 	}
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	v, err := version.ParseSemantic(gcsfuseVersionStr)
+	// 	// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+	// 	// Otherise, we have a valid tag, and we compare against the supported release.
+	// 	if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
+	// 		ginkgo.By("Running test supported for gcsfuse v2.7.0+")
+	// 		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
+	// 	} else {
+	// 		ginkgo.By("Running test supported before gcsfuse v2.7.0-gke.0")
+	// 		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	// 	}
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(12), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameKernelListCache+":TestDisabledKernelListCacheTest/TestKernelListCache_AlwaysCacheMiss", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=0")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameManagedFolders+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+
+	// 	gcsfuseIntegrationTest(testNameManagedFolders+":TestEnableEmptyManagedFoldersTrue", false, "implicit-dirs=true")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameEnableStreamingWrites+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	if getClientProtocol(driver) == "grpc" {
+	// 		e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-streaming-writes", testNameEnableStreamingWrites)
+	// 	} else {
+	// 		gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
+	// 	}
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	// })
+
+	// // These buffered_read tests are set up in consistency with gcsfuse integration tests defined here:
+	// // https://github.com/GoogleCloudPlatform/gcsfuse/blob/94e4ade71cfa056bc3dd18a573bfbbb7cc4ae765/tools/integration_tests/run_tests_mounted_directory.sh#L713-L745
+	// ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+	// })
+
+	// ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
+	// 	init()
+	// 	defer cleanup()
+	// 	if getClientProtocol(driver) == "grpc" {
+	// 		e2eskipper.Skipf("skip gcsfuse integration grpc test %v with rename-symlink", testNameRenameSymlink)
+	// 	} else {
+	// 		gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
+	// 	}
+	// })
 }

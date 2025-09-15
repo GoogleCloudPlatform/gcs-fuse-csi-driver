@@ -28,21 +28,28 @@ type TestCase struct {
 	Name string `yaml:"name"`
 }
 type TestPackage struct {
-	PackageName string `yaml:"packageName"`
-	TestBucket  string `yaml:"test_bucket"`
-	RunOnGke    bool   `yaml:"run_on_gke"`
-	Configs     map[string]string
-	// Tests       []TestCase `yaml:"tests"`
+	// PackageName      string     `yaml:"packageName"`
+	TestBucket       string       `yaml:"test_bucket"`
+	MountedDirectory string       `yaml:"mounted_directory"`
+	LogFile          string       `yaml:"log_file"`
+	RunOnGke         bool         `yaml:"run_on_gke"`
+	Configs          []TestConfig `yaml:"configs"`
 }
 
 type TestConfig struct {
-	Flags      []string   `yaml:"flags"`
-	Compatible TestBucket `yaml:"compatible"`
+	Flags      []string       `yaml:"flags"`
+	Compatible TestBucketType `yaml:"compatible"`
 }
 
-type TestBucket string
+type TestBucketType struct {
+	Flat  bool `yaml:"flat"`
+	HNS   bool `yaml:"hns"`
+	Zonal bool `yaml:"zonal"`
+}
 
-var TestPackages []TestPackage
+type TestPackages map[string][]TestPackage
+
+var LoadedYAMLTestConfigs TestPackages
 
 func EnsureVariable(v *string, set bool, msgOnError string) {
 	if set && len(*v) == 0 {
