@@ -18,17 +18,93 @@ limitations under the License.
 package driver
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"google.golang.org/grpc/codes"
 )
 
 const (
 	TraceStr = "trace"
 )
 
+func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
+	t.Parallel()
+	t.Run("modifies error code to be returned for slo parsing", func(t *testing.T) {
+		t.Parallel()
+		testCases := []struct {
+			name         string
+			errorMessage []byte
+			err          error
+			expectedCode codes.Code
+		}{
+			{
+				name:         "bootstrap config error",
+				errorMessage: []byte("ERROR: [xds] Attempt to set a bootstrap configuration even though one is already set via environment variables."),
+				expectedCode: codes.Unavailable,
+			},
+			{
+				name:         "deprecated flag error",
+				errorMessage: []byte("Flag --stat-cache-ttl has been deprecated, This flag has been deprecated (starting v2.0) in favor of metadata-cache-ttl-secs."),
+				expectedCode: codes.Unavailable,
+			},
+			{
+				name:         "deprecated flag error 2",
+				errorMessage: []byte("Flag --max-retry-duration has been deprecated, This is currently unused."),
+				expectedCode: codes.Unavailable,
+			},
+			{
+				name:         "bucket doesn't exist error",
+				errorMessage: []byte("something went wrong: bucket doesn't exist"),
+				expectedCode: codes.NotFound,
+			},
+			{
+				name:         "authentication error",
+				errorMessage: []byte("you set up gcsfuse without authentication, googleapi: Error 403: Anonymous users do not have storage.objects.list access to bucket, forbidden"),
+				expectedCode: codes.PermissionDenied,
+			},
+			{
+				name:         "killed",
+				errorMessage: []byte("Something wen't wrong - signal: killed"),
+				expectedCode: codes.ResourceExhausted,
+			},
+			{
+				name:         "incrorrect usage error",
+				errorMessage: []byte("Incorrect Usage: Missing argument 'BUCKET_NAME'"),
+				expectedCode: codes.InvalidArgument,
+			},
+			{
+				name:         "internal error",
+				errorMessage: []byte("error that should be added to slo"),
+				expectedCode: codes.Internal,
+			},
+			{
+				name:         "internal error passed in",
+				errorMessage: []byte(""),
+				expectedCode: codes.Internal,
+				err:          fmt.Errorf("Some error that occurred trying to read the gcsfuse error file"),
+			},
+			{
+				name:         "no error",
+				errorMessage: []byte(""),
+				expectedCode: codes.OK,
+				err:          os.ErrNotExist,
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Logf("test case: %s", tc.name)
+			actualCode, _ := extractErrorFromGcsFuseErrorFile(tc.errorMessage, tc.err)
+			if actualCode != tc.expectedCode {
+				t.Errorf("Got value %v, but expected %v", actualCode, tc.expectedCode)
+			}
+		}
+	})
+}
 func TestJoinMountOptions(t *testing.T) {
 	t.Parallel()
 	t.Run("joining mount options into one", func(t *testing.T) {

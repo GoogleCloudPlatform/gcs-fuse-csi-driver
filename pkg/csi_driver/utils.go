@@ -78,6 +78,8 @@ var (
 	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
 	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
 	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
+	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
+	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -414,6 +416,14 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 	if err != nil && !os.IsNotExist(err) {
 		return code, fmt.Errorf("failed to open error file %q: %w", emptyDirBasePath+"/error", err)
 	}
+
+	return extractErrorFromGcsFuseErrorFile(errMsg, err)
+}
+
+func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, error) {
+	if err != nil && !os.IsNotExist(err) {
+		return codes.Internal, fmt.Errorf("error occurred while trying to read gcsfuse error file: %w", err)
+	}
 	if err == nil && len(errMsg) > 0 {
 		// TODO: We need a standard for scraping errors from GCSFuse.
 		// A change in string format in GCSFuse would break this function.
@@ -449,9 +459,11 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 			return codes.Unavailable, fmt.Errorf("benign grpc error: %s", errMsgStr)
 		}
 
+		if deprecatedFlagPatterns.MatchString(errMsgStr) {
+			return codes.Unavailable, fmt.Errorf("benign error: %s", errMsgStr)
+		}
 		return code, fmt.Errorf("gcsfuse failed with error: %v", errMsgStr)
 	}
-
 	return codes.OK, nil
 }
 
