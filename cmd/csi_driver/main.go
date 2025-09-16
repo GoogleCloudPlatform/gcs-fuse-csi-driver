@@ -51,6 +51,9 @@ var (
 	identityProvider             = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	enableProfiling              = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
 	enableBucketScanner          = flag.Bool("enable-bucket-scanner", false, "enable the bucket scanner feature")
+	datafluxParallelism          = flag.Int("dataflux-parallelism", 0, "number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs)")
+	datafluxBatchSize            = flag.Int("dataflux-batch-size", 25000, "batch size for Dataflux lister. Defaults to 25000")
+	datafluxSkipDirectoryObjects = flag.Bool("dataflux-skip-directory-objects", false, "set to true to skip Dataflux listing objects that include files with names ending in '/'")
 	informerResyncDurationSec    = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
 	retryIntervalStart           = flag.Duration("retry-interval-start", time.Second, "Initial retry interval for a failed PV processing operation. It doubles with each failure, up to retry-interval-max.")
 	retryIntervalMax             = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval for a failed PV processing operation.")
@@ -150,6 +153,11 @@ func main() {
 				ResyncPeriod:   time.Duration(*informerResyncDurationSec) * time.Second,
 				KubeConfigPath: *kubeconfigPath,
 				RateLimiter:    workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+				DatafluxConfig: &scanner.DatafluxConfig{
+					Parallelism:          *datafluxParallelism,
+					BatchSize:            *datafluxBatchSize,
+					SkipDirectoryObjects: *datafluxSkipDirectoryObjects,
+				},
 			},
 		},
 	}
