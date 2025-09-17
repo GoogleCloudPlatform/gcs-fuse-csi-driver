@@ -56,6 +56,7 @@ spec:
             - --metrics-endpoint=:9920
             - --max-metric-collectors=10
             - --enable-cloud-profiler-for-driver=false
+            - --enable-sidecar-bucket-access-check=true
           ports:
           - containerPort: 9920
             name: metrics

@@ -41,8 +41,7 @@ import (
 const (
 	UmountTimeout = time.Second * 5
 
-	FuseMountType                      = "fuse"
-	EnableCloudProfilerForSidecarConst = "enable-cloud-profiler-for-sidecar"
+	FuseMountType = "fuse"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -138,20 +137,34 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
-
-	if s.shouldPopulateIdentifyProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
-		identityProvider := ""
+	identityProvider := ""
+	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
 		if userSpecifiedIdentityProvider != "" {
 			identityProvider = userSpecifiedIdentityProvider
 		} else {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 		}
 		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
+	}
+
+	if s.driver.config.EnableSidecarBucketAccessCheck {
+		if identityProvider == "" {
+			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
+			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
+		}
+		klog.Infof("Got identity provider %s", identityProvider)
+
+		identityPool := s.driver.config.TokenManager.GetIdentityPool()
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
+			util.PodNamespaceConst + "=" + vc[VolumeContextKeyPodNamespace],
+			util.ServiceAccountNameConst + "=" + vc[VolumeContextKeyServiceAccountName],
+			util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheck),
+			util.TokenServerIdentityPoolConst + "=" + identityPool})
 	}
 
 	if enableCloudProfilerForSidecar {
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -330,7 +343,7 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], "" /*audience*/, false)
 	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
@@ -339,7 +352,7 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 	return storageService, nil
 }
 
-func (s *nodeServer) shouldPopulateIdentifyProvider(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {
+func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {
 	if !optInHnwKSA {
 		return false
 	}

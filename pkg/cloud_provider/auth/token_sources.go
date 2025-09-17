@@ -29,6 +29,8 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	sts "google.golang.org/api/sts/v1"
@@ -38,51 +40,65 @@ import (
 
 // GCPTokenSource generates a GCP IAM SA token with a Kubernetes Service Account token.
 type GCPTokenSource struct {
-	meta           metadata.Service
-	k8sSAName      string
-	k8sSANamespace string
-	k8sSAToken     string
-	k8sClients     clientset.Interface
+	meta               metadata.Service
+	k8sSAName          string
+	k8sSANamespace     string
+	k8sSAToken         string
+	k8sClients         clientset.Interface
+	audience           string
+	fetchTokenfromFile bool // This is set for sidecar where pod doesn't have access to get service account details
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.
 func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
-
-	k8sSAToken, err := ts.fetchK8sSAToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("k8s service account token fetch error: %w", err)
+	var k8sSAToken string
+	var err error
+	// If fetchTokenfromFile is set we assume the request is coming from sidecar, as the sidecar (user pod) doesn't have access to get service account details we fetch the service account from file.
+	if ts.fetchTokenfromFile {
+		tokenPath := webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath
+		k8sSAToken, err = util.FetchK8sTokenFromFile(tokenPath)
+		if err != nil {
+			return nil, fmt.Errorf("k8s service account token fetch error: %w from path %s", err, tokenPath)
+		}
+	} else {
+		k8sSAToken, err = ts.fetchK8sSAToken(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("k8s service account token fetch error: %w", err)
+		}
 	}
 
-	identityBindingToken, err := ts.fetchIdentityBindingToken(ctx, k8sSAToken)
+	identityBindingToken, err := ts.FetchIdentityBindingToken(ctx, k8sSAToken, ts.audience)
 	if err != nil {
 		return nil, fmt.Errorf("identity binding token fetch error: %w", err)
 	}
-
+	// GCP SA Token was needed in pre WI world where we linked GCP SA Token and K8s SA token through annotation.
+	// In the fetchGCPSAToken we check if there's any annotation on the SA and return IdentityBindingToken if no annotation specified.
+	// If however fetchTokenfromFile is set we assume the request is coming from sidecar, as it doesn't have access to Get SA API we skip the check assuming the sidecar follows new setup.
+	// The new setup is the default with WI
+	if ts.fetchTokenfromFile {
+		return identityBindingToken, nil
+	}
 	token, err := ts.fetchGCPSAToken(ctx, identityBindingToken)
 	if err != nil {
 		return nil, fmt.Errorf("GCP service account token fetch error: %w", err)
 	}
-
 	return token, nil
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API.
-func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, error) {
+func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (string, error) {
 	if ts.k8sSAToken != "" {
 		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
 		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
+			return "", fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
 		}
 		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
-			return &oauth2.Token{
-				AccessToken: trs.Token,
-				Expiry:      trs.ExpirationTimestamp.Time,
-			}, nil
+			return trs.Token, nil
 		}
 
-		return nil, fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
+		return "", fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
 	}
 
 	ttl := int64(10 * time.Minute.Seconds())
@@ -97,40 +113,38 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, e
 			},
 		})
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %w", err)
+		return "", fmt.Errorf("failed to call Kubernetes ServiceAccount.CreateToken API: %w", err)
 	}
+	return resp.Status.Token, nil
 
-	return &oauth2.Token{
-		AccessToken: resp.Status.Token,
-		Expiry:      resp.Status.ExpirationTimestamp.Time,
-	}, nil
 }
 
 // fetch GCP IdentityBindingToken using the Kubernetes Service Account token
 // by calling Security Token Service (STS) API.
-func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSAToken *oauth2.Token) (*oauth2.Token, error) {
+func (ts *GCPTokenSource) FetchIdentityBindingToken(ctx context.Context, k8sSAToken string, audience string) (*oauth2.Token, error) {
 	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
-
-	audience := fmt.Sprintf(
-		"identitynamespace:%s:%s",
-		ts.meta.GetIdentityPool(),
-		ts.meta.GetIdentityProvider(),
-	)
+	if audience == "" {
+		audience = fmt.Sprintf(
+			"identitynamespace:%s:%s",
+			ts.meta.GetIdentityPool(),
+			ts.meta.GetIdentityProvider(),
+		)
+	}
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
 		Scope:              credentials.DefaultAuthScopes()[0],
 		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
 		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		SubjectToken:       k8sSAToken.AccessToken,
+		SubjectToken:       k8sSAToken,
 	}
 
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
 	if err != nil {
-		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w", audience, err)
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: and request %v: error %w", audience, stsRequest, err)
 	}
 
 	return &oauth2.Token{

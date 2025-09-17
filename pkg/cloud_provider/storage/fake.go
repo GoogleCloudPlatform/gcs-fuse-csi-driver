@@ -50,6 +50,10 @@ func (manager *fakeServiceManager) SetupServiceWithDefaultCredential(_ context.C
 	return &fakeService{sm: *manager}, nil
 }
 
+func (manager *fakeServiceManager) SetupStorageServiceForSidecar(_ context.Context, _ oauth2.TokenSource) (Service, error) {
+	return &fakeService{sm: *manager}, nil
+}
+
 func NewFakeServiceManager() ServiceManager {
 	return &fakeServiceManager{createdBuckets: map[string]*ServiceBucket{}}
 }

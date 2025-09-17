@@ -30,8 +30,9 @@ const (
 )
 
 type TokenManager interface {
-	GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource
+	GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken, audience string, fetchFromFile bool) oauth2.TokenSource
 	GetIdentityProvider() string
+	GetIdentityPool() string
 }
 
 type tokenManager struct {
@@ -52,12 +53,18 @@ func (tm *tokenManager) GetIdentityProvider() string {
 	return tm.meta.GetIdentityProvider()
 }
 
-func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource {
+func (tm *tokenManager) GetIdentityPool() string {
+	return tm.meta.GetIdentityPool()
+}
+
+func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken, audience string, fetchFromFile bool) oauth2.TokenSource {
 	return &GCPTokenSource{
-		meta:           tm.meta,
-		k8sSAName:      saName,
-		k8sSANamespace: saNamespace,
-		k8sSAToken:     saToken,
-		k8sClients:     tm.k8sClients,
+		meta:               tm.meta,
+		k8sSAName:          saName,
+		k8sSANamespace:     saNamespace,
+		k8sSAToken:         saToken,
+		k8sClients:         tm.k8sClients,
+		audience:           audience,
+		fetchTokenfromFile: fetchFromFile,
 	}
 }

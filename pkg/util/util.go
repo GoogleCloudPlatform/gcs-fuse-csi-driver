@@ -37,7 +37,14 @@ const (
 	FalseStr = "false"
 
 	// mount options that both CSI mounter and sidecar mounter should understand.
-	DisableMetricsForGKE = "disable-metrics-for-gke"
+	DisableMetricsForGKE                = "disable-metrics-for-gke"
+	EnableSidecarBucketAccessCheckConst = "enable-sidecar-bucket-access-check"
+	TokenServerIdentityPoolConst        = "token-server-identity-pool"
+	ServiceAccountNameConst             = "service-account-name"
+	PodNamespaceConst                   = "pod-namespace"
+	TokenServerIdentityProviderConst    = "token-server-identity-provider"
+	OptInHnw                            = "hnw-ksa"
+	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
 )
 
 var (
@@ -205,6 +212,15 @@ func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 	klog.Infof("Stale file '%s' successfully deleted", fileName)
 
 	return nil
+}
+
+func FetchK8sTokenFromFile(tokenPath string) (string, error) {
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading token file: %w", err)
+	}
+
+	return strings.TrimSpace(string(token)), nil
 }
 
 // The format allows customers to specify a fake volume handle for static provisioning,
