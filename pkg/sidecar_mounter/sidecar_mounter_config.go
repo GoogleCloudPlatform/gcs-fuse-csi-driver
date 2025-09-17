@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -35,31 +36,42 @@ import (
 )
 
 const (
-	GCSFuseAppName                = "gke-gcs-fuse-csi"
-	TempDir                       = "/temp-dir"
-	unixSocketBasePath            = "unix://"
-	TokenFileName                 = "token.sock" // #nosec G101
-	identityProviderFlag          = "token-server-identity-provider"
-	hostNetworkKSAOptInFlag       = "hnw-ksa"
-	enableCloudProfilerForSidecar = "enable-clooud-profiler-for-sidecar"
+	GCSFuseAppName     = "gke-gcs-fuse-csi"
+	TempDir            = "/temp-dir"
+	unixSocketBasePath = "unix://"
+	TokenFileName      = "token.sock" // #nosec G101
 )
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor                int                   `json:"-"`
-	VolumeName                    string                `json:"volumeName,omitempty"`
-	BucketName                    string                `json:"bucketName,omitempty"`
-	BufferDir                     string                `json:"-"`
-	CacheDir                      string                `json:"-"`
-	TempDir                       string                `json:"-"`
-	ConfigFile                    string                `json:"-"`
-	Options                       []string              `json:"options,omitempty"`
-	ErrWriter                     stderrWriterInterface `json:"-"`
-	FlagMap                       map[string]string     `json:"-"`
-	ConfigFileFlagMap             map[string]string     `json:"-"`
-	TokenServerIdentityProvider   string                `json:"-"`
-	HostNetworkKSAOptIn           bool                  `json:"-"`
-	EnableCloudProfilerForSidecar bool                  `json:"-"`
+	FileDescriptor                 int                   `json:"-"`
+	VolumeName                     string                `json:"volumeName,omitempty"`
+	BucketName                     string                `json:"bucketName,omitempty"`
+	BufferDir                      string                `json:"-"`
+	CacheDir                       string                `json:"-"`
+	TempDir                        string                `json:"-"`
+	ConfigFile                     string                `json:"-"`
+	Options                        []string              `json:"options,omitempty"`
+	ErrWriter                      stderrWriterInterface `json:"-"`
+	FlagMap                        map[string]string     `json:"-"`
+	ConfigFileFlagMap              map[string]string     `json:"-"`
+	TokenServerIdentityProvider    string                `json:"-"`
+	HostNetworkKSAOptIn            bool                  `json:"-"`
+	EnableCloudProfilerForSidecar  bool                  `json:"-"`
+	PodNamespace                   string                `json:"-"`
+	ServiceAccountName             string                `json:"-"`
+	EnableSidecarBucketAccessCheck bool                  `json:"-"`
+	TokenServerIdentityPool        string                `json:"-"`
+	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
+}
+
+// sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
+type sidecarRetryConfig struct {
+	Duration time.Duration
+	Factor   float64
+	Cap      time.Duration
+	Steps    int
+	Jitter   float64
 }
 
 var prometheusPort = 62990
@@ -237,16 +249,32 @@ func (mc *MountConfig) prepareMountArgs() {
 			value = argPair[1]
 		}
 
-		if flag == identityProviderFlag {
+		switch flag {
+		case util.TokenServerIdentityProviderConst:
 			mc.TokenServerIdentityProvider = value
 			continue
-		}
 
-		if flag == hostNetworkKSAOptInFlag {
+		case util.TokenServerIdentityPoolConst:
+			mc.TokenServerIdentityPool = value
+			continue
+
+		case util.OptInHnw:
 			mc.HostNetworkKSAOptIn = value == util.TrueStr
 			continue
-		}
-		if flag == enableCloudProfilerForSidecar {
+
+		case util.EnableSidecarBucketAccessCheckConst:
+			mc.EnableSidecarBucketAccessCheck = value == util.TrueStr
+			continue
+
+		case util.PodNamespaceConst:
+			mc.PodNamespace = value
+			continue
+
+		case util.ServiceAccountNameConst:
+			mc.ServiceAccountName = value
+			continue
+
+		case util.EnableCloudProfilerForSidecarConst:
 			mc.EnableCloudProfilerForSidecar = value == util.TrueStr
 			continue
 		}

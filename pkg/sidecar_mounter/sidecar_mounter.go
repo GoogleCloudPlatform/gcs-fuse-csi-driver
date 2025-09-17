@@ -36,12 +36,20 @@ import (
 
 	"cloud.google.com/go/compute/metadata"
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	cpmeta "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sts/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
@@ -49,8 +57,10 @@ const metricEndpointFmt = "http://localhost:%v/metrics"
 
 // Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
-	mounterPath string
-	WaitGroup   sync.WaitGroup
+	mounterPath           string
+	WaitGroup             sync.WaitGroup
+	TokenManager          auth.TokenManager
+	StorageServiceManager storage.ServiceManager
 }
 
 // New returns a Mounter for the current system.
@@ -64,12 +74,33 @@ func New(mounterPath string) *Mounter {
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
+	var tokenSource oauth2.TokenSource
+	var audience string
+	var err error
+
 	if mc.HostNetworkKSAOptIn {
 		if mc.TokenServerIdentityProvider != "" {
 			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
 			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
 		} else {
 			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
+		}
+		if mc.EnableSidecarBucketAccessCheck {
+			// Fetch custom tokensource and audience for host network path, for workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
+			audience, err = getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
+			if err != nil {
+				return fmt.Errorf("failed to get audience from the context: %w", err)
+			}
+			tokenSource, err = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
+			if err != nil {
+				return fmt.Errorf("Failed to create token source, got error %q", err)
+			}
+		}
+	}
+	if mc.EnableSidecarBucketAccessCheck {
+		err := m.checkBucketAccessWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName, mc.TokenServerIdentityProvider, mc)
+		if err != nil {
+			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
 		}
 	}
 
@@ -160,6 +191,14 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	}()
 
 	return nil
+}
+
+func (m *Mounter) fetchTokenSource(saNamespace, saName string, audience string) (oauth2.TokenSource, error) {
+	k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get k8s token from path %v", err)
+	}
+	return m.TokenManager.GetTokenSourceFromK8sServiceAccount(saNamespace, saName, k8stoken, audience, true), nil
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.
@@ -309,13 +348,136 @@ func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWr
 	return nil
 }
 
-func getK8sTokenFromFile(tokenPath string) (string, error) {
-	token, err := os.ReadFile(tokenPath)
+func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, identityProvider string) {
+	// Clean up any stale socket file before creating a new one.
+	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
 	if err != nil {
-		return "", fmt.Errorf("error reading token file: %w", err)
+		klog.Errorf("failed to check and delete stale token server socket file: %v", err)
+
+		return
 	}
 
-	return strings.TrimSpace(string(token)), nil
+	// Create a unix domain socket and listen for incoming connections.
+	tokenURLSocketPath := filepath.Join(tokenURLBasePath, tokenSocketName)
+	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)
+	if err != nil {
+		klog.Errorf("failed to create socket %q: %v", tokenURLSocketPath, err)
+
+		return
+	}
+	klog.Infof("created a listener using the socket path %s", tokenURLSocketPath)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		k8stoken, err := util.FetchK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+		var stsToken *oauth2.Token
+		if err != nil {
+			klog.Errorf("failed to get k8s token from path %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
+		if err != nil {
+			klog.Errorf("failed to get sts token from path %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		// Marshal the oauth2.Token object to JSON
+		jsonToken, err := json.Marshal(stsToken)
+		if err != nil {
+			klog.Errorf("failed to marshal token to JSON: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, string(jsonToken))
+	})
+
+	server := http.Server{
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	if err := server.Serve(tokenSocketListener); !errors.Is(err, http.ErrServerClosed) {
+		klog.Errorf("Server for %q returns unexpected error: %v", tokenURLSocketPath, err)
+	}
+}
+
+// checkBucketAccessWithRetry prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext and validates bucket access.
+func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string, tokenProvider string, mc *MountConfig) error {
+	backoff := wait.Backoff{
+		Duration: mc.SidecarRetryConfig.Duration,
+		Factor:   mc.SidecarRetryConfig.Factor,
+		Cap:      mc.SidecarRetryConfig.Cap,
+		Steps:    mc.SidecarRetryConfig.Steps,
+		Jitter:   mc.SidecarRetryConfig.Jitter, // Adds randomness, this will give +/- 10% of the current delay
+	}
+
+	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
+		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
+		if err != nil {
+			klog.Errorf("Failed to setup storage service got error %q, retrying...", err)
+			return false, nil
+		}
+		klog.V(4).Infof("Created storage service %v", ss)
+		if bucketName != "_" {
+			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
+				klog.Errorf("Failed to get GCS bucket %q: %v", bucketName, err)
+				return false, nil
+			}
+			klog.V(4).Infof("Bucket access check passed for %s", bucketName)
+			return true, nil
+		} else {
+			// Access check fro multi-bucket is not supported, this is in-line with current bucket access check logic in CSI node driver
+			klog.V(4).Infof("Skipping bucket check, access check will not be performed on multi-buckets with bucket name %s", bucketName)
+			return true, nil
+		}
+	}
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, ssCreateAndBucketCheckFunc)
+	if err != nil {
+		return err
+	}
+	klog.V(4).Infof("Completed access check for bucket %s", bucketName)
+	return nil
+}
+func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
+	projectID, err := metadata.ProjectIDWithContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get project ID: %w", err)
+	}
+
+	audience := fmt.Sprintf(
+		"identitynamespace:%s.svc.id.goog:%s",
+		projectID,
+		identityProvider,
+	)
+	return audience, nil
+}
+
+func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {
+	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
+		meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+		}
+
+		tm := auth.NewTokenManager(meta, clientset)
+		ssm, err := storage.NewGCSServiceManager()
+		if err != nil {
+			return nil, nil, fmt.Errorf("Failed to set up storage service manager, got error: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+		}
+		return tm, ssm, nil
+	}
+	return nil, nil, fmt.Errorf("Either of identity-pool %s or identity-provider %s were not provided", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 }
 
 func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
@@ -348,82 +510,4 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 		TokenType:   stsResponse.TokenType,
 		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
 	}, nil
-}
-
-func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
-	projectID, err := metadata.ProjectIDWithContext(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get project ID: %w", err)
-	}
-
-	audience := fmt.Sprintf(
-		"identitynamespace:%s.svc.id.goog:%s",
-		projectID,
-		identityProvider,
-	)
-	klog.Infof("audience: %s", audience)
-
-	return audience, nil
-}
-
-func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, identityProvider string) {
-	// Clean up any stale socket file before creating a new one.
-	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
-	if err != nil {
-		klog.Errorf("failed to check and delete stale token server socket file: %v", err)
-
-		return
-	}
-
-	// Create a unix domain socket and listen for incoming connections.
-	tokenURLSocketPath := filepath.Join(tokenURLBasePath, tokenSocketName)
-	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)
-	if err != nil {
-		klog.Errorf("failed to create socket %q: %v", tokenURLSocketPath, err)
-
-		return
-	}
-	klog.Infof("created a listener using the socket path %s", tokenURLSocketPath)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-		k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
-		var stsToken *oauth2.Token
-		if err != nil {
-			klog.Errorf("failed to get k8s token from path %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-
-			return
-		}
-		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
-		if err != nil {
-			klog.Errorf("failed to get sts token from path %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-
-			return
-		}
-		// Marshal the oauth2.Token object to JSON
-		jsonToken, err := json.Marshal(stsToken)
-		if err != nil {
-			klog.Errorf("failed to marshal token to JSON: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, string(jsonToken))
-	})
-
-	server := http.Server{
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-	}
-
-	if err := server.Serve(tokenSocketListener); !errors.Is(err, http.ErrServerClosed) {
-		klog.Errorf("Server for %q returns unexpected error: %v", tokenURLSocketPath, err)
-	}
 }
