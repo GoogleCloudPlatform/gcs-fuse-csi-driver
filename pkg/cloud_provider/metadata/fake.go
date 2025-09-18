@@ -49,6 +49,7 @@ func NewFakeService(projectID, location, clusterName, gkeEnv string) (Service, e
 		gkeAPIEndpoint = envAPIMap[gkeEnv]
 	}
 
+	// TODO(amacaskill): Add support for non-GKE identity providers once we have e2e tests setup for OSS K8s.
 	s := fakeServiceManager{
 		projectID:    projectID,
 		identityPool: projectID + ".svc.id.goog",

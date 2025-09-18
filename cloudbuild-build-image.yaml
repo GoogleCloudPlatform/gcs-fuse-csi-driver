@@ -22,6 +22,9 @@ substitutions:
   _STAGINGVERSION: 'v999.999.999'
   # (Optional) Set to 'true' to build gcsfuse from its source repository.
   _BUILD_GCSFUSE_FROM_SOURCE: 'false'
+  # (Optional) Set to a gcsfuse tag (https://github.com/GoogleCloudPlatform/gcsfuse/tags) to build gcsfuse from its source repository,
+  # at that branch or tag. Defaults to 'master' branch. If no branch exists with that name, it will try to find the tag with that name.
+  _GCSFUSE_TAG: 'master'
   # (Optional) Set to 'true' to also build for arm64. Note, this is not yet supported with cloud build.
   # TODO(amacaskill): Add support for building arm64 images with cloud build.
   _BUILD_ARM: 'false'
@@ -85,8 +88,16 @@ steps:
         exit 0
       fi
 
-      curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o Dockerfile.gcsfuse
-      GCSFUSE_VERSION="0.0.1-gcsfuse-git-master-$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7)"
+      curl -L https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/${_GCSFUSE_TAG}/tools/package_gcsfuse_docker/Dockerfile -o Dockerfile.gcsfuse
+      
+      if [ "${_GCSFUSE_TAG}" = "master" ]; then
+        GCSFUSE_VERSION="0.0.1-gcsfuse-git-master-$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7)"
+      else
+        # Remove the leading 'v' so we can pass this to docker buildx build build-arg GCSFUSE_VERSION
+        GCSFUSE_VERSION=$(echo "${_GCSFUSE_TAG}" | sed 's/^v//')
+      fi
+      
+      echo "Using GCSFuse version: $${GCSFUSE_VERSION}"
       echo -n "$${GCSFUSE_VERSION}" > /workspace/gcsfuse_version.txt
 
       # Build for AMD64 and save to a tar file
@@ -94,7 +105,7 @@ steps:
         --file Dockerfile.gcsfuse \
         --tag gcsfuse-release-amd \
         --build-arg GCSFUSE_VERSION=$${GCSFUSE_VERSION} \
-        --build-arg BRANCH_NAME=master \
+        --build-arg BRANCH_NAME=${_GCSFUSE_TAG} \
         --build-arg ARCHITECTURE=amd64 \
         --platform=linux/amd64 \
         --output type=docker,dest=/workspace/gcsfuse-amd.tar .
@@ -105,7 +116,7 @@ steps:
           --file Dockerfile.gcsfuse \
           --tag gcsfuse-release-arm \
           --build-arg GCSFUSE_VERSION=$${GCSFUSE_VERSION} \
-          --build-arg BRANCH_NAME=master \
+          --build-arg BRANCH_NAME=${_GCSFUSE_TAG} \
           --build-arg ARCHITECTURE=arm64 \
           --platform=linux/arm64 \
           --output type=docker,dest=/workspace/gcsfuse-arm.tar .
@@ -132,7 +143,7 @@ steps:
         docker run --rm -v $(pwd)/bin/linux/amd64:/release gcsfuse-release-amd cp /gcsfuse_$${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
       else
         # Download pre-built binary
-        gsutil "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
+        gsutil cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
       fi
       chmod 0555 ./bin/linux/amd64/gcsfuse
 
@@ -146,7 +157,7 @@ steps:
           docker run --rm -v $(pwd)/bin/linux/arm64:/release gcsfuse-release-arm cp /gcsfuse_$${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
         else
           # Download pre-built ARM binary
-          gsutil "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
+          gsutil cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
         fi
         chmod 0555 ./bin/linux/arm64/gcsfuse
       fi
@@ -218,4 +229,3 @@ steps:
         --build-arg STAGINGVERSION=${_STAGINGVERSION} \
         --build-arg TARGETPLATFORM=$$PLATFORM \
         --file ./cmd/metadata_prefetch/Dockerfile .
-
