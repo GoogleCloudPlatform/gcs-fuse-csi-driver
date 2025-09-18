@@ -29,21 +29,26 @@ type Service interface {
 	GetProjectID() string
 	GetIdentityPool() string
 	GetIdentityProvider() string
+	CustomAudience() string
 }
 
 type metadataServiceManager struct {
 	projectID        string
+	customAudience   string
 	identityPool     string
 	identityProvider string
 }
 
 var _ Service = &metadataServiceManager{}
 
-func NewMetadataService(identityPool, identityProvider string) (Service, error) {
+// TODO: see if we can just use identityPool and identityProvider, and no customAudience.
+func NewMetadataService(identityPool, identityProvider, customAudience string) (Service, error) {
 	projectID, err := metadata.ProjectIDWithContext(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
+
+	klog.Infof("Calling NewMetadataService with identityPool: %s, identityProvider: %s, customAudience: %s", identityPool, identityProvider, customAudience)
 
 	if identityPool == "" {
 		klog.Infof("got empty identityPool, constructing the identityPool using projectID")
@@ -54,6 +59,7 @@ func NewMetadataService(identityPool, identityProvider string) (Service, error) 
 		projectID:        projectID,
 		identityPool:     identityPool,
 		identityProvider: identityProvider,
+		customAudience:   customAudience,
 	}, nil
 }
 
@@ -67,4 +73,8 @@ func (manager *metadataServiceManager) GetIdentityPool() string {
 
 func (manager *metadataServiceManager) GetIdentityProvider() string {
 	return manager.identityProvider
+}
+
+func (manager *metadataServiceManager) CustomAudience() string {
+	return manager.customAudience
 }

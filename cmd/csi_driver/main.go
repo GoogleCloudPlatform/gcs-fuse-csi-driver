@@ -44,6 +44,7 @@ var (
 	nodeID                         = flag.String("nodeid", "", "node id")
 	runController                  = flag.Bool("controller", false, "run controller service")
 	runNode                        = flag.Bool("node", false, "run node service")
+	customAudience                 = flag.String("custom-audience", "", "The custom Identity Pool to authenticate with GCS API.")
 	kubeconfigPath                 = flag.String("kubeconfig-path", "", "The kubeconfig path.")
 	kubeAPIQPS                     = flag.Float64("kube-api-qps", 5, "QPS to use while communicating with the kubernetes apiserver. Defaults to 5.0.")
 	kubeAPIBurst                   = flag.Int("kube-api-burst", 10, "Burst to use while communicating with the kubernetes apiserver. Defaults to 10.")
@@ -114,7 +115,7 @@ func main() {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
-	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider, *customAudience)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
 	}

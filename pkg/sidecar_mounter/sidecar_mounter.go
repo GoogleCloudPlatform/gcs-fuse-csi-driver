@@ -86,7 +86,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
 		}
 		if mc.EnableSidecarBucketAccessCheck {
-			// Fetch custom tokensource and audience for host network path, for workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
+			// Fetch custom tokensource and audience for host network path. For workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
 			audience, err = getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
 			if err != nil {
 				return fmt.Errorf("failed to get audience from the context: %w", err)
@@ -449,23 +449,37 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 	klog.V(4).Infof("Completed access check for bucket %s", bucketName)
 	return nil
 }
+
+// TODO: Add support for custom audience to support hostnetwork
+// I think if audience is in the GKE format, we can old audience format since its gke cluster. Otherwise, use the custom audience.
+// For hostnetwork for non managed driver/ private sidecar, customer sets  identityProvider in the volume attributes, and it looks like
+// "https://container.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/clusters/CLUSTER_NAME". For not hostnetwork, it is set
+// automatically, but it will look the same format, I think? I think if we detect identityProvider starts with "https://container.googleapis.com",
+// we can use old audience format. Otherwise, we just return identityProvider directly as the audience which will be in a format like
+// //iam.googleapis.com/projects/326181500027/locations/global/workloadIdentityPools/wi-pool-amacaskill-k8s-cluster-3/providers/wi-p-amacaskill-k8s-cluster-3
 func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
 	projectID, err := metadata.ProjectIDWithContext(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get project ID: %w", err)
 	}
 
-	audience := fmt.Sprintf(
-		"identitynamespace:%s.svc.id.goog:%s",
-		projectID,
-		identityProvider,
-	)
-	return audience, nil
+	// TODO(amacaskill): remove this.
+	klog.V(4).Infof("logging identityProvider inside getAudienceFromContextAndIdentityProvider: %s", identityProvider)
+
+	if isGKEIdentityProvider(identityProvider) {
+		return fmt.Sprintf(
+			"identitynamespace:%s.svc.id.goog:%s",
+			projectID,
+			identityProvider,
+		), nil
+	}
+
+	return identityProvider, nil
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {
 	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
-		meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+		meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider, "" /* customAudience */)
 		if err != nil {
 			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 		}
@@ -510,4 +524,12 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 		TokenType:   stsResponse.TokenType,
 		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
 	}, nil
+}
+
+// TODO make this regex match exactly.
+func isGKEIdentityProvider(identityProvider string) bool {
+	// GKE identity provider format:
+	// https://container.googleapis.com/v1/projects/{project_id}/locations/{location}/clusters/{cluster_name}
+	const gkePrefix = "https://container.googleapis.com/v1/projects/"
+	return strings.HasPrefix(identityProvider, gkePrefix)
 }

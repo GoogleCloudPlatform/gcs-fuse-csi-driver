@@ -26,4 +26,5 @@ spec:
   requiresRepublish: true
   fsGroupPolicy: None
   tokenRequests:
+    # When you use the cloudbuild-install.yaml script, it automatically patches this audience value to match the discovered or provided IDENTITY_PROVIDER for your cluster.
     - audience: <project-id>.svc.id.goog
