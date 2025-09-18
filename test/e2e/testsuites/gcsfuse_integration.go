@@ -58,7 +58,10 @@ const (
 
 	testNamePrefixSucceed = "should succeed in "
 
-	masterBranchName = "master"
+	// Use release branch for corresponding gcsfuse version. This ensures we
+	// can pick up test fixes without requiring a new gcsfuse release.
+	gcsfuseReleaseBranchFormat = "v%v.%v.%v_release"
+	masterBranchName           = "master"
 
 	defaultSidecarMemoryLimit   = "1Gi"
 	defaultSidecarMemoryRequest = "512Mi"
@@ -209,12 +212,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0"))) {
 			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
 		}
-		// Starting v3.3.0, gcsfuse team creates a release branch to corresponding releases.
-		if v.AtLeast(version.MustParseSemantic("v3.3.0-gke.0")) {
-			return fmt.Sprintf("v%v.%v.%v_release", v.Major(), v.Minor(), v.Patch())
-		}
-		// By default, use the test code in the same release tag branch
-		return fmt.Sprintf("v%v.%v.%v", v.Major(), v.Minor(), v.Patch())
+
+		return fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor(), v.Patch())
 	}
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
