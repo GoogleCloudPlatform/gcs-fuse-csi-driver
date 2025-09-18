@@ -77,7 +77,8 @@ var _ = func() bool {
 	if len(l) < 4 || l[0] != "gke" {
 		klog.Fatalf("Got invalid cluster name %v, please make sure the cluster is created on GKE", currentCluster)
 	}
-	m, err = metadata.NewFakeService(l[1], l[2], l[3], *apiEnv)
+	// TODO(amacaskill): Support custom audience here.
+	m, err = metadata.NewFakeService(l[1], l[2], l[3], *apiEnv, "custom-audience")
 	if err != nil {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
@@ -88,13 +89,33 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API.
+// Skip this code path by using skipCSIBucketAccessCheck: "true".
 func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (string, error) {
 	if ts.k8sSAToken != "" {
 		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
 		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
 			return "", fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
 		}
-		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
+
+		var audienceKey string
+		identityProvider := ts.meta.GetIdentityProvider()
+
+		if isGKEIdentityProvider(identityProvider) {
+			audienceKey = ts.meta.GetIdentityPool()
+		} else {
+			audienceKey = identityProvider
+		}
+
+		// TODO(amacaskill): remove this logging once we've verified that the custom audience logic is working.
+		klog.Infof("fetchK8sSAToken with identity provider: %q, identity pool: %q, custom audience: %q", identityProvider, ts.meta.GetIdentityPool(), ts.meta.CustomAudience())
+
+		// TODO(amacaskill): remove if we don't need this.
+		if customAudience := ts.meta.CustomAudience(); customAudience != "" {
+			klog.Infof("ts.meta.CustomAudience() is %q, setting audienceKey", customAudience)
+			audienceKey = customAudience
+		}
+
+		if trs, ok := tokenMap[audienceKey]; ok {
 			return trs.Token, nil
 		}
 
@@ -119,6 +140,14 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (string, error) {
 
 }
 
+// TODO make this regex match exactly.
+func isGKEIdentityProvider(identityProvider string) bool {
+	// GKE identity provider format:
+	// https://container.googleapis.com/v1/projects/{project_id}/locations/{location}/clusters/{cluster_name}
+	const gkePrefix = "https://container.googleapis.com/v1/projects/"
+	return strings.HasPrefix(identityProvider, gkePrefix)
+}
+
 // fetch GCP IdentityBindingToken using the Kubernetes Service Account token
 // by calling Security Token Service (STS) API.
 func (ts *GCPTokenSource) FetchIdentityBindingToken(ctx context.Context, k8sSAToken string, audience string) (*oauth2.Token, error) {
@@ -126,13 +155,29 @@ func (ts *GCPTokenSource) FetchIdentityBindingToken(ctx context.Context, k8sSATo
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
+
+	// TODO(amacaskill): remove this once logic works.
+	klog.Infof("FetchIdentityBindingToken with identity provider: %q, identity pool: %q, custom audience: %q", ts.meta.GetIdentityProvider(), ts.meta.GetIdentityPool(), ts.meta.CustomAudience())
+
+	identityProvider := ts.meta.GetIdentityProvider()
 	if audience == "" {
-		audience = fmt.Sprintf(
-			"identitynamespace:%s:%s",
-			ts.meta.GetIdentityPool(),
-			ts.meta.GetIdentityProvider(),
-		)
+		if isGKEIdentityProvider(identityProvider) {
+			audience = fmt.Sprintf(
+				"identitynamespace:%s:%s",
+				ts.meta.GetIdentityPool(),
+				identityProvider,
+			)
+		} else {
+			audience = identityProvider
+		}
 	}
+
+	// TODO(amacaskill): remove if we don't need this.
+	if customAudience := ts.meta.CustomAudience(); customAudience != "" {
+		klog.Infof("ts.meta.CustomAudience() is %q, setting audience for STS request", customAudience)
+		audience = customAudience
+	}
+
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
