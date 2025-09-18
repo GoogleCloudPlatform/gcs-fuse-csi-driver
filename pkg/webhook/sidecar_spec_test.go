@@ -20,6 +20,7 @@ package webhook
 import (
 	"testing"
 
+	util "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 )
@@ -82,7 +83,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      SidecarContainerTmpVolumeName,
+									Name:      util.SidecarContainerTmpVolumeName,
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 								{
@@ -116,7 +117,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      SidecarContainerTmpVolumeName,
+									Name:      util.SidecarContainerTmpVolumeName,
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 							},
@@ -143,7 +144,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      SidecarContainerTmpVolumeName,
+									Name:      util.SidecarContainerTmpVolumeName,
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 								{
@@ -172,7 +173,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      SidecarContainerTmpVolumeName,
+									Name:      util.SidecarContainerTmpVolumeName,
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 								{
@@ -202,7 +203,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      SidecarContainerTmpVolumeName,
+									Name:      util.SidecarContainerTmpVolumeName,
 									MountPath: SidecarContainerTmpVolumeMountPath,
 								},
 								{
@@ -274,7 +275,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      SidecarContainerTmpVolumeName,
+									Name:      util.SidecarContainerTmpVolumeName,
 									MountPath: "wrong-tmp-volume-mount-path",
 								},
 								{
@@ -313,7 +314,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
 					Volumes: []corev1.Volume{
 						{
-							Name:         SidecarContainerTmpVolumeName,
+							Name:         util.SidecarContainerTmpVolumeName,
 							VolumeSource: corev1.VolumeSource{},
 						},
 						{

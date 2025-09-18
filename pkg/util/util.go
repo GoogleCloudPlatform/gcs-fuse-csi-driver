@@ -26,7 +26,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
 
@@ -45,12 +44,16 @@ const (
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	OptInHnw                            = "hnw-ksa"
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
+	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
 )
 
 var (
-	volumeIDRegEx          = regexp.MustCompile(`:.*$`)
-	targetPathRegexp       = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
-	emptyReplacementRegexp = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
+	volumeIDRegEx            = regexp.MustCompile(`:.*$`)
+	targetPathRegexp         = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
+	emptyReplacementRegexp   = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
+	gkeIdentityProviderRegex = regexp.MustCompile(
+		`^https://(?:[a-z0-9-]+-)?container(?:\.sandbox)?\.googleapis\.com/v1/projects/[^/]+/locations/[^/]+/clusters/[^/]+$`,
+	)
 )
 
 // ConvertLabelsStringToMap converts the labels from string to map
@@ -157,7 +160,7 @@ func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {
 		return "", fmt.Errorf("failed to parse volume name from target path %q: %w", targetPath, err)
 	}
 
-	emptyDirBasePath := emptyReplacementRegexp.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", webhook.SidecarContainerTmpVolumeName))
+	emptyDirBasePath := emptyReplacementRegexp.ReplaceAllString(targetPath, fmt.Sprintf("kubernetes.io~empty-dir/%v/.volumes/$1", SidecarContainerTmpVolumeName))
 
 	if createEmptyDir {
 		if err := os.MkdirAll(emptyDirBasePath, 0o750); err != nil {
@@ -228,4 +231,11 @@ func FetchK8sTokenFromFile(tokenPath string) (string, error) {
 // skipping mounts of volumes with the same volume handle, which can cause the pod to be stuck in container creation.
 func ParseVolumeID(bucketHandle string) string {
 	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
+}
+
+// Returns true if the identity provider is a GKE identity provider in the format:
+// https://container.googleapis.com/v1/projects/{project_id}/locations/{location}/clusters/{cluster_name}.
+// Other GKE environments (staging, staging2, test, sandbox) are supported as well.
+func IsGKEIdentityProvider(identityProvider string) bool {
+	return gkeIdentityProviderRegex.MatchString(identityProvider)
 }
