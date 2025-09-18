@@ -100,7 +100,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	if mc.EnableSidecarBucketAccessCheck {
 		err := m.checkBucketAccessWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName, mc.TokenServerIdentityProvider, mc)
 		if err != nil {
-			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
+			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service or check bucket access, failed with error: %v", err)
 		}
 	}
 

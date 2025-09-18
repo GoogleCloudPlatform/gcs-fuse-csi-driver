@@ -70,6 +70,8 @@ const (
 	VolumeContextKeyEphemeral              = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName             = "bucketName"
 	tokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
+	sidecarBucketAccessCheckMinVersion     = "v1.18.2-gke.0"
+	sidecarCloudProfilerMinVersion         = "v1.18.2-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 )
@@ -516,6 +518,14 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 
 func isSidecarVersionSupportedForTokenServer(imageName string) bool {
 	return isSidecarVersionSupportedForGivenFeature(imageName, tokenServerSidecarMinVersion)
+}
+
+func isSidecarVersionSupportedForSidecarBucketAccessCheck(imageName string) bool {
+	return isSidecarVersionSupportedForGivenFeature(imageName, sidecarBucketAccessCheckMinVersion)
+}
+
+func isSidecarVersionSupportedForCloudProfiler(imageName string) bool {
+	return isSidecarVersionSupportedForGivenFeature(imageName, sidecarCloudProfilerMinVersion)
 }
 
 func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
