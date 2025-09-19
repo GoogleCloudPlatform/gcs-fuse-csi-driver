@@ -21,17 +21,20 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -51,6 +54,9 @@ var (
 
 var _ = func() bool {
 	testing.Init()
+	if err := flag.Set("logtostderr", "true"); err != nil {
+		klog.Warningf("Failed to set flags: %v", err)
+	}
 	if os.Getenv(clientcmd.RecommendedConfigPathEnvVar) == "" {
 		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 		os.Setenv(clientcmd.RecommendedConfigPathEnvVar, kubeconfig)
@@ -82,6 +88,18 @@ var _ = func() bool {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
 
+	// Use the suiteName in your log message
+	fmt.Println("=== Init: Setting up for suite ===")
+
+	// Example: Call your fetchTestConfig function
+	if err := fetchTestConfig(); err != nil {
+		klog.Errorf("klog Failed to fetch test configuration: %v", err)
+		fmt.Errorf("Failed to fetch test configuration: %v", err)
+	}
+
+	// Other global setups...
+	fmt.Println("=== Init: Setup complete ===")
+
 	return true
 }()
 
@@ -96,9 +114,27 @@ func TestE2E(t *testing.T) {
 
 	suiteConfig, reporterConfig := framework.CreateGinkgoConfig()
 	klog.Infof("Starting e2e run %q on Ginkgo node %d", framework.RunID, suiteConfig.ParallelProcess)
+	// klog.Infof("Cloning gcsfuse repository...")
+	// fetchTestConfig()
+	// klog.Infof("Done cloning gcsfuse repository...got test packages %v", utils.TestPackages)
+
 	ginkgo.RunSpecs(t, "Cloud Storage FUSE CSI Driver", suiteConfig, reporterConfig)
 }
 
+// var _ = ginkgo.BeforeSuite(func() {
+// 	suiteConfig, reporterConfig := ginkgo.GinkgoConfiguration()
+
+// 	// Use the suiteName in your log message
+// 	ginkgo.GinkgoWriter.Printf("=== BeforeSuite: Setting up for suite: %v and reportedConfig %v ===\n", suiteConfig, reporterConfig)
+
+// 	// Example: Call your fetchTestConfig function
+// 	if err := fetchTestConfig(); err != nil {
+// 		klog.Errorf("Failed to fetch test configuration: %v", err)
+// 	}
+
+//		// Other global setups...
+//		ginkgo.GinkgoWriter.Println("=== BeforeSuite: Setup complete ===")
+//	})
 var _ = ginkgo.Describe("E2E Test Suite", func() {
 	GCSFuseCSITestSuites := []func() storageframework.TestSuite{
 		testsuites.InitGcsFuseCSIVolumesTestSuite,
@@ -136,3 +172,32 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
 	})
 })
+
+func fetchTestConfig() error {
+	repoPath := "tmp-gcsfuse-repo"
+	tempDir, err := os.MkdirTemp("", repoPath)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create temp dir: %v", err))
+	}
+	cmd := exec.Command("git", "clone", "--branch", "master", "--depth", "1", "https://github.com/GoogleCloudPlatform/gcsfuse.git", tempDir)
+	cmd.Stdout = ginkgo.GinkgoWriter
+	cmd.Stderr = ginkgo.GinkgoWriter
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Failed to clone gcsfuse repository: %v", err)
+	}
+	// Read and parse the YAML
+	yamlPath := filepath.Join(tempDir, "tools", "integration_tests", "test_config.yaml")
+	yamlBytes, err := os.ReadFile(yamlPath)
+	if err != nil {
+		return fmt.Errorf("Failed to read YAML file: %v", err)
+	}
+	var loadedTestPackages utils.TestPackages
+	err = yaml.Unmarshal(yamlBytes, &loadedTestPackages)
+	if err != nil {
+		return fmt.Errorf("Failed to unmarshal YAML: %v", err)
+	}
+	utils.LoadedYAMLTestConfigs = loadedTestPackages
+	fmt.Printf("Loaded test packages %v", loadedTestPackages)
+	return nil
+}

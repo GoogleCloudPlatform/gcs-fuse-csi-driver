@@ -55,6 +55,7 @@ var (
 
 func main() {
 	klog.InitFlags(nil)
+	defer klog.Flush()
 	flag.Parse()
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
