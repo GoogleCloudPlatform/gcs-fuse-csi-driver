@@ -391,7 +391,7 @@ func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Cont
 	var storageClient *storage.Client
 	// For workload identity enabled resources we need to create the storage service with default credentials so as to not consume more STS quota.
 	// The token source thus is only shared for host network enabled workload. If token source is nil then create storage client with default credentials else use the tokenSource.
-	// This is needed as the storage API checks calls TokenSource.Token() function (defined above) which leads to increased STS quota since we are directly hittingthe STS API.
+	// This is needed as the storage API checks calls TokenSource.Token() function (defined above) which leads to increased STS quota since we are directly hitting the STS API.
 	if ts != nil {
 		client := oauth2.NewClient(ctx, ts)
 		storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))

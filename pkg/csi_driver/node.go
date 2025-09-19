@@ -137,6 +137,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
+	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
 		if userSpecifiedIdentityProvider != "" {
@@ -148,7 +150,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
 	}
 
-	if s.driver.config.EnableSidecarBucketAccessCheck {
+	if enableSidecarBucketAccessCheckForSidecarVersion {
 		if identityProvider == "" {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
@@ -163,7 +165,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			util.TokenServerIdentityPoolConst + "=" + identityPool})
 	}
 
-	if enableCloudProfilerForSidecar {
+	if enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
 	}
 
@@ -210,7 +212,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
-	if s.shouldPassDefaultingFlags(pod) {
+	if gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
 		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
 		machineType, ok := node.Labels[clientset.MachineTypeKey]
 		if ok {
@@ -375,7 +377,7 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
-			sidecarVersionSupported = isSidecarVersionSupportedForTokenServer(container.Image)
+			sidecarVersionSupported = isSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion)
 
 			break
 		}
@@ -384,15 +386,11 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 	return tokenVolumeInjected && (sidecarVersionSupported || userInput)
 }
 
-func (s *nodeServer) shouldPassDefaultingFlags(pod *corev1.Pod) bool {
-	var sidecarVersionSupported bool
+func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
-			sidecarVersionSupported = isSidecarVersionSupportedForGivenFeature(container.Image, MachineTypeAutoConfigSidecarMinVersion)
-
-			break
+			return container.Image
 		}
 	}
-
-	return sidecarVersionSupported
+	return ""
 }
