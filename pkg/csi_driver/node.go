@@ -105,21 +105,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	vc := req.GetVolumeContext()
 
-	// Check if the sidecar container was injected into the Pod
-	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
-	}
-	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
-
-	if optInHostnetworkKSA && enableSidecarBucketAccessCheckForSidecarVersion {
-		// Sidecar bucket access check feature performs this validation in sidecar. For host network pods, doing a bucket access check in both node and sidecar will lead to
-		// increased STS quota so we force skip the bucket access check on node. WI caches token for sidecar so it wouldn't result in quota increase.
-		klog.V(6).Infof("Skipping bucket access check `--skipCSIBucketAccessCheck` for Host Network pods as %s is enabled", util.EnableSidecarBucketAccessCheckConst)
-		skipBucketAccessCheck = true
-	}
-
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
 	if bucketName != "_" && !skipBucketAccessCheck {
@@ -147,6 +132,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	// Check if the sidecar container was injected into the Pod
+	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
+	}
+	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
 		if userSpecifiedIdentityProvider != "" {
