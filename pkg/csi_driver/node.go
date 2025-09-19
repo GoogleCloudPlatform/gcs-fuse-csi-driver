@@ -105,6 +105,21 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	vc := req.GetVolumeContext()
 
+	// Check if the sidecar container was injected into the Pod
+	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
+	}
+	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
+
+	if optInHostnetworkKSA && enableSidecarBucketAccessCheckForSidecarVersion {
+		// Sidecar bucket access check feature performs this vaildation in sidecar, for host network pods this doing a bucket access check in both node and sidecar will
+		// lead to increased STS quota so force skipping the bucket access check on node. WI caches token for sidecar so it wouldn't result in quota increase.
+		klog.V(6).Infof("Skipping bucket access check `--skipCSIBucketAccessCheck` for Host Network pods as %s is enabled", util.EnableSidecarBucketAccessCheckConst)
+		skipBucketAccessCheck = true
+	}
+
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
 	if bucketName != "_" && !skipBucketAccessCheck {
@@ -132,13 +147,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// Check if the sidecar container was injected into the Pod
-	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
-	}
-	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
-
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
 		if userSpecifiedIdentityProvider != "" {
@@ -150,7 +158,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
 	}
 
-	if s.driver.config.EnableSidecarBucketAccessCheck && isSidecarVersionSupportedForSidecarBucketAccessCheck(gcsFuseSidecarImage) {
+	if enableSidecarBucketAccessCheckForSidecarVersion {
 		if identityProvider == "" {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
@@ -165,7 +173,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			util.TokenServerIdentityPoolConst + "=" + identityPool})
 	}
 
-	if enableCloudProfilerForSidecar && isSidecarVersionSupportedForCloudProfiler(gcsFuseSidecarImage) {
+	if enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
 	}
 
@@ -212,7 +220,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
-	if s.shouldPassDefaultingFlags(gcsFuseSidecarImage) {
+	if gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
 		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
 		machineType, ok := node.Labels[clientset.MachineTypeKey]
 		if ok {

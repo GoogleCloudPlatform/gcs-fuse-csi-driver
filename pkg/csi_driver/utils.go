@@ -70,8 +70,8 @@ const (
 	VolumeContextKeyEphemeral              = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName             = "bucketName"
 	tokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
-	sidecarBucketAccessCheckMinVersion     = "v1.18.2-gke.0"
-	sidecarCloudProfilerMinVersion         = "v1.18.2-gke.0"
+	SidecarBucketAccessCheckMinVersion     = "v1.99.0-gke.0"
+	SidecarCloudProfilerMinVersion         = "v1.99.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 )
