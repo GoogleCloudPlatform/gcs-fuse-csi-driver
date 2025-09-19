@@ -114,8 +114,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 
 	if optInHostnetworkKSA && enableSidecarBucketAccessCheckForSidecarVersion {
-		// Sidecar bucket access check feature performs this vaildation in sidecar, for host network pods this doing a bucket access check in both node and sidecar will
-		// lead to increased STS quota so force skipping the bucket access check on node. WI caches token for sidecar so it wouldn't result in quota increase.
+		// Sidecar bucket access check feature performs this validation in sidecar. For host network pods, doing a bucket access check in both node and sidecar will lead to
+		// increased STS quota so we force skip the bucket access check on node. WI caches token for sidecar so it wouldn't result in quota increase.
 		klog.V(6).Infof("Skipping bucket access check `--skipCSIBucketAccessCheck` for Host Network pods as %s is enabled", util.EnableSidecarBucketAccessCheckConst)
 		skipBucketAccessCheck = true
 	}
@@ -392,13 +392,6 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 	}
 
 	return tokenVolumeInjected && (sidecarVersionSupported || userInput)
-}
-
-func (s *nodeServer) shouldPassDefaultingFlags(gcsFuseSidecarImage string) bool {
-	if gcsFuseSidecarImage != "" {
-		return isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion)
-	}
-	return false
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
