@@ -385,7 +385,7 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
-			sidecarVersionSupported = isSidecarVersionSupportedForTokenServer(container.Image)
+			sidecarVersionSupported = isSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion)
 
 			break
 		}
