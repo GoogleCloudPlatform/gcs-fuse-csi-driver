@@ -45,29 +45,32 @@ type Config struct {
 	EphemeralStorageRequest resource.Quantity `json:"ephemeral-storage-request,omitempty"`
 	//nolint:tagliatelle
 	EphemeralStorageLimit resource.Quantity `json:"ephemeral-storage-limit,omitempty"`
+	//nolint:tagliatelle
+	GCPWorkloadIdentityCredentialConfigMap string `json:"gke-gcsfuse/workload-identity-credential-configmap,omitempty"`
 }
 
-func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit string) *Config {
+func LoadConfig(containerImage, imagePullPolicy, cpuRequest, cpuLimit, memoryRequest, memoryLimit, ephemeralStorageRequest, ephemeralStorageLimit, workloadIdentityCredentialConfigMap string) *Config {
 	return &Config{
-		ContainerImage:          containerImage,
-		ImagePullPolicy:         imagePullPolicy,
-		CPURequest:              resource.MustParse(cpuRequest),
-		CPULimit:                resource.MustParse(cpuLimit),
-		MemoryRequest:           resource.MustParse(memoryRequest),
-		MemoryLimit:             resource.MustParse(memoryLimit),
-		EphemeralStorageRequest: resource.MustParse(ephemeralStorageRequest),
-		EphemeralStorageLimit:   resource.MustParse(ephemeralStorageLimit),
+		ContainerImage:                         containerImage,
+		ImagePullPolicy:                        imagePullPolicy,
+		CPURequest:                             resource.MustParse(cpuRequest),
+		CPULimit:                               resource.MustParse(cpuLimit),
+		MemoryRequest:                          resource.MustParse(memoryRequest),
+		MemoryLimit:                            resource.MustParse(memoryLimit),
+		EphemeralStorageRequest:                resource.MustParse(ephemeralStorageRequest),
+		EphemeralStorageLimit:                  resource.MustParse(ephemeralStorageLimit),
+		GCPWorkloadIdentityCredentialConfigMap: workloadIdentityCredentialConfigMap,
 	}
 }
 
 func FakeConfig() *Config {
 	fakeImage1 := "fake-repo/fake-sidecar-image:v999.999.999-gke.0@sha256:c9cd4cde857ab8052f416609184e2900c0004838231ebf1c3817baa37f21d847"
 
-	return LoadConfig(fakeImage1, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi")
+	return LoadConfig(fakeImage1, "Always", "250m", "250m", "256Mi", "256Mi", "5Gi", "5Gi", "fake-credential-configmap")
 }
 
 func FakePrefetchConfig() *Config {
-	return LoadConfig("fake-image", "Always", "10m", "50m", "10Mi", "10Mi", "10Mi", "10Mi")
+	return LoadConfig("fake-image", "Always", "10m", "50m", "10Mi", "10Mi", "10Mi", "10Mi", "" /*workloadIdentityCredentialConfigMap*/)
 }
 
 func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {

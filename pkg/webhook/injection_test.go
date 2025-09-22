@@ -529,7 +529,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 	t.Parallel()
 
 	limits, requests := prepareResourceList(getDefaultMetadataPrefetchConfig("fake-image"))
-	customLimits, customRequests := prepareResourceList(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"))
+	customLimits, customRequests := prepareResourceList(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi", "" /*workloadIdentityCredentialConfigMap*/))
 
 	testCases := []struct {
 		testName      string
@@ -987,7 +987,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			testName: "fuse sidecar present, injection successful, with custom memory limits and requests",
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Annotations: generateAnnotationsFromConfig(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"), sidecarPrefixMap[MetadataPrefetchSidecarName]),
+					Annotations: generateAnnotationsFromConfig(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi", "" /*workloadIdentityCredentialConfigMap*/), sidecarPrefixMap[MetadataPrefetchSidecarName]),
 				},
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -1558,7 +1558,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 				tc.nativeSidecar = ptr.To(true)
 			}
 			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
-			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar)
+			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil /*credentialConfig*/)
 			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
 			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
 				t.Errorf(`failed to run %s, expected: "%v", but got "%v". Diff: %s`, tc.testName, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))

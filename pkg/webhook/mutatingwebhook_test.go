@@ -378,7 +378,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Update,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -389,7 +389,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -400,7 +400,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -416,7 +416,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{getWorkloadSpec("workload"), GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{getWorkloadSpec("workload"), GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -432,7 +432,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{getWorkloadSpec("init-workload"), GetSidecarContainerSpec(FakeConfig())},
+					InitContainers: []corev1.Container{getWorkloadSpec("init-workload"), GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Containers:     []corev1.Container{getWorkloadSpec("workload")},
 					Volumes:        GetSidecarContainerVolumeSpec(),
 				},
@@ -822,9 +822,9 @@ func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native b
 	}
 
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config)}, newPod.Spec.InitContainers...)
+		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, nil)}, newPod.Spec.InitContainers...)
 	} else {
-		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
 	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
@@ -855,9 +855,9 @@ func wantResponseWithIstio(t *testing.T, customImage bool, nativeCustomImage, na
 	}
 
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, GetNativeSidecarContainerSpec(config)}, newPod.Spec.InitContainers...)
+		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, GetNativeSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.InitContainers...)
 	} else {
-		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
 	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
