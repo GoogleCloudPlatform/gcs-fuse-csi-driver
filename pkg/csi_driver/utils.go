@@ -519,6 +519,7 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
 	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
 	// since it's built off latest code in main
+	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
 	if strings.Contains(imageName, "prow-gob-internal-boskos") {
 		return true
 	}
@@ -534,7 +535,6 @@ func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSuppor
 		klog.Infof("managed sidecar version satisfies the minimum required version %q", sidecarMinSupportedVersion)
 		return true
 	}
-
 	return false
 }
 
