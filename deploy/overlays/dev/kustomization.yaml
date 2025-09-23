@@ -61,4 +61,10 @@ patches:
     kind: DaemonSet
     name: gcsfusecsi-node
     version: v1
+- path: ./node_args.yaml
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1
 
