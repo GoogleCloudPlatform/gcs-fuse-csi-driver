@@ -77,7 +77,7 @@ download-gcsfuse:
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	rm -f ${BINDIR}/Dockerfile.gcsfuse
 	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
-	$(eval GCSFUSE_VERSION=999.$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c 1-40))
+	$(eval GCSFUSE_VERSION=0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
 
 	docker buildx build \
 		--load \
