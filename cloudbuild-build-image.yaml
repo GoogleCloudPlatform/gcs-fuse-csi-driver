@@ -86,7 +86,8 @@ steps:
       fi
 
       curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o Dockerfile.gcsfuse
-      GCSFUSE_VERSION="999.$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -f 1)"
+      GCSFUSE_VERSION="0.0.1-gcsfuse-git-master-$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7)"
+      echo -n "$${GCSFUSE_VERSION}" > /workspace/gcsfuse_version.txt
 
       # Build for AMD64 and save to a tar file
       docker buildx build \
@@ -127,7 +128,7 @@ steps:
       if [ "${_BUILD_GCSFUSE_FROM_SOURCE}" = "true" ]; then
         # Load the tarball artifact and extract the binary
         docker load < /workspace/gcsfuse-amd.tar
-        GCSFUSE_VERSION="999.$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -f 1)"
+        GCSFUSE_VERSION=$(cat /workspace/gcsfuse_version.txt)
         docker run --rm -v $(pwd)/bin/linux/amd64:/release gcsfuse-release-amd cp /gcsfuse_$${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
       else
         # Download pre-built binary
@@ -141,7 +142,7 @@ steps:
         then
           # Load the ARM tarball artifact and extract the binary
           docker load < /workspace/gcsfuse-arm.tar
-          GCSFUSE_VERSION="999.$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -f 1)"
+          GCSFUSE_VERSION=$(cat /workspace/gcsfuse_version.txt)
           docker run --rm -v $(pwd)/bin/linux/arm64:/release gcsfuse-release-arm cp /gcsfuse_$${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
         else
           # Download pre-built ARM binary

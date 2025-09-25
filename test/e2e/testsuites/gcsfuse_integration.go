@@ -158,10 +158,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	// qualifies the non-managed driver to run all the tests.
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		// When the gcsfuse binary is built using the head commit in the test pipeline,
-		// the version format does not obey the syntax and semantics of the "Semantic Versioning".
-		// Always use master branch if the gcsfuse binary is built using the head commit.
-		if err != nil {
+		// When the gcsfuse binary is built using the head commit or has a pre-release tag,
+		// it is a development build. Always use the master branch for these builds.
+		if err != nil || v.PreRelease() != "" {
 			return masterBranchName
 		}
 
