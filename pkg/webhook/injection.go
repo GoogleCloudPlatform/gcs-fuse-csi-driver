@@ -99,7 +99,7 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 }
 
 // InjectSidecarContainer injects a sidecar container into the pod and returns error if unexpected event occurs.
-func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *corev1.Pod, injectAsNativeSidecar bool) error {
+func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *corev1.Pod, injectAsNativeSidecar bool, credentialConfig *SidecarContainerCredentialConfiguration) error {
 	var containerSpec corev1.Container
 	var index int
 	config, err := si.prepareConfig(sidecarPrefixMap[containerName], *pod)
@@ -119,10 +119,10 @@ func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *cor
 
 	// Retrieve container spec and index to inject sidecar for either init containers or regular based on native sidecar support.
 	if injectAsNativeSidecar {
-		containerSpec = si.getNativeContainerSpec(containerName, pod, config)
+		containerSpec = si.getNativeContainerSpec(containerName, pod, config, credentialConfig)
 		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, containerIndexOrderMap[containerName])
 	} else {
-		containerSpec = si.getContainerSpec(containerName, pod, config)
+		containerSpec = si.getContainerSpec(containerName, pod, config, credentialConfig)
 		index = getInjectIndexAfterContainer(pod.Spec.Containers, containerIndexOrderMap[containerName])
 	}
 
@@ -151,20 +151,20 @@ func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *cor
 	return nil
 }
 
-func (si *SidecarInjector) getNativeContainerSpec(containerName string, pod *corev1.Pod, config *Config) corev1.Container {
-	containerSpec := si.getContainerSpec(containerName, pod, config)
+func (si *SidecarInjector) getNativeContainerSpec(containerName string, pod *corev1.Pod, config *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {
+	containerSpec := si.getContainerSpec(containerName, pod, config, credentialConfig)
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
 	containerSpec.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
 
 	return containerSpec
 }
 
-func (si *SidecarInjector) getContainerSpec(containerName string, pod *corev1.Pod, config *Config) corev1.Container {
+func (si *SidecarInjector) getContainerSpec(containerName string, pod *corev1.Pod, config *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {
 	if containerName == MetadataPrefetchSidecarName {
 		return si.GetMetadataPrefetchSidecarContainerSpec(pod, config)
 	}
 
-	return GetSidecarContainerSpec(config)
+	return GetSidecarContainerSpec(config, credentialConfig)
 }
 
 func insert(a []corev1.Container, value corev1.Container, index int) []corev1.Container {
