@@ -866,14 +866,14 @@ func TestGenerateDisallowedFlagsMap(t *testing.T) {
 		driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal = test.enableProfilesInternal
 		driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = test.enableProfiles
 		resultMap, err := driver.generateDisallowedFlagsMap(test.image)
-		gotExpectedError(t, test.expectErr, err, test.name)
+		GotExpectedError(t, test.expectErr, err, test.name)
 		if diff := cmp.Diff(resultMap, test.expectedMap); diff != "" {
 			t.Errorf("error mismatch in test %s (-got +want):\n%s", test.name, diff)
 		}
 	}
 }
 
-func gotExpectedError(t *testing.T, wantErr error, gotErr error, testName string) {
+func GotExpectedError(t *testing.T, wantErr error, gotErr error, testName string) {
 	t.Helper()
 	if wantErr == nil && gotErr == nil {
 		return
