@@ -18,14 +18,20 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"crypto/sha1"
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"cloud.google.com/go/compute/apiv1"
+	computepb "cloud.google.com/go/compute/apiv1/computepb"
+	"cloud.google.com/go/compute/metadata"
+	"github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
@@ -228,4 +234,53 @@ func FetchK8sTokenFromFile(tokenPath string) (string, error) {
 // skipping mounts of volumes with the same volume handle, which can cause the pod to be stuck in container creation.
 func ParseVolumeID(bucketHandle string) string {
 	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
+}
+
+func GetZonesForClusterRegion(ctx context.Context) ([]string, error) {
+	// determine the location for the cluster
+	detector := gcp.NewDetector()
+	location, locationType, err := detector.GKEAvailabilityZoneOrRegion()
+	if err == nil {
+		return nil, err
+	}
+	if locationType == 1 {
+		idx := strings.LastIndex(location, "-")
+		location = location[:idx]
+	}
+
+	return getZonesForARegion(ctx, location)
+}
+
+func getZonesForARegion(ctx context.Context, regionName string) ([]string, error) {
+	// Create a new client for the Compute Engine API.
+	client, err := compute.NewRegionsRESTClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create compute client: %w", err)
+	}
+	defer client.Close()
+
+	projectID, err := metadata.ProjectIDWithContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Project ID: %w", err)
+	}
+
+	// Execute the request.
+	region, err := client.Get(ctx, &computepb.GetRegionRequest{
+		Project: projectID,
+		Region:  regionName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get region '%s': %w", regionName, err)
+	}
+
+	// Initialize a slice to hold the zone names.
+	var zones []string
+	// The response contains a list of full URLs to the zones.
+	// We iterate through them and extract just the zone name from the end of the URL.
+	for _, zoneURL := range region.GetZones() {
+		zoneName := path.Base(zoneURL)
+		zones = append(zones, zoneName)
+	}
+
+	return zones, nil
 }
