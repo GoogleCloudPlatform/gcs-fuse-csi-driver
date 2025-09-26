@@ -68,7 +68,7 @@ var (
 	datafluxParallelism          = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
 	datafluxBatchSize            = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
 	datafluxSkipDirectoryObjects = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
-
+	clusterRegion                = flag.String("cluster-region", "", "The region in which the cluster is deployed. If not set, the region will be inferred from the cluster location. (e.g. us-central1)")
 	// Leader election flags.
 	leaderElection              = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
 	leaderElectionNamespace     = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
@@ -168,6 +168,7 @@ func main() {
 					BatchSize:            *datafluxBatchSize,
 					SkipDirectoryObjects: *datafluxSkipDirectoryObjects,
 				},
+				ClusterRegion: *clusterRegion,
 			},
 		},
 	}

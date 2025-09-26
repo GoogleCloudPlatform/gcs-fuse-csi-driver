@@ -23,12 +23,19 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/storage"
+	control "cloud.google.com/go/storage/control/apiv2"
+	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	"github.com/google/go-cmp/cmp"
+	"github.com/googleapis/gax-go/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -36,7 +43,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 
+	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1417,6 +1426,487 @@ func TestDefaultScanBucket(t *testing.T) {
 
 			if tc.fakeDataflux.called != tc.expectDatafluxCall {
 				t.Errorf("scanBucketWithDataflux called = %v, want %v", tc.fakeDataflux.called, tc.expectDatafluxCall)
+			}
+		})
+	}
+}
+
+func TestIsRetryableError(t *testing.T) {
+	// Define the test cases in a table
+	testCases := []struct {
+		name          string
+		inputErr      error
+		wantRetryable bool
+	}{
+		{
+			name:          "Nil Error - Should be considered retryable by current logic",
+			inputErr:      nil,
+			wantRetryable: true,
+		},
+		{
+			name:          "Standard Go Error - Should be considered retryable by current logic",
+			inputErr:      errors.New("a generic network failure"),
+			wantRetryable: true, // Note: Unknown errors are treated as retryable.
+		},
+		{
+			name:          "gRPC - Retryable Code (Unavailable)",
+			inputErr:      status.Error(codes.Unavailable, "service is temporarily unavailable"),
+			wantRetryable: true,
+		},
+		{
+			name:          "gRPC - Retryable Code (Internal)",
+			inputErr:      status.Error(codes.Internal, "internal server error"),
+			wantRetryable: true,
+		},
+		{
+			name:          "gRPC - Non-Retryable Code (InvalidArgument)",
+			inputErr:      status.Error(codes.InvalidArgument, "invalid email address provided"),
+			wantRetryable: false,
+		},
+		{
+			name:          "gRPC - Non-Retryable Code (NotFound)",
+			inputErr:      status.Error(codes.NotFound, "resource not found"),
+			wantRetryable: true,
+		},
+		{
+			name:          "gRPC - Non-Retryable Code (PermissionDenied)",
+			inputErr:      status.Error(codes.PermissionDenied, "user does not have access"),
+			wantRetryable: false,
+		},
+		{
+			name:          "gRPC - OK Code (Should not be an error, but test for completeness)",
+			inputErr:      status.Error(codes.OK, "this is not an error"),
+			wantRetryable: true, // OK is not in nonRetryCodes, so logic says it's retryable
+		},
+	}
+
+	// Loop through the test cases
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Call the function we are testing
+			got := isRetryableError(tc.inputErr)
+
+			// Assert that the result is what we expect
+			if got != tc.wantRetryable {
+				t.Errorf("isRetryableError(%v) = %v; want %v", tc.inputErr, got, tc.wantRetryable)
+			}
+		})
+	}
+}
+
+func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
+	// Define test cases
+	testCases := []struct {
+		name           string
+		pv             *v1.PersistentVolume
+		expectedPolicy string
+		expectError    bool
+		expectedError  string
+	}{
+		{
+			name: "should return 'admit-on-first-miss' when explicitly set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-1"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "admit-on-first-miss",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "admit-on-first-miss",
+			expectError:    false,
+		},
+		{
+			name: "should return 'admit-on-second-miss' when explicitly set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-2"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "admit-on-second-miss",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "admit-on-second-miss",
+			expectError:    false,
+		},
+		{
+			name: "should return default 'admit-on-first-miss' when attribute is not set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-3"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{}, // Empty attributes
+						},
+					},
+				},
+			},
+			expectedPolicy: "admit-on-first-miss",
+			expectError:    false,
+		},
+		{
+			name: "should return an error for an invalid admission policy",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-4"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "invalid-policy",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "",
+			expectError:    true,
+			expectedError:  "invalid admission anywhereCacheAdmissionPolicy provided: invalid-policy, valid values are admit-on-first-miss or admit-on-second-miss",
+		},
+	}
+
+	// Run tests
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy, err := getAnywhereCacheAdmissionPolicyFromPV(tc.pv)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected an error, but got nil")
+				}
+				if err != nil && err.Error() != tc.expectedError {
+					t.Errorf("Expected error message '%s', but got '%s'", tc.expectedError, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, but got: %v", err)
+				}
+			}
+
+			if policy != tc.expectedPolicy {
+				t.Errorf("Expected policy '%s', but got '%s'", tc.expectedPolicy, policy)
+			}
+		})
+	}
+}
+
+func TestGetAnywhereCacheTtlFromPV(t *testing.T) {
+	testCases := []struct {
+		name             string
+		pv               *v1.PersistentVolume
+		expectedDuration *durationpb.Duration
+		expectError      bool
+	}{
+		{
+			name: "should return correct duration when ttl is explicitly set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-1"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheTTL": "15m",
+							},
+						},
+					},
+				},
+			},
+			expectedDuration: durationpb.New(15 * time.Minute),
+			expectError:      false,
+		},
+		{
+			name: "should return default 1h duration when attribute is not set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-2"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{}, // Empty attributes
+						},
+					},
+				},
+			},
+			expectedDuration: durationpb.New(1 * time.Hour),
+			expectError:      false,
+		},
+		{
+			name: "should return an error for an invalid duration string",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-3"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheTTL": "invalid-duration",
+							},
+						},
+					},
+				},
+			},
+			expectedDuration: nil,
+			expectError:      true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			duration, err := getAnywhereCacheTtlFromPV(tc.pv)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected an error, but got nil")
+				}
+				return // End test here if error was expected
+			}
+
+			if err != nil {
+				t.Errorf("Expected no error, but got: %v", err)
+			}
+
+			if duration.GetSeconds() != tc.expectedDuration.GetSeconds() || duration.GetNanos() != tc.expectedDuration.GetNanos() {
+				t.Errorf("Expected duration %v, but got %v", tc.expectedDuration, duration)
+			}
+		})
+	}
+}
+
+// ====================================================================================
+// Anywherecache create testing: Mocks and Test Infrastructure
+// ====================================================================================
+
+// mockStorageControlClient is our fake storage client for tests.
+type mockStorageControlClient struct {
+	CreateAnywhereCacheFunc func(context.Context, *controlpb.CreateAnywhereCacheRequest, ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error)
+}
+
+func (m *mockStorageControlClient) CreateAnywhereCache(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+	if m.CreateAnywhereCacheFunc != nil {
+		return m.CreateAnywhereCacheFunc(ctx, req, opts...)
+	}
+	// Default success response if no specific behavior is set
+	return &control.CreateAnywhereCacheOperation{}, nil
+}
+
+func (m *mockStorageControlClient) Close() error {
+	// No-op for the mock
+	return nil
+}
+
+// countEventsByType drains the recorder's channel and counts events by their type.
+func countEventsByType(recorder *record.FakeRecorder) (successCount int, errorCount int) {
+	// Close the channel so the for...range loop will exit when it's empty.
+	close(recorder.Events)
+
+	for event := range recorder.Events {
+		klog.Infof("Recorded event: %s", event)
+		if strings.HasPrefix(event, v1.EventTypeNormal) {
+			successCount++
+		}
+		if strings.HasPrefix(event, v1.EventTypeWarning) {
+			errorCount++
+		}
+	}
+	return successCount, errorCount
+}
+
+// ====================================================================================
+// Anywherecache create testing: Tests
+// ====================================================================================
+
+func TestCreateAnywhereCache(t *testing.T) {
+	// --- Shared Test Variables ---
+	ctx := context.Background()
+	validpv := &v1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-pv",
+			// Add annotations needed by the real buildCreateAnywhereCacheRequest
+			Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+		},
+		Spec: v1.PersistentVolumeSpec{
+			PersistentVolumeSource: v1.PersistentVolumeSource{
+				CSI: &v1.CSIPersistentVolumeSource{
+					VolumeHandle: "my-bucket",
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		name                  string
+		setupMocks            func()
+		expectedRequeue       bool
+		expectedSuccessEvents int
+		expectedErrorEvents   int
+		pv                    *v1.PersistentVolume
+		storageControlClient  storageControlClient
+	}{
+		{
+			name: "Happy Path - All zones succeed",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			expectedRequeue:       false,
+			storageControlClient:  &mockStorageControlClient{},
+			expectedSuccessEvents: 2, // One success event per zone
+		},
+		{
+			name: "Failure - GetZonesForClusterRegion fails",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return nil, fmt.Errorf("mock region error")
+				}
+			},
+			expectedRequeue:     true, // Setup errors should be retried
+			expectedErrorEvents: 1,
+		},
+		{
+			name: "Failure - NoStorageControlClient fails",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a"}, nil
+				}
+			},
+			expectedRequeue:     false,
+			expectedErrorEvents: 1,
+		},
+		{
+			name: "Failure - Invalid TTL format",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a"}, nil
+				}
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Missing required annotation to trigger build error
+					Annotations: map[string]string{},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheTTL": "invalid-duration",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: &mockStorageControlClient{},
+			expectedRequeue:      false,
+			expectedErrorEvents:  1,
+		},
+		{
+			name: "API Failure - One zone fails with a retryable error",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			expectedRequeue:       true, // The retryable error should trigger a requeue
+			expectedSuccessEvents: 3,
+			storageControlClient: &mockStorageControlClient{
+				// This function signature now matches the interface exactly.
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					// The API call itself fails, so we return nil for the operation
+					// and the error we want to test.
+					if req.AnywhereCache.Zone != "zone-a" {
+						return &control.CreateAnywhereCacheOperation{}, nil
+					}
+					return nil, status.Errorf(codes.Internal, "failed")
+				},
+			},
+			expectedErrorEvents: 1,
+		},
+		{
+			name: "API Failure - One zone fails with a retryable error, one with non-retryable",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			expectedRequeue:       true, // The retryable error should trigger a requeue
+			expectedSuccessEvents: 2,
+			storageControlClient: &mockStorageControlClient{
+				// This function signature now matches the interface exactly.
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					if req.AnywhereCache.Zone == "zone-a" {
+						return nil, status.Errorf(codes.Internal, "failed retry")
+					}
+					if req.AnywhereCache.Zone == "zone-b" {
+						return nil, status.Errorf(codes.AlreadyExists, "failed not retry")
+					}
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+			},
+			expectedErrorEvents: 2,
+		},
+		{
+			name: "API Failure - One zone fails with a non-retryable error",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(ctx context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			expectedRequeue:       false, // Non-retryable error should not trigger a requeue
+			expectedSuccessEvents: 3,
+			storageControlClient: &mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					if req.AnywhereCache.Zone != "zone-a" {
+						return &control.CreateAnywhereCacheOperation{}, nil
+					}
+					return nil, status.Errorf(codes.AlreadyExists, "failed to build anywhere cache request: Already Exists")
+				},
+			},
+			expectedErrorEvents: 1,
+		},
+		{
+			name: "Edge Case - No zones returned",
+			setupMocks: func() {
+				utilGetZonesForClusterRegion = func(_ context.Context, service *compute.Service, location string) ([]string, error) {
+					return []string{}, nil
+				}
+			},
+			storageControlClient: &mockStorageControlClient{},
+			expectedRequeue:      false,
+		},
+	}
+
+	// --- Test Runner ---
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			klog.Infof("\n\nStarting test: %s", tc.name)
+			if tc.pv == nil {
+				tc.pv = validpv
+			}
+
+			fakeRecorder := record.NewFakeRecorder(10)
+			tc.setupMocks()
+			s := &Scanner{eventRecorder: fakeRecorder, config: &ScannerConfig{ClusterRegion: "us-central1"}, storageControlClient: tc.storageControlClient}
+
+			requeue := s.createAnywhereCache(ctx, tc.pv)
+
+			if requeue != tc.expectedRequeue {
+				t.Errorf("Expected requeue=%v, but got requeue=%v", tc.expectedRequeue, requeue)
+			}
+
+			successEvents, errorEvents := countEventsByType(fakeRecorder)
+			// Assert that the correct number of K8s events were sent
+			if successEvents != tc.expectedSuccessEvents {
+				t.Errorf("Expected %d success events, but got %d", tc.expectedSuccessEvents, successEvents)
+			}
+			if errorEvents != tc.expectedErrorEvents {
+				t.Errorf("Expected %d error events, but got %d", tc.expectedSuccessEvents, errorEvents)
 			}
 		})
 	}

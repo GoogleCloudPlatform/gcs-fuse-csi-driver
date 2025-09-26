@@ -64,3 +64,9 @@ patches:
     kind: DaemonSet
     name: gcsfusecsi-node
     version: v1
+- path: cluster_region_patch_csi_controller.json
+  target:
+    group: apps
+    kind: Deployment
+    name: gcs-fuse-csi-controller
+    version: v1

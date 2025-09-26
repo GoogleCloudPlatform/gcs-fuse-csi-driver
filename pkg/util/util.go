@@ -18,14 +18,19 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"crypto/sha1"
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"cloud.google.com/go/compute/metadata"
+	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 	"k8s.io/klog/v2"
 )
 
@@ -233,9 +238,44 @@ func ParseVolumeID(bucketHandle string) string {
 	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
 }
 
+func GetZonesForARegion(ctx context.Context, computeService *compute.Service, region string) ([]string, error) {
+	var zones []string
+	projectNumber, err := GetProjectNumber(ctx)
+	if err != nil {
+		return zones, fmt.Errorf("failed to get project number: %v", err)
+	}
+	klog.Info("Getting zones for region: ", region, " in project: ", projectNumber)
+	if computeService == nil {
+		computeService, err = compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope))
+		if err != nil {
+			return zones, fmt.Errorf("failed to create compute service: %v", err)
+		}
+	}
+
+	regionObj, err := computeService.Regions.Get(projectNumber, region).Do()
+	if err != nil {
+		return zones, fmt.Errorf("failed to get region %s: %v", region, err)
+	}
+
+	for _, zoneURL := range regionObj.Zones {
+		zoneName := path.Base(zoneURL)
+		zones = append(zones, zoneName)
+	}
+
+	return zones, nil
+}
+
 // Returns true if the identity provider is a GKE identity provider in the format:
 // https://container.googleapis.com/v1/projects/{project_id}/locations/{location}/clusters/{cluster_name}.
 // Other GKE environments (staging, staging2, test, sandbox) are supported as well.
 func IsGKEIdentityProvider(identityProvider string) bool {
 	return gkeIdentityProviderRegex.MatchString(identityProvider)
+}
+
+func GetProjectNumber(ctx context.Context) (string, error) {
+	projectNumber, err := metadata.NumericProjectIDWithContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get project number: %w", err)
+	}
+	return projectNumber, nil
 }
