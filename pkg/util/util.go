@@ -18,14 +18,18 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	compute "google.golang.org/api/compute/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -237,6 +241,40 @@ func FetchK8sTokenFromFile(tokenPath string) (string, error) {
 // skipping mounts of volumes with the same volume handle, which can cause the pod to be stuck in container creation.
 func ParseVolumeID(bucketHandle string) string {
 	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
+}
+
+func GetZonesForALocation(ctx context.Context, projectNumber string, computeService *compute.Service, location string) ([]string, error) {
+	klog.Info("Getting zones for location: ", location, " in project: ", projectNumber)
+
+	// Validating inputs.
+	if projectNumber == "" {
+		return []string{}, fmt.Errorf("no project number provided")
+	}
+	if computeService == nil {
+		return []string{}, fmt.Errorf("compute service can't be null")
+	}
+
+	// Handle the zonal cluster case.
+	_, err := computeService.Zones.Get(projectNumber, location).Context(ctx).Do()
+	if err == nil {
+		return []string{location}, nil
+	}
+	errs := []error{err}
+
+	// Handle the regional cluster case.
+	regionObj, err := computeService.Regions.Get(projectNumber, location).Context(ctx).Do()
+	if err == nil {
+		var zones []string
+		for _, zoneURL := range regionObj.Zones {
+			zoneName := path.Base(zoneURL)
+			zones = append(zones, zoneName)
+		}
+		return zones, nil
+	}
+	errs = append(errs, err)
+
+	// region and zonal API errors are both non-nil. The API request failed either because it's not a zone nor a region or some internal error.
+	return []string{}, fmt.Errorf("failed to get location %s: %v", location, errors.Join(errs...))
 }
 
 // Returns true if the identity provider is a GKE identity provider in the format:

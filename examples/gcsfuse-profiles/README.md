@@ -28,9 +28,12 @@ PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectN
 gcloud iam roles create gke.gcsfuse.profileTuner \
   --project=${GCS_PROJECT} \
   --title="GCSFuse CSI Profile Tuner" \
-  --description="Allows scanning GCS buckets for objects and retrieving bucket metadata." \
-  --permissions="storage.objects.list,storage.buckets.get"
-  # TODO(urielguzman): Add permissions for Anywhere Cache and update description.
+  --description="Allows scanning GCS buckets for objects and retrieving bucket metadata and the creation of Anywhere Caches." \
+  --permissions="storage.objects.list,\
+storage.buckets.get,\
+storage.anywhereCaches.create,\
+storage.anywhereCaches.get,\
+storage.anywhereCaches.list"
 
 # 2. Bind the custom role to the GCSFuse CSI controller on the specific bucket
 gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
@@ -43,6 +46,11 @@ gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
 gcloud projects add-iam-policy-binding ${GCS_PROJECT} \
   --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa" \
   --role="roles/monitoring.viewer"
+
+# 4. Grant access needed to determine zones for anywherecaches:
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+	    --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa" \
+	    --role "roles/compute.viewer"
 ```
 
 ## Create the workload KSA and grant it permissions to your bucket:
