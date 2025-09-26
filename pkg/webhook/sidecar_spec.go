@@ -20,6 +20,7 @@ package webhook
 import (
 	"path/filepath"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -28,7 +29,6 @@ import (
 const (
 	GcsFuseSidecarName                     = "gke-gcsfuse-sidecar"
 	MetadataPrefetchSidecarName            = "gke-gcsfuse-metadata-prefetch"
-	SidecarContainerTmpVolumeName          = "gke-gcsfuse-tmp"
 	SidecarContainerTmpVolumeMountPath     = "/gcsfuse-tmp"
 	SidecarContainerBufferVolumeName       = "gke-gcsfuse-buffer"
 	SidecarContainerBufferVolumeMountPath  = "/gcsfuse-buffer"
@@ -58,7 +58,7 @@ const (
 var (
 	// gke-gcsfuse-sidecar volumes.
 	tmpVolume = corev1.Volume{
-		Name: SidecarContainerTmpVolumeName,
+		Name: util.SidecarContainerTmpVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
@@ -80,7 +80,7 @@ var (
 
 	// gke-gcsfuse-sidecar volumeMounts.
 	TmpVolumeMount = corev1.VolumeMount{
-		Name:      SidecarContainerTmpVolumeName,
+		Name:      util.SidecarContainerTmpVolumeName,
 		MountPath: SidecarContainerTmpVolumeMountPath,
 	}
 
@@ -220,7 +220,7 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 	return container
 }
 
-func GetSATokenVolume(projectID string) corev1.Volume {
+func GetSATokenVolume(audience string) corev1.Volume {
 	saTokenVolume := corev1.Volume{
 		Name: SidecarContainerSATokenVolumeName,
 		VolumeSource: corev1.VolumeSource{
@@ -228,7 +228,7 @@ func GetSATokenVolume(projectID string) corev1.Volume {
 				Sources: []corev1.VolumeProjection{
 					{
 						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-							Audience:          projectID + ".svc.id.goog",
+							Audience:          audience,
 							ExpirationSeconds: &[]int64{tokenExpiryDuration}[0],
 							Path:              K8STokenPath,
 						},

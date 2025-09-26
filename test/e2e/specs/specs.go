@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
@@ -34,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
+
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -418,7 +420,7 @@ func (t *TestPod) SetupCacheVolumeMount(mountPath string, subPath ...string) {
 
 func (t *TestPod) SetupTmpVolumeMount(mountPath string) {
 	volumeMount := corev1.VolumeMount{
-		Name:      webhook.SidecarContainerTmpVolumeName,
+		Name:      util.SidecarContainerTmpVolumeName,
 		MountPath: mountPath,
 	}
 	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)

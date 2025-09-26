@@ -72,7 +72,7 @@ If you would like to build your own images, follow the [Cloud Storage FUSE CSI D
 
 #### Prerequisites
 
-Run the following command to grant the Cloud Build service account the Kubernetes Engine Admin (`roles/container.admin`) role which is required for the cluster to create cluster-wide resources (ClusterRole, ClusterRoleBinding), which is an admin-level task. `roles/container.developer` is also required for Cloud Build to be able to install the driver on the cluster, but this is covered within the `roles/container.admin` role.
+Run the following command to grant the Cloud Build service account the Kubernetes Engine Admin (`roles/container.admin`) role which is required for the cluster to create cluster-wide resources (ClusterRole, ClusterRoleBinding), which is an admin-level task. `roles/container.developer` is also required for Cloud Build to be able to install the driver on the cluster, but this is covered within the `roles/container.admin` role. Also ensure your node service account has the `roles/artifactregistry.reader` permission (or more permissive role that includes this role) to pull images from Artifact Registry.
 
 ```bash
 export PROJECT_ID=$(gcloud config get project)
@@ -81,6 +81,8 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 --member="serviceAccount:$PROJECT_NUMBER@cloudbuild.gserviceaccount.com" \
     --role="roles/container.admin"
 ```
+
+
 - For `The policy contains bindings with conditions, so specifying a condition is required when adding a binding. Please specify a condition.:` You can enter: `2`(None).
 
 #### Installing with Cloud Build on GKE Clusters
@@ -107,7 +109,7 @@ For non-GKE clusters (installing the driver on a self built k8s cluster), the in
 2. Provide a Secret Manager secret with `_KUBECONFIG_SECRET` containing your kubeconfig file following the instructions in [Creating a KUBECONFIG_SECRET](#creating-a-kubeconfig_secret). 
 3. Explicitly set the `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` variables. 
    - Please note that custom overrides of `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` , is not supported for pods with host network yet. 
-   - `_IDENTITY_PROVIDER` should be the full URI (e.g  `https://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID`). See [Configure Workload Identity Federation with other identity providers](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers) for details.
+   - `_IDENTITY_PROVIDER` should be the full URI (e.g  `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID`). See [Configure Workload Identity Federation with other identity providers](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers) for details.
 4. Create a private pool of Cloud Build workers that runs inside your network, following instructions in [Creating a private pool](#creating-a-private-pool). Pass this private pool to the `--worker-pool` `gcloud builds submit` flag.
    -  This is required for Cloud Build to access your cluster's API server. Failure to configure the private pool will cause the Cloud Build install job to fail with a `dial tcp <internal ip address>: i/o timeout` error because the Cloud Build Job can't access the self-managed Kubernetes cluster's API server at its private IP address.
 5. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. 
@@ -119,7 +121,7 @@ export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 export IDENTITY_POOL=<your identity pool>
-# Note this should be the full URI (e.g. https://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID)
+# Note this should be the full URI (e.g. //iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID)
 export IDENTITY_PROVIDER=<your identity provider>
 # The name of the secret you created in the "Creating a KUBECONFIG_SECRET section" below.
 export KUBECONFIG_SECRET="gcsfuse-kubeconfig-secret"
@@ -337,7 +339,7 @@ export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 export IDENTITY_POOL=<your-identity-pool>
-# Note this should be the full URI (e.g. https://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID)
+# Note this should be the full URI (e.g. //iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/WORKLOAD_PROVIDER_ID)
 export IDENTITY_PROVIDER=<your-identity-provider>
 # The name of the secret you created in the "Creating a KUBECONFIG_SECRET section" below.
 export KUBECONFIG_SECRET="gcsfuse-kubeconfig-secret"

@@ -88,17 +88,29 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API.
+// Skip this code path by using skipCSIBucketAccessCheck: "true". This path is still called
+// with Host Network + sidecar bucket access check logic enabled (--enable-sidecar-bucket-access-check=true).
 func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (string, error) {
+	audience := ts.meta.GetIdentityPool()
+	identityProvider := ts.meta.GetIdentityProvider()
+
+	// If identity provider is not a GKE identity provider, we use the identity provider as the
+	// audience for the token request. For GKE, we use the identity pool.
+	if !util.IsGKEIdentityProvider(identityProvider) {
+		audience = identityProvider
+	}
+
 	if ts.k8sSAToken != "" {
 		tokenMap := make(map[string]*authenticationv1.TokenRequestStatus)
 		if err := json.Unmarshal([]byte(ts.k8sSAToken), &tokenMap); err != nil {
 			return "", fmt.Errorf("failed to unmarshal TokenRequestStatus: %w", err)
 		}
-		if trs, ok := tokenMap[ts.meta.GetIdentityPool()]; ok {
+
+		if trs, ok := tokenMap[audience]; ok {
 			return trs.Token, nil
 		}
 
-		return "", fmt.Errorf("could not find token for the identity pool %q", ts.meta.GetIdentityPool())
+		return "", fmt.Errorf("could not find token for %q", audience)
 	}
 
 	ttl := int64(10 * time.Minute.Seconds())
@@ -109,7 +121,7 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (string, error) {
 		&authenticationv1.TokenRequest{
 			Spec: authenticationv1.TokenRequestSpec{
 				ExpirationSeconds: &ttl,
-				Audiences:         []string{ts.meta.GetIdentityPool()},
+				Audiences:         []string{audience},
 			},
 		})
 	if err != nil {
@@ -126,13 +138,20 @@ func (ts *GCPTokenSource) FetchIdentityBindingToken(ctx context.Context, k8sSATo
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
+
+	identityProvider := ts.meta.GetIdentityProvider()
 	if audience == "" {
-		audience = fmt.Sprintf(
-			"identitynamespace:%s:%s",
-			ts.meta.GetIdentityPool(),
-			ts.meta.GetIdentityProvider(),
-		)
+		if util.IsGKEIdentityProvider(identityProvider) {
+			audience = fmt.Sprintf(
+				"identitynamespace:%s:%s",
+				ts.meta.GetIdentityPool(),
+				identityProvider,
+			)
+		} else {
+			audience = identityProvider
+		}
 	}
+
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",

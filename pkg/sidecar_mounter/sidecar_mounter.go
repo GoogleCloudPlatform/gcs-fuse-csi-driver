@@ -78,15 +78,16 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	var audience string
 	var err error
 
+	// TODO(amacaskill): Add support for hostnetwork pods on OSS k8s.
 	if mc.HostNetworkKSAOptIn {
 		if mc.TokenServerIdentityProvider != "" {
 			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
 			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
 		} else {
-			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
+			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set identityProvider in VolumeAttributes")
 		}
 		if mc.EnableSidecarBucketAccessCheck {
-			// Fetch custom tokensource and audience for host network path, for workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
+			// Fetch custom tokensource and audience for host network path. For workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
 			audience, err = getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
 			if err != nil {
 				return fmt.Errorf("failed to get audience from the context: %w", err)
@@ -449,18 +450,25 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 	klog.V(4).Infof("Completed access check for bucket %s", bucketName)
 	return nil
 }
+
+// getAudienceFromContextAndIdentityProvider uses the given identityProvider and returns a formatted audience string used for STS Token exchange.
+// For a GKE cluster, the audience is formatted like "identitynamespace:PROJECT_ID.svc.id.goog:IDENTITY_PROVIDER". For a non-GKE cluster,
+// the audience is simply the identityProvider.
 func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProvider string) (string, error) {
 	projectID, err := metadata.ProjectIDWithContext(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get project ID: %w", err)
 	}
 
-	audience := fmt.Sprintf(
-		"identitynamespace:%s.svc.id.goog:%s",
-		projectID,
-		identityProvider,
-	)
-	return audience, nil
+	if util.IsGKEIdentityProvider(identityProvider) {
+		return fmt.Sprintf(
+			"identitynamespace:%s.svc.id.goog:%s",
+			projectID,
+			identityProvider,
+		), nil
+	}
+
+	return identityProvider, nil
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {

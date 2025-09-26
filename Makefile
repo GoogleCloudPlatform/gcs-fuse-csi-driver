@@ -17,6 +17,7 @@ export REGISTRY ?= jiaxun
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
+export GCSFUSE_TAG ?= master
 export BUILD_ARM ?= false
 export WI_NODE_LABEL_CHECK ?= true
 BINDIR ?= $(shell pwd)/bin
@@ -76,15 +77,20 @@ download-gcsfuse:
 
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	rm -f ${BINDIR}/Dockerfile.gcsfuse
-	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/master/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
-	$(eval GCSFUSE_VERSION=0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
+	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/${_GCSFUSE_TAG}/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
+	
+	ifeq ($(GCSFUSE_TAG), master)
+		$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
+	else
+    	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
+	endif
 
 	docker buildx build \
 		--load \
 		--file ${BINDIR}/Dockerfile.gcsfuse \
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
-		--build-arg BRANCH_NAME=master \
+		--build-arg BRANCH_NAME=${GCSFUSE_TAG} \
 		--build-arg ARCHITECTURE=amd64 \
 		--platform=linux/amd64 .
 
@@ -99,7 +105,7 @@ ifeq (${BUILD_ARM}, true)
 		--file ${BINDIR}/Dockerfile.gcsfuse \
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
-		--build-arg BRANCH_NAME=master \
+		--build-arg BRANCH_NAME=${GCSFUSE_TAG} \
 		--build-arg ARCHITECTURE=arm64 \
 		--platform=linux/arm64 .
 
