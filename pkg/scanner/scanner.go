@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,6 +53,8 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	control "cloud.google.com/go/storage/control/apiv2"
+	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -84,6 +88,7 @@ const (
 	reasonScanOperationWarning        = "ScanOperationWarning"
 	reasonScanOperationSucceeded      = "ScanOperationSucceeded"
 	reasonScanOperationTimedOut       = "ScanOperationTimedOut"
+	reasonAnywhereCacheCreateError      = "AnywhereCacheCreateError"
 
 	// Bucket scan status values
 	scanCompleted = "completed"
@@ -103,6 +108,10 @@ const (
 	// Cloud Monitoring metrics
 	objectCountMetric = "storage.googleapis.com/storage/object_count"
 	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
+
+	// Anywhere Cache constants
+	admitOnFirstMiss = "admit-on-first-miss"
+	admitOnSecondMiss = "admit-on-second-miss"
 )
 
 var (
@@ -121,6 +130,14 @@ var (
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
 	scanBucketWithDataflux = defaultScanBucketWithDataflux
+
+	// Non-Retryable GCS Error codes
+	noRetryCodes = map[int]bool{
+		400: true, // invalid request
+		403: true, // permission denied
+		404: true, // resource does not exist
+		409: true, // request already exists, TODO(fuechr): validate request was successful.
+	}
 )
 
 // stringPtr returns a pointer to the passed string.
@@ -654,7 +671,138 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanCompleted); patchErr != nil {
 		return fmt.Errorf("failed to patch PV %q results, err: %w", pv.Name, patchErr)
 	}
+
+	// Check if the pv uses a anywhere cache enabled storage class.
+	isAnywhereCacheEnabled, err := isAnywhereCacheEnabled(s.scLister, pv)
+	if err != nil {
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Will not enable anywhere cache, error occured while checking its enablement for sc %q: %v", pv.Spec.StorageClassName, err)
+		klog.Errorf("will not enable anywhere cache, error occured while checking its enablement for sc %q: %v", pv.Spec.StorageClassName, err)
+	}
+
+	if isAnywhereCacheEnabled {
+		// Try to create anywherecache
+		err := createAnywhereCache(ctx, pv, *bucketI)
+		if err != nil {
+			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Will not enable anywhere cache, error occured for pv: %s, bucket: %s: %v", pv.Name, bucketI.name, err)
+			klog.Errorf("will not enable anywhere cache, error occured for pv: %s, bucket: %s: %v", pv.Name, bucketI.name, err)
+			return nil
+		} 
+		return fmt.Errorf("anywhere cache creation failed for PV %q and bucket %s", pv.Name, bucketI.name)
+	}
 	return nil // Remove since this is a complete and successful scan.
+}
+
+func createAnywhereCache(ctx context.Context, pv *v1.PersistentVolume, bucketInfo bucketInfo) error {
+	// determine the zones
+	zones, err := util.GetZonesForClusterRegion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get zone for region: %v", err)
+	}
+
+	// check if user provided ac settings for ttl and admission policy
+	anywhereCacheTtl, err := getAnywhereCacheTtlFromPV(pv)
+	if err != nil {
+		return fmt.Errorf("failed to determine anywhereCacheTTL: %v", err)
+	}
+	anywhereCacheAdmissionPolicy, err := getAnywhereCacheAdmissionPolicyFromPV(pv)
+	if err != nil {
+		return fmt.Errorf("failed to determine anywhereCacheAdmissionPolicy: %v", err)
+	}
+
+	// create storage control client
+	storageControlClient, err := control.NewStorageControlClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create storage client: %v", err) // todo should this retry
+	}
+	defer storageControlClient.Close()
+
+	// required bucket name format for anywhere cache api
+	acBucketName := fmt.Sprintf(`projects/_/buckets/%s`, bucketInfo.name)
+	shouldRequeue := false
+	klog.Infof("Attempting to create anywhere caches for %s in zones %s", acBucketName, strings.Join(zones, " "))
+
+	for _, zone := range zones {
+		req := &controlpb.CreateAnywhereCacheRequest{
+			Parent: acBucketName,
+			AnywhereCache: &controlpb.AnywhereCache{
+				Ttl:             anywhereCacheTtl,
+				Zone:            zone
+				AdmissionPolicy: anywhereCacheAdmissionPolicy,
+			},
+		}
+
+		// perform request to create cache
+		klog.Infof("Attempting to create anywhere cache for %s", acName)
+		op, err := storageControlClient.CreateAnywhereCache(ctx, req)
+
+		// if we encounter an error log it and determine if we need to requeue
+		if err != nil {
+			// if its an api error
+			if apiErr, ok := err.(*googleapi.Error); ok {
+				shouldRequeue = shouldRequeue || handleApiError(ctx, apiErr, storageControlClient, acName)
+			} else {
+				klog.Errorf("will not retry submitting anywhere cache creation to zone %s for the bucket %s: %v", zone, bucketInfo.name, err)
+			}
+		} else {
+			// anywhere cache creation takes about 60 minutes to be created, if the operation returns done then something went wrong and we should retry
+			shouldRequeue = shouldRequeue || op.Done() 
+		}
+	}
+	return shouldRequeue, nil
+}
+
+func handleApiError(ctx context.Context, apiErr *googleapi.Error, client *control.StorageControlClient, acName string) bool {
+	shouldRequeue := false
+	if noRetryCodes[apiErr.Code] {
+		klog.Errorf("(will not retry) failed to create anywhere cache %s, error: %v", acName, apiErr)
+	} else {
+		klog.Errorf("(will retry) failed to create anywhere cache %s, error: %v", acName, apiErr)
+		shouldRequeue = true
+	}
+	return shouldRequeue
+}
+
+func isAnywhereCacheEnabled(storageClassLister storagelisters.StorageClassLister, pv *v1.PersistentVolume) (bool, error) {
+	// get the storage class from sc informer
+	sc, err := storageClassLister.Get(pv.Spec.StorageClassName)
+	if err != nil {
+		// storage class not available
+		return false, err
+	}
+	// retrieve 'enableAnywhereCache' from list of parameters and parse
+	enableAnywhereCache, ok := sc.Parameters["enableAnywhereCache"]
+	if ok {
+		return wh.ParseBool(enableAnywhereCache)
+	}
+	// found the sc but didn't have the parameter, not enabling anywhere cache
+	return false, nil
+}
+
+func getAnywhereCacheTtlFromPV(pv *v1.PersistentVolume) (*durationpb.Duration, error) {
+	ttl, ok := pv.Spec.CSI.VolumeAttributes["anywhereCacheTTL"]
+	if !ok {
+		ttl = "1h"
+	}
+	goDuration, err := time.ParseDuration(ttl)
+	if err != nil {
+		return nil, err
+	}
+
+	return durationpb.New(goDuration), nil
+}
+
+func getAnywhereCacheAdmissionPolicyFromPV(pv *v1.PersistentVolume) (string, error) {
+	if pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes == nil {
+		return admitOnFirstMiss, fmt.Errorf("unable to read volume attributes for pv", pv.Name)
+	}
+	admissionPolicy, ok := pv.Spec.CSI.VolumeAttributes["anywhereCacheAdmissionPolicy"]
+	if !ok {
+		return admitOnFirstMiss, nil
+	}
+	if admissionPolicy == admitOnFirstMiss || admissionPolicy == admitOnSecondMiss {
+		return admissionPolicy, nil
+	}
+	return admissionPolicy, fmt.Errorf("invalid admission anywhereCacheAdmissionPolicy provided: %s, valid values are admit-on-first-miss or admit-on-second-miss", admissionPolicy)
 }
 
 func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
