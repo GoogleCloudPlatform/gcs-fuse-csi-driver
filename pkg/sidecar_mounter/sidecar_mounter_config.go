@@ -92,6 +92,7 @@ var disallowedFlags = map[string]bool{
 	"cache-dir":                            true,
 	"experimental-local-file-cache":        true,
 	"prometheus-port":                      true,
+	"profile":                              true,
 }
 
 var boolFlags = map[string]bool{
@@ -172,12 +173,22 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 }
 
 func mergeFlags(mountConfigFlagMap map[string]string, driverFlagMap map[string]string) {
+	invalidArgs := []string{}
+
 	for key, value := range driverFlagMap {
-		_, ok := mountConfigFlagMap[key]
-		// Only overwrite values not set in mountConfigMap
-		if !ok {
-			mountConfigFlagMap[key] = value
+		if disallowedFlags[key] {
+			invalidArgs = append(invalidArgs, key)
+		} else {
+			_, ok := mountConfigFlagMap[key]
+			// Only overwrite values not set in mountConfigMap
+			if !ok {
+				mountConfigFlagMap[key] = value
+			}
 		}
+
+	}
+	if len(invalidArgs) > 0 {
+		klog.Warningf("Will discard invalid args encountered while merging flags and continue to mount. flags: %s", invalidArgs)
 	}
 }
 

@@ -145,6 +145,18 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
 		{
+			name: "temporary until we support profile flag - should return valid args with error correctly",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"profile"},
+			},
+			expectedArgs:          defaultFlagMap,
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
 			name: "should return valid args with custom app-name",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
@@ -408,5 +420,55 @@ func TestPrepareConfigFile(t *testing.T) {
 		}
 
 		os.Remove(tc.mc.ConfigFile)
+	}
+}
+
+func TestMergeFlags(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name          string
+		configMapArgs map[string]string
+		driverMapArgs map[string]string
+		mergedFlags   map[string]string
+	}{
+		{
+			name: "should not enable profiles",
+			configMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"logging":           "invalid",
+			},
+			driverMapArgs: map[string]string{
+				"profile": "true",
+			},
+			mergedFlags: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"logging":           "invalid",
+			},
+		},
+		{
+			name: "should merge everything",
+			configMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+			},
+			driverMapArgs: map[string]string{
+				"logging": "invalid",
+			},
+			mergedFlags: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"logging":           "invalid",
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Logf("test case: %s", tc.name)
+		result := tc.configMapArgs
+		mergeFlags(result, tc.driverMapArgs)
+		if !reflect.DeepEqual(result, tc.mergedFlags) {
+			t.Errorf("Got flags %v, but expected %v", result, tc.mergedFlags)
+		}
 	}
 }
