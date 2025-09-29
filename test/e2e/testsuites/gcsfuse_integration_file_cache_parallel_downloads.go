@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/onsi/ginkgo/v2"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -91,11 +92,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 	// we build the non-managed driver, we build gcsfuse from master and assign a tag of 999 to that build. This automatically
 	// qualifies the non-managed driver to run all the tests.
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		// When the gcsfuse binary is built using the head commit or has a pre-release tag,
-		// it is a development build. Always use the master branch for these builds.
-		if err != nil || v.PreRelease() != "" {
-			return masterBranchName
+		v, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+		if branch == utils.MasterBranchName {
+			return branch
 		}
 
 		// check if the given gcsfuse version supports the test case
@@ -108,7 +107,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 			e2eskipper.Skipf("skip gcsfuse integration HNS tests on gcsfuse version %v", v.String())
 		}
 
-		return fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor(), v.Patch())
+		return branch
 	}
 
 	gcsfuseIntegrationFileCacheTest := func(testName string, readOnly bool, fileCacheCapacity, fileCacheForRangeRead, metadataCacheTTLSeconds string, mountOptions ...string) {
@@ -136,7 +135,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
 		cacheDir := "cache-dir"
 		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
-		if gcsfuseTestBranch == masterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
+		if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 			if hnsEnabled(driver) {
 				cacheDir = "cache-dir-read-cache-hns-true"
 			} else {

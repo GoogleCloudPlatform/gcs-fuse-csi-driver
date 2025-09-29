@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -57,11 +58,6 @@ const (
 	testNameRenameSymlink         = "rename_symlink"
 
 	testNamePrefixSucceed = "should succeed in "
-
-	// Use release branch for corresponding gcsfuse version. This ensures we
-	// can pick up test fixes without requiring a new gcsfuse release.
-	gcsfuseReleaseBranchFormat = "v%v.%v.%v_release"
-	masterBranchName           = "master"
 
 	defaultSidecarMemoryLimit   = "1Gi"
 	defaultSidecarMemoryRequest = "512Mi"
@@ -157,11 +153,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	// we build the non-managed driver, we build gcsfuse from master and assign a tag of 999 to that build. This automatically
 	// qualifies the non-managed driver to run all the tests.
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
-		// When the gcsfuse binary is built using the head commit or has a pre-release tag,
-		// it is a development build. Always use the master branch for these builds.
-		if err != nil || v.PreRelease() != "" {
-			return masterBranchName
+		v, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+		if branch == utils.MasterBranchName {
+			return branch
 		}
 
 		// If the GCSFuse version is exactly v3.0.0, use the master branch to fetch the tests.
@@ -172,7 +166,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// v.EqualTo is only supported in k8s.io/apimachinery v0.31.0, and we are still using
 		// v0.30.
 		if v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) && v.LessThan(version.MustParseSemantic("v3.1.0-gke.0")) {
-			return masterBranchName
+			return utils.MasterBranchName
 		}
 
 		// check if the given gcsfuse version supports the test case
@@ -208,11 +202,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 
 		// Rename_symlink tests are in separat test package only of v2.11.4 for now
-		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0"))) {
+		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0")) || branch == utils.MasterBranchName) {
 			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
 		}
 
-		return fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor(), v.Patch())
+		return branch
 	}
 
 	gcsfuseIntegrationTest := func(testName string, readOnly bool, mountOptions ...string) {
@@ -349,7 +343,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			// https://github.com/GoogleCloudPlatform/gcsfuse/tree/master/tools/integration_tests/concurrent_operations
 			finalTestCommand = baseTestCommandWithTestBucket + " -run TestConcurrentListing/.*"
 		case testNameRenameDirLimit:
-			if gcsfuseTestBranch == masterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
+			if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 				finalTestCommand = baseTestCommandWithTestBucket
 			} else {
 				finalTestCommand = baseTestCommand
@@ -359,7 +353,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		case testNameListLargeDir, testNameWriteLargeFiles:
 			finalTestCommand = baseTestCommandWithTestBucket + " -timeout 120m"
 		case testNameReadLargeFiles:
-			if gcsfuseTestBranch == masterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
+			if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 				finalTestCommand = baseTestCommandWithTestBucket + " -timeout 60m"
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
