@@ -287,7 +287,7 @@ github.com/json-iterator/go
 # github.com/kubernetes-csi/csi-lib-utils v0.22.0
 ## explicit; go 1.24.0
 github.com/kubernetes-csi/csi-lib-utils/protosanitizer
-# github.com/mailru/easyjson v0.9.0
+# github.com/mailru/easyjson v0.9.1
 ## explicit; go 1.20
 github.com/mailru/easyjson/buffer
 github.com/mailru/easyjson/jlexer
