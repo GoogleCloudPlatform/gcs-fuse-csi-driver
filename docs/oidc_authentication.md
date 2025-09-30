@@ -1,4 +1,7 @@
 <!--
+Copyright 2018 The Kubernetes Authors.
+Copyright 2022 Google LLC
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -95,12 +98,12 @@ Grant the service account the necessary permissions to access your GCS bucket:
 
 ```bash
 export BUCKET_NAME="your-gcs-bucket"
-epxort ROLE_NAME="roles/storage.objectUser" # it could be any role you wish to grant
+export ROLE_NAME="roles/storage.objectUser" # it could be any role you wish to grant
 export NAMESPACE="pod_namespace"
 export KSA_NAME="pod_service_account"
 
 # Grant a given role
-gcloud storage buckets add-iam-policy-binding gs://$BUCKET_NAME --member "principal://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$PROJECT_ID.svc.id.goog/subject/ns/$NAMESPACE/sa/$KSA_NAME" --role "$ROLE_NAME"
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET_NAME --member "principal://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID/subject/system:serviceaccount:$NAMESPACE:$KSA_NAME" --role "$ROLE_NAME"
 ```
 
 **Important Links:**
@@ -263,7 +266,7 @@ kubectl logs gcs-fuse-oidc-example -c gke-gcsfuse-sidecar
 
 ## Important Notes
 
-- **Volume Attributes:** The `skipCSIBucketAccessCheck: "true"` volume attribute is required when using OIDC authentication
+- **Volume Attributes:** The `skipCSIBucketAccessCheck: "true"` volume attribute is required when using OIDC authentication. This is necessary because the CSI driver performs bucket access validation during volume mount, but OIDC credentials (projected service account tokens) are only available at runtime within the pod context. By skipping this initial check, the driver defers authentication to the gcsfuse sidecar which will have access to the projected tokens and credential configuration
 - **ConfigMap Security:** While credential configuration files don't contain private keys, they should still be treated as sensitive configuration
 - **Token Refresh:** Kubernetes automatically handles token refresh for projected service account tokens
 

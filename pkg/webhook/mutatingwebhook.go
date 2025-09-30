@@ -114,8 +114,8 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 
 	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
 	// Inject GCP workload identity credential config configmap and token.
-	if si.Config.GCPWorkloadIdentityCredentialConfigMap != "" && si.K8SClient != nil {
-		filename, credentialConfig, err := appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, si.Config.GCPWorkloadIdentityCredentialConfigMap)
+	if configMapName, ok := pod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" && si.K8SClient != nil {
+		filename, credentialConfig, err := appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, configMapName)
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
 		}
@@ -126,7 +126,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
 			},
 		}
-		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", si.Config.GCPWorkloadIdentityCredentialConfigMap, pod.Namespace)
+		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
 	}
 
 	// Inject Fuse Side Car container.
@@ -385,11 +385,14 @@ func parseCredentialConfigurationConfigMap(client kubernetes.Interface, pod *cor
 		return "", nil, fmt.Errorf("failed to get configMap %s in namespace %s: %v", configMapName, pod.Namespace, err)
 	}
 
+	if len(configMap.Data) != 1 {
+		return "", nil, fmt.Errorf("ConfigMap %s in namespace %s must contain exactly one data entry, but found %d", configMapName, pod.Namespace, len(configMap.Data))
+	}
+
 	// Find the file name for the credential configuration. Typically it is credential-configuration.json
 	var filename string
 	for key := range configMap.Data {
 		filename = key
-		break
 	}
 
 	if len(filename) == 0 {
