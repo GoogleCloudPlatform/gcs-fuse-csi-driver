@@ -18,10 +18,21 @@ limitations under the License.
 package utils
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
+)
+
+var (
+	MasterBranchName = "master"
+
+	// Use release branch for corresponding gcsfuse version. This ensures we
+	// can pick up test fixes without requiring a new gcsfuse release.
+	gcsfuseReleaseBranchFormat = "v%v.%v.%v_release"
 )
 
 func EnsureVariable(v *string, set bool, msgOnError string) {
@@ -51,4 +62,15 @@ func runCommand(action string, cmd *exec.Cmd) error {
 	}
 
 	return cmd.Wait()
+}
+
+func GCSFuseBranch(gcsfuseVersionStr string) (*version.Version, string) {
+	v, err := version.ParseSemantic(gcsfuseVersionStr)
+	// When the gcsfuse binary is built using the head commit or has a pre-release tag that does not contain "-gke",
+	// (e.g. v3.3.0-gke.1) it is a development build. Always use the master branch for these builds.
+	if err != nil || (v.PreRelease() != "" && !strings.Contains(gcsfuseVersionStr, "-gke")) {
+		return nil, MasterBranchName
+	}
+
+	return v, fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor(), v.Patch())
 }
