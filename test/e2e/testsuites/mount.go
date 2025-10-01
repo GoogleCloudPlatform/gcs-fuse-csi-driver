@@ -219,6 +219,27 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod.Cleanup(ctx)
 	}
 
+	testGcsfuseProfilesFlagFilters := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring test pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		profileMO := "profile=aiml-training,profile:aiml-training"
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false, profileMO)
+
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking pod is does not have --profile=aiml-training passed to gcsfuse")
+		tPod.VerifyProfileFlagsAreNotPassed(f.Namespace.Name)
+
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
 	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse", func() {
 		testDefaultingFlags(specs.DisableAutoconfig)
 	})
@@ -250,5 +271,9 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
 		testCaseLongMountOptions()
+	})
+
+	ginkgo.It("should not pass profile as a user-specified mountOption to gcsfuse when profile is specified", func() {
+		testGcsfuseProfilesFlagFilters()
 	})
 }
