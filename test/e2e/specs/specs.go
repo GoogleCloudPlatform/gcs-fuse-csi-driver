@@ -1242,3 +1242,18 @@ func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachi
 	gomega.Expect(stdout).To(gomega.ContainSubstring(expectedMachineTypeFlagString),
 		"Should find MachineType flag string %q in stdout", expectedMachineTypeFlagString)
 }
+
+func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
+	stdout, stderr, err := e2ekubectl.RunKubectlWithFullOutput(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+
+	// handles profile=aiml-training case
+	gomega.Expect(stdout).To(gomega.Not(gomega.ContainSubstring("--profile aiml-training")),
+		"Should not find profile flag string in stdout")
+
+	// handles profile:aiml-training case
+	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*profile:aiml-training.*\]`)),
+		"Should NOT find 'profile:aiml-training' within the gcsfuse config file content map, but it was found.")
+}

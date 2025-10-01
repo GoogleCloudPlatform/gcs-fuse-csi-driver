@@ -92,6 +92,7 @@ var disallowedFlags = map[string]bool{
 	"cache-dir":                            true,
 	"experimental-local-file-cache":        true,
 	"prometheus-port":                      true,
+	"profile":                              true,
 }
 
 var boolFlags = map[string]bool{
