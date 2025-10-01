@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"cloud.google.com/go/profiler"
@@ -40,31 +42,40 @@ import (
 )
 
 var (
-	endpoint                       = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID                         = flag.String("nodeid", "", "node id")
-	runController                  = flag.Bool("controller", false, "run controller service")
-	runNode                        = flag.Bool("node", false, "run node service")
+	endpoint                       = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint.")
+	nodeID                         = flag.String("nodeid", "", "Node id.")
+	runController                  = flag.Bool("controller", false, "Run controller service.")
+	runNode                        = flag.Bool("node", false, "Run node service.")
 	kubeconfigPath                 = flag.String("kubeconfig-path", "", "The kubeconfig path.")
 	kubeAPIQPS                     = flag.Float64("kube-api-qps", 5, "QPS to use while communicating with the kubernetes apiserver. Defaults to 5.0.")
 	kubeAPIBurst                   = flag.Int("kube-api-burst", 10, "Burst to use while communicating with the kubernetes apiserver. Defaults to 10.")
 	identityPool                   = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
 	identityProvider               = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
-	enableProfiling                = flag.Bool("enable-profiling", false, "enable the golang pprof at port 6060")
-	enableBucketScanner            = flag.Bool("enable-bucket-scanner", false, "enable the bucket scanner feature")
-	datafluxParallelism            = flag.Int("dataflux-parallelism", 0, "number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs)")
-	datafluxBatchSize              = flag.Int("dataflux-batch-size", 25000, "batch size for Dataflux lister. Defaults to 25000")
-	datafluxSkipDirectoryObjects   = flag.Bool("dataflux-skip-directory-objects", false, "set to true to skip Dataflux listing objects that include files with names ending in '/'")
-	informerResyncDurationSec      = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
+	enableProfiling                = flag.Bool("enable-profiling", false, "Enable the golang pprof at port 6060.")
+	informerResyncDurationSec      = flag.Int("informer-resync-duration-sec", 1800, "Informer resync duration in seconds.")
 	retryIntervalStart             = flag.Duration("retry-interval-start", time.Second, "Initial retry interval for a failed PV processing operation. It doubles with each failure, up to retry-interval-max.")
 	retryIntervalMax               = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval for a failed PV processing operation.")
-	fuseSocketDir                  = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory")
+	fuseSocketDir                  = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory.")
 	metricsEndpoint                = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
 	maximumNumberOfCollectors      = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
-	disableAutoconfig              = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type")
-	wiNodeLabelCheck               = flag.Bool("wi-node-label-check", true, "Workload Identity node label check")
-	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver")
+	disableAutoconfig              = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type.")
+	wiNodeLabelCheck               = flag.Bool("wi-node-label-check", true, "Workload Identity node label check.")
+	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver.")
+	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
 
-	enableCloudProfilerForDriver = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data")
+	// Bucket scanner flags.
+	enableBucketScanner          = flag.Bool("enable-bucket-scanner", false, "Enable the bucket scanner feature.")
+	datafluxParallelism          = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
+	datafluxBatchSize            = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
+	datafluxSkipDirectoryObjects = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
+
+	// Leader election flags.
+	leaderElection              = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
+	leaderElectionNamespace     = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
+	leaderElectionLeaseDuration = flag.Duration("leader-election-lease-duration", 15*time.Second, "Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.")
+	leaderElectionRenewDeadline = flag.Duration("leader-election-renew-deadline", 10*time.Second, "Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.")
+	leaderElectionRetryPeriod   = flag.Duration("leader-election-retry-period", 5*time.Second, "Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.")
+
 	// These are set at compile time.
 	version = "unknown"
 )
@@ -73,8 +84,21 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	// ctx enables graceful shutdown. Application components should
+	// respect ctx.Done() for cleanup.
+	// The first SIGINT or SIGTERM signal cancels ctx to initiate shutdown.
+	// A second such signal results in immediate termination via os.Exit(1).
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		klog.Infof("Received signal %v, initiating shutdown...", sig)
+		cancel()  // Trigger graceful shutdown
+		<-sigChan // Wait for a second signal
+		klog.Infof("Received second signal, exiting forcefully...")
+		os.Exit(1) // Force exit
+	}()
 
 	if *enableCloudProfilerForDriver {
 		cfg := profiler.Config{
@@ -150,11 +174,16 @@ func main() {
 		FeatureScanner: &driver.FeatureScanner{
 			Enabled: *enableBucketScanner,
 			Config: &scanner.ScannerConfig{
-				KubeAPIQPS:     *kubeAPIQPS,
-				KubeAPIBurst:   *kubeAPIBurst,
-				ResyncPeriod:   time.Duration(*informerResyncDurationSec) * time.Second,
-				KubeConfigPath: *kubeconfigPath,
-				RateLimiter:    workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+				KubeAPIQPS:                  *kubeAPIQPS,
+				KubeAPIBurst:                *kubeAPIBurst,
+				ResyncPeriod:                time.Duration(*informerResyncDurationSec) * time.Second,
+				KubeConfigPath:              *kubeconfigPath,
+				RateLimiter:                 workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+				LeaderElection:              *leaderElection,
+				LeaderElectionNamespace:     *leaderElectionNamespace,
+				LeaderElectionLeaseDuration: *leaderElectionLeaseDuration,
+				LeaderElectionRenewDeadline: *leaderElectionRenewDeadline,
+				LeaderElectionRetryPeriod:   *leaderElectionRetryPeriod,
 				DatafluxConfig: &scanner.DatafluxConfig{
 					Parallelism:          *datafluxParallelism,
 					BatchSize:            *datafluxBatchSize,
@@ -187,7 +216,7 @@ func main() {
 	}
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver version %v", version)
-	gcfsDriver.Run(ctx, *endpoint)
+	gcfsDriver.Run(ctx, cancel, *endpoint)
 
 	os.Exit(0)
 }

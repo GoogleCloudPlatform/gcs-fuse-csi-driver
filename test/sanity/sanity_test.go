@@ -80,7 +80,8 @@ func TestSanity(t *testing.T) {
 	}
 
 	go func() {
-		gcfsDriver.Run(context.Background(), endpoint)
+		ctx, cancel := context.WithCancel(context.Background())
+		gcfsDriver.Run(ctx, cancel, endpoint)
 	}()
 
 	// Run test
