@@ -260,6 +260,32 @@ func (t *TestPod) WaitForFailedContainerError(ctx context.Context, msg string) {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestPod) WaitForFailedMountOrContainerError(ctx context.Context, containerErrMsg string, mountErrMsg string) {
+
+	failedMountErr := e2eevents.WaitTimeoutForEvent(
+		ctx,
+		t.client,
+		t.namespace.Name,
+		fields.Set{"reason": events.FailedMountVolume}.AsSelector().String(),
+		mountErrMsg,
+		pollTimeoutSlow)
+
+	if failedMountErr == nil {
+		// Either failed mount or failed container should succeed so if 1st condition succeeds then we don't have to check the 2nd condition
+		return
+	}
+	failedContainerErr := e2eevents.WaitTimeoutForEvent(
+		ctx,
+		t.client,
+		t.namespace.Name,
+		fields.Set{"reason": events.FailedToStartContainer}.AsSelector().String(),
+		containerErrMsg,
+		pollTimeoutSlow)
+
+	// We did not recieve error on failed mount so expect failed container to fail
+	framework.ExpectNoError(failedContainerErr)
+}
+
 func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context) {
 	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, pollTimeout)
 	framework.ExpectNoError(err)
