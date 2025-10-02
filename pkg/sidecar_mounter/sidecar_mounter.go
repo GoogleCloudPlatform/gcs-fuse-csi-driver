@@ -40,6 +40,7 @@ import (
 	cpmeta "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
@@ -350,7 +351,7 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 }
 
 // scrapeGcsfuseMetrics connects to the gcsfuse metrics endpoint and scrapes the latest metrics.
-func scrapeGcsfuseMetrics(ctx context.Context, metricEndpoint string) (map[string]*prometheus.MetricFamily, error) {
+func scrapeGcsfuseMetrics(ctx context.Context, metricEndpoint string) (map[string]*dto.MetricFamily, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
