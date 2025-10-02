@@ -367,3 +367,24 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 		}
 	}
 }
+
+// CombineMetricFamilies writes combined metric families to the response writer.
+func CombineMetricFamilies(w http.ResponseWriter, families ...map[string]*dto.MetricFamily) error {
+	allFamilies := make(map[string]*dto.MetricFamily)
+	for _, familyMap := range families {
+		for name, family := range familyMap {
+			if _, ok := allFamilies[name]; !ok {
+				allFamilies[name] = family
+			} else {
+				allFamilies[name].Metric = append(allFamilies[name].Metric, family.Metric...)
+			}
+		}
+	}
+
+	for _, family := range allFamilies {
+		if _, err := expfmt.MetricFamilyToText(w, family); err != nil {
+			return fmt.Errorf("failed to write metric family %q to text: %w", family.GetName(), err)
+		}
+	}
+	return nil
+}
