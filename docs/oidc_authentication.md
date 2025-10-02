@@ -57,11 +57,8 @@ gcloud iam workload-identity-pools create $POOL_ID \
 Create a provider within the pool that trusts your Kubernetes cluster:
 
 ```bash
-# Get the cluster's OIDC issuer URL
-export CLUSTER_ISSUER_URL=$(gcloud container clusters describe $CLUSTER_NAME \
-    --location=$CLUSTER_LOCATION \
-    --project=$PROJECT_ID \
-    --format="value(workloadIdentityConfig.workloadPool)")
+# Construct the cluster's OIDC issuer URL
+export CLUSTER_ISSUER_URL="https://container.googleapis.com/v1/projects/${PROJECT_ID}/locations/${CLUSTER_LOCATION}/clusters/${CLUSTER_NAME}"
 
 # Create workload identity provider
 gcloud iam workload-identity-pools providers create-oidc $PROVIDER_ID \

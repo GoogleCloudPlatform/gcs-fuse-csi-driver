@@ -416,23 +416,7 @@ func createWorkloadIdentityPool(projectID, poolID string) {
 }
 
 func getClusterOIDCIssuer(clusterName, clusterLocation, projectID string) string {
-	cmd := exec.Command("gcloud", "container", "clusters", "describe", clusterName,
-		"--location="+clusterLocation,
-		"--project="+projectID,
-		"--format=value(workloadIdentityConfig.workloadPool)")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		klog.Errorf("Failed to get cluster OIDC issuer: %v, output: %s", err, string(output))
-		return ""
-	}
-	
-	// Convert workloadPool format to OIDC issuer URL
-	workloadPool := strings.TrimSpace(string(output))
-	if workloadPool == "" {
-		return ""
-	}
-	
-	// The issuer URL is typically https://container.googleapis.com/v1/projects/{project}/locations/{location}/clusters/{cluster}
+	// The issuer URL for a GKE cluster is constructed as follows.
 	return fmt.Sprintf("https://container.googleapis.com/v1/projects/%s/locations/%s/clusters/%s",
 		projectID, clusterLocation, clusterName)
 }
