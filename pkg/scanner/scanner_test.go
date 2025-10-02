@@ -1282,3 +1282,106 @@ func TestDefaultScanBucket(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
+	// Define test cases
+	testCases := []struct {
+		name            string
+		pv              *v1.PersistentVolume
+		expectedPolicy  string
+		expectError     bool
+		expectedError   string
+	}{
+		{
+			name: "should return 'admit-on-first-miss' when explicitly set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-1"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "admit-on-first-miss",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "admit-on-first-miss",
+			expectError:    false,
+		},
+		{
+			name: "should return 'admit-on-second-miss' when explicitly set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-2"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "admit-on-second-miss",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "admit-on-second-miss",
+			expectError:    false,
+		},
+		{
+			name: "should return default 'admit-on-first-miss' when attribute is not set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-3"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{}, // Empty attributes
+						},
+					},
+				},
+			},
+			expectedPolicy: "admit-on-first-miss",
+			expectError:    false,
+		},
+		{
+			name: "should return an error for an invalid admission policy",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-4"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "invalid-policy",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "invalid-policy",
+			expectError:    true,
+			expectedError:  "invalid admission anywhereCacheAdmissionPolicy provided: invalid-policy, valid values are admit-on-first-miss or admit-on-second-miss",
+		},
+	}
+
+	// Run tests
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy, err := getAnywhereCacheAdmissionPolicyFromPV(tc.pv)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected an error, but got nil")
+				}
+				if err != nil && err.Error() != tc.expectedError {
+					t.Errorf("Expected error message '%s', but got '%s'", tc.expectedError, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, but got: %v", err)
+				}
+			}
+
+			if policy != tc.expectedPolicy {
+				t.Errorf("Expected policy '%s', but got '%s'", tc.expectedPolicy, policy)
+			}
+		})
+	}
+}
