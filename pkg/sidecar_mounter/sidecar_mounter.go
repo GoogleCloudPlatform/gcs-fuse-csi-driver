@@ -39,6 +39,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	cpmeta "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
@@ -54,6 +55,17 @@ import (
 )
 
 const metricEndpointFmt = "http://localhost:%v/metrics"
+
+var (
+	sidecarMounterRegistry = prometheus.NewRegistry()
+
+	bucketAccessCheckRetries = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "gcsfuse_sidecar_bucket_access_check_retries",
+			Help: "Number of times the bucket access check has been retried, emitted every 10 retries.",
+		},
+	)
+)
 
 // Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
@@ -283,6 +295,8 @@ func logVolumeTotalSize(dirPath string) {
 // exposing a unix domain socket for CSI driver to connect.
 func collectMetrics(ctx context.Context, port, tempDir string) {
 	metricEndpoint := fmt.Sprintf(metricEndpointFmt, port)
+	// Register the sidecar mounter's own metrics.
+	sidecarMounterRegistry.MustRegister(bucketAccessCheckRetries)
 
 	// Create a unix domain socket and listen for incoming connections.
 	socketPath := filepath.Join(tempDir, metrics.SocketName)
@@ -308,8 +322,20 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		if err := scrapeMetrics(timeoutCtx, metricEndpoint, w); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		gcsfuseMetrics, err := scrapeGcsfuseMetrics(timeoutCtx, metricEndpoint)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to scrape gcsfuse metrics: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		sidecarMetrics, err := sidecarMounterRegistry.Gather()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to gather sidecar mounter metrics: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if err := metrics.CombineMetricFamilies(w, gcsfuseMetrics, sidecarMetrics); err != nil {
+			klog.Errorf("failed to combine and write metrics: %v", err)
 		}
 	})
 
@@ -323,29 +349,29 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 	}
 }
 
-// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
-// The response is written to a new http.ResponseWriter.
-func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWriter) error {
+// scrapeGcsfuseMetrics connects to the gcsfuse metrics endpoint and scrapes the latest metrics.
+func scrapeGcsfuseMetrics(ctx context.Context, metricEndpoint string) (map[string]*prometheus.MetricFamily, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
+		return nil, fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to make HTTP request to %q: %w", metricEndpoint, err)
+		return nil, fmt.Errorf("failed to make HTTP request to %q: %w", metricEndpoint, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected HTTP status: %v", resp.Status)
+		return nil, fmt.Errorf("unexpected HTTP status: %v", resp.Status)
 	}
 
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return fmt.Errorf("failed to copy response: %w", err)
+	metricFamilies, err := metrics.ProcessMetricsData(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process metrics data: %w", err)
 	}
 
-	return nil
+	return metricFamilies, nil
 }
 
 func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, identityProvider string) {
@@ -422,11 +448,18 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 		Jitter:   mc.SidecarRetryConfig.Jitter, // Adds randomness, this will give +/- 10% of the current delay
 	}
 
+	var retryCount int
 	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
+		retryCount++
+		// After the first attempt, increment the metric every 10 retries.
+		if retryCount > 1 && (retryCount-1)%10 == 0 {
+			bucketAccessCheckRetries.Inc()
+			klog.Infof("Bucket access check has retried %d times, incrementing metric.", retryCount-1)
+		}
 		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 		if err != nil {
 			klog.Errorf("Failed to setup storage service got error %q, retrying...", err)
-			return false, nil
+			return false, nil // Returning false, nil indicates to the backoff manager to retry.
 		}
 		klog.V(4).Infof("Created storage service %v", ss)
 		if bucketName != "_" {
