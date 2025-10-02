@@ -529,7 +529,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 	t.Parallel()
 
 	limits, requests := prepareResourceList(getDefaultMetadataPrefetchConfig("fake-image"))
-	customLimits, customRequests := prepareResourceList(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi", "" /*workloadIdentityCredentialConfigMap*/))
+	customLimits, customRequests := prepareResourceList(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"))
 
 	testCases := []struct {
 		testName      string
@@ -987,7 +987,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			testName: "fuse sidecar present, injection successful, with custom memory limits and requests",
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Annotations: generateAnnotationsFromConfig(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi", "" /*workloadIdentityCredentialConfigMap*/), sidecarPrefixMap[MetadataPrefetchSidecarName]),
+					Annotations: generateAnnotationsFromConfig(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"), sidecarPrefixMap[MetadataPrefetchSidecarName]),
 				},
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{

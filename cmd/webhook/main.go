@@ -53,7 +53,6 @@ var (
 	ephemeralStorageLimit                   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
 	sidecarImage                            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
 	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
-	workloadIdentityCredentialConfigMap     = flag.String("workload-identity-credential-configmap", "", "The ConfigMap name that contains the GCP Workload Identity credential configuration.")
 	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
 	enableGcsfuseProfiles                   = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
 	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
@@ -81,14 +80,14 @@ func main() {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", webhookVersion, *sidecarImage)
 
 	// Load webhook config
-	fuseSideCarConfig := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit, *workloadIdentityCredentialConfigMap)
+	fuseSideCarConfig := wh.LoadConfig(*sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit)
 	fuseSideCarConfig.ShouldInjectSAVolume = *injectSAVol
 	klog.Infof("Webhook should inject SA volume: %t", fuseSideCarConfig.ShouldInjectSAVolume)
 
 	fuseSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
 	klog.Infof("Webhook should enable gcsfuse profiles: %t", fuseSideCarConfig.EnableGcsfuseProfiles)
 
-	metadataPrefetchSideCarConfig := wh.LoadConfig(*metadataSidecarImage, *imagePullPolicy, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit, "" /*workloadIdentityCredentialConfigMap*/)
+	metadataPrefetchSideCarConfig := wh.LoadConfig(*metadataSidecarImage, *imagePullPolicy, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit)
 
 	// Load config for manager, informers, listers
 	kubeConfig := config.GetConfigOrDie()
