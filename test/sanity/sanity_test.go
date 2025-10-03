@@ -71,7 +71,7 @@ func TestSanity(t *testing.T) {
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
 		K8sClients:            clientset.NewFakeClientset(),
 		MetricsManager:        &metrics.FakeMetricsManager{},
-		FeatureOptions:        &driver.GCSDriverFeatureOptions{FeatureScanner: &driver.FeatureScanner{}},
+		FeatureOptions:        &driver.GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{}},
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(driverConfig)

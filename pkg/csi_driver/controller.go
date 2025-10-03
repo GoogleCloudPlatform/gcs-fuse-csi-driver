@@ -23,7 +23,7 @@ import (
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/scanner"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
@@ -58,7 +58,7 @@ type controllerServer struct {
 	driver                *GCSDriver
 	storageServiceManager storage.ServiceManager
 	volumeLocks           *util.VolumeLocks
-	scanner               *scanner.Scanner
+	scanner               *profiles.Scanner
 	features              *GCSDriverFeatureOptions
 }
 
@@ -69,8 +69,8 @@ func newControllerServer(driver *GCSDriver, storageServiceManager storage.Servic
 		volumeLocks:           util.NewVolumeLocks(),
 		features:              featureOptions,
 	}
-	if cs.features.FeatureScanner.Enabled {
-		s, err := scanner.NewScanner(cs.features.FeatureScanner.Config)
+	if cs.features.FeatureGCSFuseProfiles.Enabled {
+		s, err := profiles.NewScanner(cs.features.FeatureGCSFuseProfiles.ScannerConfig)
 		if err != nil {
 			return nil, err
 		}
