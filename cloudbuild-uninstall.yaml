@@ -128,7 +128,7 @@ steps:
           EFFECTIVE_WI_NODE_LABEL_CHECK="true"
         fi
 
-        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
+        echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/project_patch_csi_driver.json
         echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"$${EFFECTIVE_IDENTITY_PROVIDER}\"}]" > $${KUSTOMIZE_DIR}/identity_provider_patch_csi_node.json
         echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"$${EFFECTIVE_IDENTITY_POOL}\"}]" > $${KUSTOMIZE_DIR}/identity_pool_patch_csi_node.json
         echo "[{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--wi-node-label-check=$${EFFECTIVE_WI_NODE_LABEL_CHECK}\"}]" > $${KUSTOMIZE_DIR}/wi_node_label_check_patch.json
