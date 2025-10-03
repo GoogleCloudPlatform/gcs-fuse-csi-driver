@@ -20,6 +20,7 @@ package webhook
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 )
@@ -39,7 +40,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should pass the validation with the standard sidecar container",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -49,7 +50,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should pass the validation with the init sidecar container",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					InitContainers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:        GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -60,8 +61,8 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should pass the validation with the both init and regular sidecar containers",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers:     []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
-					InitContainers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers:     []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
+					InitContainers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:        GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -293,7 +294,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should fail the validation when the temp volume is missing",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes: []corev1.Volume{
 						{
 							Name: SidecarContainerBufferVolumeName,
@@ -310,7 +311,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should fail the validation with a non-emptyDir temp volume",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes: []corev1.Volume{
 						{
 							Name:         SidecarContainerTmpVolumeName,
@@ -331,7 +332,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should pass the validation with a custom buffer volume",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes: append(GetSidecarContainerVolumeSpec(), corev1.Volume{
 						Name: SidecarContainerBufferVolumeName,
 						VolumeSource: corev1.VolumeSource{
@@ -348,7 +349,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 			name: "should pass the validation with a custom cache volume",
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes: append(GetSidecarContainerVolumeSpec(), corev1.Volume{
 						Name: SidecarContainerCacheVolumeName,
 						VolumeSource: corev1.VolumeSource{
@@ -369,7 +370,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						{
 							Name: "first-container",
 						},
-						GetSidecarContainerSpec(FakeConfig()),
+						GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/),
 					},
 					Volumes: GetSidecarContainerVolumeSpec(),
 				},
@@ -384,7 +385,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						{
 							Name: "first-container",
 						},
-						GetSidecarContainerSpec(FakeConfig()),
+						GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/),
 					},
 					Volumes: GetSidecarContainerVolumeSpec(),
 				},
@@ -403,7 +404,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						{
 							Name: "second-container",
 						},
-						GetSidecarContainerSpec(FakeConfig()),
+						GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/),
 					},
 					Volumes: GetSidecarContainerVolumeSpec(),
 				},
@@ -419,7 +420,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						{
 							Name: IstioSidecarName,
 						},
-						GetSidecarContainerSpec(FakeConfig()),
+						GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/),
 					},
 					Volumes: GetSidecarContainerVolumeSpec(),
 				},
@@ -434,7 +435,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						{
 							Name: IstioSidecarName,
 						},
-						GetSidecarContainerSpec(FakeConfig()),
+						GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/),
 					},
 					Volumes: GetSidecarContainerVolumeSpec(),
 				},
@@ -453,7 +454,7 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 						{
 							Name: IstioSidecarName,
 						},
-						GetSidecarContainerSpec(FakeConfig()),
+						GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/),
 						{
 							Name: "workload",
 						},
@@ -475,5 +476,204 @@ func TestValidatePodHasSidecarContainerInjectedForAutoInjection(t *testing.T) {
 		if isInitContainer != tc.isInitContainer {
 			t.Errorf("got injection result for is init container %v, but expected %v", isInitContainer, tc.isInitContainer)
 		}
+	}
+}
+
+func TestGetNativeSidecarContainerSpec(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name           string
+		config         *Config
+		credConfig     *SidecarContainerCredentialConfiguration
+		expectedEnvVar *corev1.EnvVar
+		expectedMounts []corev1.VolumeMount
+	}{
+		{
+			name:       "native sidecar with nil credential config",
+			config:     FakeConfig(),
+			credConfig: nil,
+			expectedEnvVar: &corev1.EnvVar{
+				Name:  "NATIVE_SIDECAR",
+				Value: "TRUE",
+			},
+			expectedMounts: []corev1.VolumeMount{
+				TmpVolumeMount,
+				buffVolumeMount,
+				cacheVolumeMount,
+			},
+		},
+		{
+			name:   "native sidecar with credential config having GAC env var only",
+			config: FakeConfig(),
+			credConfig: &SidecarContainerCredentialConfiguration{
+				GacEnv: &corev1.EnvVar{
+					Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+					Value: "/etc/workload-identity/credential-configuration.json",
+				},
+			},
+			expectedEnvVar: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: "/etc/workload-identity/credential-configuration.json",
+			},
+			expectedMounts: []corev1.VolumeMount{
+				TmpVolumeMount,
+				buffVolumeMount,
+				cacheVolumeMount,
+			},
+		},
+		{
+			name:   "native sidecar with credential config having volume mounts only",
+			config: FakeConfig(),
+			credConfig: &SidecarContainerCredentialConfiguration{
+				CredentialVolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      SidecarContainerWITokenVolumeName,
+						MountPath: "/var/run/service-account",
+					},
+					{
+						Name:      SidecarContainerWICredentialConfigMapVolumeName,
+						MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath,
+					},
+				},
+			},
+			expectedEnvVar: &corev1.EnvVar{
+				Name:  "NATIVE_SIDECAR",
+				Value: "TRUE",
+			},
+			expectedMounts: []corev1.VolumeMount{
+				TmpVolumeMount,
+				buffVolumeMount,
+				cacheVolumeMount,
+				{
+					Name:      SidecarContainerWITokenVolumeName,
+					MountPath: "/var/run/service-account",
+				},
+				{
+					Name:      SidecarContainerWICredentialConfigMapVolumeName,
+					MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath,
+				},
+			},
+		},
+		{
+			name:   "native sidecar with full credential config",
+			config: FakeConfig(),
+			credConfig: &SidecarContainerCredentialConfiguration{
+				GacEnv: &corev1.EnvVar{
+					Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+					Value: "/etc/workload-identity/credential-configuration.json",
+				},
+				CredentialVolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      SidecarContainerWITokenVolumeName,
+						MountPath: "/var/run/service-account",
+					},
+					{
+						Name:      SidecarContainerWICredentialConfigMapVolumeName,
+						MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath,
+					},
+				},
+			},
+			expectedEnvVar: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: "/etc/workload-identity/credential-configuration.json",
+			},
+			expectedMounts: []corev1.VolumeMount{
+				TmpVolumeMount,
+				buffVolumeMount,
+				cacheVolumeMount,
+				{
+					Name:      SidecarContainerWITokenVolumeName,
+					MountPath: "/var/run/service-account",
+				},
+				{
+					Name:      SidecarContainerWICredentialConfigMapVolumeName,
+					MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath,
+				},
+			},
+		},
+		{
+			name:   "native sidecar with custom token path",
+			config: FakeConfig(),
+			credConfig: &SidecarContainerCredentialConfiguration{
+				GacEnv: &corev1.EnvVar{
+					Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+					Value: "/etc/workload-identity/credential-configuration.json",
+				},
+				CredentialVolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      SidecarContainerWITokenVolumeName,
+						MountPath: "/custom/token/path",
+					},
+					{
+						Name:      SidecarContainerWICredentialConfigMapVolumeName,
+						MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath,
+					},
+				},
+			},
+			expectedEnvVar: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: "/etc/workload-identity/credential-configuration.json",
+			},
+			expectedMounts: []corev1.VolumeMount{
+				TmpVolumeMount,
+				buffVolumeMount,
+				cacheVolumeMount,
+				{
+					Name:      SidecarContainerWITokenVolumeName,
+					MountPath: "/custom/token/path",
+				},
+				{
+					Name:      SidecarContainerWICredentialConfigMapVolumeName,
+					MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath,
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			container := GetNativeSidecarContainerSpec(tc.config, tc.credConfig)
+
+			// Verify container has native sidecar properties
+			if container.Name != GcsFuseSidecarName {
+				t.Errorf("expected container name %q, got %q", GcsFuseSidecarName, container.Name)
+			}
+
+			if container.RestartPolicy == nil || *container.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+				t.Errorf("expected RestartPolicy to be Always, got %v", container.RestartPolicy)
+			}
+
+			// Check NATIVE_SIDECAR environment variable is always present
+			var foundNativeSidecar bool
+			for _, env := range container.Env {
+				if env.Name == "NATIVE_SIDECAR" && env.Value == "TRUE" {
+					foundNativeSidecar = true
+					break
+				}
+			}
+			if !foundNativeSidecar {
+				t.Errorf("expected NATIVE_SIDECAR=TRUE environment variable to be present")
+			}
+
+			// Check for expected environment variable (GAC or native sidecar)
+			var foundExpectedEnv bool
+			for _, env := range container.Env {
+				if env.Name == tc.expectedEnvVar.Name && env.Value == tc.expectedEnvVar.Value {
+					foundExpectedEnv = true
+					break
+				}
+			}
+			if !foundExpectedEnv {
+				t.Errorf("expected environment variable %q=%q but was not found", tc.expectedEnvVar.Name, tc.expectedEnvVar.Value)
+			}
+
+			// Check volume mounts
+			if diff := cmp.Diff(tc.expectedMounts, container.VolumeMounts); diff != "" {
+				t.Errorf("volume mounts mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

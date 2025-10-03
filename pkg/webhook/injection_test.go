@@ -1558,7 +1558,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 				tc.nativeSidecar = ptr.To(true)
 			}
 			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
-			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar)
+			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil /*credentialConfig*/)
 			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
 			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
 				t.Errorf(`failed to run %s, expected: "%v", but got "%v". Diff: %s`, tc.testName, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))

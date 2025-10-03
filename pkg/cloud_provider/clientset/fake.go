@@ -59,7 +59,7 @@ func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
-				webhook.GetSidecarContainerSpec(config),
+				webhook.GetSidecarContainerSpec(config, nil /*credentialConfig*/),
 			},
 			Volumes: webhook.GetSidecarContainerVolumeSpec(),
 		},
