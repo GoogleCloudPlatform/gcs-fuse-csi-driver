@@ -24,8 +24,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 )
 
 func TestConvertLabelsStringToMap(t *testing.T) {
@@ -321,7 +319,7 @@ func TestPrepareEmptyDir(t *testing.T) {
 		{
 			name:                     "should return emptyDir path correctly",
 			targetPath:               "/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~csi/test-volume/mount",
-			expectedEmptyDirBasePath: fmt.Sprintf("/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~empty-dir/%v/.volumes/test-volume", webhook.SidecarContainerTmpVolumeName),
+			expectedEmptyDirBasePath: fmt.Sprintf("/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~empty-dir/%v/.volumes/test-volume", SidecarContainerTmpVolumeName),
 			expectedError:            false,
 		},
 		{
@@ -492,4 +490,62 @@ func TestRemoveBucketSuffixIfPresentAndReturnVolumeId(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestIsGKEIdentityProvider(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name                          string
+		identityProvider              string
+		expectedIsGKEIdentityProvider bool
+	}{
+		{
+			name:                          "should return true for prod GKE identity provider",
+			identityProvider:              "https://container.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster",
+			expectedIsGKEIdentityProvider: true,
+		},
+		{
+			name:                          "should return true for staging GKE identity provider",
+			identityProvider:              "https://staging-container.sandbox.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster",
+			expectedIsGKEIdentityProvider: true,
+		},
+		{
+			name:                          "should return true for staging2 GKE identity provider",
+			identityProvider:              "https://staging2-container.sandbox.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster",
+			expectedIsGKEIdentityProvider: true,
+		},
+		{
+			name:                          "should return true for test GKE identity provider",
+			identityProvider:              "https://test-container.sandbox.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster",
+			expectedIsGKEIdentityProvider: true,
+		},
+		{
+			name:                          "should return true for dev sandbox GKE identity provider",
+			identityProvider:              "https://amacaskill-gke-sandbox-test-container.sandbox.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster",
+			expectedIsGKEIdentityProvider: true,
+		},
+		{
+			name:                          "should return false for custom identityProvider",
+			identityProvider:              "//iam.googleapis.com/projects/326181500027/locations/global/workloadIdentityPools/wi-pool-amacaskill-k8s-cluster-3/providers/wi-p-amacaskill-k8s-cluster-3",
+			expectedIsGKEIdentityProvider: false,
+		},
+		{
+			name:                          "should return false for missing https, identityProvider",
+			identityProvider:              "//container.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster",
+			expectedIsGKEIdentityProvider: false,
+		},
+		{
+			name:                          "should return false, extra fields after gke identity provider",
+			identityProvider:              "https://container.googleapis.com/v1/projects/my-project/locations/us-central1/clusters/my-cluster/extra",
+			expectedIsGKEIdentityProvider: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Logf("test case: %s", tc.name)
+		gotIsGKEIdentityProvider := IsGKEIdentityProvider(tc.identityProvider)
+		if tc.expectedIsGKEIdentityProvider != gotIsGKEIdentityProvider {
+			t.Errorf("got isGKEIdentityProvider = %t for identityProvider %q, but expected %t", gotIsGKEIdentityProvider, tc.identityProvider, tc.expectedIsGKEIdentityProvider)
+		}
+	}
 }

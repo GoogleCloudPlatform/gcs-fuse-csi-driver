@@ -25,6 +25,7 @@ import (
 	"slices"
 
 	"cloud.google.com/go/compute/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -115,7 +116,8 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		if err != nil {
 			return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to get project id: %w", err))
 		}
-		pod.Spec.Volumes = append(pod.Spec.Volumes, GetSATokenVolume(projectID))
+		audience := audienceForInjectedSATokenVolume(projectID, pod)
+		pod.Spec.Volumes = append(pod.Spec.Volumes, GetSATokenVolume(audience))
 	}
 
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
@@ -150,6 +152,30 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	}
 
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
+}
+
+// audienceForInjectedSATokenVolume determines the audience to use for the injected service account token volume.
+// It searches through the pod's volumes to see if any of them have an identityProvider set in their VolumeAttributes.
+// If one is found and it is a GKE cluster identityProvider, or if no identityProvider is set, it uses the default
+// GKE identity provider format of projectID + ".svc.id.goog".
+func audienceForInjectedSATokenVolume(projectID string, pod *corev1.Pod) string {
+	var foundIdentityProvider string
+	// Loop through the pod's volumes to find a better audience.
+	for _, v := range pod.Spec.Volumes {
+		if v.CSI != nil && v.CSI.Driver == "gcsfuse.csi.storage.gke.io" && v.CSI.VolumeAttributes != nil {
+			if identityProvider, ok := v.CSI.VolumeAttributes["identityProvider"]; ok && identityProvider != "" {
+				// If found, the identityProvider becomes the new audience.
+				foundIdentityProvider = identityProvider
+				klog.Infof("Found identityProvider=%s set in VolumeAttributes", foundIdentityProvider)
+				break
+			}
+		}
+	}
+
+	if util.IsGKEIdentityProvider(foundIdentityProvider) || foundIdentityProvider == "" {
+		return projectID + ".svc.id.goog"
+	}
+	return foundIdentityProvider
 }
 
 // Modifies the pod spec to add gcsfuse profile related features. This includes adding a label, scheduling gate, and placeholder file cache volumes

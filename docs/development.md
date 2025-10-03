@@ -55,6 +55,8 @@ Run the following command to build and push the images using cloud build. If you
 
 For running cloud build from a Google Internal project, you can use the following command. This will use the gcsfuse version present in `cmd/sidecar_mounter/gcsfuse_binary` as the gcsfuse binary. You can change this to a different version, or use `_BUILD_GCSFUSE_FROM_SOURCE=true` to build gcsfuse from HEAD. Setting `GCSFUSE_BINARY_GCS_PATH` to the `gke-release-staging` bucket in `cmd/sidecar_mounter/gcsfuse_binary` is only allowed for Google Internal projects because artifacts in `gke-release-staging` are not publicly accessible.
 
+Note that this currently isn't working because gcloud isn't installed the `prepare-gcsfuse-binary` step image, so for now, use the make install command if you want to run at the GCSFuse version in _GCSFUSE_BINARY_GCS_PATH on Google internal project. <!--TODO(amacaskill): fix this. -->
+
 ```bash
 export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
@@ -65,13 +67,21 @@ gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REG
 
 #### Cloud Build on NON Google Internal projects
 
-If you are running this from a non-google internal project, you must set `_BUILD_GCSFUSE_FROM_SOURCE=true`, because without this, gcsfuse is loaded from the binary in `gke-release-staging`, which is not publicly accessible.
+If you are running this from a non-google internal project, you must set `_BUILD_GCSFUSE_FROM_SOURCE=true`, because without this, gcsfuse is loaded from the binary in `gke-release-staging`, which is not publicly accessible. By default, `_BUILD_GCSFUSE_FROM_SOURCE=true` will build GCSFuse from the master branch. If you would like to run from a particular GCSFuse release tag instead of master, run the following commands to find the latest GCSFuse release supported by our driver. Running from a GCSFuse release rather than master is recommended as GCSFuse master branch isn't always stable like releases, which have gone through extensive qualification testing.
+
+```bash
+export LATEST_TAG=$(curl -s "https://api.github.com/repos/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/latest" | jq -r .tag_name)
+export GCSFUSE_TAG=$(curl -sL "https://raw.githubusercontent.com/GoogleCloudPlatform/gcs-fuse-csi-driver/$LATEST_TAG/cmd/sidecar_mounter/gcsfuse_binary" | cut -d'/' -f5 | cut -d'-' -f1)
+echo "latest GCSFuse CSI driver release is $LATEST_TAG, which uses GCSFuse version $GCSFUSE_TAG"
+```
+
+ After you have found the latest `GCSFUSE_VERSION`, pass that to the cloudbuild script with the `_GCSFUSE_TAG` substitution. 
 
 ```bash
 export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
-gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_BUILD_GCSFUSE_FROM_SOURCE=true
+gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_BUILD_GCSFUSE_FROM_SOURCE=true,_GCSFUSE_TAG=$GCSFUSE_TAG
 ```
 
 ### Makefile Commands
@@ -81,7 +91,7 @@ Run the following command to build and push the images using the Makefile:
 ```bash
 # REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
 # STAGINGVERSION=<staging-version>: Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.
-# BUILD_GCSFUSE_FROM_SOURCE=true: Optional. You only have to build the gcsfuse binary from source when any CSI change depend on an unreleased GCSFuse enhancement.
+# BUILD_GCSFUSE_FROM_SOURCE=<true|false>: Optional, default: false. Indicate if you want to build the gcsfuse binary from source. This is required for building images from non-google internal projects OR if you want to test any CSI change depend on an unreleased GCSFuse enhancement. If BUILD_GCSFUSE_FROM_SOURCE is true, by default it builts GCSFuse from head of the master branch. If you want to build GCSFuse from a particular tag, then set GCSFUSE_TAG as explained in cloudbuild sections above.
 make build-image-and-push-multi-arch REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
 ```
 
