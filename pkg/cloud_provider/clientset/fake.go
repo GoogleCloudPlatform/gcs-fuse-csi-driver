@@ -24,6 +24,8 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	v1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -35,6 +37,8 @@ type FakeNodeConfig struct {
 type FakeClientset struct {
 	fakePod  *corev1.Pod
 	fakeNode *corev1.Node
+	fakePV   *corev1.PersistentVolume
+	fakeSC   *v1.StorageClass
 }
 
 func NewFakeClientset() *FakeClientset {
@@ -46,9 +50,13 @@ func NewFakeClientset() *FakeClientset {
 	return fakeClientSet
 }
 
-func (c *FakeClientset) ConfigurePodLister(_ string) {}
+func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
 
-func (c *FakeClientset) ConfigureNodeLister(_ string) {}
+func (c *FakeClientset) ConfigureNodeLister(_ context.Context, _ string) {}
+
+func (c *FakeClientset) ConfigurePVLister(_ context.Context) {}
+
+func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
 
 func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
 	config := webhook.FakeConfig()
@@ -106,6 +114,18 @@ func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
 	c.fakeNode.ObjectMeta.Name = name
 
 	return c.fakeNode, nil
+}
+
+func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
+	c.fakeNode.ObjectMeta.Name = name
+
+	return c.fakePV, nil
+}
+
+func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
+	c.fakeNode.ObjectMeta.Name = name
+
+	return c.fakeSC, nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
