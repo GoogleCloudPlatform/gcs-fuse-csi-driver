@@ -30,6 +30,8 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -93,6 +95,7 @@ const (
 	// Bucket scan status values
 	scanCompleted = "completed"
 	scanTimeout   = "timeout"
+	scanOverride  = "override"
 
 	// Key prefixes for workqueue
 	pvPrefix  = "pv/"
@@ -160,6 +163,7 @@ type ScannerConfig struct {
 }
 
 // bucketInfo holds the results of a bucket scan.
+// isOverride will be true if the PV is using the "override" status.
 type bucketInfo struct {
 	name             string
 	dir              string
@@ -168,6 +172,7 @@ type bucketInfo struct {
 	numObjects       int64
 	totalSizeBytes   int64
 	isHNSEnabled     bool
+	isOverride       bool
 }
 
 // Scanner is the main controller structure.
@@ -508,10 +513,16 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 		klog.Infof("Requeuing %q %q: %v", syncType, itemKey, err)
 		s.queue.AddRateLimited(key)
 	} else {
-		// All other errors will be requeued with exponential back-off and
-		// logged as errors, e.g. Kubernetes API server or transient errors.
 		klog.Errorf("Error syncing %q %q: %v", syncType, itemKey, err)
-		s.queue.AddRateLimited(key)
+		// TODO(urielguzman): Update the rest of the errors to return a categorized status
+		// error code. This will be done during SLO / SLI metrics implementation.
+		if status.Code(err) != codes.InvalidArgument {
+			// Don't re-queue InvalidArgument  errors since these are fixed
+			// until the user fixes their spec and re-deploys.
+			// All other errors will be requeued with exponential back-off,
+			// e.g. Kubernetes API server or internal errors.
+			s.queue.AddRateLimited(key)
+		}
 	}
 	return true
 }
@@ -586,11 +597,16 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 
 		bucketI, err := s.checkPVRelevance(pv)
 		if err != nil {
-			return fmt.Errorf("error checking PV %q relevance for Pod %q: %v", pvName, key, err)
+			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
 
-		if bucketI != nil {
-			klog.Infof("Pod %q uses relevant PV %q (PVC %q/%q)", key, pvName, namespace, pvcName)
+		// If bucketI is nil, PV is not relevant or TTL is not expired.
+		// If bucketI.isOverride is true, PV is relevant but scanning is bypassed.
+		// In either of these two cases, we DO NOT enqueue the PV for scanning,
+		// and we proceed to check the next volume.
+		pvRelevant := bucketI != nil
+		if pvRelevant && !bucketI.isOverride {
+			klog.Infof("Pod %q uses relevant PV %q (PVC %q/%q) requiring a scan", key, pvName, namespace, pvcName)
 			anyPVRelevant = true
 			s.enqueuePVIfNotTracked(pv) // Enqueue the PV for scanning if not already tracked
 		}
@@ -606,7 +622,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		return fmt.Errorf("%w: waiting for PVCs to be ready for Pod %q", errRequeuePod, key)
 	}
 
-	// If no PVs are relevant and no other reason to requeue, remove the scheduling gate
+	// If no PVs are relevant (including the override case) and no other reason to requeue, remove the scheduling gate
 	return s.removeSchedulingGate(ctx, pod)
 }
 
@@ -669,6 +685,21 @@ func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, attributeKey str
 	return &defaultDuration, nil
 }
 
+// bypassScanForOverride handles a PV with the override mode set.
+// No actual scan is performed. It uses the pre-validated bucketInfo to patch the PV
+// with the user-provided data and record a corresponding event.
+func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVolume, key string, bucketI *bucketInfo) error {
+	klog.Infof("PV %q is set to 'override' mode. Bypassing bucket scan and applying user-provided annotations.", key)
+
+	// The status annotation is already "override", but we patch it here along with
+	// the timestamp to mark the operation as complete and update the in-memory map.
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes, HNS enabled: %t", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes, bucketI.isHNSEnabled)
+	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanOverride); patchErr != nil {
+		return patchErr
+	}
+	return nil // Remove from queue since this is considered a complete and successful "scan" (bypass).
+}
+
 // syncPV is the core reconciliation function for a PersistentVolume.
 // It checks if the PV is relevant, performs the bucket scan, and updates the PV annotations.
 func (s *Scanner) syncPV(ctx context.Context, key string) error {
@@ -694,10 +725,17 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Relevance check failed: %v", err)
 		return fmt.Errorf("relevance check failed for PV %q: %w", pv.Name, err)
 	}
-	if bucketI == nil {
+	pvRelevant := bucketI != nil
+	if !pvRelevant {
 		klog.V(6).Infof("PV %q is no longer relevant, skipping sync", key)
 		return nil // Remove irrelevant PV from queue
 	}
+
+	if bucketI.isOverride {
+		// Bypass the scanner if the override mode is set.
+		return s.bypassScanForOverride(ctx, pv, key, bucketI)
+	}
+
 	klog.Infof("PV %q is relevant, bucket: %q, dir: %q, onlyDirSpecified: %t", key, bucketI.name, bucketI.dir, bucketI.onlyDirSpecified)
 
 	// ----- At this stage, the PV has been considered eligible for a scan. -----
@@ -991,7 +1029,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 	klog.Infof("Successfully updated annotations on PV %q with status %q", pv.Name, status)
 
 	// Update in-memory map only on terminal state updates.
-	if status == scanCompleted || status == scanTimeout {
+	if status == scanCompleted || status == scanTimeout || status == scanOverride {
 		s.scanMutex.Lock()
 		s.lastSuccessfulScan[pv.Name] = currentTime
 		s.scanMutex.Unlock()
@@ -1000,10 +1038,67 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 	return nil
 }
 
+// parseNonNegativeIntegerFromString returns an error if the string fails
+// to be parsed as an integer, or if the integer is negative.
+func parseNonNegativeIntegerFromString(val string) (int64, error) {
+	valInt, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if valInt < 0 {
+		return 0, fmt.Errorf("invalid negative integer value for %q", val)
+	}
+	return valInt, nil
+}
+
+// parseOverrideStatus checks that, if the override mode is set, the
+// PV has the required annotations with valid format/types. Returns a bucketInfo
+// with parsed results if valid, or returns an error otherwise.
+func parseOverrideStatus(pv *v1.PersistentVolume) (*bucketInfo, error) {
+	// Enforce required annotations for override mode and validate formats.
+	bucketI := bucketInfo{}
+	requiredAnnotations := []string{
+		annotationNumObjects,
+		annotationTotalSize,
+		annotationHNSEnabled,
+	}
+	for _, key := range requiredAnnotations {
+		// TODO(fuechr): Move this validation to mutating webhook so that the PV creation fails
+		// fast before getting to the scanner.
+		if _, exists := pv.Annotations[key]; !exists {
+			return nil, status.Errorf(codes.InvalidArgument, "status %q requires annotation %q", scanOverride, key)
+		}
+		switch key {
+		case annotationNumObjects:
+			val, err := parseNonNegativeIntegerFromString(pv.Annotations[key])
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
+			}
+			bucketI.numObjects = val
+		case annotationTotalSize:
+			val, err := parseNonNegativeIntegerFromString(pv.Annotations[key])
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
+			}
+			bucketI.totalSizeBytes = val
+		case annotationHNSEnabled:
+			val, err := strconv.ParseBool(pv.Annotations[annotationHNSEnabled])
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
+			}
+			bucketI.isHNSEnabled = val
+		default:
+			// This should never happen, but it's safer to check.
+			return nil, status.Errorf(codes.Internal, "unexpected key for override mode requiredAnnotations: %q", key)
+		}
+	}
+	return &bucketI, nil
+}
+
 // checkPVRelevance determines if a PersistentVolume is relevant for scanning.
 // A PV is relevant if it uses the gcsfuse CSI driver and its StorageClass
 // has a workloadType parameter set to inference, training, or checkpointing.
-// The PV is relevant if the current time - last scan time > scan TTL
+// The PV is relevant if the current time - last scan time > scan TTL, or if the status is "override".
 // This function returns a bucketInfo with the bucket name and the directory if
 // relevant, otherwise, it will return nil and any error.
 func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error) {
@@ -1047,52 +1142,7 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 	switch workloadType {
 	case paramWorkloadTypeInferenceKey, paramWorkloadTypeTrainingKey, paramWorkloadTypeCheckpointingKey:
 	default:
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Found invalid %q parameter %q in StorageClass %q for PV %q", paramWorkloadTypeKey, workloadType, scName, pv.Name)
-		return nil, nil // Avoid re-queueing on static customer misconfig.
-	}
-
-	currentScanTTL, err := s.getDurationAttribute(pv, volumeAttributeScanTTLKey, defaultScanTTLDuration)
-	if err != nil {
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Bucket scan TTL configuration error: %v", err)
-		return nil, nil // Avoid re-queueing on static customer misconfig.
-	}
-
-	var lastScanTime time.Time
-	found := false
-	source := ""
-
-	s.scanMutex.RLock()
-	if lastTime, ok := s.lastSuccessfulScan[pv.Name]; ok {
-		lastScanTime = lastTime
-		found = true
-		source = "memory"
-		klog.V(6).Infof("PV %q: Found last scan time in memory: %q", pv.Name, lastScanTime)
-	}
-	s.scanMutex.RUnlock()
-
-	if !found {
-		if lastUpdatedTimeStr, ok := pv.Annotations[annotationLastUpdatedTime]; ok {
-			parsedTime, err := time.Parse(time.RFC3339, lastUpdatedTimeStr)
-			if err != nil {
-				klog.Warningf("PV %q: Failed to parse annotation %q value %q: %v. Assuming no recent scan", pv.Name, annotationLastUpdatedTime, lastUpdatedTimeStr, err)
-			} else {
-				lastScanTime = parsedTime
-				found = true
-				source = "annotation"
-				klog.V(6).Infof("PV %q: Found last scan time in annotations: %q", pv.Name, lastScanTime)
-			}
-		}
-	}
-
-	if found {
-		elapsed := timeNow().Sub(lastScanTime)
-		if elapsed < *currentScanTTL {
-			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan (source: %q), which is less than TTL %q", pv.Name, elapsed.Round(time.Second), source, currentScanTTL)
-			return nil, nil
-		}
-		klog.V(6).Infof("PV %q: Proceeding with scan, %q elapsed since last scan (source: %q), TTL is %q", pv.Name, elapsed.Round(time.Second), source, currentScanTTL)
-	} else {
-		klog.V(6).Infof("PV %q: No last scan time found in memory or annotations. Proceeding with scan", pv.Name)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid %q parameter %q in StorageClass %q for PV %q", paramWorkloadTypeKey, workloadType, scName, pv.Name)
 	}
 
 	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
@@ -1105,11 +1155,104 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 			break
 		}
 	}
-	return &bucketInfo{
+
+	bucketI := &bucketInfo{
 		name:             bucketName,
 		dir:              dir,
 		onlyDirSpecified: onlyDirSpecified,
-	}, nil
+	}
+
+	// Handle the override annotation, if set.
+	if bucketStatus, ok := pv.Annotations[annotationStatus]; ok && bucketStatus == scanOverride {
+		// Enforce required annotations for override mode and validate formats.
+		overrideInfo, err := parseOverrideStatus(pv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate arguments for PV %q with override mode: %v", pv.Name, err)
+		}
+		klog.Infof("PV %q: Override mode detected. Bypassing scan.", pv.Name)
+		// The PV is considered relevant but this directs syncPV and syncPod to the bypass logic.
+		overrideInfo.name = bucketI.name
+		overrideInfo.dir = bucketI.dir
+		overrideInfo.onlyDirSpecified = bucketI.onlyDirSpecified
+		overrideInfo.isOverride = true
+		return overrideInfo, nil
+	}
+
+	lastScanTime, found, err := s.calculateLastScanTime(pv)
+	if err != nil {
+		return nil, err
+	}
+
+	if found {
+		elapsed := timeNow().Sub(lastScanTime)
+
+		currentScanTTL, err := s.getDurationAttribute(pv, volumeAttributeScanTTLKey, defaultScanTTLDuration)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "bucket scan TTL configuration error: %v", err)
+		}
+
+		if elapsed < *currentScanTTL {
+			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan, which is less than TTL %q", pv.Name, elapsed.Round(time.Second), currentScanTTL)
+			return nil, nil
+		}
+		klog.V(6).Infof("PV %q: Proceeding with scan, %q elapsed since last scan, TTL is %q", pv.Name, elapsed.Round(time.Second), currentScanTTL)
+		return bucketI, nil
+	}
+
+	// If the PV is relevant but doesn't yet have a last scan time, it hasn't been scanned yet.
+	// It is unexpected that the PV has scanner annotations unless the override mode is enabled,
+	// which has already been verified above. This should be flagged to the user to avoid
+	// unexpected behavior.
+	// TODO(fuechr): Move this validation to mutating webhook so that the PV creation fails
+	// fast before getting to the scanner.
+	if annotationsUsed := pvAnnotationIntersection(pv, []string{
+		annotationStatus,
+		annotationNumObjects,
+		annotationTotalSize,
+		annotationHNSEnabled,
+	}); len(annotationsUsed) > 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "scanner annotations for PV %q found in non-override mode: %+v", pv.Name, annotationsUsed)
+	}
+	klog.V(6).Infof("PV %q: No last scan time found in memory or annotations. Proceeding with scan", pv.Name)
+	return bucketI, nil
+}
+
+// calculateLastScanTime returns the last successful scan of a PV. If it doesn't exist in
+// memory (e.g. first time scanning the PV), it checks the PV annotatins. The function
+// returns a boolean to indicate if the value was found, otherwise, it returns an error.
+func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, bool, error) {
+	// Check if the last scan time appears in memory first.
+	s.scanMutex.RLock()
+	lastScanTimeFromMemory, ok := s.lastSuccessfulScan[pv.Name]
+	s.scanMutex.RUnlock()
+	if ok {
+		klog.V(6).Infof("PV %q: Found last scan time in memory: %q", pv.Name, lastScanTimeFromMemory)
+		return lastScanTimeFromMemory, true, nil
+	}
+
+	// Check if the last scan time appears in the PV annotations.
+	lastScanTimeFromAnnotation, ok := pv.Annotations[annotationLastUpdatedTime]
+	if !ok {
+		return time.Time{}, false, nil
+	}
+	parsedTime, err := time.Parse(time.RFC3339, lastScanTimeFromAnnotation)
+	if err != nil {
+		return time.Time{}, false, status.Errorf(codes.InvalidArgument, "PV %q: Failed to parse annotation %q value %q: %v", pv.Name, annotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
+	}
+	klog.V(6).Infof("PV %q: Found last scan time in annotation: %q", pv.Name, lastScanTimeFromAnnotation)
+	return parsedTime, true, nil
+}
+
+// pvAnnotationIntersection returns the intersection of the provided annotation keys and
+// the annotation keys found in the PV.
+func pvAnnotationIntersection(pv *v1.PersistentVolume, annotations []string) []string {
+	var intersection []string
+	for _, key := range annotations {
+		if _, exists := pv.Annotations[key]; exists {
+			intersection = append(intersection, key)
+		}
+	}
+	return intersection
 }
 
 // onlyDirValue parses a mount option string to extract the value of "only-dir".
@@ -1156,22 +1299,7 @@ func (s *Scanner) addPV(obj any) {
 		klog.Errorf("AddFunc PV: Expected PersistentVolume but got %T", obj)
 		return
 	}
-	s.handlePVEvent(pv, "ADD")
-}
-
-// This function is called by addPV and updatePV event handlers.
-func (s *Scanner) handlePVEvent(pv *v1.PersistentVolume, eventType string) {
-	bucketI, err := s.checkPVRelevance(pv)
-	if err != nil {
-		klog.Errorf("PV %q: Error checking relevance for %q: %v", eventType, pv.Name, err)
-		return
-	}
-
-	if bucketI == nil {
-		klog.V(6).Infof("PV %q: %q - Not relevant", eventType, pv.Name)
-		return
-	}
-
+	klog.V(6).Infof("AddFunc PV: PV ADDED: %q", pv.Name)
 	s.enqueuePVIfNotTracked(pv)
 }
 
@@ -1190,9 +1318,9 @@ func (s *Scanner) deletePV(obj any) {
 			klog.Errorf("DeleteFunc PV: Expected PV in Tombstone but got %T", tombstone.Obj)
 			return
 		}
-		klog.V(6).Infof("PV TOMBSTONE: %q", pv.Name)
+		klog.V(6).Infof("DeleteFunc PV: PV TOMBSTONE: %q", pv.Name)
 	} else {
-		klog.V(6).Infof("PV DELETED: %q", pv.Name)
+		klog.V(6).Infof("DeleteFunc PV: PV DELETED: %q", pv.Name)
 	}
 
 	key, err := cache.MetaNamespaceKeyFunc(pv)
@@ -1219,7 +1347,7 @@ func (s *Scanner) addPod(obj any) {
 		klog.Errorf("AddFunc Pod: Expected Pod but got %T", obj)
 		return
 	}
-	klog.V(6).Infof("Pod ADDED: %q/%q", pod.Namespace, pod.Name)
+	klog.V(6).Infof("AddFunc Pod: Pod ADDED: %q/%q", pod.Namespace, pod.Name)
 	s.enqueuePod(pod)
 }
 
@@ -1237,9 +1365,9 @@ func (s *Scanner) deletePod(obj any) {
 			klog.Errorf("DeleteFunc Pod: Expected Pod in Tombstone but got %T", tombstone.Obj)
 			return
 		}
-		klog.V(6).Infof("Pod TOMBSTONE: %q/%q", pod.Namespace, pod.Name)
+		klog.V(6).Infof("DeleteFunc Pod: Pod TOMBSTONE: %q/%q", pod.Namespace, pod.Name)
 	} else {
-		klog.V(6).Infof("Pod DELETED: %q/%q", pod.Namespace, pod.Name)
+		klog.V(6).Infof("DeleteFunc Pod: Pod DELETED: %q/%q", pod.Namespace, pod.Name)
 	}
 
 	key, err := cache.MetaNamespaceKeyFunc(pod)
@@ -1247,7 +1375,7 @@ func (s *Scanner) deletePod(obj any) {
 		klog.Errorf("DeleteFunc Pod: Error mapping key from object: %v", err)
 		return
 	}
-	klog.V(6).Infof("Forgetting Pod %q from queue", key)
+	klog.V(6).Infof("DeleteFunc Pod: Forgetting Pod %q from queue", key)
 	s.queue.Forget(podPrefix + key)
 }
 
