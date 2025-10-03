@@ -867,7 +867,7 @@ kubectl exec example --namespace $NAMESPACE -- gcloud auth print-access-token
 We recommend installing the driver from a fully released + GKE cluster qualified GCSFuse CSI Driver image, as these images have passed extensive qualification on GKE clusters; 
 however, support for using these qualified images directly is not supported because the OSS image for `gcs-fuse-csi-driver-webhook` is not currently hosted in a public repository. As a workaround until this is supported, you will need to build and push images for the GCSFuse CSI driver before you can start the installation process. 
 
-To build and push your image, we recommend checking out the GCSFuse CSI driver from the latest release tag, and building from that tag. **The minimum supported tag for the OSS K8s Support is (TBD)**. <!--TODO(amacaskill): Add new tag once its cut.-->
+To build and push your image, we recommend checking out the GCSFuse CSI driver from the latest release tag, and building from that tag. **The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.19.2](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.19.2)**
 
 To find the latest GCSFuse CSI Driver release tag, run the following curl command, or look for the release with the latest tag in [Releases](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases).
 
