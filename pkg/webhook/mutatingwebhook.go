@@ -110,7 +110,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 	// Inject service account volume
-	if si.Config.ShouldInjectSAVolume {
+	if pod.Spec.HostNetwork && si.Config.ShouldInjectSAVolume {
 		projectID, err := metadata.ProjectIDWithContext(ctx)
 		if err != nil {
 			return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to get project id: %w", err))
