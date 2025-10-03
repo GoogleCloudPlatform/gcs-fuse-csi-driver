@@ -123,7 +123,8 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 	limits, requests := prepareResourceList(c)
 
 	volumeMounts := []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount}
-	if c.ShouldInjectSAVolume {
+	// Inject SA token only for Host Network pods
+	if c.PodHostNetworkSetting && c.ShouldInjectSAVolume {
 		volumeMounts = append(volumeMounts, saTokenVolumeMount)
 	}
 
