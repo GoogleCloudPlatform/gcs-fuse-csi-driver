@@ -23,7 +23,7 @@ ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make metadata-prefetch BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.12 AS debian
 # Install necessary dependencies
 RUN clean-install bash
 

@@ -265,6 +265,8 @@ func generateTestSkip(testParams *TestParameters) string {
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "metrics") // Skipping as these tests are known to be unstable
 
+		skipTests = append(skipTests, "should.not.pass.profile") // Skipping for managed as changes have not been picked up yet
+
 		supportsKernelReadAhead, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, kernelReadAheadMinimumVersion)
 		if !supportsKernelReadAhead {
 			skipTests = append(skipTests, "read.ahead")
