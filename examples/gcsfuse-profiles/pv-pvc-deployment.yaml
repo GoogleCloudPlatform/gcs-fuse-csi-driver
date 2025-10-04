@@ -32,7 +32,7 @@ spec:
   storageClassName: gcsfusecsi-inference
   csi:
     driver: gcsfuse.csi.storage.gke.io
-    volumeHandle: test-bucket
+    volumeHandle:  gcsfusecsi-list-storm-hns-bucket
     volumeAttributes:
       # Optional: The timeout for the bucket scan operation before giving up and delivering
       # partial results. The default is 2m.
@@ -42,7 +42,7 @@ spec:
       # scan. The default is 168h (7 days).
       # bucketScanTTL: 168h
   mountOptions:
-  - only-dir=/my-folder/
+  - only-dir=/copy-0000/
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
