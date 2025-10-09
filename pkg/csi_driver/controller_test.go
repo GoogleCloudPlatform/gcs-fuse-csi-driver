@@ -36,7 +36,7 @@ const (
 func initTestController(t *testing.T) csi.ControllerServer {
 	t.Helper()
 	driver := initTestDriver(t, nil)
-	cs, err := newControllerServer(driver, driver.config.StorageServiceManager, &GCSDriverFeatureOptions{FeatureScanner: &FeatureScanner{}})
+	cs, err := newControllerServer(driver, driver.config.StorageServiceManager, &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}})
 	if err != nil {
 		t.Fatalf("newControllerServer failed: %v", err)
 	}

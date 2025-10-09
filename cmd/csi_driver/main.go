@@ -35,7 +35,7 @@ import (
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/scanner"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -63,8 +63,8 @@ var (
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver.")
 	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
 
-	// Bucket scanner flags.
-	enableBucketScanner          = flag.Bool("enable-bucket-scanner", false, "Enable the bucket scanner feature.")
+	// GCSFuse profiles flags.
+	enableGCSFuseProfiles        = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
 	datafluxParallelism          = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
 	datafluxBatchSize            = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
 	datafluxSkipDirectoryObjects = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
@@ -171,9 +171,9 @@ func main() {
 	}
 
 	featureOptions := &driver.GCSDriverFeatureOptions{
-		FeatureScanner: &driver.FeatureScanner{
-			Enabled: *enableBucketScanner,
-			Config: &scanner.ScannerConfig{
+		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
+			Enabled: *enableGCSFuseProfiles,
+			ScannerConfig: &profiles.ScannerConfig{
 				KubeAPIQPS:                  *kubeAPIQPS,
 				KubeAPIBurst:                *kubeAPIBurst,
 				ResyncPeriod:                time.Duration(*informerResyncDurationSec) * time.Second,
@@ -184,7 +184,7 @@ func main() {
 				LeaderElectionLeaseDuration: *leaderElectionLeaseDuration,
 				LeaderElectionRenewDeadline: *leaderElectionRenewDeadline,
 				LeaderElectionRetryPeriod:   *leaderElectionRetryPeriod,
-				DatafluxConfig: &scanner.DatafluxConfig{
+				DatafluxConfig: &profiles.DatafluxConfig{
 					Parallelism:          *datafluxParallelism,
 					BatchSize:            *datafluxBatchSize,
 					SkipDirectoryObjects: *datafluxSkipDirectoryObjects,

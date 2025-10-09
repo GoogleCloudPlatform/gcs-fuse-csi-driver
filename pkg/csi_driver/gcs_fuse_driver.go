@@ -26,7 +26,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/scanner"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -37,13 +37,13 @@ import (
 
 const DefaultName = "gcsfuse.csi.storage.gke.io"
 
-type FeatureScanner struct {
-	Enabled bool
-	Config  *scanner.ScannerConfig
+type FeatureGCSFuseProfiles struct {
+	Enabled       bool
+	ScannerConfig *profiles.ScannerConfig
 }
 
 type GCSDriverFeatureOptions struct {
-	FeatureScanner *FeatureScanner
+	FeatureGCSFuseProfiles *FeatureGCSFuseProfiles
 }
 
 type GCSDriverConfig struct {
@@ -216,7 +216,7 @@ func (driver *GCSDriver) Run(ctx context.Context, cancel context.CancelFunc, end
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
 
-	if driver.config.RunController && driver.config.FeatureOptions.FeatureScanner.Enabled {
+	if driver.config.RunController && driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled {
 		// Start the scanner in a separate goroutine, respecting the parent context.
 		go driver.cs.(*controllerServer).scanner.Start(ctx, cancel)
 	}

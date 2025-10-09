@@ -26,7 +26,7 @@ spec:
             - "--v=5"
             - "--endpoint=unix:/csi/csi.sock"
             - "--controller=true"
-            - "--enable-bucket-scanner=true"
+            - "--enable-gcsfuse-profiles=true"
             - "--dataflux-batch-size=25000"
             - "--dataflux-parallelism=0"
             - "--leader-election=true"
