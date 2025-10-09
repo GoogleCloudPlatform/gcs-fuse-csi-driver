@@ -149,27 +149,6 @@ func main() {
 		klog.Fatalf("Failed to set up storage service manager: %v", err)
 	}
 
-	var mounter mount.Interface
-	var mm metrics.Manager
-	if *runNode {
-		if *nodeID == "" {
-			klog.Fatalf("NodeID cannot be empty for node service")
-		}
-
-		clientset.ConfigurePodLister(*nodeID)
-		clientset.ConfigureNodeLister(*nodeID)
-
-		mounter, err = csimounter.New("", *fuseSocketDir)
-		if err != nil {
-			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
-		}
-
-		if *metricsEndpoint != "" {
-			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
-			mm.InitializeHTTPHandler()
-		}
-	}
-
 	featureOptions := &driver.GCSDriverFeatureOptions{
 		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
 			Enabled: *enableGCSFuseProfiles,
@@ -191,6 +170,33 @@ func main() {
 				},
 			},
 		},
+	}
+
+	var mounter mount.Interface
+	var mm metrics.Manager
+	if *runNode {
+		if *nodeID == "" {
+			klog.Fatalf("NodeID cannot be empty for node service")
+		}
+
+		clientset.ConfigurePodLister(ctx, *nodeID)
+		clientset.ConfigureNodeLister(ctx, *nodeID)
+
+		if featureOptions.FeatureGCSFuseProfiles.Enabled {
+			// Curently, only the gcsfuse profiles feature actually uses these listers.
+			clientset.ConfigurePVLister(ctx)
+			clientset.ConfigureSCLister(ctx)
+		}
+
+		mounter, err = csimounter.New("", *fuseSocketDir)
+		if err != nil {
+			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
+		}
+
+		if *metricsEndpoint != "" {
+			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
+			mm.InitializeHTTPHandler()
+		}
 	}
 
 	config := &driver.GCSDriverConfig{

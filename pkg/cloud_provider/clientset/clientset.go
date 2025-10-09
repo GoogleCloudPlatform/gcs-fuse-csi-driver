@@ -26,24 +26,30 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	storagelisters "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
 
 type Interface interface {
-	ConfigurePodLister(nodeName string)
-	ConfigureNodeLister(nodeName string)
+	ConfigurePodLister(ctx context.Context, nodeName string)
+	ConfigureNodeLister(ctx context.Context, nodeName string)
+	ConfigurePVLister(ctx context.Context)
+	ConfigureSCLister(ctx context.Context)
 	GetPod(namespace, name string) (*corev1.Pod, error)
+	GetNode(name string) (*corev1.Node, error)
+	GetPV(name string) (*corev1.PersistentVolume, error)
+	GetSC(name string) (*storagev1.StorageClass, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
-	GetNode(name string) (*corev1.Node, error)
 }
 
 type PodInfo struct {
@@ -55,13 +61,18 @@ type Clientset struct {
 	k8sClients                kubernetes.Interface
 	podLister                 listersv1.PodLister
 	nodeLister                listersv1.NodeLister
+	pvLister                  listersv1.PersistentVolumeLister
+	scLister                  storagelisters.StorageClassLister
 	informerResyncDurationSec int
 }
 
-const GkeMetaDataServerKey = "iam.gke.io/gke-metadata-server-enabled"
-const MachineTypeKey = "node.kubernetes.io/instance-type"
+const (
+	GkeMetaDataServerKey              = "iam.gke.io/gke-metadata-server-enabled"
+	MachineTypeKey                    = "node.kubernetes.io/instance-type"
+	GkeAppliedNodeLabelsAnnotationKey = "node.gke.io/last-applied-node-labels"
+)
 
-func (c *Clientset) ConfigureNodeLister(nodeName string) {
+func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 	trim := func(obj interface{}) (interface{}, error) {
 		if accessor, err := meta.Accessor(obj); err == nil {
 			if accessor.GetManagedFields() != nil {
@@ -87,9 +98,24 @@ func (c *Clientset) ConfigureNodeLister(nodeName string) {
 			newLabels[MachineTypeKey] = machineType
 		}
 
+		newStatus := corev1.NodeStatus{
+			// Used by the gcsfuse profiles feature to determine if the recommended cache fits in the node.
+			Allocatable: nodeObj.Status.Allocatable,
+		}
+
+		newAnnotations := map[string]string{}
+
+		appliedLabelsStr, ok := nodeObj.ObjectMeta.Annotations[GkeAppliedNodeLabelsAnnotationKey]
+		if ok && appliedLabelsStr != "" {
+			// Used by the gcsfuse profiles feature to determine if the node has the "cloud.google.com/gke-ephemeral-storage-local-ssd" label key.
+			// TODO(urielguzman): This will not work in OSS K8S. We should consider either giving the customer a static label or
+			// allowing the customer to pass their custom "node has LSSD" label into the gcsfuse profiles feature, most likely via a VolumeAttribute.
+			newAnnotations[GkeAppliedNodeLabelsAnnotationKey] = appliedLabelsStr
+		}
+
 		nodeObj.Spec = corev1.NodeSpec{}
-		nodeObj.Status = corev1.NodeStatus{}
-		nodeObj.ObjectMeta.Annotations = nil
+		nodeObj.Status = newStatus
+		nodeObj.ObjectMeta.Annotations = newAnnotations
 		nodeObj.ObjectMeta.Labels = newLabels
 
 		return obj, nil
@@ -105,11 +131,68 @@ func (c *Clientset) ConfigureNodeLister(nodeName string) {
 	)
 	nodeLister := informerFactory.Core().V1().Nodes().Lister()
 
-	ctx := context.Background()
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
 
 	c.nodeLister = nodeLister
+}
+
+func (c *Clientset) ConfigurePVLister(ctx context.Context) {
+	trim := func(obj any) (any, error) {
+		pvObj, ok := obj.(*corev1.PersistentVolume)
+		if !ok {
+			return obj, nil
+		}
+		return &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        pvObj.ObjectMeta.Name,
+				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
+			},
+			Spec: corev1.PersistentVolumeSpec{
+				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
+			},
+		}, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTransform(trim),
+	)
+	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.pvLister = pvLister
+}
+
+func (c *Clientset) ConfigureSCLister(ctx context.Context) {
+	trim := func(obj any) (any, error) {
+		scObj, ok := obj.(*storagev1.StorageClass)
+		if !ok {
+			return obj, nil
+		}
+		return &storagev1.StorageClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: scObj.ObjectMeta.Name,
+			},
+			MountOptions: scObj.MountOptions, // Required by the gcsfuse profiles feature to apply pre-bundled mount options.
+			Parameters:   scObj.Parameters,   // Required by the gcsfuse profiles feature to get profile configs.
+		}, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTransform(trim),
+	)
+	scLister := informerFactory.Storage().V1().StorageClasses().Lister()
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.scLister = scLister
 }
 
 func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
@@ -135,7 +218,7 @@ func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error
 	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec}, nil
 }
 
-func (c *Clientset) ConfigurePodLister(nodeName string) {
+func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 	trim := func(obj interface{}) (interface{}, error) {
 		if accessor, err := meta.Accessor(obj); err == nil {
 			if accessor.GetManagedFields() != nil {
@@ -202,7 +285,6 @@ func (c *Clientset) ConfigurePodLister(nodeName string) {
 	)
 	podLister := informerFactory.Core().V1().Pods().Lister()
 
-	ctx := context.Background()
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
 
@@ -223,6 +305,22 @@ func (c *Clientset) GetNode(name string) (*corev1.Node, error) {
 	}
 
 	return c.nodeLister.Get(name)
+}
+
+func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
+	if c.pvLister == nil {
+		return nil, errors.New("pv informer is not ready")
+	}
+
+	return c.pvLister.Get(name)
+}
+
+func (c *Clientset) GetSC(name string) (*storagev1.StorageClass, error) {
+	if c.scLister == nil {
+		return nil, errors.New("sc informer is not ready")
+	}
+
+	return c.scLister.Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
