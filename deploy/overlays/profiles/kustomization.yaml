@@ -30,6 +30,8 @@ patchesStrategicMerge:
 - node_always_pull.yaml
 - webhook_always_pull.yaml
 - controller.yaml
+- node_setup.yaml
+- node.yaml
 - webhook_deployment.yaml
 patches:
 - path: project_patch_csi_driver.json
@@ -62,4 +64,3 @@ patches:
     kind: DaemonSet
     name: gcsfusecsi-node
     version: v1
-

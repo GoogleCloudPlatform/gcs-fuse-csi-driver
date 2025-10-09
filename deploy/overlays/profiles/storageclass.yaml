@@ -19,6 +19,7 @@ metadata:
   name: gcsfusecsi-training
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
+  # TODO(urielguzman): Replace mount options with 'profile=aiml-training' when `enable-gcsfuse-profiles-internal` is implemented.
   - implicit-dirs
   - metadata-cache:negative-ttl-secs:0
   - metadata-cache:ttl-secs:-1
@@ -29,7 +30,8 @@ mountOptions:
   - file-system:kernel-list-cache-ttl-secs:-1
 parameters:
   workloadType: "training"
-  csiDriverConfig: "skipCSIBucketAccessCheck=true,gcsfuseMetadataPrefetchOnMount=true"
+  skipCSIBucketAccessCheck: "true"
+  gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
   fuseMemoryAllocatableFactor: "0.7"
   fuseEphemeralStorageAllocatableFactor: "0.85"
@@ -40,6 +42,7 @@ metadata:
   name: gcsfusecsi-inference
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
+  # TODO(urielguzman): Replace mount options with 'profile=aiml-inference' when `enable-gcsfuse-profiles-internal` is implemented.
   - implicit-dirs
   - metadata-cache:negative-ttl-secs:0
   - metadata-cache:ttl-secs:-1
@@ -50,7 +53,8 @@ mountOptions:
   - file-system:kernel-list-cache-ttl-secs:-1
 parameters:
   workloadType: "inference"
-  csiDriverConfig: "skipCSIBucketAccessCheck=true,gcsfuseMetadataPrefetchOnMount=true"
+  skipCSIBucketAccessCheck: "true"
+  gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
   fuseMemoryAllocatableFactor: "0.7"
   fuseEphemeralStorageAllocatableFactor: "0.85"
@@ -61,6 +65,7 @@ metadata:
   name: gcsfusecsi-checkpointing
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
+  # TODO(urielguzman): Replace mount options with 'profile=aiml-checkpointing' when `enable-gcsfuse-profiles-internal` is implemented.
   - implicit-dirs
   - metadata-cache:negative-ttl-secs:0
   - metadata-cache:ttl-secs:-1
@@ -73,7 +78,8 @@ mountOptions:
   - file-system:rename-dir-limit:200000
 parameters:
   workloadType: "checkpointing"
-  csiDriverConfig: "skipCSIBucketAccessCheck=true,gcsfuseMetadataPrefetchOnMount=true"
+  skipCSIBucketAccessCheck: "true"
+  gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
   fuseMemoryAllocatableFactor: "0.7"
   fuseEphemeralStorageAllocatableFactor: "0.85"
