@@ -86,7 +86,7 @@ spec:
         NUMJOBS=50 NRFILES={{ .Values.fio.filesPerThread }} FILE_SIZE={{ .Values.fio.fileSize }} BLOCK_SIZE={{ .Values.fio.blockSize }} READ_TYPE=read DIR=/data fio ${filename} --alloc-size=1048576
 
         echo "Uploading data to bucket {{ .Values.bucketName }}..."
-        gsutil -m cp -R /data/* gs://{{ .Values.bucketName }}
+        gcloud storage cp --recursive /data/* gs://{{ .Values.bucketName }}
     volumeMounts:
     - name: local-dir
       mountPath: /data

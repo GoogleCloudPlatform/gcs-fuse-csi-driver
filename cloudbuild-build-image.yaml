@@ -31,7 +31,7 @@ substitutions:
   # (Required if _BUILD_GCSFUSE_FROM_SOURCE is 'false')
   # The GCS path to the directory with pre-built gcsfuse binaries.
   # TODO(amacaskill): Add support to use gs://gke-release/gcsfuse once we add copy logic in Louhi. Note gke-release is not accessible by non-Google internal projects.
-  # TODO(amacaskill): Add support for _GCSFUSE_BINARY_GCS_PATH by fixing error: "prepare-gcsfuse-binary": bash: line 10: gsutil: command not found
+  # TODO(amacaskill): Add support for _GCSFUSE_BINARY_GCS_PATH by fixing error: "prepare-gcsfuse-binary": bash: line 10: gcloud: command not found
   _GCSFUSE_BINARY_GCS_PATH: ''
 
 steps:
@@ -143,7 +143,7 @@ steps:
         docker run --rm -v $(pwd)/bin/linux/amd64:/release gcsfuse-release-amd cp /gcsfuse_$${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
       else
         # Download pre-built binary
-        gsutil cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
+        gcloud storage cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
       fi
       chmod 0555 ./bin/linux/amd64/gcsfuse
 
@@ -157,7 +157,7 @@ steps:
           docker run --rm -v $(pwd)/bin/linux/arm64:/release gcsfuse-release-arm cp /gcsfuse_$${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
         else
           # Download pre-built ARM binary
-          gsutil cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
+          gcloud storage cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
         fi
         chmod 0555 ./bin/linux/arm64/gcsfuse
       fi
