@@ -66,15 +66,11 @@ import (
 )
 
 const (
-	scannerComponentName              = "gke-gcsfuse-scanner"
-	csiDriverName                     = "gcsfuse.csi.storage.gke.io"
-	paramWorkloadTypeKey              = "workloadType"
-	paramWorkloadTypeInferenceKey     = "inference"
-	paramWorkloadTypeTrainingKey      = "training"
-	paramWorkloadTypeCheckpointingKey = "checkpointing"
-	volumeAttributeScanTimeoutKey     = "bucketScanTimeout"
-	volumeAttributeScanTTLKey         = "bucketScanTTL"
-	leaseName                         = "gke-gcsfuse-scanner-leader"
+	scannerComponentName          = "gke-gcsfuse-scanner"
+	csiDriverName                 = "gcsfuse.csi.storage.gke.io"
+	volumeAttributeScanTimeoutKey = "bucketScanTimeout"
+	volumeAttributeScanTTLKey     = "bucketScanTTL"
+	leaseName                     = "gke-gcsfuse-scanner-leader"
 
 	// Annotation keys
 	annotationPrefix          = "gke-gcsfuse"
@@ -1131,18 +1127,16 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 	if scParams == nil {
 		return nil, nil
 	}
-	workloadType, ok := scParams[paramWorkloadTypeKey]
+	workloadType, ok := scParams[workloadTypeKey]
 	if !ok {
-		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", paramWorkloadTypeKey, scName, pv.Name)
+		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", workloadTypeKey, scName, pv.Name)
 		return nil, nil
 	}
 
 	// ---- At this stage, there is clearly a customer intent to use the scanner feature, so we start logging warnings -----
 
-	switch workloadType {
-	case paramWorkloadTypeInferenceKey, paramWorkloadTypeTrainingKey, paramWorkloadTypeCheckpointingKey:
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "invalid %q parameter %q in StorageClass %q for PV %q", paramWorkloadTypeKey, workloadType, scName, pv.Name)
+	if err := validateWorkloadType(workloadType); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to validate workload type: %v", err)
 	}
 
 	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)

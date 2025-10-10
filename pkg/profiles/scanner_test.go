@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	validSCParams = map[string]string{paramWorkloadTypeKey: paramWorkloadTypeInferenceKey}
+	validSCParams = map[string]string{workloadTypeKey: workloadTypeInferenceKey}
 	validSC       = createStorageClass(testSCName, validSCParams)
 	podLabels     = map[string]string{profileManagedLabelKey: profileManagedLabelValue}
 	scanResult    = &bucketInfo{
@@ -377,7 +377,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Training",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{paramWorkloadTypeKey: paramWorkloadTypeTrainingKey}),
+				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeTrainingKey}),
 			},
 			wantRelevant: true,
 			wantBucket:   testBucketName,
@@ -386,7 +386,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Inference",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{paramWorkloadTypeKey: paramWorkloadTypeInferenceKey}),
+				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeInferenceKey}),
 			},
 			wantRelevant: true,
 			wantBucket:   testBucketName,
@@ -395,7 +395,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Checkpointing",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{paramWorkloadTypeKey: paramWorkloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
 			},
 			wantRelevant: true,
 			wantBucket:   testBucketName,
@@ -404,7 +404,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Irrelevant - Wrong Driver",
 			pv:   createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{paramWorkloadTypeKey: paramWorkloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
 			},
 			wantRelevant: false,
 		},
@@ -418,7 +418,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Error - Invalid Workload Type",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{paramWorkloadTypeKey: "blah"}),
+				createStorageClass(testSCName, map[string]string{workloadTypeKey: "blah"}),
 			},
 			wantErr: true,
 		},
