@@ -61,6 +61,7 @@ type GCSDriverConfig struct {
 	EnableSidecarBucketAccessCheck bool
 	WINodeLabelCheck               bool
 	EnableCloudProfilerForSidecar  bool
+	EnableGcsfuseProfilesInternal  bool
 	FeatureOptions                 *GCSDriverFeatureOptions
 }
 

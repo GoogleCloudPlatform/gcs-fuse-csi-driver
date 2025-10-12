@@ -56,6 +56,7 @@ const (
 	testNameInactiveStreamTimeout = "inactive_stream_timeout"
 	testNameBufferedReads         = "buffered_read"
 	testNameRenameSymlink         = "rename_symlink"
+	testNameDisallowMountOptions  = "remove_disallowed_mount_options"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -358,6 +359,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			} else {
 				finalTestCommand = baseTestCommand + " -timeout 60m"
 			}
+		case testNameDisallowMountOptions:
+			tPod.VerifyProfileFlagsAreNotPassed(f.Namespace.Name)
 		case testNameRenameSymlink:
 			finalTestCommand = baseTestCommandWithTestBucket
 		default:
@@ -762,5 +765,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		} else {
 			gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
 		}
+	})
+
+	// testNameDisallowMountOptions tests if mount options which are disallowed are passed to the sidecar - currently only "profile" is disallowed
+	ginkgo.It(testNamePrefixSucceed+testNameDisallowMountOptions+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameDisallowMountOptions, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0", "profile=inference", "profile:checkpointing")
 	})
 }

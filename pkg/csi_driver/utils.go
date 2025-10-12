@@ -73,7 +73,9 @@ const (
 	SidecarBucketAccessCheckMinVersion     = "v1.99.0-gke.0"
 	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
+	GCSFuseProfilesMinVersion              = "v1000.0.0-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
+	GCSFuseProfileFlag                     = "profile"
 )
 
 var (
