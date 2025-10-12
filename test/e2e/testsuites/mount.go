@@ -273,7 +273,8 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		testCaseLongMountOptions()
 	})
 
-	ginkgo.It("should not pass profile as a user-specified mountOption to gcsfuse when profile is specified", func() {
+	// TODO(fuechr): add test for 'should pass profile' once storage profiles feature goes GA
+	ginkgo.It("should not pass profile as a user-specified mountOption to gcsfuse when profile is specified and 'enable-gcsfuse-profiles-internal' flag is false", func() {
 		testGcsfuseProfilesFlagFilters()
 	})
 }

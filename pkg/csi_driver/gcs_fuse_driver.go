@@ -38,8 +38,9 @@ import (
 const DefaultName = "gcsfuse.csi.storage.gke.io"
 
 type FeatureGCSFuseProfiles struct {
-	Enabled       bool
-	ScannerConfig *profiles.ScannerConfig
+	Enabled                       bool
+	ScannerConfig                 *profiles.ScannerConfig
+	EnableGcsfuseProfilesInternal bool
 }
 
 type GCSDriverFeatureOptions struct {

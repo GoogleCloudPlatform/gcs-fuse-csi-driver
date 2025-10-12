@@ -259,6 +259,24 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				expectedSupported:          false,
 				minFeatureVersionSupported: TokenServerSidecarMinVersion,
 			},
+			{
+				name:                       "Storage Profiles Internal - should return false for unsupported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.16.7-gke.1@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: TokenServerSidecarMinVersion,
+			},
+			{
+				name:                       "Storage Profiles Internal - should return false for unsupported sidecar version",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.2-gke.2@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "Storage Profiles Internal - should return true for supported sidecar version",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.2@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
 		}
 
 		for _, tc := range testCases {
@@ -668,4 +686,143 @@ func TestParseVolumeAttributes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestRemoveDisallowedMountOptions(t *testing.T) {
+	// Define test cases
+	testCases := []struct {
+		name            string
+		mountOptions    []string
+		disallowedFlags map[string]bool
+		expected        []string
+	}{
+		{
+			name:            "empty mount options, results in original mountOptions",
+			mountOptions:    []string{},
+			disallowedFlags: map[string]bool{"debug_fuse": true},
+			expected:        []string{},
+		},
+		{
+			name:            "nil disallowed flags, results in original mountOptions",
+			mountOptions:    []string{"debug_fuse", "profile=inference"},
+			disallowedFlags: nil,
+			expected:        []string{"debug_fuse", "profile=inference"},
+		},
+		{
+			name:            "no disallowed flags specified, results in original mountOptions",
+			mountOptions:    []string{"debug_fuse", "profile=inference"},
+			disallowedFlags: map[string]bool{"NA": true},
+			expected:        []string{"debug_fuse", "profile=inference"},
+		},
+		{
+			name:         "debug_fuse in disallowed flags, results in mountOptions stripped of debug_fuse",
+			mountOptions: []string{"debug_gcs", "gid:1000", "debug_fuse"},
+			disallowedFlags: map[string]bool{
+				"debug_fuse": true,
+			},
+			expected: []string{"debug_gcs", "gid:1000"},
+		},
+		{
+			name:         "all flags are disallowed, results in all flags stripped from mount options",
+			mountOptions: []string{"debug_gcs", "profile=inference", "profile:inference"},
+			disallowedFlags: map[string]bool{
+				"debug_gcs": true,
+				"profile":   true,
+			},
+			expected: []string{},
+		},
+		{
+			name:            "no matching disallowed flags, results in noop",
+			mountOptions:    []string{"uid:1001", "gid=1002"},
+			disallowedFlags: map[string]bool{"debug_fuse": true},
+			expected:        []string{"uid:1001", "gid=1002"},
+		},
+	}
+
+	// Run test cases
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := removeDisallowedMountOptions(tc.mountOptions, tc.disallowedFlags)
+
+			if diff := cmp.Diff(actual, tc.expected); diff != "" {
+				t.Errorf("test %q failed: got %v, but want %v", tc.name, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGenerateDisallowedFlagsMap(t *testing.T) {
+	t.Parallel()
+	driver := initTestDriver(t, nil)
+	driver.config.FeatureOptions = &GCSDriverFeatureOptions{
+		FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{
+			EnableGcsfuseProfilesInternal: false,
+		},
+	}
+	cases := []struct {
+		name           string
+		image          string
+		expectedMap    map[string]bool
+		expectErr      error
+		enableProfiles bool
+	}{
+		{
+			name:           "nil sidecar image results in failed map generation",
+			image:          "",
+			expectedMap:    map[string]bool{},
+			expectErr:      fmt.Errorf("unable to get disallowed flags, sidecar image is empty"),
+			enableProfiles: false,
+		},
+		{
+			name:           "sidecar version predates storage profiles - results in disllowed profile flag",
+			image:          "v1.18.0-gke.1",
+			expectedMap:    map[string]bool{GCSFuseProfileFlag: true},
+			expectErr:      nil,
+			enableProfiles: true,
+		},
+		{
+			name:           "sidecar version supports storage profiles but feature is disabled - results in disllowed profile flag",
+			image:          "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.2@sha256:abcd",
+			expectedMap:    map[string]bool{GCSFuseProfileFlag: true},
+			enableProfiles: false,
+			expectErr:      nil,
+		},
+		{
+			name:           "sidecar version supports storage profiles and feature is enables - results in empty map",
+			image:          "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.4-gke.2@sha256:abcd",
+			expectedMap:    map[string]bool{},
+			enableProfiles: true,
+			expectErr:      nil,
+		},
+	}
+
+	for _, test := range cases {
+		driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal = false
+		if test.enableProfiles {
+			driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal = true
+		}
+		resultMap, err := driver.generateDisallowedFlagsMap(test.image)
+		gotExpectedError(t, test.expectErr, err, test.name)
+		if diff := cmp.Diff(resultMap, test.expectedMap); diff != "" {
+			t.Errorf("error mismatch in test %s (-got +want):\n%s", test.name, diff)
+		}
+	}
+}
+
+func gotExpectedError(t *testing.T, wantErr error, gotErr error, testName string) {
+	t.Helper()
+	if wantErr == nil && gotErr == nil {
+		return
+	}
+	if gotErr != nil && wantErr == nil {
+		t.Errorf("%s: got error %v, want nil", testName, gotErr)
+		return
+	}
+	if gotErr == nil && wantErr != nil {
+		t.Errorf("%s: got nil, want error", testName)
+		return
+	}
+	if gotErr.Error() != wantErr.Error() {
+		t.Errorf("%s: got error message: %q, expected: %q", testName, gotErr.Error(), wantErr.Error())
+	}
 }
