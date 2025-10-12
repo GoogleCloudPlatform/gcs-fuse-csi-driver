@@ -63,11 +63,12 @@ var (
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver.")
 	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
 
-	// Bucket scanner flags.
-	enableBucketScanner          = flag.Bool("enable-bucket-scanner", false, "Enable the bucket scanner feature.")
-	datafluxParallelism          = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
-	datafluxBatchSize            = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
-	datafluxSkipDirectoryObjects = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
+	// GCSFuse profiles flags.
+	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
+	datafluxParallelism           = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
+	datafluxBatchSize             = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
+	datafluxSkipDirectoryObjects  = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
+	enableGcsfuseProfilesInternal = flag.Bool("enable-gcsfuse-profiles-internal", false, "Allow the temporarily disallowed gcsfuse profiles flag ('profile') to be passed for internal use only")
 
 	// Leader election flags.
 	leaderElection              = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
@@ -149,31 +150,10 @@ func main() {
 		klog.Fatalf("Failed to set up storage service manager: %v", err)
 	}
 
-	var mounter mount.Interface
-	var mm metrics.Manager
-	if *runNode {
-		if *nodeID == "" {
-			klog.Fatalf("NodeID cannot be empty for node service")
-		}
-
-		clientset.ConfigurePodLister(*nodeID)
-		clientset.ConfigureNodeLister(*nodeID)
-
-		mounter, err = csimounter.New("", *fuseSocketDir)
-		if err != nil {
-			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
-		}
-
-		if *metricsEndpoint != "" {
-			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
-			mm.InitializeHTTPHandler()
-		}
-	}
-
 	featureOptions := &driver.GCSDriverFeatureOptions{
-		FeatureScanner: &driver.FeatureScanner{
-			Enabled: *enableBucketScanner,
-			Config: &scanner.ScannerConfig{
+		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
+			Enabled: *enableGCSFuseProfiles,
+			ScannerConfig: &profiles.ScannerConfig{
 				KubeAPIQPS:                  *kubeAPIQPS,
 				KubeAPIBurst:                *kubeAPIBurst,
 				ResyncPeriod:                time.Duration(*informerResyncDurationSec) * time.Second,
@@ -184,13 +164,41 @@ func main() {
 				LeaderElectionLeaseDuration: *leaderElectionLeaseDuration,
 				LeaderElectionRenewDeadline: *leaderElectionRenewDeadline,
 				LeaderElectionRetryPeriod:   *leaderElectionRetryPeriod,
-				DatafluxConfig: &scanner.DatafluxConfig{
+				DatafluxConfig: &profiles.DatafluxConfig{
 					Parallelism:          *datafluxParallelism,
 					BatchSize:            *datafluxBatchSize,
 					SkipDirectoryObjects: *datafluxSkipDirectoryObjects,
 				},
 			},
+			EnableGcsfuseProfilesInternal: *enableGcsfuseProfilesInternal,
 		},
+	}
+
+	var mounter mount.Interface
+	var mm metrics.Manager
+	if *runNode {
+		if *nodeID == "" {
+			klog.Fatalf("NodeID cannot be empty for node service")
+		}
+
+		clientset.ConfigurePodLister(ctx, *nodeID)
+		clientset.ConfigureNodeLister(ctx, *nodeID)
+
+		if featureOptions.FeatureGCSFuseProfiles.Enabled {
+			// Curently, only the gcsfuse profiles feature actually uses these listers.
+			clientset.ConfigurePVLister(ctx)
+			clientset.ConfigureSCLister(ctx)
+		}
+
+		mounter, err = csimounter.New("", *fuseSocketDir)
+		if err != nil {
+			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
+		}
+
+		if *metricsEndpoint != "" {
+			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
+			mm.InitializeHTTPHandler()
+		}
 	}
 
 	config := &driver.GCSDriverConfig{

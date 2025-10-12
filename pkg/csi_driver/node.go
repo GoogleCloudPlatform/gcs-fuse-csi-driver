@@ -266,6 +266,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
+	disallowedFlags, err := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to generate disallowed flags map err:%v", err)
+	}
+
+	fuseMountOptions = removeDisallowedMountOptions(fuseMountOptions, disallowedFlags)
 	// Start to mount
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
@@ -388,6 +394,11 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	for _, container := range pod.Spec.InitContainers {
+		if container.Name == webhook.GcsFuseSidecarName {
+			return container.Image
+		}
+	}
+	for _, container := range pod.Spec.Containers {
 		if container.Name == webhook.GcsFuseSidecarName {
 			return container.Image
 		}
