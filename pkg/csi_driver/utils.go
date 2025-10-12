@@ -73,7 +73,9 @@ const (
 	SidecarBucketAccessCheckMinVersion     = "v1.99.0-gke.0"
 	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
+	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
+	GCSFuseProfileFlag                     = "profile"
 )
 
 var (
@@ -593,4 +595,37 @@ func ParseFlagMapFromFlagFile(flagFileContent string) map[string]string {
 		configFlags[key] = value
 	}
 	return configFlags
+}
+
+// removeDisallowedMountOptions removes any flags in 'disallowedFlags' from fuse mount options
+func removeDisallowedMountOptions(fuseMountOptions []string, disallowedFlags map[string]bool) []string {
+	if len(disallowedFlags) == 0 {
+		return fuseMountOptions
+	}
+	n := 0
+	for _, item := range fuseMountOptions {
+		parts := strings.FieldsFunc(item, func(r rune) bool {
+			return r == ':' || r == '='
+		})
+		key := parts[0]
+
+		if !disallowedFlags[key] {
+			fuseMountOptions[n] = item
+			n++
+		}
+	}
+	return fuseMountOptions[:n]
+}
+
+// generateDisallowedFlagsMap generates a list of flags that should or shouldn't be passed to sidecar based on sidcar image version
+func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) (map[string]bool, error) {
+	disallowedFlags := map[string]bool{}
+	if gcsFuseSidecarImage == "" {
+		return disallowedFlags, fmt.Errorf("unable to get disallowed flags, sidecar image is empty")
+	}
+	GCSFuseProfileFlagVal := !(driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion))
+	if GCSFuseProfileFlagVal {
+		disallowedFlags[GCSFuseProfileFlag] = GCSFuseProfileFlagVal
+	}
+	return disallowedFlags, nil
 }
