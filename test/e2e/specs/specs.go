@@ -161,7 +161,7 @@ func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 				},
 				RestartPolicy:                corev1.RestartPolicyAlways,
 				Volumes:                      make([]corev1.Volume, 0),
-				AutomountServiceAccountToken: ptr.To(true),
+				AutomountServiceAccountToken: ptr.To(false),
 				Tolerations: []corev1.Toleration{
 					{Operator: corev1.TolerationOpExists},
 				},

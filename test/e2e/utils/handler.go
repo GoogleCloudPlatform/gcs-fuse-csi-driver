@@ -240,7 +240,7 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, testParams.GinkgoSkip)
 	}
 
-	if testParams.DeployOverlayName == "stable" {
+	if testParams.DeployOverlayName == "stable" || testParams.DeployOverlayName == "sidecar_bucket_access_check" {
 		skipTests = append(skipTests, "Dynamic.PV")
 	}
 
