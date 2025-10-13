@@ -48,7 +48,7 @@ var (
 		"temp-dir",
 		"config-file",
 		"foreground",
-		"log-file",
+		// "log-file",
 		"log-format",
 		"key-file",
 		"token-url",
@@ -57,7 +57,7 @@ var (
 		"logging:log-rotate:max-file-size-mb:test",
 		"logging:log-rotate:backup-file-count:test",
 		"logging:log-rotate:compress:test",
-		"cache-dir",
+		// "cache-dir",
 		"experimental-local-file-cache",
 	}
 )

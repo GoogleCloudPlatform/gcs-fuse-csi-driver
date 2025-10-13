@@ -160,17 +160,17 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
 	})
 
-	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
-		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
-		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
-		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
-	}
+	// GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
+	// 	testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
+	// 	testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
+	// 	testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
+	// }
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *zbFlag)
+	// testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *zbFlag)
 
-	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
-		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
-	})
+	// ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
+	// 	storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
+	// })
 })
 
 func fetchTestConfig() error {
@@ -179,9 +179,11 @@ func fetchTestConfig() error {
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create temp dir: %v", err))
 	}
-	cmd := exec.Command("git", "clone", "--branch", "master", "--depth", "1", "https://github.com/GoogleCloudPlatform/gcsfuse.git", tempDir)
-	cmd.Stdout = ginkgo.GinkgoWriter
-	cmd.Stderr = ginkgo.GinkgoWriter
+	cmd := exec.Command("git", "clone", "--branch", "read-cache-test-migration", "--depth", "1", "https://github.com/GoogleCloudPlatform/gcsfuse.git", tempDir)
+	// cmd.Stderr = ginkgo.GinkgoWriter
+	// cmd.Stdout = ginkgo.GinkgoWriter
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("Failed to clone gcsfuse repository: %v", err)

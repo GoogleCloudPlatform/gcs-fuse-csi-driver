@@ -74,7 +74,7 @@ func main() {
 		klog.Warningf("Failed to set flags: %v", err)
 	}
 	flag.Parse()
-	klog.SetOutput(io.MultiWriter(ginkgo.GinkgoWriter))
+	klog.SetOutput(io.MultiWriter(os.Stderr, ginkgo.GinkgoWriter))
 
 	if *inProw {
 		utils.EnsureVariable(boskosResourceType, true, "'boskos-resource-type' must be set when running in prow")

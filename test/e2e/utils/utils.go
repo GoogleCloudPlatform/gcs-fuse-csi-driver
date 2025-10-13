@@ -39,6 +39,7 @@ type TestPackage struct {
 type TestConfig struct {
 	Flags      []string       `yaml:"flags"`
 	Compatible TestBucketType `yaml:"compatible"`
+	Run        string         `yaml:"run"`
 }
 
 type TestBucketType struct {

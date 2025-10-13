@@ -217,6 +217,7 @@ func Handle(testParams *TestParameters) error {
 		"--junit-report", "junit-gcsfusecsi.xml",
 		"--output-dir", artifactsDir,
 		testParams.PkgDir+"/test/e2e/",
+		"--always-emit-ginkgo-writer",
 		"--",
 		"--client-protocol", testParams.GcsfuseClientProtocol,
 		"--provider", "skeleton",
@@ -225,6 +226,8 @@ func Handle(testParams *TestParameters) error {
 		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
 		"--api-env", envAPIMap[testParams.APIEndpointOverride],
 	)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
 
 	if err := runCommand("Running Ginkgo e2e test...", cmd); err != nil {
 		return fmt.Errorf("failed to run e2e tests with ginkgo: %w", err)
