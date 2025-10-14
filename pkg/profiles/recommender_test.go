@@ -22,7 +22,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -67,6 +70,15 @@ var (
 			"gke-gcsfuse/bucket-scan-hns-enabled":       "true",
 		},
 		SCName: "gcsfusecsi-training",
+	}
+
+	testNodeConfig = clientset.FakeNodeConfig{
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceMemory:           resource.MustParse("2Gi"),
+				corev1.ResourceEphemeralStorage: resource.MustParse("20Gi"),
+			},
+		},
 	}
 
 	csiDriverVolumeAttributeKeys = map[string]struct{}{
@@ -155,8 +167,34 @@ func (b *SCConfigBuilder) WithoutParameter(key string) *SCConfigBuilder {
 	return b
 }
 
+// WithParameter sets a specific key-value pair in the Parameters map.
+func (b *SCConfigBuilder) WithParameter(key, value string) *SCConfigBuilder {
+	if b.config.Parameters == nil {
+		b.config.Parameters = make(map[string]string)
+	}
+	b.config.Parameters[key] = value
+	return b
+}
+
 // Build returns the final FakeSCConfig.
 func (b *SCConfigBuilder) Build() clientset.FakeSCConfig {
+	return b.config
+}
+
+// NodeConfigBuilder helps create FakeNodeConfig instances for tests.
+type NodeConfigBuilder struct {
+	config clientset.FakeNodeConfig
+}
+
+// NewNodeConfigBuilder initializes a builder with default testNodeConfig values.
+func NewNodeConfigBuilder() *NodeConfigBuilder {
+	// Clone to avoid modifying the global variable
+	cfg := testNodeConfig
+	return &NodeConfigBuilder{config: cfg}
+}
+
+// Build returns the final FakeNodeConfig.
+func (b *NodeConfigBuilder) Build() clientset.FakeNodeConfig {
 	return b.config
 }
 
@@ -166,6 +204,8 @@ func TestBuildProfileConfig(t *testing.T) {
 		targetPath string
 		pvConfig   clientset.FakePVConfig
 		scConfig   clientset.FakeSCConfig
+		nodeName   string
+		nodeConfig clientset.FakeNodeConfig
 		wantErr    bool
 		wantConfig *ProfileConfig
 	}{
@@ -175,12 +215,253 @@ func TestBuildProfileConfig(t *testing.T) {
 			wantErr:    false,
 			pvConfig:   NewPVConfigBuilder().Build(),
 			scConfig:   NewSCConfigBuilder().Build(),
+			nodeName:   "test-node",
+			nodeConfig: NewNodeConfigBuilder().Build(),
 			wantConfig: &ProfileConfig{
 				pvDetails: &pvDetails{
 					name:           "test-pv",
 					numObjects:     1000,
 					totalSizeBytes: 1000000000,
 				},
+				scDetails: &scDetails{
+					fileCacheMediumPriority: map[string][]string{
+						"general_purpose": {"ram", "lssd"},
+						"gpu":             {"ram", "lssd"},
+						"tpu":             {"ram"},
+					},
+					fuseMemoryAllocatableFactor:           0.7,
+					fuseEphemeralStorageAllocatableFactor: 0.85,
+					VolumeAttributes: map[string]string{
+						"mountOptions":                   "1",
+						"fileCacheCapacity":              "2",
+						"fileCacheForRangeRead":          "3",
+						"metadataStatCacheCapacity":      "4",
+						"metadataTypeCacheCapacity":      "5",
+						"metadataCacheTTLSeconds":        "6",
+						"gcsfuseLoggingSeverity":         "7",
+						"skipCSIBucketAccessCheck":       "8",
+						"hostNetworkPodKSA":              "9",
+						"identityProvider":               "10",
+						"disableMetrics":                 "11",
+						"identityPool":                   "12",
+						"enableCloudProfilerForSidecar":  "13",
+						"gcsfuseMetadataPrefetchOnMount": "14",
+					},
+					mountOptions: []string{
+						"implicit-dirs",
+						"metadata-cache:negative-ttl-secs:0",
+						"metadata-cache:ttl-secs:-1",
+						"file-cache:cache-file-for-range-read:true",
+						"file-system:kernel-list-cache-ttl-secs:-1",
+						"read_ahead_kb=1024",
+					},
+				},
+				nodeDetails: &nodeDetails{
+					name: "test-node",
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           2 * 1024 * 1024 * 1024,
+						ephemeralStorageBytes: 20 * 1024 * 1024 * 1024,
+					},
+					nodeType: "general_purpose",
+				},
+			},
+		},
+		{
+			name:       "TestBuildProfileConfig - Should fail with invalid target path",
+			targetPath: "/tmp/invalidpath",
+			wantErr:    true,
+			pvConfig:   NewPVConfigBuilder().Build(),
+			scConfig:   NewSCConfigBuilder().Build(),
+			nodeConfig: NewNodeConfigBuilder().Build(),
+		},
+		{
+			name:       "TestBuildProfileConfig - Should fail if PV annotations missing",
+			targetPath: testTargetPath,
+			pvConfig:   NewPVConfigBuilder().WithAnnotations(nil).Build(),
+			scConfig:   NewSCConfigBuilder().Build(),
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			wantErr:    true,
+		},
+		{
+			name:       "TestBuildProfileConfig - Should fail if SC name empty",
+			pvConfig:   NewPVConfigBuilder().WithSCName("").Build(),
+			scConfig:   NewSCConfigBuilder().Build(),
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			targetPath: testTargetPath,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := clientset.NewFakeClientset()
+			// Check if default-like structs, to avoid creating empty PV/SC
+			if !reflect.DeepEqual(tt.pvConfig, clientset.FakePVConfig{}) {
+				fakeClient.CreatePV(tt.pvConfig)
+			}
+			if !reflect.DeepEqual(tt.scConfig, clientset.FakeSCConfig{}) {
+				fakeClient.CreateSC(tt.scConfig)
+			}
+			if !reflect.DeepEqual(tt.nodeConfig, clientset.FakeNodeConfig{}) {
+				fakeClient.CreateNode(tt.nodeConfig)
+			}
+
+			got, err := BuildProfileConfig(&BuildProfileConfigParams{
+				targetPath:          tt.targetPath,
+				clientset:           fakeClient,
+				volumeAttributeKeys: csiDriverVolumeAttributeKeys,
+				nodeName:            tt.nodeName,
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			opts := []cmp.Option{
+				cmp.AllowUnexported(ProfileConfig{}, pvDetails{}, nodeDetails{}, parsedResourceList{}, scDetails{}),
+			}
+			if diff := cmp.Diff(tt.wantConfig, got, opts...); diff != "" {
+				t.Errorf("BuildProfileConfig() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestBuildNodeDetails(t *testing.T) {
+	tests := []struct {
+		name    string
+		node    *corev1.Node
+		want    *nodeDetails
+		wantErr bool
+	}{
+		{
+			name: "TestBuildNodeDetails - General purpose node",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceMemory:           resource.MustParse("2Gi"),
+						corev1.ResourceEphemeralStorage: resource.MustParse("20Gi"),
+					},
+				},
+			},
+			want: &nodeDetails{
+				name:     "test-node",
+				nodeType: nodeTypeGeneralPurpose,
+				nodeAllocatables: &parsedResourceList{
+					memoryBytes:           2 * 1024 * 1024 * 1024,
+					ephemeralStorageBytes: 20 * 1024 * 1024 * 1024,
+				},
+			},
+		},
+		{
+			name: "TestBuildNodeDetails - GPU node",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "gpu-node"},
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceMemory:           resource.MustParse("2Gi"),
+						corev1.ResourceEphemeralStorage: resource.MustParse("20Gi"),
+						nvidiaGpuResourceName:           resource.MustParse("1"),
+					},
+				},
+			},
+			want: &nodeDetails{
+				name:     "gpu-node",
+				nodeType: nodeTypeGPU,
+				nodeAllocatables: &parsedResourceList{
+					memoryBytes:           2 * 1024 * 1024 * 1024,
+					ephemeralStorageBytes: 20 * 1024 * 1024 * 1024,
+				},
+			},
+		},
+		{
+			name: "TestBuildNodeDetails - TPU node",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "tpu-node"},
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceMemory:           resource.MustParse("2Gi"),
+						corev1.ResourceEphemeralStorage: resource.MustParse("20Gi"),
+						googleTpuResourceName:           resource.MustParse("1"),
+					},
+				},
+			},
+			want: &nodeDetails{
+				name:     "tpu-node",
+				nodeType: nodeTypeTPU,
+				nodeAllocatables: &parsedResourceList{
+					memoryBytes:           2 * 1024 * 1024 * 1024,
+					ephemeralStorageBytes: 20 * 1024 * 1024 * 1024,
+				},
+			},
+		},
+		{
+			name: "TestBuildNodeDetails - Node with Local SSD annotation",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "lssd-node",
+					Annotations: map[string]string{
+						gkeAppliedNodeLabelsAnnotationKey: ephemeralStorageLocalSSDLabelKey + "=" + util.TrueStr,
+					},
+				},
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceMemory:           resource.MustParse("1Gi"),
+						corev1.ResourceEphemeralStorage: resource.MustParse("10Gi"),
+					},
+				},
+			},
+			want: &nodeDetails{
+				name:     "lssd-node",
+				nodeType: nodeTypeGeneralPurpose,
+				nodeAllocatables: &parsedResourceList{
+					memoryBytes:           1 * 1024 * 1024 * 1024,
+					ephemeralStorageBytes: 10 * 1024 * 1024 * 1024,
+				},
+				hasLocalSSDEphemeralStorageAnnotation: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildNodeDetails(tt.node)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("buildNodeDetails() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(nodeDetails{}, parsedResourceList{})); diff != "" {
+				t.Errorf("buildNodeDetails() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestBuildSCDetails(t *testing.T) {
+	defaultSC := NewSCConfigBuilder().Build()
+	defaultParams := defaultSC.Parameters
+	defaultMountOptions := defaultSC.MountOptions
+
+	tests := []struct {
+		name    string
+		sc      *storagev1.StorageClass
+		want    *scDetails
+		wantErr bool
+	}{
+		{
+			name: "TestBuildSCDetails - Valid StorageClass",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "test-sc"},
+				Parameters:   defaultParams,
+				MountOptions: defaultMountOptions,
+			},
+			want: &scDetails{
 				fileCacheMediumPriority: map[string][]string{
 					"general_purpose": {"ram", "lssd"},
 					"gpu":             {"ram", "lssd"},
@@ -204,99 +485,127 @@ func TestBuildProfileConfig(t *testing.T) {
 					"enableCloudProfilerForSidecar":  "13",
 					"gcsfuseMetadataPrefetchOnMount": "14",
 				},
-				mountOptions: []string{
-					"implicit-dirs",
-					"metadata-cache:negative-ttl-secs:0",
-					"metadata-cache:ttl-secs:-1",
-					"file-cache:cache-file-for-range-read:true",
-					"file-system:kernel-list-cache-ttl-secs:-1",
-					"read_ahead_kb=1024",
-				},
+				mountOptions: defaultMountOptions,
 			},
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail with invalid target path",
-			targetPath: "/tmp/invalidpath",
-			wantErr:    true,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().Build(),
+			name: "TestBuildSCDetails - Nil Parameters",
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "nil-params-sc"},
+			},
+			wantErr: true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if PV annotations missing",
-			targetPath: testTargetPath,
-			pvConfig:   NewPVConfigBuilder().WithAnnotations(nil).Build(),
-			scConfig:   NewSCConfigBuilder().Build(),
-			wantErr:    true,
+			name: "TestBuildSCDetails - Missing workloadType",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-workload-sc"},
+				Parameters:   NewSCConfigBuilder().WithoutParameter("workloadType").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if SC name empty",
-			pvConfig:   NewPVConfigBuilder().WithSCName("").Build(),
-			scConfig:   NewSCConfigBuilder().Build(),
-			targetPath: testTargetPath,
-			wantErr:    true,
+			name: "TestBuildSCDetails - Invalid workloadType",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-workload-sc"},
+				Parameters:   NewSCConfigBuilder().WithParameter("workloadType", "invalid").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if SC parameters nil",
-			targetPath: testTargetPath,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().WithParameters(nil).Build(),
-			wantErr:    true,
+			name: "TestBuildSCDetails - Missing fuseFileCacheMediumPriority",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-priority-sc"},
+				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseFileCacheMediumPriority").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
 		},
 		{
-			name:       "testbuildprofileconfig - should fail if workloadType missing",
-			targetPath: testTargetPath,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().WithoutParameter("workloadType").Build(),
-			wantErr:    true,
+			name: "TestBuildSCDetails - Invalid fuseFileCacheMediumPriority",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-priority-sc"},
+				Parameters:   NewSCConfigBuilder().WithParameter("fuseFileCacheMediumPriority", "gpu:ram,:bad").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if fuseFileCacheMediumPriority missing",
-			targetPath: testTargetPath,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().WithoutParameter("fuseFileCacheMediumPriority").Build(),
-			wantErr:    true,
+			name: "TestBuildSCDetails - Missing fuseMemoryAllocatableFactor",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-mem-factor-sc"},
+				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseMemoryAllocatableFactor").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if fuseMemoryAllocatableFactor missing",
-			targetPath: testTargetPath,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().WithoutParameter("fuseMemoryAllocatableFactor").Build(),
-			wantErr:    true,
+			name: "TestBuildSCDetails - Invalid fuseMemoryAllocatableFactor",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-mem-factor-sc"},
+				Parameters:   NewSCConfigBuilder().WithParameter("fuseMemoryAllocatableFactor", "-0.1").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if fuseEphemeralStorageAllocatableFactor missing",
-			targetPath: testTargetPath,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().WithoutParameter("fuseEphemeralStorageAllocatableFactor").Build(),
-			wantErr:    true,
+			name: "TestBuildSCDetails - Missing fuseEphemeralStorageAllocatableFactor",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-storage-factor-sc"},
+				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseEphemeralStorageAllocatableFactor").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
+		},
+		{
+			name: "TestBuildSCDetails - Invalid fuseEphemeralStorageAllocatableFactor",
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-storage-factor-sc"},
+				Parameters:   NewSCConfigBuilder().WithParameter("fuseEphemeralStorageAllocatableFactor", "abc").Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			wantErr: true,
+		},
+		{
+			name: "TestBuildSCDetails - Only keep relevant volume attributes",
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "extra-params-sc"},
+				Parameters: map[string]string{
+					"workloadType":                          "inference",
+					"fuseFileCacheMediumPriority":           "general_purpose:ram",
+					"fuseMemoryAllocatableFactor":           "0.1",
+					"fuseEphemeralStorageAllocatableFactor": "0.1",
+					"fileCacheCapacity":                     "10Gi", // Keep
+					"unknownParameter":                      "should-be-ignored",
+				},
+				MountOptions: defaultMountOptions,
+			},
+			want: &scDetails{
+				fileCacheMediumPriority: map[string][]string{
+					"general_purpose": {"ram"},
+				},
+				fuseMemoryAllocatableFactor:           0.1,
+				fuseEphemeralStorageAllocatableFactor: 0.1,
+				VolumeAttributes: map[string]string{
+					"fileCacheCapacity": "10Gi",
+				},
+				mountOptions: defaultMountOptions,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeClient := clientset.NewFakeClientset()
-			// Check if default-like structs, to avoid creating empty PV/SC
-			if !reflect.DeepEqual(tt.pvConfig, clientset.FakePVConfig{}) {
-				fakeClient.CreatePV(tt.pvConfig)
-			}
-			if !reflect.DeepEqual(tt.scConfig, clientset.FakeSCConfig{}) {
-				fakeClient.CreateSC(tt.scConfig)
-			}
-
-			got, err := BuildProfileConfig(tt.targetPath, fakeClient, csiDriverVolumeAttributeKeys)
+			got, err := buildSCDetails(tt.sc, csiDriverVolumeAttributeKeys)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("buildSCDetails() error = %v, wantErr %v", err, tt.wantErr)
 			}
-
 			if tt.wantErr {
 				return
 			}
-
-			opts := []cmp.Option{
-				cmp.AllowUnexported(ProfileConfig{}, pvDetails{}),
-			}
-			if diff := cmp.Diff(tt.wantConfig, got, opts...); diff != "" {
-				t.Errorf("BuildProfileConfig() returned unexpected diff (-want +got):\n%s", diff)
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(scDetails{})); diff != "" {
+				t.Errorf("buildSCDetails() returned unexpected diff (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -384,7 +693,7 @@ func TestParseFileCacheMediumPriority(t *testing.T) {
 	}
 }
 
-func TestPVDetailsFromAnnotations(t *testing.T) {
+func TestBuildPVDetails(t *testing.T) {
 	tests := []struct {
 		name        string
 		annotations map[string]string
@@ -392,7 +701,7 @@ func TestPVDetailsFromAnnotations(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name: "TestGetPVDetailsFromAnnotations - Should parse valid annotations",
+			name: "TestBuildPVDetails - Should parse valid annotations",
 			annotations: map[string]string{
 				annotationNumObjects: "12345",
 				annotationTotalSize:  "67890",
@@ -401,26 +710,26 @@ func TestPVDetailsFromAnnotations(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:        "TestGetPVDetailsFromAnnotations - Should return error if annotations nil",
+			name:        "TestBuildPVDetails - Should return error if annotations nil",
 			annotations: nil,
 			wantErr:     true,
 		},
 		{
-			name: "TestGetPVDetailsFromAnnotations - Should return error if numObjects missing",
+			name: "TestBuildPVDetails - Should return error if numObjects missing",
 			annotations: map[string]string{
 				annotationTotalSize: "67890",
 			},
 			wantErr: true,
 		},
 		{
-			name: "TestGetPVDetailsFromAnnotations - Should return error if totalSize missing",
+			name: "TestBuildPVDetails - Should return error if totalSize missing",
 			annotations: map[string]string{
 				annotationNumObjects: "12345",
 			},
 			wantErr: true,
 		},
 		{
-			name: "TestGetPVDetailsFromAnnotations - Should return error if numObjects invalid",
+			name: "TestBuildPVDetails - Should return error if numObjects invalid",
 			annotations: map[string]string{
 				annotationNumObjects: "abc",
 				annotationTotalSize:  "67890",
@@ -428,7 +737,7 @@ func TestPVDetailsFromAnnotations(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "TestGetPVDetailsFromAnnotations - Should return error if totalSize invalid",
+			name: "TestBuildPVDetails - Should return error if totalSize invalid",
 			annotations: map[string]string{
 				annotationNumObjects: "12345",
 				annotationTotalSize:  "def",
@@ -442,7 +751,7 @@ func TestPVDetailsFromAnnotations(t *testing.T) {
 			pv := &corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-pv", Annotations: tt.annotations},
 			}
-			got, err := pvDetailsFromAnnotations(pv)
+			got, err := buildPVDetails(pv)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("getPVDetailsFromAnnotations() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -524,6 +833,186 @@ func TestSelectFromMapIfKeysMatch(t *testing.T) {
 			got := selectFromMapIfKeysMatch(tc.target, tc.keys)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("SelectFromMapIfKeysMatch(%v, %v) returned diff (-want +got):\n%s", tc.target, tc.keys, diff)
+			}
+		})
+	}
+}
+
+func TestIsGpuNodeByResource(t *testing.T) {
+	tests := []struct {
+		name string
+		node *corev1.Node
+		want bool
+	}{
+		{
+			name: "TestIsGpuNodeByResource - Should return true for GPU node",
+			node: &corev1.Node{Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{nvidiaGpuResourceName: resource.MustParse("1")}}},
+			want: true,
+		},
+		{
+			name: "TestIsGpuNodeByResource - Should return false for non-GPU node",
+			node: &corev1.Node{Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}}},
+			want: false,
+		},
+		{
+			name: "TestIsGpuNodeByResource - Should return false for zero GPUs",
+			node: &corev1.Node{Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{nvidiaGpuResourceName: resource.MustParse("0")}}},
+			want: false,
+		},
+		{
+			name: "TestIsGpuNodeByResource - Should return false for nil node",
+			node: nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isGpuNodeByResource(tt.node); got != tt.want {
+				t.Errorf("isGpuNodeByResource() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTpuNodeByResource(t *testing.T) {
+	tests := []struct {
+		name string
+		node *corev1.Node
+		want bool
+	}{
+		{
+			name: "TestIsTpuNodeByResource - Should return true for TPU node",
+			node: &corev1.Node{Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{googleTpuResourceName: resource.MustParse("1")}}},
+			want: true,
+		},
+		{
+			name: "TestIsTpuNodeByResource - Should return false for non-TPU node",
+			node: &corev1.Node{Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}}},
+			want: false,
+		},
+		{
+			name: "TestIsTpuNodeByResource - Should return false for zero TPUs",
+			node: &corev1.Node{Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{googleTpuResourceName: resource.MustParse("0")}}},
+			want: false,
+		},
+		{
+			name: "TestIsTpuNodeByResource - Should return false for nil node",
+			node: nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTpuNodeByResource(tt.node); got != tt.want {
+				t.Errorf("isTpuNodeByResource() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseResource(t *testing.T) {
+	tests := []struct {
+		name         string
+		resourceName corev1.ResourceName
+		resourceList corev1.ResourceList
+		want         int64
+		wantErr      bool
+	}{
+		{
+			name:         "TestParseResource - Should parse memory",
+			resourceName: corev1.ResourceMemory,
+			resourceList: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
+			want:         1024 * 1024 * 1024,
+			wantErr:      false,
+		},
+		{
+			name:         "TestParseResource - Should parse ephemeral storage",
+			resourceName: corev1.ResourceEphemeralStorage,
+			resourceList: corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("10G")},
+			want:         10 * 1000 * 1000 * 1000,
+			wantErr:      false,
+		},
+		{
+			name:         "TestParseResource - Should return 0 if resource not found",
+			resourceName: corev1.ResourceCPU,
+			resourceList: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
+			want:         0,
+			wantErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseResource(tt.resourceName, tt.resourceList)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseResource() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("parseResource() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasLocalSSDEphemeralStorageAnnotation(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{
+			name:        "TestHasLocalSSDEphemeralStorageAnnotation - Should return false for nil annotations",
+			annotations: nil,
+			want:        false,
+		},
+		{
+			name:        "TestHasLocalSSDEphemeralStorageAnnotation - Should return false for empty annotations",
+			annotations: map[string]string{},
+			want:        false,
+		},
+		{
+			name: "TestHasLocalSSDEphemeralStorageAnnotation - Should return false when key not present",
+			annotations: map[string]string{
+				"some-other-key": "value",
+			},
+			want: false,
+		},
+		{
+			name: "TestHasLocalSSDEphemeralStorageAnnotation - Should return true when label is present and true",
+			annotations: map[string]string{
+				gkeAppliedNodeLabelsAnnotationKey: "foo=bar," + ephemeralStorageLocalSSDLabelKey + "=" + util.TrueStr + ",baz=qux",
+			},
+			want: true,
+		},
+		{
+			name: "TestHasLocalSSDEphemeralStorageAnnotation - Should return false when label is present but not true",
+			annotations: map[string]string{
+				gkeAppliedNodeLabelsAnnotationKey: ephemeralStorageLocalSSDLabelKey + "=false",
+			},
+			want: false,
+		},
+		{
+			name: "TestHasLocalSSDEphemeralStorageAnnotation - Should handle spaces around label",
+			annotations: map[string]string{
+				gkeAppliedNodeLabelsAnnotationKey: "  " + ephemeralStorageLocalSSDLabelKey + "  =  " + util.TrueStr + "  ",
+			},
+			want: true,
+		},
+		{
+			name: "TestHasLocalSSDEphemeralStorageAnnotation - Should handle malformed pairs gracefully",
+			annotations: map[string]string{
+				gkeAppliedNodeLabelsAnnotationKey: "foo=bar,malformed," + ephemeralStorageLocalSSDLabelKey + "=" + util.TrueStr,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasLocalSSDEphemeralStorageAnnotation(tt.annotations); got != tt.want {
+				t.Errorf("hasLocalSSDEphemeralStorageAnnotation() = %v, want %v", got, tt.want)
 			}
 		})
 	}
