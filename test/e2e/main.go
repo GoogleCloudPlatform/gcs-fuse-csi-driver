@@ -42,6 +42,8 @@ var (
 	nodeImageType       = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
 	istioVersion        = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
 	gcsfuseEnableZB     = flag.Bool("gcsfuse-enable-zb", false, "use GCS Zonal Buckets for the tests")
+	gkeGcloudCommand    = flag.String("gke-gcloud-command", "gcloud", "(gke only) gcloud command used to create a cluster. Modify if you need to pass custom gcloud to create cluster.")
+	gkeGcloudArgs       = flag.String("gke-gcloud-args", "", "(gke only) Additional arguments to custom gcloud command.")
 
 	// Test infrastructure flags.
 	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -111,6 +113,8 @@ func main() {
 		IstioVersion:           *istioVersion,
 		GcsfuseClientProtocol:  *gcsfuseClientProtocol,
 		EnableZB:               *gcsfuseEnableZB,
+		GkeGcloudCommand:       *gkeGcloudCommand,
+		GkeGcloudArgs:          *gkeGcloudArgs,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {
