@@ -26,6 +26,11 @@ webhooks:
         operations: ["CREATE"]
         resources: ["pods"]
         scope: "Namespaced"
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["persistentvolumes"]
+        scope: "Cluster"
     clientConfig:
       caBundle: ""
       service:

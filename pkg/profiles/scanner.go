@@ -56,6 +56,7 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,14 +73,6 @@ const (
 	volumeAttributeScanTTLKey     = "bucketScanTTL"
 	leaseName                     = "gke-gcsfuse-scanner-leader"
 
-	// Annotation keys
-	annotationPrefix          = "gke-gcsfuse"
-	annotationStatus          = annotationPrefix + "/bucket-scan-status"
-	annotationNumObjects      = annotationPrefix + "/bucket-scan-num-objects"
-	annotationTotalSize       = annotationPrefix + "/bucket-scan-total-size-bytes"
-	annotationLastUpdatedTime = annotationPrefix + "/bucket-scan-last-updated-time"
-	annotationHNSEnabled      = annotationPrefix + "/bucket-scan-hns-enabled"
-
 	// Event reasons
 	reasonScanOperationStartError     = "ScanOperationStartError"
 	reasonScanOperationStartSucceeded = "ScanOperationStartSucceeded"
@@ -91,7 +84,6 @@ const (
 	// Bucket scan status values
 	scanCompleted = "completed"
 	scanTimeout   = "timeout"
-	scanOverride  = "override"
 
 	// Key prefixes for workqueue
 	pvPrefix  = "pv/"
@@ -690,7 +682,7 @@ func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVo
 	// The status annotation is already "override", but we patch it here along with
 	// the timestamp to mark the operation as complete and update the in-memory map.
 	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes, HNS enabled: %t", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes, bucketI.isHNSEnabled)
-	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanOverride); patchErr != nil {
+	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, profilesutil.ScanOverride); patchErr != nil {
 		return patchErr
 	}
 	return nil // Remove from queue since this is considered a complete and successful "scan" (bypass).
@@ -1010,11 +1002,11 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolume, bucketI *bucketInfo, status string) error {
 	currentTime := timeNow()
 	annotationsToUpdate := map[string]*string{
-		annotationStatus:          stringPtr(status),
-		annotationNumObjects:      int64Ptr(bucketI.numObjects),
-		annotationTotalSize:       int64Ptr(bucketI.totalSizeBytes),
-		annotationLastUpdatedTime: stringPtr(currentTime.UTC().Format(time.RFC3339)),
-		annotationHNSEnabled:      boolPtr(bucketI.isHNSEnabled),
+		profilesutil.AnnotationStatus:          stringPtr(status),
+		profilesutil.AnnotationNumObjects:      int64Ptr(bucketI.numObjects),
+		profilesutil.AnnotationTotalSize:       int64Ptr(bucketI.totalSizeBytes),
+		profilesutil.AnnotationLastUpdatedTime: stringPtr(currentTime.UTC().Format(time.RFC3339)),
+		profilesutil.AnnotationHNSEnabled:      boolPtr(bucketI.isHNSEnabled),
 	}
 	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, status)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
@@ -1025,70 +1017,13 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 	klog.Infof("Successfully updated annotations on PV %q with status %q", pv.Name, status)
 
 	// Update in-memory map only on terminal state updates.
-	if status == scanCompleted || status == scanTimeout || status == scanOverride {
+	if status == scanCompleted || status == scanTimeout || status == profilesutil.ScanOverride {
 		s.scanMutex.Lock()
 		s.lastSuccessfulScan[pv.Name] = currentTime
 		s.scanMutex.Unlock()
 		klog.V(6).Infof("Updated lastSuccessfulScan map for PV %q to %q", pv.Name, currentTime)
 	}
 	return nil
-}
-
-// parseNonNegativeIntegerFromString returns an error if the string fails
-// to be parsed as an integer, or if the integer is negative.
-func parseNonNegativeIntegerFromString(val string) (int64, error) {
-	valInt, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	if valInt < 0 {
-		return 0, fmt.Errorf("invalid negative integer value for %q", val)
-	}
-	return valInt, nil
-}
-
-// parseOverrideStatus checks that, if the override mode is set, the
-// PV has the required annotations with valid format/types. Returns a bucketInfo
-// with parsed results if valid, or returns an error otherwise.
-func parseOverrideStatus(pv *v1.PersistentVolume) (*bucketInfo, error) {
-	// Enforce required annotations for override mode and validate formats.
-	bucketI := bucketInfo{}
-	requiredAnnotations := []string{
-		annotationNumObjects,
-		annotationTotalSize,
-		annotationHNSEnabled,
-	}
-	for _, key := range requiredAnnotations {
-		// TODO(fuechr): Move this validation to mutating webhook so that the PV creation fails
-		// fast before getting to the scanner.
-		if _, exists := pv.Annotations[key]; !exists {
-			return nil, status.Errorf(codes.InvalidArgument, "status %q requires annotation %q", scanOverride, key)
-		}
-		switch key {
-		case annotationNumObjects:
-			val, err := parseNonNegativeIntegerFromString(pv.Annotations[key])
-			if err != nil {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
-			}
-			bucketI.numObjects = val
-		case annotationTotalSize:
-			val, err := parseNonNegativeIntegerFromString(pv.Annotations[key])
-			if err != nil {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
-			}
-			bucketI.totalSizeBytes = val
-		case annotationHNSEnabled:
-			val, err := strconv.ParseBool(pv.Annotations[annotationHNSEnabled])
-			if err != nil {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
-			}
-			bucketI.isHNSEnabled = val
-		default:
-			// This should never happen, but it's safer to check.
-			return nil, status.Errorf(codes.Internal, "unexpected key for override mode requiredAnnotations: %q", key)
-		}
-	}
-	return &bucketI, nil
 }
 
 // checkPVRelevance determines if a PersistentVolume is relevant for scanning.
@@ -1157,12 +1092,18 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 	}
 
 	// Handle the override annotation, if set.
-	if bucketStatus, ok := pv.Annotations[annotationStatus]; ok && bucketStatus == scanOverride {
+	if bucketStatus, ok := pv.Annotations[profilesutil.AnnotationStatus]; ok && bucketStatus == profilesutil.ScanOverride {
 		// Enforce required annotations for override mode and validate formats.
-		overrideInfo, err := parseOverrideStatus(pv)
+		numObjects, totalSizeBytes, isHNSEnabled, err := profilesutil.ParseOverrideStatus(pv)
 		if err != nil {
 			return nil, fmt.Errorf("failed to validate arguments for PV %q with override mode: %v", pv.Name, err)
 		}
+		overrideInfo := &bucketInfo{
+			numObjects:     numObjects,
+			totalSizeBytes: totalSizeBytes,
+			isHNSEnabled:   isHNSEnabled,
+		}
+
 		klog.Infof("PV %q: Override mode detected. Bypassing scan.", pv.Name)
 		// The PV is considered relevant but this directs syncPV and syncPod to the bypass logic.
 		overrideInfo.name = bucketI.name
@@ -1195,15 +1136,13 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 
 	// If the PV is relevant but doesn't yet have a last scan time, it hasn't been scanned yet.
 	// It is unexpected that the PV has scanner annotations unless the override mode is enabled,
-	// which has already been verified above. This should be flagged to the user to avoid
+	// which has already been verified in the mutating webhook and verified above. This should be flagged to the user to avoid
 	// unexpected behavior.
-	// TODO(fuechr): Move this validation to mutating webhook so that the PV creation fails
-	// fast before getting to the scanner.
-	if annotationsUsed := pvAnnotationIntersection(pv, []string{
-		annotationStatus,
-		annotationNumObjects,
-		annotationTotalSize,
-		annotationHNSEnabled,
+	if annotationsUsed := profilesutil.PvAnnotationIntersection(pv, []string{
+		profilesutil.AnnotationStatus,
+		profilesutil.AnnotationNumObjects,
+		profilesutil.AnnotationTotalSize,
+		profilesutil.AnnotationHNSEnabled,
 	}); len(annotationsUsed) > 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "scanner annotations for PV %q found in non-override mode: %+v", pv.Name, annotationsUsed)
 	}
@@ -1225,28 +1164,16 @@ func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, boo
 	}
 
 	// Check if the last scan time appears in the PV annotations.
-	lastScanTimeFromAnnotation, ok := pv.Annotations[annotationLastUpdatedTime]
+	lastScanTimeFromAnnotation, ok := pv.Annotations[profilesutil.AnnotationLastUpdatedTime]
 	if !ok {
 		return time.Time{}, false, nil
 	}
 	parsedTime, err := time.Parse(time.RFC3339, lastScanTimeFromAnnotation)
 	if err != nil {
-		return time.Time{}, false, status.Errorf(codes.InvalidArgument, "PV %q: Failed to parse annotation %q value %q: %v", pv.Name, annotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
+		return time.Time{}, false, status.Errorf(codes.InvalidArgument, "PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
 	}
 	klog.V(6).Infof("PV %q: Found last scan time in annotation: %q", pv.Name, lastScanTimeFromAnnotation)
 	return parsedTime, true, nil
-}
-
-// pvAnnotationIntersection returns the intersection of the provided annotation keys and
-// the annotation keys found in the PV.
-func pvAnnotationIntersection(pv *v1.PersistentVolume, annotations []string) []string {
-	var intersection []string
-	for _, key := range annotations {
-		if _, exists := pv.Annotations[key]; exists {
-			intersection = append(intersection, key)
-		}
-	}
-	return intersection
 }
 
 // onlyDirValue parses a mount option string to extract the value of "only-dir".

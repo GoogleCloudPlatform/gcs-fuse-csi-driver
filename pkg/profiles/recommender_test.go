@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	corev1 "k8s.io/api/core/v1"
@@ -844,8 +845,8 @@ func TestBuildPVDetails(t *testing.T) {
 		{
 			name: "TestBuildPVDetails - Should parse valid annotations",
 			annotations: map[string]string{
-				annotationNumObjects: "12345",
-				annotationTotalSize:  "67890",
+				putil.AnnotationNumObjects: "12345",
+				putil.AnnotationTotalSize:  "67890",
 			},
 			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890},
 			wantErr: false,
@@ -858,30 +859,30 @@ func TestBuildPVDetails(t *testing.T) {
 		{
 			name: "TestBuildPVDetails - Should return error if numObjects missing",
 			annotations: map[string]string{
-				annotationTotalSize: "67890",
+				putil.AnnotationTotalSize: "67890",
 			},
 			wantErr: true,
 		},
 		{
 			name: "TestBuildPVDetails - Should return error if totalSize missing",
 			annotations: map[string]string{
-				annotationNumObjects: "12345",
+				putil.AnnotationNumObjects: "12345",
 			},
 			wantErr: true,
 		},
 		{
 			name: "TestBuildPVDetails - Should return error if numObjects invalid",
 			annotations: map[string]string{
-				annotationNumObjects: "abc",
-				annotationTotalSize:  "67890",
+				putil.AnnotationNumObjects: "abc",
+				putil.AnnotationTotalSize:  "67890",
 			},
 			wantErr: true,
 		},
 		{
 			name: "TestBuildPVDetails - Should return error if totalSize invalid",
 			annotations: map[string]string{
-				annotationNumObjects: "12345",
-				annotationTotalSize:  "def",
+				putil.AnnotationNumObjects: "12345",
+				putil.AnnotationTotalSize:  "def",
 			},
 			wantErr: true,
 		},
