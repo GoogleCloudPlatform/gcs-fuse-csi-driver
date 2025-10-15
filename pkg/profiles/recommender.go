@@ -26,7 +26,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -38,12 +40,47 @@ const (
 	fuseFileCacheMediumPriorityKey           = "fuseFileCacheMediumPriority"
 	fuseMemoryAllocatableFactorKey           = "fuseMemoryAllocatableFactor"
 	fuseEphemeralStorageAllocatableFactorKey = "fuseEphemeralStorageAllocatableFactor"
+
+	// Node allocatable resource keys
+	nvidiaGpuResourceName = corev1.ResourceName("nvidia.com/gpu")
+	googleTpuResourceName = corev1.ResourceName("google.com/tpu")
+
+	// Node types
+	nodeTypeTPU            = "tpu"
+	nodeTypeGPU            = "gpu"
+	nodeTypeGeneralPurpose = "general_purpose"
+
+	// gkeAppliedNodeLabelsAnnotationKey is the annotation key that stores a comma-separated list of node labels.
+	gkeAppliedNodeLabelsAnnotationKey = "node.gke.io/last-applied-node-labels"
+	// EphemeralStorageLocalSSDLabelKey is the specific label key we are looking for within the applied labels.
+	ephemeralStorageLocalSSDLabelKey = "cloud.google.com/gke-ephemeral-storage-local-ssd"
 )
 
 // ProfileConfig holds the consolidated configuration for a volume profile,
 // derived from PersistentVolume annotations and StorageClass parameters.
 type ProfileConfig struct {
-	pvDetails                             *pvDetails          // Details extracted from the PersistentVolume's annotations.
+	pvDetails   *pvDetails   // Details extracted from the PersistentVolume.
+	nodeDetails *nodeDetails // Details extracted from the Node.
+	scDetails   *scDetails   // Details extracted from the SC.
+}
+
+// pvDetails holds a parsed summary of information about a PersistentVolume that are relevant to the recommender.
+type pvDetails struct {
+	numObjects     int64  // The number of objects reported by the PV.
+	totalSizeBytes int64  // The total size in bytes reported by the PV.
+	name           string // The name of the PersistentVolume.
+}
+
+// nodeDetails holds a parsed summary of information about a Node that are relevant to the recommender.
+type nodeDetails struct {
+	nodeType                              string
+	nodeAllocatables                      *parsedResourceList
+	name                                  string // The name of the Node.
+	hasLocalSSDEphemeralStorageAnnotation bool
+}
+
+// scDetails holds a parsed summary of information about a StorageClass that are relevant to the recommender.
+type scDetails struct {
 	fileCacheMediumPriority               map[string][]string // Parsed priority map for file cache mediums.
 	fuseMemoryAllocatableFactor           float64             // Factor for calculating FUSE memory allocation.
 	fuseEphemeralStorageAllocatableFactor float64             // Factor for calculating FUSE ephemeral storage allocation.
@@ -51,28 +88,33 @@ type ProfileConfig struct {
 	mountOptions                          []string            // Mount options sourced from the StorageClass.
 }
 
-// pvDetails holds a summary of information about a PersistentVolume,
-// typically extracted from its annotations.
-type pvDetails struct {
-	numObjects     int64  // The number of objects reported by the PV.
-	totalSizeBytes int64  // The total size in bytes reported by the PV.
-	name           string // The name of the PersistentVolume.
+// parsedResourceList holds the parsed resource values from a pod spec.
+type parsedResourceList struct {
+	memoryBytes           int64
+	ephemeralStorageBytes int64
+}
+
+// BuildProfileConfigParams contains the parameters needed to build a profile configuration.
+type BuildProfileConfigParams struct {
+	targetPath          string
+	clientset           clientset.Interface
+	volumeAttributeKeys map[string]struct{}
+	nodeName            string
 }
 
 // BuildProfileConfig constructs a ProfileConfig by fetching and validating
-// information from the PersistentVolume and StorageClass associated with the given targetPath.
-// It extracts volume details from PV annotations and configuration parameters from the SC.
+// information from the PV, Pod, SC, and Node relevant to the recommender.
 // volumeAttributeKeys is used to filter parameters from the StorageClass that should be
 // treated as volume attributes.
-func BuildProfileConfig(targetPath string, clientset clientset.Interface, volumeAttributeKeys map[string]struct{}) (*ProfileConfig, error) {
+func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error) {
 	// Get the PV name from target path.
-	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(targetPath)
+	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(params.targetPath)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", targetPath, err)
+		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.targetPath, err)
 	}
 
 	// Get the PV object using the PV name.
-	pv, err := clientset.GetPV(volumeName)
+	pv, err := params.clientset.GetPV(volumeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "pv %q not found: %v", volumeName, err)
@@ -81,7 +123,7 @@ func BuildProfileConfig(targetPath string, clientset clientset.Interface, volume
 	}
 
 	// Get the PV details from the PV object's annotations.
-	pvDetails, err := pvDetailsFromAnnotations(pv)
+	pvDetails, err := buildPVDetails(pv)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
 	}
@@ -94,7 +136,7 @@ func BuildProfileConfig(targetPath string, clientset clientset.Interface, volume
 	}
 
 	// Get the StorageClass object from the StorageClassName.
-	sc, err := clientset.GetSC(scName)
+	sc, err := params.clientset.GetSC(scName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "sc %q not found: %v", scName, err)
@@ -102,52 +144,31 @@ func BuildProfileConfig(targetPath string, clientset clientset.Interface, volume
 		return nil, status.Errorf(codes.Internal, "failed to get StorageClass %q: %v", scName, err)
 	}
 
-	// Get the parameters from the StorageClass.
-	if sc.Parameters == nil {
-		return nil, status.Errorf(codes.InvalidArgument, "sc %q found but has nil Parameters map for volume %q", scName, pv.Name)
-	}
-
-	// Validate the workloadType parameter for the profile.
-	workloadType, ok := sc.Parameters[workloadTypeKey]
-	if !ok {
-		return nil, status.Errorf(codes.InvalidArgument, "missing workloadType parameter in StorageClass %q for PV %q", scName, pv.Name)
-	}
-	if err := validateWorkloadType(workloadType); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to validate workloadType parameter in StorageClass %q for PV %q: %v", scName, pv.Name, err)
-	}
-
-	// Get the file cache medium priority from the StorageClass parameters.
-	fileCacheMediumPriorityStr, ok := sc.Parameters[fuseFileCacheMediumPriorityKey]
-	if !ok {
-		return nil, status.Errorf(codes.InvalidArgument, "missing fuseFileCacheMediumPriority in StorageClass %q for PV %q", scName, pv.Name)
-	}
-	fileCacheMediumPriority, err := parseFileCacheMediumPriority(fileCacheMediumPriorityStr)
+	// Get the scDetails from the StorageClass object.
+	scDetails, err := buildSCDetails(sc, params.volumeAttributeKeys)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse fileCacheMediumPriority in StorageClass %q for PV %q: %v", scName, pv.Name, err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
 	}
 
-	// Get the fuse memory allocatable factor from the StorageClass parameters.
-	fuseMemoryAllocatableFactorVal, err := parseFloatParameterNonNegative(sc.Parameters, fuseMemoryAllocatableFactorKey)
+	// Get the Node object using the Node name.
+	node, err := params.clientset.GetNode(params.nodeName)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse fuse memory allocatable factor param in StorageClass %q for PV %q: %v", scName, pv.Name, err)
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found: %v", params.nodeName, err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get node %q: %v", params.nodeName, err)
 	}
 
-	// Get the fuse ephemeral storage allocatable factor from the StorageClass parameters.
-	fuseEphemeralStorageAllocatableFactorVal, err := parseFloatParameterNonNegative(sc.Parameters, fuseEphemeralStorageAllocatableFactorKey)
+	// Get the nodeDetails from the Node object.
+	nodeDetails, err := buildNodeDetails(node)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse fuse ephemeral storage allocatable factor param in StorageClass %q for PV %q: %v", scName, pv.Name, err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to get node details: %v", err)
 	}
-
-	// Parse volume attributes from the StorageClass parameters. Only select from keys recognized by the CSI Driver as volume attributes.
-	volumeAttributes := selectFromMapIfKeysMatch(sc.Parameters, volumeAttributeKeys)
 
 	return &ProfileConfig{
-		pvDetails:                             pvDetails,
-		fileCacheMediumPriority:               fileCacheMediumPriority,
-		fuseEphemeralStorageAllocatableFactor: fuseEphemeralStorageAllocatableFactorVal,
-		fuseMemoryAllocatableFactor:           fuseMemoryAllocatableFactorVal,
-		VolumeAttributes:                      volumeAttributes,
-		mountOptions:                          sc.MountOptions,
+		pvDetails:   pvDetails,
+		nodeDetails: nodeDetails,
+		scDetails:   scDetails,
 	}, nil
 }
 
@@ -209,11 +230,11 @@ func parseFileCacheMediumPriority(input string) (map[string][]string, error) {
 	return result, nil
 }
 
-// pvDetailsFromAnnotations extracts and parses the number of objects and total size
+// buildPVDetails extracts and parses the number of objects and total size
 // annotations from the given PersistentVolume. It returns a pvDetails struct containing
 // the parsed values. An error is returned if the required annotations are missing,
 // empty, or cannot be parsed into their expected integer types.
-func pvDetailsFromAnnotations(
+func buildPVDetails(
 	pv *corev1.PersistentVolume) (*pvDetails, error) {
 	// Extract annotations
 	pvAnnotations := pv.GetAnnotations()
@@ -263,6 +284,88 @@ func pvDetailsFromAnnotations(
 	}, nil
 }
 
+// buildNodeDetails extracts and processes information from a Kubernetes Node object
+// to populate and return a nodeDetails struct. It parses allocatable resources,
+// determines the node type (General Purpose, GPU, TPU), and checks for specific
+// annotations like local SSD ephemeral storage.
+func buildNodeDetails(node *corev1.Node) (*nodeDetails, error) {
+	// Parse the node allocatables from the node.
+	nodeAllocatables, err := parseResourceList(node.Status.Allocatable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse node allocatable resources from node %q: %v", node.Name, err)
+	}
+
+	// Get the node type from the node.
+	nodeType := nodeTypeGeneralPurpose
+	if isGpuNodeByResource(node) {
+		nodeType = nodeTypeGPU
+	} else if isTpuNodeByResource(node) {
+		nodeType = nodeTypeTPU
+	}
+
+	return &nodeDetails{
+		nodeType:                              nodeType,
+		nodeAllocatables:                      nodeAllocatables,
+		name:                                  node.Name,
+		hasLocalSSDEphemeralStorageAnnotation: hasLocalSSDEphemeralStorageAnnotation(node.Annotations),
+	}, nil
+}
+
+// buildSCDetails extracts and validates parameters from a Kubernetes StorageClass
+// object to populate and return an scDetails struct. It checks for required
+// parameters like workloadType and fuseFileCacheMediumPriority, parses
+// numeric factors, and selects volume attributes based on the provided
+// volumeAttributeKeys. An error is returned if any mandatory parameters are
+// missing or invalid.
+func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}) (*scDetails, error) {
+	// Get the parameters from the StorageClass.
+	if sc.Parameters == nil {
+		return nil, fmt.Errorf("sc %q found but has nil Parameters map", sc.Name)
+	}
+
+	// Validate the workloadType parameter for the profile.
+	workloadType, ok := sc.Parameters[workloadTypeKey]
+	if !ok {
+		return nil, fmt.Errorf("missing workloadType parameter in StorageClass %q", sc.Name)
+	}
+	if err := validateWorkloadType(workloadType); err != nil {
+		return nil, fmt.Errorf("failed to validate workloadType parameter in StorageClass %q: %v", sc.Name, err)
+	}
+
+	// Get the file cache medium priority from the StorageClass parameters.
+	fileCacheMediumPriorityStr, ok := sc.Parameters[fuseFileCacheMediumPriorityKey]
+	if !ok {
+		return nil, fmt.Errorf("missing fuseFileCacheMediumPriority in StorageClass %q", sc.Name)
+	}
+	fileCacheMediumPriority, err := parseFileCacheMediumPriority(fileCacheMediumPriorityStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse fuseFileCacheMediumPriority in StorageClass %q: %v", sc.Name, err)
+	}
+
+	// Get the fuse memory allocatable factor from the StorageClass parameters.
+	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(sc.Parameters, fuseMemoryAllocatableFactorKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse fuse memory allocatable factor param in StorageClass %q: %v", sc.Name, err)
+	}
+
+	// Get the fuse ephemeral storage allocatable factor from the StorageClass parameters.
+	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(sc.Parameters, fuseEphemeralStorageAllocatableFactorKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse fuse ephemeral storage allocatable factor param in StorageClass %q: %v", sc.Name, err)
+	}
+
+	// Parse volume attributes from the StorageClass parameters. Only select from keys recognized by the CSI Driver as volume attributes.
+	volumeAttributes := selectFromMapIfKeysMatch(sc.Parameters, volumeAttributeKeys)
+
+	return &scDetails{
+		fileCacheMediumPriority:               fileCacheMediumPriority,
+		fuseMemoryAllocatableFactor:           fuseMemoryAllocatableFactor,
+		fuseEphemeralStorageAllocatableFactor: fuseEphemeralStorageAllocatableFactor,
+		VolumeAttributes:                      volumeAttributes,
+		mountOptions:                          sc.MountOptions,
+	}, nil
+}
+
 // selectFromMapIfKeysMatch returns a new map containing entries from the 'target' map
 // only if their keys are also present in the 'keys' map. The values
 // in the returned map are taken from the 'target' map.
@@ -289,4 +392,92 @@ func validateWorkloadType(workloadType string) error {
 		return fmt.Errorf("invalid %q parameter %q", workloadTypeKey, workloadType)
 	}
 	return nil
+}
+
+// isGpuNodeByResource checks if the node has allocatable nvidia.com/gpu resources.
+func isGpuNodeByResource(node *corev1.Node) bool {
+	if node == nil || node.Status.Allocatable == nil {
+		return false
+	}
+	gpuQuantity, exists := node.Status.Allocatable[nvidiaGpuResourceName]
+	return exists && gpuQuantity.CmpInt64(0) > 0
+}
+
+// isTpuNodeByResource checks if the node has allocatable google.com/tpu resources.
+func isTpuNodeByResource(node *corev1.Node) bool {
+	if node == nil || node.Status.Allocatable == nil {
+		return false
+	}
+	tpuQuantity, exists := node.Status.Allocatable[googleTpuResourceName]
+	return exists && tpuQuantity.CmpInt64(0) > 0
+}
+
+func hasLocalSSDEphemeralStorageAnnotation(annotations map[string]string) bool {
+	// Get the value of the 'node.gke.io/last-applied-node-labels' annotation.
+	appliedLabelsStr, ok := annotations[gkeAppliedNodeLabelsAnnotationKey]
+	if !ok || appliedLabelsStr == "" {
+		return false
+	}
+	// Split the comma-separated string of labels into individual label strings.
+	labelPairs := strings.Split(appliedLabelsStr, ",")
+	// Iterate through each label string (e.g., "key=value").
+	for _, labelPairStr := range labelPairs {
+		// Split the label string into key and value.
+		// Use SplitN to handle cases where a value might unexpectedly contain an '='.
+		kv := strings.SplitN(labelPairStr, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		labelKey := strings.TrimSpace(kv[0])
+		labelValue := strings.TrimSpace(kv[1])
+		// Check if this is the label we're looking for and if its value is "true".
+		if labelKey == ephemeralStorageLocalSSDLabelKey && labelValue == util.TrueStr {
+			return true
+		}
+	}
+	// If we've gone through all labels and haven't found the specific key-value pair,
+	// then the node does not have the indicator.
+	return false
+}
+
+// parseResource attempts to parse a specific resource quantity (e.g., memory, ephemeral-storage)
+// from a corev1.ResourceList. It returns the value in bytes as an int64.
+// If the resource name is not found in the list, it defaults to 0.
+// An error is returned if the quantity is present but cannot be parsed as an int64.
+func parseResource(name corev1.ResourceName, resourceList corev1.ResourceList) (int64, error) {
+	quantity, ok := resourceList[name]
+	if !ok {
+		// If the resource quantity is unset, default to zero (e.g. sidecar limits).
+		klog.V(6).Infof("key %q not found in resource list %+v, defaulting to 0", name, resourceList)
+		return 0, nil
+	}
+	bytes, parsedOK := quantity.AsInt64()
+	if parsedOK {
+		klog.V(6).Infof("Successfully parsed resource %q: %d bytes (%s)", name, bytes, quantity.String())
+		return bytes, nil
+	}
+	return 0, fmt.Errorf("could not parse resource %q quantity %q as int64 bytes", name, quantity.String())
+}
+
+// parseResourceList parses memory and ephemeral storage resources from a
+// corev1.ResourceList and returns them in a parsedResourceList struct.
+// It uses parseResource internally for each resource type. An error is returned
+// if any of the individual resource parsing fails.
+func parseResourceList(resourceList corev1.ResourceList) (*parsedResourceList, error) {
+	// Parse memory
+	memory, err := parseResource(corev1.ResourceMemory, resourceList)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse resource memory, err: %v", err)
+	}
+
+	// Parse ephemeral storage
+	ephemeralStorage, err := parseResource(corev1.ResourceEphemeralStorage, resourceList)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse resource ephemeral storage, err: %v", err)
+	}
+
+	return &parsedResourceList{
+		memoryBytes:           memory,
+		ephemeralStorageBytes: ephemeralStorage,
+	}, nil
 }

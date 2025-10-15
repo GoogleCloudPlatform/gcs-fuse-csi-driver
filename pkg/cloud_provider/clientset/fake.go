@@ -31,6 +31,7 @@ import (
 type FakeNodeConfig struct {
 	IsWorkloadIdentityEnabled bool
 	MachineType               string
+	Status                    corev1.NodeStatus
 }
 
 type FakePVConfig struct {
@@ -112,6 +113,7 @@ func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 	if c.fakeNode.Labels[MachineTypeKey] == "" {
 		c.fakeNode.Labels[MachineTypeKey] = "e2-medium"
 	}
+	c.fakeNode.Status = nodeConfig.Status
 }
 
 func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
