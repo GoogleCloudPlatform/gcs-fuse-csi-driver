@@ -45,6 +45,7 @@ const (
 	OptInHnw                            = "hnw-ksa"
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
+	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
 )
 
 var (
@@ -238,4 +239,15 @@ func ParseVolumeID(bucketHandle string) string {
 // Other GKE environments (staging, staging2, test, sandbox) are supported as well.
 func IsGKEIdentityProvider(identityProvider string) bool {
 	return gkeIdentityProviderRegex.MatchString(identityProvider)
+}
+
+func ParseBool(str string) (bool, error) {
+	switch str {
+	case "True", "true":
+		return true, nil
+	case "False", "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("could not parse string to bool: the acceptable values for %q are 'True', 'true', 'false' or 'False'", str)
+	}
 }
