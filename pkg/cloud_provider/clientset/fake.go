@@ -34,6 +34,11 @@ type FakeNodeConfig struct {
 	Status                    corev1.NodeStatus
 }
 
+type FakePodConfig struct {
+	HostNetworkEnabled bool
+	SidecarLimits      corev1.ResourceList
+}
+
 type FakePVConfig struct {
 	Annotations map[string]string
 	SCName      string
@@ -54,7 +59,7 @@ type FakeClientset struct {
 func NewFakeClientset() *FakeClientset {
 	fakeClientSet := &FakeClientset{}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
-	fakeClientSet.CreatePod( /*hostNetworkEnabled */ false)
+	fakeClientSet.CreatePod(FakePodConfig{HostNetworkEnabled: false})
 	fakeClientSet.CreateNode(FakeNodeConfig{IsWorkloadIdentityEnabled: true})
 	fakeClientSet.CreatePV(FakePVConfig{})
 	fakeClientSet.CreateSC(FakeSCConfig{})
@@ -70,8 +75,14 @@ func (c *FakeClientset) ConfigurePVLister(_ context.Context) {}
 
 func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
 
-func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
+func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 	config := webhook.FakeConfig()
+
+	if podConfig.SidecarLimits != nil {
+		config.MemoryLimit = podConfig.SidecarLimits[corev1.ResourceMemory]
+		config.EphemeralStorageLimit = podConfig.SidecarLimits[corev1.ResourceEphemeralStorage]
+	}
+
 	c.fakePod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "",
@@ -95,7 +106,7 @@ func (c *FakeClientset) CreatePod(hostNetworkEnabled bool) {
 		},
 	}
 
-	if hostNetworkEnabled {
+	if podConfig.HostNetworkEnabled {
 		c.fakePod.Spec.HostNetwork = true
 	}
 }

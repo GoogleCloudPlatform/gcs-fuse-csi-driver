@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -78,6 +79,13 @@ var (
 				corev1.ResourceMemory:           resource.MustParse("2Gi"),
 				corev1.ResourceEphemeralStorage: resource.MustParse("20Gi"),
 			},
+		},
+	}
+
+	testPodConfig = clientset.FakePodConfig{
+		SidecarLimits: corev1.ResourceList{
+			corev1.ResourceMemory:           resource.MustParse("1Gi"),
+			corev1.ResourceEphemeralStorage: resource.MustParse("10Gi"),
 		},
 	}
 
@@ -198,25 +206,48 @@ func (b *NodeConfigBuilder) Build() clientset.FakeNodeConfig {
 	return b.config
 }
 
+// PodConfigBuilder helps create FakePodConfig instances for tests.
+type PodConfigBuilder struct {
+	config clientset.FakePodConfig
+}
+
+// NewPodConfigBuilder initializes a builder with default testPodConfig values.
+func NewPodConfigBuilder() *PodConfigBuilder {
+	// Clone to avoid modifying the global variable
+	cfg := testPodConfig
+	return &PodConfigBuilder{config: cfg}
+}
+
+// Build returns the final FakePodConfig.
+func (b *PodConfigBuilder) Build() clientset.FakePodConfig {
+	return b.config
+}
+
 func TestBuildProfileConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		targetPath string
-		pvConfig   clientset.FakePVConfig
-		scConfig   clientset.FakeSCConfig
-		nodeName   string
-		nodeConfig clientset.FakeNodeConfig
-		wantErr    bool
-		wantConfig *ProfileConfig
+		name         string
+		targetPath   string
+		pvConfig     clientset.FakePVConfig
+		scConfig     clientset.FakeSCConfig
+		nodeName     string
+		nodeConfig   clientset.FakeNodeConfig
+		podNamespace string
+		podName      string
+		podConfig    clientset.FakePodConfig
+		wantErr      bool
+		wantConfig   *ProfileConfig
 	}{
 		{
-			name:       "TestBuildProfileConfig - Should build config successfully",
-			targetPath: testTargetPath,
-			wantErr:    false,
-			pvConfig:   NewPVConfigBuilder().Build(),
-			scConfig:   NewSCConfigBuilder().Build(),
-			nodeName:   "test-node",
-			nodeConfig: NewNodeConfigBuilder().Build(),
+			name:         "TestBuildProfileConfig - Should build config successfully",
+			targetPath:   testTargetPath,
+			wantErr:      false,
+			pvConfig:     NewPVConfigBuilder().Build(),
+			scConfig:     NewSCConfigBuilder().Build(),
+			nodeName:     "test-node",
+			nodeConfig:   NewNodeConfigBuilder().Build(),
+			podNamespace: "default",
+			podName:      "test-pod",
+			podConfig:    NewPodConfigBuilder().Build(),
 			wantConfig: &ProfileConfig{
 				pvDetails: &pvDetails{
 					name:           "test-pv",
@@ -264,6 +295,14 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					nodeType: "general_purpose",
 				},
+				podDetails: &podDetails{
+					namespace: "default",
+					name:      "test-pod",
+					sidecarLimits: &parsedResourceList{
+						memoryBytes:           1024 * 1024 * 1024,
+						ephemeralStorageBytes: 10 * 1024 * 1024 * 1024,
+					},
+				},
 			},
 		},
 		{
@@ -273,6 +312,7 @@ func TestBuildProfileConfig(t *testing.T) {
 			pvConfig:   NewPVConfigBuilder().Build(),
 			scConfig:   NewSCConfigBuilder().Build(),
 			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().Build(),
 		},
 		{
 			name:       "TestBuildProfileConfig - Should fail if PV annotations missing",
@@ -280,6 +320,7 @@ func TestBuildProfileConfig(t *testing.T) {
 			pvConfig:   NewPVConfigBuilder().WithAnnotations(nil).Build(),
 			scConfig:   NewSCConfigBuilder().Build(),
 			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().Build(),
 			wantErr:    true,
 		},
 		{
@@ -287,6 +328,7 @@ func TestBuildProfileConfig(t *testing.T) {
 			pvConfig:   NewPVConfigBuilder().WithSCName("").Build(),
 			scConfig:   NewSCConfigBuilder().Build(),
 			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().Build(),
 			targetPath: testTargetPath,
 			wantErr:    true,
 		},
@@ -305,12 +347,17 @@ func TestBuildProfileConfig(t *testing.T) {
 			if !reflect.DeepEqual(tt.nodeConfig, clientset.FakeNodeConfig{}) {
 				fakeClient.CreateNode(tt.nodeConfig)
 			}
+			if !reflect.DeepEqual(tt.podConfig, clientset.FakePodConfig{}) {
+				fakeClient.CreatePod(tt.podConfig)
+			}
 
 			got, err := BuildProfileConfig(&BuildProfileConfigParams{
 				targetPath:          tt.targetPath,
 				clientset:           fakeClient,
 				volumeAttributeKeys: csiDriverVolumeAttributeKeys,
 				nodeName:            tt.nodeName,
+				podNamespace:        tt.podNamespace,
+				podName:             tt.podName,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -321,7 +368,7 @@ func TestBuildProfileConfig(t *testing.T) {
 			}
 
 			opts := []cmp.Option{
-				cmp.AllowUnexported(ProfileConfig{}, pvDetails{}, nodeDetails{}, parsedResourceList{}, scDetails{}),
+				cmp.AllowUnexported(ProfileConfig{}, pvDetails{}, nodeDetails{}, parsedResourceList{}, scDetails{}, podDetails{}),
 			}
 			if diff := cmp.Diff(tt.wantConfig, got, opts...); diff != "" {
 				t.Errorf("BuildProfileConfig() returned unexpected diff (-want +got):\n%s", diff)
@@ -438,6 +485,100 @@ func TestBuildNodeDetails(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(nodeDetails{}, parsedResourceList{})); diff != "" {
 				t.Errorf("buildNodeDetails() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestBuildPodDetails(t *testing.T) {
+	validLimits := corev1.ResourceList{
+		corev1.ResourceMemory:           resource.MustParse("256Mi"),
+		corev1.ResourceEphemeralStorage: resource.MustParse("5Gi"),
+	}
+
+	tests := []struct {
+		name            string
+		pod             *corev1.Pod
+		isInitContainer bool
+		want            *podDetails
+		wantErr         bool
+	}{
+		{
+			name: "TestBuildPodDetails - Should parse sidecar in Containers",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "other-container"},
+						{
+							Name:      webhook.GcsFuseSidecarName,
+							Resources: corev1.ResourceRequirements{Limits: validLimits},
+						},
+					},
+				},
+			},
+			isInitContainer: false,
+			want: &podDetails{
+				namespace: "default",
+				name:      "test-pod",
+				sidecarLimits: &parsedResourceList{
+					memoryBytes:           256 * 1024 * 1024,
+					ephemeralStorageBytes: 5 * 1024 * 1024 * 1024,
+				},
+			},
+		},
+		{
+			name: "TestBuildPodDetails - Should parse sidecar in InitContainers",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "init-pod", Namespace: "kube-system"},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:      webhook.GcsFuseSidecarName,
+							Resources: corev1.ResourceRequirements{Limits: validLimits},
+						},
+					},
+					Containers: []corev1.Container{{Name: "main-container"}},
+				},
+			},
+			isInitContainer: true,
+			want: &podDetails{
+				namespace: "kube-system",
+				name:      "init-pod",
+				sidecarLimits: &parsedResourceList{
+					memoryBytes:           256 * 1024 * 1024,
+					ephemeralStorageBytes: 5 * 1024 * 1024 * 1024,
+				},
+			},
+		},
+		{
+			name: "TestBuildPodDetails - Should return empty sidecar limits if sidecar not found",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "no-sidecar-pod", Namespace: "default"},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "other-container"}},
+				},
+			},
+			isInitContainer: false,
+			want: &podDetails{
+				namespace:     "default",
+				name:          "no-sidecar-pod",
+				sidecarLimits: &parsedResourceList{}, // Expect empty
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildPodDetails(tt.isInitContainer, tt.pod)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("buildPodDetails() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(podDetails{}, parsedResourceList{})); diff != "" {
+				t.Errorf("buildPodDetails() returned unexpected diff (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -907,6 +1048,49 @@ func TestIsTpuNodeByResource(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isTpuNodeByResource(tt.node); got != tt.want {
 				t.Errorf("isTpuNodeByResource() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGcsFuseSidecarResourceRequirements(t *testing.T) {
+	limits := corev1.ResourceList{
+		corev1.ResourceMemory:           resource.MustParse("1Gi"),
+		corev1.ResourceEphemeralStorage: resource.MustParse("10Gi"),
+	}
+	tests := []struct {
+		name            string
+		pod             *corev1.Pod
+		want            corev1.ResourceRequirements
+		isInitContainer bool
+	}{
+		{
+			name: "TestGcsFuseSidecarResourceRequirements - Should find sidecar in InitContainers",
+			pod: &corev1.Pod{Spec: corev1.PodSpec{
+				InitContainers: []corev1.Container{{Name: webhook.GcsFuseSidecarName, Resources: corev1.ResourceRequirements{Limits: limits}}},
+			}},
+			isInitContainer: true,
+			want:            corev1.ResourceRequirements{Limits: limits},
+		},
+		{
+			name: "TestGcsFuseSidecarResourceRequirements - Should find sidecar in Containers",
+			pod: &corev1.Pod{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: webhook.GcsFuseSidecarName, Resources: corev1.ResourceRequirements{Limits: limits}}},
+			}},
+			isInitContainer: false,
+			want:            corev1.ResourceRequirements{Limits: limits},
+		},
+		{
+			name: "TestGcsFuseSidecarResourceRequirements - Should return empty for nil pod",
+			pod:  nil,
+			want: corev1.ResourceRequirements{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gcsFuseSidecarResourceRequirements(tt.isInitContainer, tt.pod); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("gcsFuseSidecarResourceRequirements() = %v, want %v", got, tt.want)
 			}
 		})
 	}

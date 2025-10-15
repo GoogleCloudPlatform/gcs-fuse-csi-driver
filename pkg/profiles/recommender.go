@@ -23,6 +23,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -62,6 +63,8 @@ type ProfileConfig struct {
 	pvDetails   *pvDetails   // Details extracted from the PersistentVolume.
 	nodeDetails *nodeDetails // Details extracted from the Node.
 	scDetails   *scDetails   // Details extracted from the SC.
+	podDetails  *podDetails  // Details extracted from the Pod.
+
 }
 
 // pvDetails holds a parsed summary of information about a PersistentVolume that are relevant to the recommender.
@@ -77,6 +80,13 @@ type nodeDetails struct {
 	nodeAllocatables                      *parsedResourceList
 	name                                  string // The name of the Node.
 	hasLocalSSDEphemeralStorageAnnotation bool
+}
+
+// podDetaails holds a parsed summary of information about a Pod that are relevant to the recommender.
+type podDetails struct {
+	sidecarLimits *parsedResourceList
+	namespace     string
+	name          string // The name of the Pod.
 }
 
 // scDetails holds a parsed summary of information about a StorageClass that are relevant to the recommender.
@@ -100,6 +110,9 @@ type BuildProfileConfigParams struct {
 	clientset           clientset.Interface
 	volumeAttributeKeys map[string]struct{}
 	nodeName            string
+	podNamespace        string
+	podName             string
+	isInitContainer     bool
 }
 
 // BuildProfileConfig constructs a ProfileConfig by fetching and validating
@@ -162,13 +175,29 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	// Get the nodeDetails from the Node object.
 	nodeDetails, err := buildNodeDetails(node)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to get node details: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to get node details: %v", err)
+	}
+
+	// Get the Pod object using the Pod namespace/name.
+	pod, err := params.clientset.GetPod(params.podNamespace, params.podName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.NotFound, "pod %s/%s not found: %v", params.podNamespace, params.podName, err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", params.podNamespace, params.podName, err)
+	}
+
+	// Get the podDetails from the Pod object.
+	podDetails, err := buildPodDetails(params.isInitContainer, pod)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get pod details: %v", err)
 	}
 
 	return &ProfileConfig{
 		pvDetails:   pvDetails,
 		nodeDetails: nodeDetails,
 		scDetails:   scDetails,
+		podDetails:  podDetails,
 	}, nil
 }
 
@@ -309,6 +338,50 @@ func buildNodeDetails(node *corev1.Node) (*nodeDetails, error) {
 		name:                                  node.Name,
 		hasLocalSSDEphemeralStorageAnnotation: hasLocalSSDEphemeralStorageAnnotation(node.Annotations),
 	}, nil
+}
+
+// buildPodDetails extracts resource limit information for the gcsFuse sidecar container
+// from a given corev1.Pod. The isInitContainer boolean specifies whether to look
+// within the Pod's InitContainers or its Containers.
+// It uses gcsFuseSidecarResourceRequirements to find the sidecar's resource requirements
+// and then calls parseResourceList to process the Limits.
+// It returns a pointer to a podDetails struct or an error if parsing the resource limits fails.
+func buildPodDetails(isInitContainer bool, pod *corev1.Pod) (*podDetails, error) {
+	// Get the sidecar limits from the Pod.
+	sidecarLimits, err := parseResourceList(gcsFuseSidecarResourceRequirements(isInitContainer, pod).Limits)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse gcsfuse sidecar resource list from pod %q: %v", pod.Name, err)
+	}
+
+	return &podDetails{
+		namespace:     pod.Namespace,
+		name:          pod.Name,
+		sidecarLimits: sidecarLimits,
+	}, nil
+}
+
+// gcsFuseSidecarResourceRequirements finds the corev1.ResourceRequirements for the
+// gcsFuse sidecar container within a provided corev1.Pod.
+// The isInitContainer flag dictates whether the function searches in pod.Spec.InitContainers
+// or pod.Spec.Containers.
+func gcsFuseSidecarResourceRequirements(isInitContainer bool, pod *corev1.Pod) corev1.ResourceRequirements {
+	if pod == nil {
+		return corev1.ResourceRequirements{}
+	}
+
+	var containers []corev1.Container
+	if isInitContainer {
+		containers = pod.Spec.InitContainers
+	} else {
+		containers = pod.Spec.Containers
+	}
+
+	for _, container := range containers {
+		if container.Name == webhook.GcsFuseSidecarName {
+			return container.Resources
+		}
+	}
+	return corev1.ResourceRequirements{}
 }
 
 // buildSCDetails extracts and validates parameters from a Kubernetes StorageClass
