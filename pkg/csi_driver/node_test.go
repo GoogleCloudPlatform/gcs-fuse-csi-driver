@@ -248,7 +248,7 @@ func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 	for _, test := range cases {
 		fakeClientSet := &clientset.FakeClientset{}
 		fakeClientSet.CreateNode( /* workloadIdentityEnabled */ clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
-		fakeClientSet.CreatePod( /* hostNetworkEnabled */ test.hostNetworkEnabledOnPod)
+		fakeClientSet.CreatePod(clientset.FakePodConfig{HostNetworkEnabled: test.hostNetworkEnabledOnPod})
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, true)
 
 		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
@@ -446,7 +446,7 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 	for _, test := range cases {
 		fakeClientSet := &clientset.FakeClientset{}
 		fakeClientSet.CreateNode(clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: test.workloadIdentityEnabledOnNode})
-		fakeClientSet.CreatePod(false)
+		fakeClientSet.CreatePod(clientset.FakePodConfig{HostNetworkEnabled: false})
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, test.wiNodeLabelCheck)
 
 		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
