@@ -74,6 +74,9 @@ type TestParameters struct {
 	IstioVersion                 string
 	GcsfuseClientProtocol        string
 	EnableZB                     bool
+
+	GkeGcloudCommand string
+	GkeGcloudArgs    string
 }
 
 const (

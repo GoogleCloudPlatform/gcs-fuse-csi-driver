@@ -39,6 +39,24 @@ var (
 	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")
 )
 
+// gcloudCommand constructs an exec.Cmd for a gcloud command,
+// incorporating custom command paths and default arguments from TestParameters.
+func gcloudCommand(testParams *TestParameters, args ...string) *exec.Cmd {
+	gcloudBin := testParams.GkeGcloudCommand
+	if gcloudBin == "" {
+		gcloudBin = "gcloud" // Default to "gcloud" if not provided
+	}
+
+	var fullArgs []string
+	if testParams.GkeGcloudArgs != "" {
+		fullArgs = append(fullArgs, strings.Fields(testParams.GkeGcloudArgs)...)
+	}
+	fullArgs = append(fullArgs, args...)
+
+	//nolint:gosec
+	return exec.Command(gcloudBin, fullArgs...)
+}
+
 func clusterDownGKE(testParams *TestParameters) error {
 	//nolint:gosec
 	cmd := exec.Command("gcloud", "container", "clusters", "delete", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion, "--quiet")
@@ -120,7 +138,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 		}
 	}
 
-	cmd = exec.Command("gcloud", cmdParams...)
+	cmd = gcloudCommand(testParams, cmdParams...)
 	if err := runCommand("Starting e2e Cluster on GKE", cmd); err != nil {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on GKE: %w", err)
 	}
