@@ -25,7 +25,9 @@ import (
 	"slices"
 
 	"cloud.google.com/go/compute/metadata"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
+	util "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -63,6 +65,21 @@ type SidecarInjector struct {
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
 func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) admission.Response {
+	if req.Kind.Kind == "PersistentVolume" && si.Config.EnableGcsfuseProfiles { // Currently only handling pvs for gcsfuse profiles
+		pv := &corev1.PersistentVolume{}
+		if err := si.Decoder.Decode(req, pv); err != nil {
+			klog.Errorf("Could not decode PersistentVolume object: %v", err)
+			return admission.Errored(http.StatusBadRequest, err)
+		}
+		klog.Infof("Mutating webhook is handling PersistentVolume: %s", pv.Name)
+
+		if err := si.validatePersistentVolumeForGCSFuseProfiles(pv); err != nil {
+			klog.Errorf("PersistentVolume validation failed: %v", err)
+			return admission.Errored(http.StatusBadRequest, err)
+		}
+		return admission.Allowed(fmt.Sprintf("No mutation Required on PersistentVolume: %s", pv.Name))
+	}
+
 	// Validate injection request
 	pod := &corev1.Pod{}
 
@@ -154,6 +171,19 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
 }
 
+// validatePersistentVolumeForGCSFuseProfiles ensures it meets the requirements for gcsfuse CSI driver usage
+// currently validations are only required by storage profiles, so this is a no-op if profiles are not enabled
+func (si *SidecarInjector) validatePersistentVolumeForGCSFuseProfiles(pv *corev1.PersistentVolume) error {
+	if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != util.GCSFuseCsiDriverName {
+		// Not a gcsfuse CSI driver volume, skip validation
+		return nil
+	}
+	if err := putil.ValidateStorageProfilesOverrideStatus(pv); err != nil {
+		return err
+	}
+	return nil
+}
+
 // audienceForInjectedSATokenVolume determines the audience to use for the injected service account token volume.
 // It searches through the pod's volumes to see if any of them have an identityProvider set in their VolumeAttributes.
 // If one is found and it is a GKE cluster identityProvider, or if no identityProvider is set, it uses the default
@@ -162,7 +192,7 @@ func audienceForInjectedSATokenVolume(projectID string, pod *corev1.Pod) string 
 	var foundIdentityProvider string
 	// Loop through the pod's volumes to find a better audience.
 	for _, v := range pod.Spec.Volumes {
-		if v.CSI != nil && v.CSI.Driver == "gcsfuse.csi.storage.gke.io" && v.CSI.VolumeAttributes != nil {
+		if v.CSI != nil && v.CSI.Driver == util.GCSFuseCsiDriverName && v.CSI.VolumeAttributes != nil {
 			if identityProvider, ok := v.CSI.VolumeAttributes["identityProvider"]; ok && identityProvider != "" {
 				// If found, the identityProvider becomes the new audience.
 				foundIdentityProvider = identityProvider
