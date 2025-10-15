@@ -107,6 +107,12 @@ type TestPod struct {
 	namespace *corev1.Namespace
 }
 
+func NewTestPodModifiedSpec(c clientset.Interface, ns *corev1.Namespace, setAutomountServiceAccountToken bool) *TestPod {
+	testpod := NewTestPod(c, ns)
+	testpod.pod.Spec.AutomountServiceAccountToken = ptr.To(setAutomountServiceAccountToken)
+	return testpod
+}
+
 func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 	cpu, _ := resource.ParseQuantity("100m")
 	mem, _ := resource.ParseQuantity("20Mi")
@@ -161,7 +167,7 @@ func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 				},
 				RestartPolicy:                corev1.RestartPolicyAlways,
 				Volumes:                      make([]corev1.Volume, 0),
-				AutomountServiceAccountToken: ptr.To(true),
+				AutomountServiceAccountToken: ptr.To(false),
 				Tolerations: []corev1.Toleration{
 					{Operator: corev1.TolerationOpExists},
 				},
@@ -183,6 +189,10 @@ func (t *TestPod) GetPodName() string {
 
 func (t *TestPod) GetPodVols() []corev1.Volume {
 	return t.pod.Spec.Volumes
+}
+
+func (t *TestPod) GetAutoMountServiceAccountToken() bool {
+	return *t.pod.Spec.AutomountServiceAccountToken
 }
 
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed.

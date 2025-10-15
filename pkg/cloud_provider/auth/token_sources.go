@@ -114,6 +114,9 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (string, error) {
 	}
 
 	ttl := int64(10 * time.Minute.Seconds())
+	if ts.k8sClients == nil {
+		return "", fmt.Errorf("failed to get Kubernetes client, cannot to create SA token")
+	}
 	resp, err := ts.k8sClients.CreateServiceAccountToken(
 		ctx,
 		ts.k8sSANamespace,

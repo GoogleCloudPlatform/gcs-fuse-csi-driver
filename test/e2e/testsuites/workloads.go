@@ -253,4 +253,37 @@ func (t *gcsFuseCSIWorkloadsTestSuite) DefineTests(driver storageframework.TestD
 		ginkgo.By("The pod should terminate fast")
 		tJob.WaitForAllJobPodsGone(ctx)
 	})
+
+	ginkgo.It("should successfully create pod with automountServiceAccountToken false", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, false)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+	})
+
+	ginkgo.It("should successfully create pod with automountServiceAccountToken true", func() {
+		init()
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+	})
+
 }
