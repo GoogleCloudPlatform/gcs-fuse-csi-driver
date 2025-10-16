@@ -36,15 +36,17 @@ const (
 	FalseStr = "false"
 
 	// mount options that both CSI mounter and sidecar mounter should understand.
-	DisableMetricsForGKE                = "disable-metrics-for-gke"
-	EnableSidecarBucketAccessCheckConst = "enable-sidecar-bucket-access-check"
-	TokenServerIdentityPoolConst        = "token-server-identity-pool"
-	ServiceAccountNameConst             = "service-account-name"
-	PodNamespaceConst                   = "pod-namespace"
-	TokenServerIdentityProviderConst    = "token-server-identity-provider"
-	OptInHnw                            = "hnw-ksa"
-	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
-	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
+	DisableMetricsForGKE                 = "disable-metrics-for-gke"
+	EnableSidecarBucketAccessCheckConst  = "enable-sidecar-bucket-access-check"
+	TokenServerIdentityPoolConst         = "token-server-identity-pool"
+	ServiceAccountNameConst              = "service-account-name"
+	PodNamespaceConst                    = "pod-namespace"
+	TokenServerIdentityProviderConst     = "token-server-identity-provider"
+	OptInHnw                             = "hnw-ksa"
+	EnableCloudProfilerForSidecarConst   = "enable-cloud-profiler-for-sidecar"
+	SidecarContainerTmpVolumeName        = "gke-gcsfuse-tmp"
+	SidecarBuckettAccessCheckErrorPrefix = "sidecar bucket access check error"
+	StorageServiceErrorStr               = "failed to setup storage service"
 )
 
 var (
