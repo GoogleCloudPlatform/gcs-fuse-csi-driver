@@ -40,6 +40,7 @@ readonly number_nodes=${NUMBER_NODES:-3}
 readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 readonly build_gcsfuse_from_source=${BUILD_GCSFUSE_FROM_SOURCE:-false}
 readonly enable_zb=${ENABLE_ZB:-false}
+readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-false}
 
 # Install golang
 version=1.22.7
@@ -80,6 +81,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --node-machine-type=${node_machine_type} \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
             --number-nodes=${number_nodes} \
-            --gcsfuse-enable-zb=${enable_zb}"
+            --gcsfuse-enable-zb=${enable_zb} \
+            --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check}"
 
 eval "$base_cmd"
