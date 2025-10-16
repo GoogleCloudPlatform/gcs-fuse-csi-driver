@@ -68,20 +68,22 @@ type TestParameters struct {
 	GinkgoFlakeAttempts string
 	GinkgoSkipGcpSaTest bool
 
-	SupportsNativeSidecar        bool
-	SupportSAVolInjection        bool
-	SupportMachineTypeAutoconfig bool
-	IstioVersion                 string
-	GcsfuseClientProtocol        string
-	EnableZB                     bool
+	SupportsNativeSidecar          bool
+	SupportSAVolInjection          bool
+	SupportMachineTypeAutoconfig   bool
+	IstioVersion                   string
+	GcsfuseClientProtocol          string
+	EnableZB                       bool
+	EnableSidecarBucketAccessCheck bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
 }
 
 const (
-	TestWithNativeSidecarEnvVar     = "TEST_WITH_NATIVE_SIDECAR"
-	TestWithSAVolumeInjectionEnvVar = "TEST_WITH_SA_VOL_INJECTION"
+	TestWithNativeSidecarEnvVar            = "TEST_WITH_NATIVE_SIDECAR"
+	TestWithSAVolumeInjectionEnvVar        = "TEST_WITH_SA_VOL_INJECTION"
+	TestWithSidecarBucketAccessCheckEnvVar = "TEST_WITH_SIDECAR_BUCKET_ACCESS_CHECK"
 )
 
 func Handle(testParams *TestParameters) error {
@@ -196,6 +198,9 @@ func Handle(testParams *TestParameters) error {
 
 	if err = os.Setenv(TestWithSAVolumeInjectionEnvVar, strconv.FormatBool(supportSAVolInjection)); err != nil {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSAVolumeInjectionEnvVar, err)
+	}
+	if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(testParams.EnableSidecarBucketAccessCheck)); err != nil {
+		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
 	}
 
 	supportsMachineTypeAutoConfig, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, supportsMachineTypeAutoConfigMinimumVersion)

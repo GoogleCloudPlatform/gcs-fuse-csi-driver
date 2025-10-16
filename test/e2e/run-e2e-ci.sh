@@ -42,6 +42,7 @@ readonly build_gcsfuse_from_source=${BUILD_GCSFUSE_FROM_SOURCE:-false}
 readonly enable_zb=${ENABLE_ZB:-false}
 readonly gke_gcloud_command=${GKE_GCLOUD_COMMAND:-gcloud}
 readonly gke_gcloud_args=${GKE_GCLOUD_ARGS:-}
+readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-false}
 
 # Install golang
 version=1.22.7
@@ -83,7 +84,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
             --number-nodes=${number_nodes} \
             --gcsfuse-enable-zb=${enable_zb} \
+            --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --gke-gcloud-command='${gke_gcloud_command}' \
             --gke-gcloud-args='${gke_gcloud_args}'"
-
 eval "$base_cmd"
