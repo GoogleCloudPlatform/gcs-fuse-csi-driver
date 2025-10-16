@@ -72,6 +72,10 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	if err != nil {
 		klog.Fatalf(`env variable "%s" could not be converted to boolean`, nativeSidecarEnvVar)
 	}
+	enableSidecarBucketAccessCheck, err := strconv.ParseBool(os.Getenv(utils.TestWithSidecarBucketAccessCheckEnvVar))
+	if err != nil {
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, enableSidecarBucketAccessCheck)
+	}
 
 	saVolInjectEnvVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
 	supportSAVolInjection, err := strconv.ParseBool(saVolInjectEnvVar)
@@ -138,8 +142,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 
+		if enableSidecarBucketAccessCheck && configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix {
+			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+		} else {
+			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
+		}
 		if gcsfuseVersionStr == "" {
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
@@ -190,8 +198,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		}
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0-gke.0"))) {
-			tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
-			tPod.WaitForFailedMountError(ctx, "name should be a valid bucket resource name")
+			if enableSidecarBucketAccessCheck {
+				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "storage: bucket doesn't exist")
+			} else {
+				tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
+				tPod.WaitForFailedMountError(ctx, "name should be a valid bucket resource name")
+			}
 		} else {
 			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
@@ -242,6 +255,15 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
+
+		// For invalid SA testcase, The Unauthenticated error spawns from prepareStorageClient() in CSI NodePublish. When CSI skips bucket access check, this step is skipped and access is checked in sidecar checkBucketAccessWithRetry() .
+		if enableSidecarBucketAccessCheck {
+			if slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
+				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
+				return
+			}
+		}
 		tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
 		tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
 
@@ -259,6 +281,9 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	}
 
 	ginkgo.It("should fail when the specified service account does not have access to the GCS bucket", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
 		testCaseSAInsufficientAccess("")
 	})
 	ginkgo.It("[metadata prefetch] should fail when the specified service account does not have access to the GCS bucket", func() {
@@ -269,6 +294,9 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when the specified service account does not have access to the GCS bucket", func() {
+		if pattern.VolType == storageframework.DynamicPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		}
 		testCaseSAInsufficientAccess(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
