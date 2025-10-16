@@ -75,8 +75,6 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
 	var tokenSource oauth2.TokenSource
-	var audience string
-	var err error
 
 	// TODO(amacaskill): Add support for hostnetwork pods on OSS k8s.
 	if mc.HostNetworkKSAOptIn {
@@ -88,7 +86,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 		if mc.EnableSidecarBucketAccessCheck {
 			// Fetch custom tokensource and audience for host network path. For workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
-			audience, err = getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
+			audience, err := getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
 			if err != nil {
 				return fmt.Errorf("failed to get audience from the context: %w", err)
 			}
@@ -423,13 +421,18 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 		Jitter:   mc.SidecarRetryConfig.Jitter, // Adds randomness, this will give +/- 10% of the current delay
 	}
 
+	var ss storage.Service
+	var err error
 	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
-		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
-		if err != nil {
-			klog.Errorf("Failed to setup storage service got error %q, retrying...", err)
-			return false, nil
+		if ss == nil {
+			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
+			if err != nil {
+				klog.Errorf("Failed to setup storage service, got error %q, retrying...", err)
+				return false, nil
+			}
+			klog.V(4).Infof("Created storage service %v", ss)
 		}
-		klog.V(4).Infof("Created storage service %v", ss)
+
 		if bucketName != "_" {
 			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
 				klog.Errorf("Failed to get GCS bucket %q: %v", bucketName, err)
@@ -437,15 +440,17 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 			}
 			klog.V(4).Infof("Bucket access check passed for %s", bucketName)
 			return true, nil
+
 		} else {
 			// Access check fro multi-bucket is not supported, this is in-line with current bucket access check logic in CSI node driver
 			klog.V(4).Infof("Skipping bucket check, access check will not be performed on multi-buckets with bucket name %s", bucketName)
 			return true, nil
 		}
 	}
-	err := wait.ExponentialBackoffWithContext(ctx, backoff, ssCreateAndBucketCheckFunc)
+
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, ssCreateAndBucketCheckFunc)
 	if err != nil {
-		return err
+		return fmt.Errorf("bucket access check failed after retries: %w", err)
 	}
 	klog.V(4).Infof("Completed access check for bucket %s", bucketName)
 	return nil
