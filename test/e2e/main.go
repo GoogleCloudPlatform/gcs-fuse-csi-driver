@@ -31,19 +31,20 @@ var (
 	pkgDir = flag.String("pkg-dir", "", "the package directory")
 
 	// Kubernetes cluster flags.
-	gkeClusterRegion    = flag.String("gke-cluster-region", "", "region that gke regional cluster should be created in")
-	gkeClusterVersion   = flag.String("gke-cluster-version", "", "GKE cluster worker master and node version")
-	gkeReleaseChannel   = flag.String("gke-release-channel", "rapid", "GKE cluster release channel")
-	gkeNodeVersion      = flag.String("gke-node-version", "", "GKE cluster worker node version")
-	nodeMachineType     = flag.String("node-machine-type", "n2-standard-8", "GKE cluster worker node machine type")
-	numNodes            = flag.Int("number-nodes", 3, "number of nodes in the test cluster")
-	useGKEAutopilot     = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
-	apiEndpointOverride = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
-	nodeImageType       = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
-	istioVersion        = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
-	gcsfuseEnableZB     = flag.Bool("gcsfuse-enable-zb", false, "use GCS Zonal Buckets for the tests")
-	gkeGcloudCommand    = flag.String("gke-gcloud-command", "gcloud", "(gke only) gcloud command used to create a cluster. Modify if you need to pass custom gcloud to create cluster.")
-	gkeGcloudArgs       = flag.String("gke-gcloud-args", "", "(gke only) Additional arguments to custom gcloud command.")
+	gkeClusterRegion               = flag.String("gke-cluster-region", "", "region that gke regional cluster should be created in")
+	gkeClusterVersion              = flag.String("gke-cluster-version", "", "GKE cluster worker master and node version")
+	gkeReleaseChannel              = flag.String("gke-release-channel", "rapid", "GKE cluster release channel")
+	gkeNodeVersion                 = flag.String("gke-node-version", "", "GKE cluster worker node version")
+	nodeMachineType                = flag.String("node-machine-type", "n2-standard-8", "GKE cluster worker node machine type")
+	numNodes                       = flag.Int("number-nodes", 3, "number of nodes in the test cluster")
+	useGKEAutopilot                = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
+	apiEndpointOverride            = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
+	nodeImageType                  = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
+	istioVersion                   = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
+	gcsfuseEnableZB                = flag.Bool("gcsfuse-enable-zb", false, "use GCS Zonal Buckets for the tests")
+	gkeGcloudCommand               = flag.String("gke-gcloud-command", "gcloud", "(gke only) gcloud command used to create a cluster. Modify if you need to pass custom gcloud to create cluster.")
+	gkeGcloudArgs                  = flag.String("gke-gcloud-args", "", "(gke only) Additional arguments to custom gcloud command.")
+	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "enables bucket access check in sidecar")
 
 	// Test infrastructure flags.
 	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -86,35 +87,36 @@ func main() {
 	}
 
 	testParams := &utils.TestParameters{
-		PkgDir:                 *pkgDir,
-		InProw:                 *inProw,
-		BoskosResourceType:     *boskosResourceType,
-		UseGKEManagedDriver:    *useGKEManagedDriver,
-		NodeImageType:          *nodeImageType,
-		UseGKEAutopilot:        *useGKEAutopilot,
-		APIEndpointOverride:    *apiEndpointOverride,
-		GkeClusterRegion:       *gkeClusterRegion,
-		GkeClusterVersion:      *gkeClusterVersion,
-		GkeReleaseChannel:      *gkeReleaseChannel,
-		GkeNodeVersion:         *gkeNodeVersion,
-		NodeMachineType:        *nodeMachineType,
-		NumNodes:               *numNodes,
-		ImageRegistry:          *imageRegistry,
-		DeployOverlayName:      *deployOverlayName,
-		BuildGcsFuseCsiDriver:  *buildGcsFuseCsiDriver,
-		BuildGcsFuseFromSource: *buildGcsFuseFromSource,
-		BuildArm:               *buildArm,
-		GinkgoFocus:            *ginkgoFocus,
-		GinkgoSkip:             *ginkgoSkip,
-		GinkgoProcs:            *ginkgoProcs,
-		GinkgoTimeout:          *ginkgoTimeout,
-		GinkgoFlakeAttempts:    *ginkgoFlakeAttempts,
-		GinkgoSkipGcpSaTest:    *ginkgoSkipGcpSaTest,
-		IstioVersion:           *istioVersion,
-		GcsfuseClientProtocol:  *gcsfuseClientProtocol,
-		EnableZB:               *gcsfuseEnableZB,
-		GkeGcloudCommand:       *gkeGcloudCommand,
-		GkeGcloudArgs:          *gkeGcloudArgs,
+		PkgDir:                         *pkgDir,
+		InProw:                         *inProw,
+		BoskosResourceType:             *boskosResourceType,
+		UseGKEManagedDriver:            *useGKEManagedDriver,
+		NodeImageType:                  *nodeImageType,
+		UseGKEAutopilot:                *useGKEAutopilot,
+		APIEndpointOverride:            *apiEndpointOverride,
+		GkeClusterRegion:               *gkeClusterRegion,
+		GkeClusterVersion:              *gkeClusterVersion,
+		GkeReleaseChannel:              *gkeReleaseChannel,
+		GkeNodeVersion:                 *gkeNodeVersion,
+		NodeMachineType:                *nodeMachineType,
+		NumNodes:                       *numNodes,
+		ImageRegistry:                  *imageRegistry,
+		DeployOverlayName:              *deployOverlayName,
+		BuildGcsFuseCsiDriver:          *buildGcsFuseCsiDriver,
+		BuildGcsFuseFromSource:         *buildGcsFuseFromSource,
+		BuildArm:                       *buildArm,
+		GinkgoFocus:                    *ginkgoFocus,
+		GinkgoSkip:                     *ginkgoSkip,
+		GinkgoProcs:                    *ginkgoProcs,
+		GinkgoTimeout:                  *ginkgoTimeout,
+		GinkgoFlakeAttempts:            *ginkgoFlakeAttempts,
+		GinkgoSkipGcpSaTest:            *ginkgoSkipGcpSaTest,
+		IstioVersion:                   *istioVersion,
+		GcsfuseClientProtocol:          *gcsfuseClientProtocol,
+		EnableZB:                       *gcsfuseEnableZB,
+		GkeGcloudCommand:               *gkeGcloudCommand,
+		GkeGcloudArgs:                  *gkeGcloudArgs,
+		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {

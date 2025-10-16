@@ -38,6 +38,7 @@ readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
 readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"
 readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 readonly enable_zb=${ENABLE_ZB:-false}
+readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-false}
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
@@ -72,5 +73,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --ginkgo-timeout=${ginkgo_timeout} \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
             --ginkgo-flake-attempts=${ginkgo_flake_attempts} \
-            --gcsfuse-enable-zb=${enable_zb}"
+            --gcsfuse-enable-zb=${enable_zb} \
+            --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check}"
 eval "$base_cmd"
