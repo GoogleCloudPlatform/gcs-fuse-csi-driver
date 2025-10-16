@@ -43,7 +43,6 @@ var istioContainer = corev1.Container{
 	Name: IstioSidecarName,
 }
 var testNamespace = "default"
-var csiDriverName = "gcs-fuse-csi.storage.gke.io"
 
 func TestPrepareConfig(t *testing.T) {
 	t.Parallel()

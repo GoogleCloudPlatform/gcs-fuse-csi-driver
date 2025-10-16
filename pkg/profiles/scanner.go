@@ -28,8 +28,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/googleapis/gax-go/v2"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -56,6 +59,9 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	control "cloud.google.com/go/storage/control/apiv2"
+	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
+	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,12 +87,14 @@ const (
 	annotationHNSEnabled      = annotationPrefix + "/bucket-scan-hns-enabled"
 
 	// Event reasons
-	reasonScanOperationStartError     = "ScanOperationStartError"
-	reasonScanOperationStartSucceeded = "ScanOperationStartSucceeded"
-	reasonScanOperationFailed         = "ScanOperationFailed"
-	reasonScanOperationWarning        = "ScanOperationWarning"
-	reasonScanOperationSucceeded      = "ScanOperationSucceeded"
-	reasonScanOperationTimedOut       = "ScanOperationTimedOut"
+	reasonScanOperationStartError      = "ScanOperationStartError"
+	reasonScanOperationStartSucceeded  = "ScanOperationStartSucceeded"
+	reasonScanOperationFailed          = "ScanOperationFailed"
+	reasonScanOperationWarning         = "ScanOperationWarning"
+	reasonScanOperationSucceeded       = "ScanOperationSucceeded"
+	reasonScanOperationTimedOut        = "ScanOperationTimedOut"
+	reasonAnywhereCacheCreateError     = "AnywhereCacheCreateError"
+	reasonAnywhereCacheCreateSucceeded = "AnywhereCacheCreateSucceeded"
 
 	// Bucket scan status values
 	scanCompleted = "completed"
@@ -107,6 +115,10 @@ const (
 	// Cloud Monitoring metrics
 	objectCountMetric = "storage.googleapis.com/storage/object_count"
 	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
+
+	// Anywhere Cache constants
+	admitOnFirstMiss  = "admit-on-first-miss"
+	admitOnSecondMiss = "admit-on-second-miss"
 )
 
 var (
@@ -125,6 +137,21 @@ var (
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
 	scanBucketWithDataflux = defaultScanBucketWithDataflux
+
+	// Non-Retryable GCS Error codes
+	nonRetryCodes = map[codes.Code]bool{
+		codes.InvalidArgument:    true,
+		codes.PermissionDenied:   true,
+		codes.AlreadyExists:      true,
+		codes.FailedPrecondition: true,
+		codes.Unauthenticated:    true,
+	}
+	// anywhere cache vars
+	hourDuration = durationpb.New(time.Hour)
+
+	// Used for testing
+	utilGetZonesForClusterRegion    = util.GetZonesForARegion
+	buildCreateAnywhereCacheRequest = BuildCreateAnywhereCacheRequest
 )
 
 // stringPtr returns a pointer to the passed string.
@@ -156,6 +183,7 @@ type ScannerConfig struct {
 	LeaderElectionLeaseDuration time.Duration
 	LeaderElectionRenewDeadline time.Duration
 	LeaderElectionRetryPeriod   time.Duration
+	ClusterRegion               string
 }
 
 // bucketInfo holds the results of a bucket scan.
@@ -173,23 +201,25 @@ type bucketInfo struct {
 
 // Scanner is the main controller structure.
 type Scanner struct {
-	kubeClient     kubernetes.Interface
-	pvLister       v1listers.PersistentVolumeLister
-	pvcLister      v1listers.PersistentVolumeClaimLister
-	scLister       storagelisters.StorageClassLister
-	podLister      v1listers.PodLister
-	pvSynced       cache.InformerSynced
-	pvcSynced      cache.InformerSynced
-	scSynced       cache.InformerSynced
-	podSynced      cache.InformerSynced
-	factory        informers.SharedInformerFactory
-	podFactory     informers.SharedInformerFactory
-	queue          workqueue.TypedRateLimitingInterface[string]
-	eventRecorder  record.EventRecorder
-	datafluxConfig *DatafluxConfig
-	gcsClient      *storage.Client
-	metricClient   *monitoring.MetricClient
-	config         *ScannerConfig
+	kubeClient           kubernetes.Interface
+	pvLister             v1listers.PersistentVolumeLister
+	pvcLister            v1listers.PersistentVolumeClaimLister
+	scLister             storagelisters.StorageClassLister
+	podLister            v1listers.PodLister
+	pvSynced             cache.InformerSynced
+	pvcSynced            cache.InformerSynced
+	scSynced             cache.InformerSynced
+	podSynced            cache.InformerSynced
+	factory              informers.SharedInformerFactory
+	podFactory           informers.SharedInformerFactory
+	queue                workqueue.TypedRateLimitingInterface[string]
+	eventRecorder        record.EventRecorder
+	datafluxConfig       *DatafluxConfig
+	gcsClient            *storage.Client
+	metricClient         *monitoring.MetricClient
+	config               *ScannerConfig
+	computeService       *compute.Service
+	storageControlClient storageControlClient
 
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
 	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
@@ -213,6 +243,13 @@ type Scanner struct {
 	// Identity of this controller, generated at creation time and not persisted
 	// across restarts. Useful only for debugging, for seeing the source of events.
 	id string
+}
+
+// storageControlClient defines the interface that the real and mock clients satisfy.
+// This allows us to swap the real client with a mock one during tests.
+type storageControlClient interface {
+	CreateAnywhereCache(context.Context, *controlpb.CreateAnywhereCacheRequest, ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error)
+	Close() error
 }
 
 // buildConfig creates a Kubernetes rest.Config for the client.
@@ -383,6 +420,30 @@ func (s *Scanner) run(ctx context.Context) {
 	defer func() {
 		if err := metricClient.Close(); err != nil {
 			klog.Errorf("Failed to close metric client: %v", err)
+		}
+	}()
+
+	computeService, err := compute.NewService(context.Background(), option.WithScopes(compute.ComputeReadonlyScope))
+	if err != nil {
+		klog.Errorf("Failed to create compute service: %v", err)
+		return
+	}
+	s.computeService = computeService
+	defer func() {
+		if err := metricClient.Close(); err != nil {
+			klog.Errorf("Failed to close compute service: %v", err)
+		}
+	}()
+
+	storageControlClient, err := control.NewStorageControlClient(context.Background())
+	if err != nil {
+		klog.Errorf("Failed to create storage control client: %v", err)
+		return
+	}
+	s.storageControlClient = storageControlClient
+	defer func() {
+		if err := metricClient.Close(); err != nil {
+			klog.Errorf("Failed to close storage control client: %v", err)
 		}
 	}()
 
@@ -771,7 +832,169 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanCompleted); patchErr != nil {
 		return fmt.Errorf("failed to patch PV %q results, err: %w", pv.Name, patchErr)
 	}
+
+	// Check if the pv uses a anywhere cache enabled storage class.
+	isAnywhereCacheEnabled, err := isAnywhereCacheEnabled(s.scLister, pv)
+	if err != nil {
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Will not enable anywhere cache, error occured while checking its enablement for sc %q: %v", pv.Spec.StorageClassName, err)
+		klog.Errorf("will not enable anywhere cache, error occured while checking its enablement for sc %q: %v", pv.Spec.StorageClassName, err)
+	}
+
+	if isAnywhereCacheEnabled {
+		shouldRequeue := s.createAnywhereCache(ctx, pv)
+		if shouldRequeue {
+			return fmt.Errorf("anywhere cache creation failed for PV %q and bucket %s, will retry", pv.Name, bucketI.name)
+		}
+	}
 	return nil // Remove since this is a complete and successful scan.
+}
+
+// createAnywhereCache does prework and makes request to create anywherecache
+// prework: get zones, create clients, and sets up the request for anywhere cache
+// create request: sends a create anywhere cache for each zone of the cluster (api is impodent).
+// if any retryable error occurs we requeue the pv to try again later.
+func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolume) bool {
+	anywhereCacheTtl, err := getAnywhereCacheTtlFromPV(pv)
+	if err != nil {
+		err = fmt.Errorf("failed to determine anywhereCacheTTL: %v", err)
+		s.recordACCreateErrorEvent(pv, "", err, false)
+		return false
+	}
+	anywhereCacheAdmissionPolicy, err := getAnywhereCacheAdmissionPolicyFromPV(pv)
+	if err != nil {
+		err = fmt.Errorf("failed to determine anywhereCacheAdmissionPolicy: %v", err)
+		s.recordACCreateErrorEvent(pv, "", err, false)
+		return false
+	}
+	requeue := false
+	zones, err := utilGetZonesForClusterRegion(ctx, s.computeService, s.config.ClusterRegion)
+	if err != nil {
+		err = fmt.Errorf("failed to get zones for region: %v", err)
+		requeue = isRetryableError(err)
+		s.recordACCreateErrorEvent(pv, "", err, requeue)
+		return requeue
+	}
+	if s.storageControlClient == nil {
+		err = fmt.Errorf("failed to create storage client")
+		s.recordACCreateErrorEvent(pv, "", err, requeue)
+		return false
+	}
+
+	for _, zone := range zones {
+		acName := fmt.Sprintf("%s/%s", pv.Spec.CSI.VolumeHandle, zone)
+
+		req, err := buildCreateAnywhereCacheRequest(pv, zone, anywhereCacheTtl, anywhereCacheAdmissionPolicy)
+		if err != nil {
+			err = status.Errorf(codes.InvalidArgument, "failed to build anywhere cache request: %v", err)
+			s.recordACCreateErrorEvent(pv, acName, err, requeue)
+			continue
+		}
+
+		klog.Infof("Attempting to create anywhere cache: %s", acName)
+		_, err = s.storageControlClient.CreateAnywhereCache(ctx, req)
+
+		if err != nil {
+			shouldRequeueThisZone := isRetryableError(err)
+			requeue = requeue || shouldRequeueThisZone
+			s.recordACCreateErrorEvent(pv, acName, err, shouldRequeueThisZone)
+		} else {
+			// TODO(fuechr): validate request was successful, for now we assume the creation was successful if no error.
+			s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheCreateSucceeded, "Created Anywhere Cache %s for pv: %s", acName, pv.Name)
+		}
+	}
+	return requeue
+}
+
+// isRetryableError checks if an error is retryable.
+// An error is considered retryable if it's not a gRPC status error or if its code is not in the non-retryable list.
+func isRetryableError(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return true
+	}
+	return !nonRetryCodes[st.Code()]
+}
+
+// buildCreateAnywhereCacheRequest builds the request to create an anywhere cache based on the pv ().
+func BuildCreateAnywhereCacheRequest(pv *v1.PersistentVolume, zone string, anywhereCacheTtl *durationpb.Duration, anywhereCacheAdmissionPolicy string) (*controlpb.CreateAnywhereCacheRequest, error) {
+	return &controlpb.CreateAnywhereCacheRequest{
+		// projects/_/buckets/... is the required format for the api
+		Parent: fmt.Sprintf(`projects/_/buckets/%s`, pv.Spec.CSI.VolumeHandle),
+		AnywhereCache: &controlpb.AnywhereCache{
+			Ttl:             anywhereCacheTtl,
+			Zone:            zone,
+			AdmissionPolicy: anywhereCacheAdmissionPolicy,
+		},
+	}, nil
+}
+
+// recordACCreateErrorEvent records an event for an anywhere cache creation error.
+func (s *Scanner) recordACCreateErrorEvent(pv *v1.PersistentVolume, acName string, err error, willRetry bool) {
+	shouldRetryString := "[WILL NOT RETRY]"
+	if willRetry {
+		shouldRetryString = "[WILL RETRY]"
+	}
+	acNameString := ""
+	if acName != "" {
+		acNameString = fmt.Sprintf(" Requested anywherecache: %s.", acName)
+	}
+	s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "AnywhereCacheCreationFailed %s. The GCS bucket used by pv %s failed to enable anywherecache due to: %v%s", shouldRetryString, pv.Name, err, acNameString)
+}
+
+// isAnywhereCacheEnabled returns the value of 'enableAnywhereCache' or error if invalid value is present.
+func isAnywhereCacheEnabled(storageClassLister storagelisters.StorageClassLister, pv *v1.PersistentVolume) (bool, error) {
+	// get the storage class from sc informer
+	sc, err := storageClassLister.Get(pv.Spec.StorageClassName)
+	if err != nil {
+		// storage class not available
+		return false, err
+	}
+	// retrieve 'enableAnywhereCache' from list of parameters and parse
+	enableAnywhereCache, ok := sc.Parameters["enableAnywhereCache"]
+	if ok {
+		return wh.ParseBool(enableAnywhereCache)
+	}
+	// found the sc but didn't have the parameter, not enabling anywhere cache
+	return false, nil
+}
+
+// getAnywhereCacheTtlFromPV returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
+func getAnywhereCacheTtlFromPV(pv *v1.PersistentVolume) (*durationpb.Duration, error) {
+	if pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes == nil {
+		klog.Infof("no volume attributes provided, defaulting the anywhere cache ttl to 1h for pv: %s", pv.Name)
+		return hourDuration, nil
+	}
+
+	ttl, ok := pv.Spec.CSI.VolumeAttributes["anywhereCacheTTL"]
+
+	if !ok {
+		klog.Infof("no ttl volume attribute provided, defaulting the anywhere cache ttl to 1h for pv: %s", pv.Name)
+		return hourDuration, nil
+	}
+
+	goDuration, err := time.ParseDuration(ttl)
+	if err != nil {
+		return nil, err
+	}
+
+	return durationpb.New(goDuration), nil
+}
+
+// getAnywhereCacheAdmissionPolicyFromPV returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
+func getAnywhereCacheAdmissionPolicyFromPV(pv *v1.PersistentVolume) (string, error) {
+	if pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes == nil {
+		klog.Infof("no volume attributes provided, defaulting the anywhere cache admission policy to admit-on-first-miss for pv: %s", pv.Name)
+		return admitOnFirstMiss, nil
+	}
+	admissionPolicy, ok := pv.Spec.CSI.VolumeAttributes["anywhereCacheAdmissionPolicy"]
+	if !ok {
+		klog.Infof("no admission policy volume attribute provided, defaulting the anywhere cache admission policy to admit-on-first-miss for pv: %s", pv.Name)
+		return admitOnFirstMiss, nil
+	}
+	if admissionPolicy == admitOnFirstMiss || admissionPolicy == admitOnSecondMiss {
+		return admissionPolicy, nil
+	}
+	return "", fmt.Errorf("invalid admission anywhereCacheAdmissionPolicy provided: %s, valid values are admit-on-first-miss or admit-on-second-miss", admissionPolicy)
 }
 
 func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
