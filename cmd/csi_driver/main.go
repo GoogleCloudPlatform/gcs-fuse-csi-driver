@@ -64,10 +64,11 @@ var (
 	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
 
 	// GCSFuse profiles flags.
-	enableGCSFuseProfiles        = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
-	datafluxParallelism          = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
-	datafluxBatchSize            = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
-	datafluxSkipDirectoryObjects = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
+	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
+	datafluxParallelism           = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
+	datafluxBatchSize             = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
+	datafluxSkipDirectoryObjects  = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
+	enableGcsfuseProfilesInternal = flag.Bool("enable-gcsfuse-profiles-internal", false, "Allow the temporarily disallowed gcsfuse profiles flag to be passed for internal use only")
 
 	// Leader election flags.
 	leaderElection              = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
@@ -213,6 +214,7 @@ func main() {
 		DisableAutoconfig:              *disableAutoconfig,
 		WINodeLabelCheck:               *wiNodeLabelCheck,
 		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
+		EnableGcsfuseProfilesInternal:  *enableGcsfuseProfilesInternal,
 		FeatureOptions:                 featureOptions,
 	}
 

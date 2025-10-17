@@ -145,18 +145,6 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
 		{
-			name: "temporary until we support profile flag - no valid options provided, should return default maps",
-			mc: &MountConfig{
-				BucketName: "test-bucket",
-				BufferDir:  "test-buffer-dir",
-				CacheDir:   "test-cache-dir",
-				ConfigFile: "test-config-file",
-				Options:    []string{"profile=aiml-training", "profile:aiml-training"},
-			},
-			expectedArgs:          defaultFlagMap,
-			expectedConfigMapArgs: defaultConfigFileFlagMap,
-		},
-		{
 			name: "should return valid args with custom app-name",
 			mc: &MountConfig{
 				BucketName: "test-bucket",

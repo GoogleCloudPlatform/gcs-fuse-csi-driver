@@ -266,6 +266,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
+	// map of flags stripped from mount options: if flag is 'true' do NOT pass mo to sidecar
+	// flag should only be set to 'false' if feature flag is enabled and is supported by given sidecar version
+	disallowedFlags := map[string]bool{
+		GCSFuseProfileFlag: !(s.driver.config.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)),
+	}
+	fuseMountOptions = removeDisallowedMountOptions(fuseMountOptions, disallowedFlags)
 	// Start to mount
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
@@ -274,6 +280,26 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
 
 	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+func removeDisallowedMountOptions(fuseMountOptions []string, disallowedFlags map[string]bool) []string {
+	fuseMountOptionsStripped := []string{}
+	for _, item := range fuseMountOptions {
+		// Split into key/value at first ":" or "="
+		parts := strings.FieldsFunc(item, func(r rune) bool {
+			return r == ':' || r == '='
+		})
+
+		key := parts[0]
+
+		// Check if key exists in map
+		val, exists := disallowedFlags[key]
+
+		if !exists || !val {
+			fuseMountOptionsStripped = append(fuseMountOptionsStripped, item)
+		}
+	}
+	return fuseMountOptionsStripped
 }
 
 func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {

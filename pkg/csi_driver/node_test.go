@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -456,5 +457,86 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
 			t.Errorf("test %q failed:got error %q, expected error %q", test.name, err, test.expectErr)
 		}
+	}
+}
+
+func TestRemoveDisallowedMountOptions(t *testing.T) {
+	// Define test cases
+	testCases := []struct {
+		name            string
+		mountOptions    []string
+		disallowedFlags map[string]bool
+		expected        []string
+	}{
+		{
+			name:            "empty mount options",
+			mountOptions:    []string{},
+			disallowedFlags: map[string]bool{"debug_fuse": true},
+			expected:        []string{},
+		},
+		{
+			name:            "nil disallowed flags",
+			mountOptions:    []string{"debug_fuse", "profile=inference"},
+			disallowedFlags: nil,
+			expected:        []string{"debug_fuse", "profile=inference"},
+		},
+		{
+			name:            "no disallowed flags specified",
+			mountOptions:    []string{"debug_fuse", "profile=inference"},
+			disallowedFlags: map[string]bool{},
+			expected:        []string{"debug_fuse", "profile=inference"},
+		},
+		{
+			name:         "remove one disallowed flag",
+			mountOptions: []string{"debug_gcs", "gid:1000", "debug_fuse"},
+			disallowedFlags: map[string]bool{
+				"debug_fuse": true,
+			},
+			expected: []string{"debug_gcs", "gid:1000"},
+		},
+		{
+			name:         "remove multiple disallowed flags and one is false",
+			mountOptions: []string{"debug_gcs:false", "profile=inference", "somethingelse:30", "uid=1000"},
+			disallowedFlags: map[string]bool{
+				"profile":       true,
+				"debug_gcs":     true,
+				"somethingelse": false,
+			},
+			expected: []string{"somethingelse:30", "uid=1000"},
+		},
+		{
+			name:         "all flags are disallowed",
+			mountOptions: []string{"debug_gcs", "profile=inference", "profile:inference"},
+			disallowedFlags: map[string]bool{
+				"debug_gcs": true,
+				"profile":   true,
+			},
+			expected: []string{},
+		},
+		{
+			name:         "disallowed flag is present but set to false",
+			mountOptions: []string{"profile=inference", "profile:inference"},
+			disallowedFlags: map[string]bool{
+				"profile": false, // This flag should NOT be removed
+			},
+			expected: []string{"profile=inference", "profile:inference"},
+		},
+		{
+			name:            "no matching disallowed flags",
+			mountOptions:    []string{"uid:1001", "gid=1002"},
+			disallowedFlags: map[string]bool{"debug_fuse": true},
+			expected:        []string{"uid:1001", "gid=1002"},
+		},
+	}
+
+	// Run test cases
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := removeDisallowedMountOptions(tc.mountOptions, tc.disallowedFlags)
+
+			if !reflect.DeepEqual(actual, tc.expected) {
+				t.Errorf("test '%s' failed: expected %v, but got %v", tc.name, tc.expected, actual)
+			}
+		})
 	}
 }
