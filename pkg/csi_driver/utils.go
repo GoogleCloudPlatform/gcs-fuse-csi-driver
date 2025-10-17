@@ -465,6 +465,13 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, err
 		if deprecatedFlagPatterns.MatchString(errMsgStr) {
 			return codes.Unavailable, fmt.Errorf("benign error: %s", errMsgStr)
 		}
+
+		if strings.HasPrefix(util.SidecarBuckettAccessCheckErrorPrefix, errMsgStr) {
+			if strings.Contains(errMsgStr, util.StorageServiceErrorStr) {
+				code = codes.Unauthenticated
+			}
+			return code, fmt.Errorf(errMsgStr)
+		}
 		return code, fmt.Errorf("gcsfuse failed with error: %v", errMsgStr)
 	}
 	return codes.OK, nil
