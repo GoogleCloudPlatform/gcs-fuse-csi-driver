@@ -18,6 +18,7 @@ package profiles
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -54,10 +55,10 @@ var (
 		},
 		MountOptions: []string{
 			"implicit-dirs",
-			"metadata-cache:negative-ttl-secs:0",
-			"metadata-cache:ttl-secs:-1",
-			"file-cache:cache-file-for-range-read:true",
-			"file-system:kernel-list-cache-ttl-secs:-1",
+			"metadata-cache:negative-ttl-secs=0",
+			"metadata-cache:ttl-secs=-1",
+			"file-cache:cache-file-for-range-read=true",
+			"file-system:kernel-list-cache-ttl-secs=-1",
 			"read_ahead_kb=1024",
 		},
 	}
@@ -114,6 +115,17 @@ const (
 // PVConfigBuilder helps create FakePVConfig instances for tests.
 type PVConfigBuilder struct {
 	config clientset.FakePVConfig
+}
+
+// Helper to sort string slices for consistent comparison
+func sortStrings(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	c := make([]string, len(s))
+	copy(c, s)
+	sort.Strings(c)
+	return c
 }
 
 // NewPVConfigBuilder initializes a builder with default testPVConfig values.
@@ -280,10 +292,10 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					mountOptions: []string{
 						"implicit-dirs",
-						"metadata-cache:negative-ttl-secs:0",
-						"metadata-cache:ttl-secs:-1",
-						"file-cache:cache-file-for-range-read:true",
-						"file-system:kernel-list-cache-ttl-secs:-1",
+						"metadata-cache:negative-ttl-secs=0",
+						"metadata-cache:ttl-secs=-1",
+						"file-cache:cache-file-for-range-read=true",
+						"file-system:kernel-list-cache-ttl-secs=-1",
 						"read_ahead_kb=1024",
 					},
 				},
@@ -1197,6 +1209,628 @@ func TestHasLocalSSDEphemeralStorageAnnotation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := hasLocalSSDEphemeralStorageAnnotation(tt.annotations); got != tt.want {
 				t.Errorf("hasLocalSSDEphemeralStorageAnnotation() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAddRecommendationToMountOptions(t *testing.T) {
+	tests := []struct {
+		name                string
+		initialOptions      []string
+		mountOptionKey      string
+		recommendationBytes int64
+		wantOptions         []string
+	}{
+		{
+			name:                "Bytes greater than 0 - Should add formatted option",
+			initialOptions:      []string{"opt1"},
+			mountOptionKey:      "test-key",
+			recommendationBytes: 2 * mib,
+			wantOptions:         []string{"opt1", "test-key=2"},
+		},
+		{
+			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key=val format",
+			initialOptions:      []string{"opt1", "test-key=1"},
+			mountOptionKey:      "test-key",
+			recommendationBytes: 2 * mib,
+			wantOptions:         []string{"opt1", "test-key=1"},
+		},
+		{
+			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key:val format",
+			initialOptions:      []string{"opt1", "test-key:1"},
+			mountOptionKey:      "test-key",
+			recommendationBytes: 2 * mib,
+			wantOptions:         []string{"opt1", "test-key:1"},
+		},
+		{
+			name:                "Bytes equals 0 - Should not add option",
+			initialOptions:      []string{"opt1"},
+			mountOptionKey:      "test-key",
+			recommendationBytes: 0,
+			wantOptions:         []string{"opt1"},
+		},
+		{
+			name:                "Empty initial options - Should add option",
+			initialOptions:      []string{},
+			mountOptionKey:      "test-key",
+			recommendationBytes: mib,
+			wantOptions:         []string{"test-key=1"},
+		},
+		{
+			name:                "Bytes require rounding up - Should format with rounded up MiB",
+			initialOptions:      []string{},
+			mountOptionKey:      "test-key",
+			recommendationBytes: mib + 1,
+			wantOptions:         []string{"test-key=2"},
+		},
+		{
+			name:                "Nil initial options - Should handle nil slice",
+			initialOptions:      nil,
+			mountOptionKey:      "test-key",
+			recommendationBytes: mib,
+			wantOptions:         []string{"test-key=1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Copy initialOptions to avoid modifying test case data
+			options := append([]string(nil), tt.initialOptions...)
+			got := addRecommendationToMountOptions(options, tt.mountOptionKey, tt.recommendationBytes)
+			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
+				t.Errorf("addRecommendationToMountOptions(%v, %q, %d) returned diff (-want +got):\n%s", tt.initialOptions, tt.mountOptionKey, tt.recommendationBytes, diff)
+			}
+		})
+	}
+}
+
+func TestBuildCacheRequirements(t *testing.T) {
+	tests := []struct {
+		name string
+		pv   *pvDetails
+		want *cacheRequirements
+	}{
+		{
+			name: "Non-zero PV details - Should calculate all cache requirements",
+			pv: &pvDetails{
+				numObjects:     1000,
+				totalSizeBytes: 10 * mib,
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
+				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
+				fileCacheBytes:         10 * mib,
+			},
+		},
+		{
+			name: "Zero numObjects - Should result in zero metadata cache",
+			pv: &pvDetails{
+				numObjects:     0,
+				totalSizeBytes: 5 * mib,
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 0,
+				metadataTypeCacheBytes: 0,
+				fileCacheBytes:         5 * mib,
+			},
+		},
+		{
+			name: "Zero totalSizeBytes - Should result in zero file cache",
+			pv: &pvDetails{
+				numObjects:     500,
+				totalSizeBytes: 0,
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 500 * metadataStatCacheBytesPerObject,
+				metadataTypeCacheBytes: 500 * metadataTypeCacheBytesPerObject,
+				fileCacheBytes:         0,
+			},
+		},
+		{
+			name: "All zero PV details - Should result in all zero requirements",
+			pv: &pvDetails{
+				numObjects:     0,
+				totalSizeBytes: 0,
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 0,
+				metadataTypeCacheBytes: 0,
+				fileCacheBytes:         0,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildCacheRequirements(tt.pv)
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(cacheRequirements{})); diff != "" {
+				t.Errorf("buildCacheRequirements(%v) returned unexpected diff (-want +got):\n%s", tt.pv, diff)
+			}
+		})
+	}
+}
+
+func TestCalculateFuseResourceBudget(t *testing.T) {
+	tests := []struct {
+		name              string
+		nodeAllocatable   int64
+		allocatableFactor float64
+		sidecarLimit      int64
+		wantBudget        int64
+	}{
+		{
+			name:              "Sidecar limit less than allocatable - Should use sidecar limit",
+			nodeAllocatable:   1000,
+			allocatableFactor: 0.5,
+			sidecarLimit:      400,
+			wantBudget:        200, // min(1000, 400) * 0.5 = 400 * 0.5
+		},
+		{
+			name:              "Sidecar limit greater than allocatable - Should use node allocatable",
+			nodeAllocatable:   1000,
+			allocatableFactor: 0.5,
+			sidecarLimit:      1200,
+			wantBudget:        500, // min(1000, 1200) * 0.5 = 1000 * 0.5
+		},
+		{
+			name:              "Sidecar limit is zero - Should use node allocatable",
+			nodeAllocatable:   1000,
+			allocatableFactor: 0.5,
+			sidecarLimit:      0,
+			wantBudget:        500, // nodeAllocatable * 0.5
+		},
+		{
+			name:              "Factor is 1.0 - Should apply factor correctly",
+			nodeAllocatable:   1000,
+			allocatableFactor: 1.0,
+			sidecarLimit:      600,
+			wantBudget:        600, // min(1000, 600) * 1.0
+		},
+		{
+			name:              "Factor is 0.0 - Should result in zero budget",
+			nodeAllocatable:   1000,
+			allocatableFactor: 0.0,
+			sidecarLimit:      600,
+			wantBudget:        0,
+		},
+		{
+			name:              "Node allocatable is zero - Should result in zero budget",
+			nodeAllocatable:   0,
+			allocatableFactor: 0.5,
+			sidecarLimit:      100,
+			wantBudget:        0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateFuseResourceBudget(tt.nodeAllocatable, tt.allocatableFactor, tt.sidecarLimit)
+			if got != tt.wantBudget {
+				t.Errorf("calculateFuseResourceBudget(%d, %.2f, %d) = %d, want %d", tt.nodeAllocatable, tt.allocatableFactor, tt.sidecarLimit, got, tt.wantBudget)
+			}
+		})
+	}
+}
+
+func TestCalculateResourceBudgets(t *testing.T) {
+	tests := []struct {
+		name          string
+		config        *ProfileConfig
+		wantMemory    int64
+		wantEphemeral int64
+	}{
+		{
+			name: "Standard case - Should calculate both budgets",
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           2 * 1024 * 1024 * 1024,  // 2Gi
+						ephemeralStorageBytes: 20 * 1024 * 1024 * 1024, // 20Gi
+					},
+				},
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           0.7,
+					fuseEphemeralStorageAllocatableFactor: 0.85,
+				},
+				podDetails: &podDetails{
+					sidecarLimits: &parsedResourceList{
+						memoryBytes:           1 * 1024 * 1024 * 1024,  // 1Gi
+						ephemeralStorageBytes: 10 * 1024 * 1024 * 1024, // 10Gi
+					},
+				},
+			},
+			// Memory: min(2Gi, 1Gi) * 0.7 = 1Gi * 0.7 = 751619276
+			wantMemory: 1073741824 * 7 / 10,
+			// Ephemeral: min(20Gi, 10Gi) * 0.85 = 10Gi * 0.85 = 9126805504
+			wantEphemeral: 10737418240 * 85 / 100,
+		},
+		{
+			name: "Zero sidecar limits - Should base budgets on node allocatables",
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           2 * 1024 * 1024 * 1024,
+						ephemeralStorageBytes: 20 * 1024 * 1024 * 1024,
+					},
+				},
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           0.5,
+					fuseEphemeralStorageAllocatableFactor: 0.5,
+				},
+				podDetails: &podDetails{
+					sidecarLimits: &parsedResourceList{
+						memoryBytes:           0,
+						ephemeralStorageBytes: 0,
+					},
+				},
+			},
+			// Memory: 2Gi * 0.5 = 1Gi = 1073741824
+			wantMemory: 1073741824,
+			// Ephemeral: 20Gi * 0.5 = 10Gi = 10737418240
+			wantEphemeral: 10737418240,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotMemory, gotEphemeral := calculateResourceBudgets(tt.config)
+			if gotMemory != tt.wantMemory || gotEphemeral != tt.wantEphemeral {
+				t.Errorf("calculateResourceBudgets() = (%d, %d), want (%d, %d) - Should match expected budgets", gotMemory, gotEphemeral, tt.wantMemory, tt.wantEphemeral)
+			}
+		})
+	}
+}
+
+func TestRecommendMetadataCacheSize(t *testing.T) {
+	config := &ProfileConfig{
+		nodeDetails: &nodeDetails{name: "test-node"},
+	}
+	tests := []struct {
+		name                string
+		required            int64
+		memoryBudget        int64
+		wantRecommended     int64
+		wantRemainingBudget int64
+	}{
+		{
+			name:                "Required less than budget - Should return required size",
+			required:            500,
+			memoryBudget:        1000,
+			wantRecommended:     500,
+			wantRemainingBudget: 500,
+		},
+		{
+			name:                "Required equals budget - Should return required size",
+			required:            1000,
+			memoryBudget:        1000,
+			wantRecommended:     1000,
+			wantRemainingBudget: 0,
+		},
+		{
+			name:                "Required greater than budget - Should cap at budget",
+			required:            1500,
+			memoryBudget:        1000,
+			wantRecommended:     1000,
+			wantRemainingBudget: 0,
+		},
+		{
+			name:                "Required is zero - Should return zero",
+			required:            0,
+			memoryBudget:        1000,
+			wantRecommended:     0,
+			wantRemainingBudget: 1000,
+		},
+		{
+			name:                "Budget is zero - Should return zero",
+			required:            500,
+			memoryBudget:        0,
+			wantRecommended:     0,
+			wantRemainingBudget: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRecommended, gotRemainingBudget := recommendMetadataCacheSize(config, tt.required, tt.memoryBudget, "test")
+			if gotRecommended != tt.wantRecommended || gotRemainingBudget != tt.wantRemainingBudget {
+				t.Errorf("recommendMetadataCacheSize(%d, %d) = (%d, %d), want (%d, %d) - Should match recommended and remaining budgets", tt.required, tt.memoryBudget, gotRecommended, gotRemainingBudget, tt.wantRecommended, tt.wantRemainingBudget)
+			}
+		})
+	}
+}
+
+func TestRecommendCacheConfigs(t *testing.T) {
+	// Constants for easier reading
+	objPerStat := metadataStatCacheBytesPerObject
+	objPerType := metadataTypeCacheBytesPerObject
+
+	// Example config components
+	defaultPV := &pvDetails{numObjects: 1000, totalSizeBytes: 100 * mib}
+	defaultSC := &scDetails{fuseMemoryAllocatableFactor: 1.0, fuseEphemeralStorageAllocatableFactor: 1.0}
+	defaultNode := &nodeDetails{nodeAllocatables: &parsedResourceList{memoryBytes: 5 * mib, ephemeralStorageBytes: 100 * mib}, name: "test-node"}
+	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+
+	tests := []struct {
+		name    string
+		config  *ProfileConfig
+		want    *recommendation
+		wantErr bool
+	}{
+		{
+			name: "Sufficient budget for all metadata caches - Should recommend full required sizes",
+			config: &ProfileConfig{
+				pvDetails:   defaultPV,
+				scDetails:   defaultSC,
+				nodeDetails: defaultNode,
+				podDetails:  defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: 1000 * objPerStat, // 1.5MiB
+				metadataTypeCacheBytes: 1000 * objPerType, // 0.2MiB
+			},
+			wantErr: false,
+		},
+		{
+			name: "Limited memory budget caps stat cache - Should cap stat cache size",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: defaultSC,
+				nodeDetails: &nodeDetails{
+					nodeAllocatables: &parsedResourceList{memoryBytes: 1 * mib, ephemeralStorageBytes: 100 * mib},
+					name:             "test-node",
+				},
+				podDetails: defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: 1 * mib,
+				metadataTypeCacheBytes: 0, // No budget left after stat cache
+			},
+			wantErr: false,
+		},
+		{
+			name: "Limited memory budget caps type cache - Should cap type cache size",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: defaultSC,
+				nodeDetails: &nodeDetails{
+					// Required stat: 1.5MiB, Required type: 0.2MiB. Total needed: 1.7MiB
+					nodeAllocatables: &parsedResourceList{memoryBytes: (1000 * objPerStat) + (1000 * objPerType) - 1, ephemeralStorageBytes: 100 * mib},
+					name:             "test-node",
+				},
+				podDetails: defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: 1000 * objPerStat,
+				metadataTypeCacheBytes: (1000 * objPerType) - 1, // Capped
+			},
+			wantErr: false,
+		},
+		{
+			name: "Zero numObjects - Should recommend zero metadata cache",
+			config: &ProfileConfig{
+				pvDetails:   &pvDetails{numObjects: 0, totalSizeBytes: 100 * mib},
+				scDetails:   defaultSC,
+				nodeDetails: defaultNode,
+				podDetails:  defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: 0,
+				metadataTypeCacheBytes: 0,
+			},
+			wantErr: false,
+		},
+		{
+			name:    "Nil pvDetails - Should return error",
+			config:  &ProfileConfig{pvDetails: nil, scDetails: defaultSC, nodeDetails: defaultNode, podDetails: defaultPod},
+			wantErr: true,
+		},
+		{
+			name:    "Nil scDetails - Should return error",
+			config:  &ProfileConfig{pvDetails: defaultPV, scDetails: nil, nodeDetails: defaultNode, podDetails: defaultPod},
+			wantErr: true,
+		},
+		{
+			name:    "Nil nodeDetails - Should return error",
+			config:  &ProfileConfig{pvDetails: defaultPV, scDetails: defaultSC, nodeDetails: nil, podDetails: defaultPod},
+			wantErr: true,
+		},
+		{
+			name:    "Nil podDetails - Should return error",
+			config:  &ProfileConfig{pvDetails: defaultPV, scDetails: defaultSC, nodeDetails: defaultNode, podDetails: nil},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := recommendCacheConfigs(tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("recommendCacheConfigs() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(recommendation{})); diff != "" {
+				t.Errorf("recommendCacheConfigs() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRecommendMountOptions(t *testing.T) {
+	// Example config components
+	defaultPV := &pvDetails{numObjects: 1000, totalSizeBytes: 100 * mib}
+	defaultSC := &scDetails{
+		mountOptions:                          []string{"implicit-dirs"},
+		fuseMemoryAllocatableFactor:           1.0,
+		fuseEphemeralStorageAllocatableFactor: 1.0,
+	}
+	defaultNode := &nodeDetails{nodeAllocatables: &parsedResourceList{memoryBytes: 5 * mib, ephemeralStorageBytes: 100 * mib}, name: "test-node"}
+	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+
+	tests := []struct {
+		name        string
+		config      *ProfileConfig
+		wantOptions []string
+		wantErr     bool
+	}{
+		{
+			name: "Adds recommended metadata cache options - Should include new options",
+			config: &ProfileConfig{
+				pvDetails:   defaultPV,
+				scDetails:   defaultSC,
+				nodeDetails: defaultNode,
+				podDetails:  defaultPod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"metadata-cache:stat-cache-max-size-mb=2", // ceilDiv(1000 * 1500, mib) = 2
+				"metadata-cache:type-cache-max-size-mb=1", // ceilDiv(1000 * 200, mib) = 1
+			},
+			wantErr: false,
+		},
+		{
+			name: "Zero recommendations - Should not add new options",
+			config: &ProfileConfig{
+				pvDetails:   &pvDetails{numObjects: 0, totalSizeBytes: 0}, // Forces zero recommendations
+				scDetails:   defaultSC,
+				nodeDetails: defaultNode,
+				podDetails:  defaultPod,
+			},
+			wantOptions: []string{"implicit-dirs"},
+			wantErr:     false,
+		},
+		{
+			name: "Error from recommendCacheConfigs - Should propagate error",
+			config: &ProfileConfig{
+				pvDetails:   nil, // This will cause recommendCacheConfigs to error
+				scDetails:   defaultSC,
+				nodeDetails: defaultNode,
+				podDetails:  defaultPod,
+			},
+			wantOptions: nil,
+			wantErr:     true,
+		},
+		{
+			name: "Pre-existing mount options - Should append to existing options",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"read_ahead_kb=1024", "other-option"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+				},
+				nodeDetails: defaultNode,
+				podDetails:  defaultPod,
+			},
+			wantOptions: []string{
+				"read_ahead_kb=1024",
+				"other-option",
+				"metadata-cache:stat-cache-max-size-mb=2",
+				"metadata-cache:type-cache-max-size-mb=1",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RecommendMountOptions(tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RecommendMountOptions() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
+				t.Errorf("RecommendMountOptions() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
+	tests := []struct {
+		name    string
+		srcOpts []string
+		dstOpts []string
+		want    []string
+	}{
+		{
+			name:    "src_empty - Should return dstOpts",
+			srcOpts: []string{},
+			dstOpts: []string{"a=1", "b:2"},
+			want:    []string{"a=1", "b:2"},
+		},
+		{
+			name:    "dst_empty - Should return srcOpts",
+			srcOpts: []string{"a=1", "b:2"},
+			dstOpts: []string{},
+			want:    []string{"a=1", "b:2"},
+		},
+		{
+			name:    "both_empty - Should return empty slice",
+			srcOpts: []string{},
+			dstOpts: []string{},
+			want:    []string{},
+		},
+		{
+			name:    "nil_src - Should return dstOpts",
+			srcOpts: nil,
+			dstOpts: []string{"a=1"},
+			want:    []string{"a=1"},
+		},
+		{
+			name:    "nil_dst - Should return srcOpts",
+			srcOpts: []string{"a=1"},
+			dstOpts: nil,
+			want:    []string{"a=1"},
+		},
+		{
+			name:    "no_overlap - Should append srcOpts to dstOpts",
+			srcOpts: []string{"c=3"},
+			dstOpts: []string{"a=1", "b:2"},
+			want:    []string{"a=1", "b:2", "c=3"},
+		},
+		{
+			name:    "overlap_exact - Should not add from srcOpts",
+			srcOpts: []string{"a=new"},
+			dstOpts: []string{"a=1", "b:2"},
+			want:    []string{"a=1", "b:2"},
+		},
+		{
+			name:    "overlap_case_insensitive - Should not add from srcOpts",
+			srcOpts: []string{"A=new", "B:old"},
+			dstOpts: []string{"a=1", "b:2"},
+			want:    []string{"a=1", "b:2"},
+		},
+		{
+			name:    "overlap_different_format - Should not add from srcOpts based on key",
+			srcOpts: []string{"a:new"},
+			dstOpts: []string{"a=1", "b:2"},
+			want:    []string{"a=1", "b:2"},
+		},
+		{
+			name:    "mixed_add_and_skip - Should add only new keys",
+			srcOpts: []string{"C=3", "a=new", "d:4"},
+			dstOpts: []string{"a=1", "b:2"},
+			want:    []string{"a=1", "b:2", "C=3", "d:4"},
+		},
+		{
+			name:    "src_has_duplicates_key - Should add only the first instance of a new key",
+			srcOpts: []string{"c=1", "c=2"},
+			dstOpts: []string{"a=1"},
+			want:    []string{"a=1", "c=1"},
+		},
+		{
+			name:    "dst_has_duplicates_key - Should preserve dst duplicates and add new keys",
+			srcOpts: []string{"c=1"},
+			dstOpts: []string{"a=1", "a=2"},
+			want:    []string{"a=1", "a=2", "c=1"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeMountOptionsIfKeyUnset(tc.dstOpts, tc.srcOpts)
+			if diff := cmp.Diff(sortStrings(tc.want), sortStrings(got)); diff != "" {
+				t.Errorf("MergeMountOptionsIfKeyUnset(%v, %v) returned diff (-want +got):\n%s", tc.srcOpts, tc.dstOpts, diff)
 			}
 		})
 	}
