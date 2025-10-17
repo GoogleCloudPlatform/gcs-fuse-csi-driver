@@ -28,8 +28,13 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,7 +48,6 @@ var istioContainer = corev1.Container{
 	Name: IstioSidecarName,
 }
 var testNamespace = "default"
-var csiDriverName = "gcs-fuse-csi.storage.gke.io"
 
 func TestPrepareConfig(t *testing.T) {
 	t.Parallel()
@@ -610,6 +614,174 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			if tc.inputPod != nil {
 				request.Object = runtime.RawExtension{
 					Raw: serialize(t, tc.inputPod),
+				}
+			}
+
+			gotResponse := si.Handle(context.Background(), *request)
+
+			if err := compareResponses(tc.wantResponse, gotResponse); err != nil {
+				t.Errorf("for test: %s\nGot injection result: %v, but want: %v. details: %v", tc.name, gotResponse, tc.wantResponse, err)
+			}
+		})
+	}
+}
+
+func TestValidateMutatingWebhookResponseForPV(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name         string
+		inputPv      *corev1.PersistentVolume
+		operation    admissionv1.Operation
+		wantResponse admission.Response
+		nodes        []corev1.Node
+	}{
+		{
+			name:         "Empty request test.",
+			inputPv:      nil,
+			wantResponse: admission.Errored(http.StatusBadRequest, errors.New("there is no content to decode")),
+		},
+		{
+			name:      "Noop",
+			operation: admissionv1.Create,
+			inputPv: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							Driver: util.GCSFuseCsiDriverName,
+						},
+					},
+				},
+			},
+			wantResponse: admission.Allowed("No mutation Required on PersistentVolume: "),
+		},
+		{
+			name:      "Noop with profiles enabled",
+			operation: admissionv1.Create,
+			inputPv: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							Driver: util.GCSFuseCsiDriverName,
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "example-pv",
+					Annotations: map[string]string{},
+				},
+			},
+			wantResponse: admission.Allowed("No mutation Required on PersistentVolume: example-pv"),
+		},
+		{
+			name:      "Block bc of override",
+			operation: admissionv1.Create,
+			inputPv: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							Driver: util.GCSFuseCsiDriverName,
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "example-pv",
+					Annotations: map[string]string{
+						putil.AnnotationStatus: putil.ScanOverride,
+					},
+				},
+			},
+			wantResponse: admission.Errored(http.StatusBadRequest, status.Errorf(codes.InvalidArgument, "status %q requires annotation %q", putil.ScanOverride, putil.AnnotationNumObjects)),
+		},
+		{
+			name:      "Block bc of annotation no override",
+			operation: admissionv1.Create,
+			inputPv: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							Driver: util.GCSFuseCsiDriverName,
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "example-pv",
+					Annotations: map[string]string{
+						putil.AnnotationNumObjects: "some val",
+					},
+				},
+			},
+			wantResponse: admission.Errored(http.StatusBadRequest, status.Errorf(codes.InvalidArgument, "scanner annotations for PV %q found in non-override mode: [%+v]", "example-pv", putil.AnnotationNumObjects)),
+		},
+		{
+			name:      "Block bc of annotation with invalid value",
+			operation: admissionv1.Create,
+			inputPv: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							Driver: util.GCSFuseCsiDriverName,
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "example-pv",
+					Annotations: map[string]string{
+						putil.AnnotationStatus:     putil.ScanOverride,
+						putil.AnnotationNumObjects: "-10",
+						putil.AnnotationTotalSize:  "10",
+						putil.AnnotationHNSEnabled: "true",
+					},
+				},
+			},
+			wantResponse: admission.Errored(http.StatusBadRequest, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: value must be non-negative, got: \"-10\"", putil.AnnotationNumObjects)),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeClient := fake.NewSimpleClientset()
+
+			// Create the nodes.
+			for _, node := range tc.nodes {
+				n := node
+				_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), &n, metav1.CreateOptions{})
+				if err != nil {
+					t.Error("failed to setup/create nodes")
+				}
+			}
+
+			informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
+			lister := informerFactory.Core().V1().Nodes().Lister()
+
+			si := SidecarInjector{
+				Client: nil,
+				Config: &Config{
+					EnableGcsfuseProfiles: true,
+				},
+				Decoder:    admission.NewDecoder(runtime.NewScheme()),
+				NodeLister: lister,
+			}
+
+			stopCh := make(<-chan struct{})
+			informerFactory.Start(stopCh)
+			informerFactory.WaitForCacheSync(stopCh)
+
+			request := &admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Kind: metav1.GroupVersionKind{
+						Group:   "",
+						Version: "v1",
+						Kind:    "PersistentVolume",
+					},
+					Operation: tc.operation,
+				},
+			}
+			if tc.inputPv != nil {
+				request.Object = runtime.RawExtension{
+					Raw: serialize(t, tc.inputPv),
 				}
 			}
 

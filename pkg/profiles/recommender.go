@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
@@ -273,16 +274,16 @@ func buildPVDetails(
 	}
 
 	// Get annotation values as strings
-	numObjectsStr, numObjectsFound := pvAnnotations[annotationNumObjects]
-	totalSizeStr, totalSizeFound := pvAnnotations[annotationTotalSize]
+	numObjectsStr, numObjectsFound := pvAnnotations[profilesutil.AnnotationNumObjects]
+	totalSizeStr, totalSizeFound := pvAnnotations[profilesutil.AnnotationTotalSize]
 
 	// Check for missing annotations
 	var missingAnnotations []string
 	if !numObjectsFound {
-		missingAnnotations = append(missingAnnotations, annotationNumObjects)
+		missingAnnotations = append(missingAnnotations, profilesutil.AnnotationNumObjects)
 	}
 	if !totalSizeFound {
-		missingAnnotations = append(missingAnnotations, annotationTotalSize)
+		missingAnnotations = append(missingAnnotations, profilesutil.AnnotationTotalSize)
 	}
 
 	if len(missingAnnotations) > 0 {
@@ -294,11 +295,11 @@ func buildPVDetails(
 	var parseErrors []string
 	numObjects, err := strconv.ParseInt(numObjectsStr, 10, 64)
 	if err != nil {
-		parseErrors = append(parseErrors, fmt.Sprintf("failed to parse %s value %q: %v", annotationNumObjects, numObjectsStr, err))
+		parseErrors = append(parseErrors, fmt.Sprintf("failed to parse %s value %q: %v", profilesutil.AnnotationNumObjects, numObjectsStr, err))
 	}
 	totalSizeBytes, err := strconv.ParseInt(totalSizeStr, 10, 64)
 	if err != nil {
-		parseErrors = append(parseErrors, fmt.Sprintf("failed to parse %s value %q: %v", annotationTotalSize, totalSizeStr, err))
+		parseErrors = append(parseErrors, fmt.Sprintf("failed to parse %s value %q: %v", profilesutil.AnnotationTotalSize, totalSizeStr, err))
 	}
 	if len(parseErrors) > 0 {
 		errorMsg := strings.Join(parseErrors, "; ")
