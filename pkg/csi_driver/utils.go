@@ -449,7 +449,8 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, err
 
 		if strings.Contains(errMsgStr, "googleapi: Error 403") ||
 			strings.Contains(errMsgStr, "IAM returned 403 Forbidden: Permission") ||
-			strings.Contains(errMsgStr, "google: could not find default credentials") {
+			strings.Contains(errMsgStr, "google: could not find default credentials") ||
+			strings.Contains(errMsgStr, "not have storage.objects.list access") {
 			code = codes.PermissionDenied
 		}
 
@@ -464,6 +465,12 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, err
 
 		if deprecatedFlagPatterns.MatchString(errMsgStr) {
 			return codes.Unavailable, fmt.Errorf("benign error: %s", errMsgStr)
+		}
+		if strings.Contains(errMsgStr, util.StorageServiceErrorStr) {
+			code = codes.Unauthenticated
+		}
+		if strings.Contains(errMsgStr, util.SidecarBucketAccessCheckErrorPrefix) {
+			return code, fmt.Errorf("%v", errMsgStr) // Remember the error string already contains SidecarBucketAccessCheckErrorPrefix
 		}
 		return code, fmt.Errorf("gcsfuse failed with error: %v", errMsgStr)
 	}

@@ -427,7 +427,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 		if ss == nil {
 			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 			if err != nil {
-				klog.Errorf("Failed to setup storage service, got error %q, retrying...", err)
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("%q: %q: %v %v, retrying...", util.SidecarBucketAccessCheckErrorPrefix, util.StorageServiceErrorStr, storage.ParseErrCode(err), err))
 				return false, nil
 			}
 			klog.V(4).Infof("Created storage service %v", ss)
@@ -435,7 +435,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 
 		if bucketName != "_" {
 			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-				klog.Errorf("Failed to get GCS bucket %q: %v", bucketName, err)
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("%q: failed to get GCS bucket %q: %v %v", util.SidecarBucketAccessCheckErrorPrefix, bucketName, storage.ParseErrCode(err), err))
 				return false, nil
 			}
 			klog.V(4).Infof("Bucket access check passed for %s", bucketName)
