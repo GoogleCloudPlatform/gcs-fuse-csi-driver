@@ -45,6 +45,8 @@ const (
 	OptInHnw                            = "hnw-ksa"
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
+	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
+	StorageServiceErrorStr              = "failed to setup storage service"
 )
 
 var (

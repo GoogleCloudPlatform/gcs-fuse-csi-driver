@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -37,10 +38,11 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 	t.Run("modifies error code to be returned for slo parsing", func(t *testing.T) {
 		t.Parallel()
 		testCases := []struct {
-			name         string
-			errorMessage []byte
-			err          error
-			expectedCode codes.Code
+			name                string
+			errorMessage        []byte
+			err                 error
+			expectedCode        codes.Code
+			expectedErrorSubstr string
 		}{
 			{
 				name:         "bootstrap config error",
@@ -94,13 +96,46 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 				expectedCode: codes.OK,
 				err:          os.ErrNotExist,
 			},
+			{
+				name:                "sidecar bucket access checked error bucket does not exist",
+				errorMessage:        []byte(fmt.Sprintf("%v: bucket doesn't exist", util.SidecarBucketAccessCheckErrorPrefix)),
+				expectedCode:        codes.NotFound,
+				expectedErrorSubstr: fmt.Sprintf("%s", util.SidecarBucketAccessCheckErrorPrefix),
+			},
+			{
+				name:                "sidecar bucket access checked error invalid bucket",
+				errorMessage:        []byte(fmt.Sprintf("%v: bucket doesn't exist", util.SidecarBucketAccessCheckErrorPrefix)),
+				expectedCode:        codes.NotFound,
+				expectedErrorSubstr: fmt.Sprintf("%s", util.SidecarBucketAccessCheckErrorPrefix),
+			},
+			{
+				name:                "sidecar bucket access checked permission denied",
+				errorMessage:        []byte(fmt.Sprintf("%v: not have storage.objects.list access", util.SidecarBucketAccessCheckErrorPrefix)),
+				expectedCode:        codes.PermissionDenied,
+				expectedErrorSubstr: fmt.Sprintf("%s", util.SidecarBucketAccessCheckErrorPrefix),
+			},
+			{
+				name:                "sidecar bucket access checked unauthorized access",
+				errorMessage:        []byte(fmt.Sprintf("%v: %v", util.SidecarBucketAccessCheckErrorPrefix, util.StorageServiceErrorStr)),
+				expectedCode:        codes.Unauthenticated,
+				expectedErrorSubstr: fmt.Sprintf("%s", util.SidecarBucketAccessCheckErrorPrefix),
+			},
 		}
 
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			actualCode, _ := extractErrorFromGcsFuseErrorFile(tc.errorMessage, tc.err)
+			actualCode, err := extractErrorFromGcsFuseErrorFile(tc.errorMessage, tc.err)
 			if actualCode != tc.expectedCode {
 				t.Errorf("Got value %v, but expected %v", actualCode, tc.expectedCode)
+			}
+			if err == nil {
+				if tc.expectedErrorSubstr != "" {
+					t.Errorf("Got nil error, but expected error with prefix %q", tc.expectedErrorSubstr)
+				}
+				continue
+			}
+			if tc.expectedErrorSubstr != "" && !strings.Contains(err.Error(), tc.expectedErrorSubstr) {
+				t.Errorf("Got value %v, but expected %v", err, tc.expectedErrorSubstr)
 			}
 		}
 	})
