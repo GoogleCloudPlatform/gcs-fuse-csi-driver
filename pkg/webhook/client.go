@@ -21,6 +21,7 @@ import (
 	"errors"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 )
 
 // IsPreprovisionCSIVolume checks whether the volume is a pre-provisioned volume for the desired csiDriver.
@@ -80,4 +81,16 @@ func (si *SidecarInjector) GetPVC(namespace, name string) (*corev1.PersistentVol
 	}
 
 	return pvc, nil
+}
+
+// GetVolumesStorageClass returns nil if pv has no sc, error if its unable to retrieve the sc, or for happy path returns the sc
+func (si *SidecarInjector) GetVolumesStorageClass(volume *corev1.PersistentVolume) (*storagev1.StorageClass, error) {
+	if volume == nil || volume.Spec.StorageClassName == "" {
+		return nil, nil
+	}
+	sc, err := si.ScLister.Get(volume.Spec.StorageClassName)
+	if err != nil {
+		return nil, err
+	}
+	return sc, nil
 }

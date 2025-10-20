@@ -32,8 +32,9 @@ const (
 //   - isGcsFuseCSIVolume - (bool) whether volume is backed by gcsfuse csi driver.
 //   - isDynamicMount - (bool) True if volume is attempting to mount all of the buckets in project.
 //   - volumeAttributes (map[string]string)
+//   - pv - if volume is a pv we return (*corev1.PersistentVolume) otherwise nil
 //   - error - if check failed
-func (si *SidecarInjector) isGcsFuseCSIVolume(volume corev1.Volume, namespace string) (bool, bool, map[string]string, error) {
+func (si *SidecarInjector) isGcsFuseCSIVolume(volume corev1.Volume, namespace string) (bool, bool, map[string]string, *corev1.PersistentVolume, error) {
 	var isDynamicMount bool
 
 	// Check if it is ephemeral volume.
@@ -45,21 +46,21 @@ func (si *SidecarInjector) isGcsFuseCSIVolume(volume corev1.Volume, namespace st
 				isDynamicMount = true
 			}
 
-			return true, isDynamicMount, volume.CSI.VolumeAttributes, nil
+			return true, isDynamicMount, volume.CSI.VolumeAttributes, nil, nil
 		}
 
-		return false, false, nil, nil
+		return false, false, nil, nil, nil
 	}
 
 	// Check if it's a persistent volume.
 	pvc := volume.PersistentVolumeClaim
 	if pvc == nil {
-		return false, false, nil, nil
+		return false, false, nil, nil, nil
 	}
 	pvcName := pvc.ClaimName
 	pvcObj, err := si.GetPVC(namespace, pvcName)
 	if err != nil {
-		return false, false, nil, err
+		return false, false, nil, nil, err
 	}
 
 	// Check if the PVC is a preprovisioned gcsfuse volume.
@@ -67,7 +68,7 @@ func (si *SidecarInjector) isGcsFuseCSIVolume(volume corev1.Volume, namespace st
 	if err != nil || pv == nil {
 		klog.Warningf("unable to determine if PVC %s/%s is a pre-provisioned gcsfuse volume: %v", namespace, pvcName, err)
 
-		return false, false, nil, nil
+		return false, false, nil, nil, nil
 	}
 
 	if ok {
@@ -75,8 +76,8 @@ func (si *SidecarInjector) isGcsFuseCSIVolume(volume corev1.Volume, namespace st
 			isDynamicMount = true
 		}
 
-		return true, isDynamicMount, pv.Spec.CSI.VolumeAttributes, nil
+		return true, isDynamicMount, pv.Spec.CSI.VolumeAttributes, pv, nil
 	}
 
-	return false, false, nil, nil
+	return false, false, nil, nil, nil
 }
