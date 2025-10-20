@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	listerstoragev1 "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -69,6 +70,7 @@ type SidecarInjector struct {
 	NodeLister             listersv1.NodeLister
 	PvcLister              listersv1.PersistentVolumeClaimLister
 	PvLister               listersv1.PersistentVolumeLister
+	ScLister               listerstoragev1.StorageClassLister
 	ServerVersion          *version.Version
 	K8SClient              kubernetes.Interface
 }

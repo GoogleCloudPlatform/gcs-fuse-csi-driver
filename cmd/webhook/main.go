@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	storagelisters "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -120,6 +121,10 @@ func main() {
 	nodeLister := informerFactory.Core().V1().Nodes().Lister()
 	pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
 	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
+	var scLister storagelisters.StorageClassLister
+	if *enableGcsfuseProfiles {
+		scLister = informerFactory.Storage().V1().StorageClasses().Lister()
+	}
 
 	informerFactory.Start(context.Done())
 	informerFactory.WaitForCacheSync(context.Done())
@@ -160,6 +165,7 @@ func main() {
 			NodeLister:             nodeLister,
 			PvLister:               pvLister,
 			PvcLister:              pvcLister,
+			ScLister:               scLister,
 			ServerVersion:          serverVersion,
 			K8SClient:              client,
 		},

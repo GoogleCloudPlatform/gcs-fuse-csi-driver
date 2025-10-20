@@ -19,12 +19,14 @@ package webhook
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -537,6 +539,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 		config        Config
 		nativeSidecar *bool
 		expectedPod   *corev1.Pod
+		sc            *storagev1.StorageClass
 	}{
 		{
 			testName: "no injection",
@@ -1595,4 +1598,328 @@ func generateAnnotationsFromConfig(config *Config, prefix string) map[string]str
 	}
 
 	return annotations
+}
+func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		testName      string
+		pod           *corev1.Pod
+		config        Config
+		nativeSidecar *bool
+		expectedPod   *corev1.Pod
+		sc            *storagev1.StorageClass
+		pv            *corev1.PersistentVolume
+		pvc           *corev1.PersistentVolumeClaim
+	}{
+		{
+			testName:    "fuse sidecar present, injection successful with sc",
+			pod:         getInputPodForMetadataPrefetchWitSCTest("1", "true", false),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("1", true, "true", false),
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-pv1",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "my-sc1",
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: gcsFuseCsiDriverName,
+						},
+					},
+				},
+			},
+			pvc: getPVCForMetadataPrefetchWitSCTest("1"),
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-sc1",
+				},
+				Parameters: map[string]string{
+					"gcsfuseMetadataPrefetchOnMount": "true",
+				},
+			},
+		},
+		{
+			testName:    "fuse sidecar present, no injection with no sc",
+			pod:         getInputPodForMetadataPrefetchWitSCTest("4", "true", false),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("4", false, "true", false),
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-pv4",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "",
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: gcsFuseCsiDriverName,
+						},
+					},
+				},
+			},
+			pvc: getPVCForMetadataPrefetchWitSCTest("4"),
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-sc4",
+				},
+			},
+		},
+		{
+			testName:    "fuse sidecar present, no injection, one volume references prefetch and disables it",
+			pod:         getInputPodForMetadataPrefetchWitSCTest("2", "true", true),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("2", false, "true", true),
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-pv2",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "",
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: gcsFuseCsiDriverName,
+						},
+					},
+				},
+			},
+			pvc: getPVCForMetadataPrefetchWitSCTest("2"),
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-sc2",
+				},
+				Parameters: map[string]string{
+					"gcsfuseMetadataPrefetchOnMount": "true",
+				},
+			},
+		},
+		{
+			testName:    "fuse sidecar present, no injection, sc disables",
+			pod:         getInputPodForMetadataPrefetchWitSCTest("5", "true", false),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("5", false, "true", false),
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-pv5",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "my-sc5",
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: gcsFuseCsiDriverName,
+						},
+					},
+				},
+			},
+			pvc: getPVCForMetadataPrefetchWitSCTest("5"),
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "my-sc5",
+				},
+				Parameters: map[string]string{
+					"gcsfuseMetadataPrefetchOnMount": "false",
+				},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.testName, func(t *testing.T) {
+			t.Parallel()
+			if tc.nativeSidecar == nil {
+				tc.nativeSidecar = ptr.To(true)
+			}
+			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
+			si.Config = &Config{EnableGcsfuseProfiles: true}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fakeClient := fake.NewSimpleClientset()
+			informer := informers.NewSharedInformerFactory(fakeClient, resyncDuration)
+			si.ScLister = informer.Storage().V1().StorageClasses().Lister()
+			si.PvLister = informer.Core().V1().PersistentVolumes().Lister()
+			si.PvcLister = informer.Core().V1().PersistentVolumeClaims().Lister()
+			informer.Start(ctx.Done())
+			_, err := fakeClient.StorageV1().StorageClasses().Create(context.TODO(), tc.sc, metav1.CreateOptions{})
+
+			if err != nil {
+				t.Fatalf("failed to setup test SC: %v", err)
+			}
+			_, err = fakeClient.CoreV1().PersistentVolumes().Create(context.TODO(), tc.pv, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("failed to setup test PV: %v", err)
+			}
+			_, err = fakeClient.CoreV1().PersistentVolumes().Create(context.TODO(), &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pv-mention-prefetch",
+				}}, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("failed to setup test PV: %v", err)
+			}
+
+			_, err = fakeClient.CoreV1().PersistentVolumeClaims("").Create(context.TODO(), tc.pvc, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("failed to setup test PVC: %v", err)
+			}
+			_, err = fakeClient.CoreV1().PersistentVolumeClaims("").Create(context.TODO(), &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pvc-mention-prefetch",
+				}, Spec: corev1.PersistentVolumeClaimSpec{
+					VolumeName: "pv-mention-prefetch",
+				}}, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("failed to setup test PVC: %v", err)
+			}
+
+			informer.WaitForCacheSync(ctx.Done())
+
+			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil)
+			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
+			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
+				t.Errorf(`failed to run %s, expected: "%v", but got "%v". Diff: %s`, tc.testName, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))
+			}
+		})
+	}
+}
+
+func getInputPodForMetadataPrefetchWitSCTest(modifier string, enableProfiles string, includeVolumeThatMentionsPrefetch bool) *corev1.Pod {
+	volumes := []corev1.Volume{
+		{
+			Name: "my-volume",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: "my-pvc" + modifier,
+				},
+			},
+		},
+	}
+	if includeVolumeThatMentionsPrefetch {
+		volumes = append(volumes, corev1.Volume{
+			Name: "pvc-mention-prefetch",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: "pvc-mentions-prefetch",
+				},
+			},
+		})
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"gke-gcsfuse/profiles": enableProfiles,
+			},
+		},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{
+					Name: GcsFuseSidecarName,
+				},
+				{
+					Name: "two",
+				},
+				{
+					Name: "three",
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "workload-one",
+				},
+				{
+					Name: "workload-two",
+				},
+				{
+					Name: "workload-three",
+				},
+			},
+			Volumes: volumes,
+		},
+	}
+}
+
+func getExpectedPodForMetadataPrefetchWithSCTest(modifier string, enableMP bool, enableProfiles string, includeVolumeThatMentionsPrefetch bool) *corev1.Pod {
+	volumes := []corev1.Volume{
+		{
+			Name: "my-volume",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: "my-pvc" + modifier,
+				},
+			},
+		},
+	}
+	if includeVolumeThatMentionsPrefetch {
+		volumes = append(volumes, corev1.Volume{
+			Name: "pvc-mention-prefetch",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: "pvc-mentions-prefetch",
+				},
+			},
+		})
+	}
+	initContainerArray := []corev1.Container{
+		{
+			Name: GcsFuseSidecarName,
+		},
+		{
+			Name: "two",
+		},
+		{
+			Name: "three",
+		},
+	}
+	if enableMP {
+		limits, requests := prepareResourceList(getDefaultMetadataPrefetchConfig("fake-image"))
+		initContainerArray = append(initContainerArray[:1], append([]corev1.Container{
+			{
+				Name:            MetadataPrefetchSidecarName,
+				Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
+				RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
+				SecurityContext: GetSecurityContext(),
+				Image:           FakePrefetchConfig().ContainerImage,
+				ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
+				Resources: corev1.ResourceRequirements{
+					Requests: requests,
+					Limits:   limits,
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      "my-volume",
+						ReadOnly:  true,
+						MountPath: "/volumes/my-volume",
+					},
+				},
+			},
+		}, initContainerArray[1:]...)...)
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"gke-gcsfuse/profiles": enableProfiles,
+			},
+		},
+		Spec: corev1.PodSpec{
+			InitContainers: initContainerArray,
+			Containers: []corev1.Container{
+				{
+					Name: "workload-one",
+				},
+				{
+					Name: "workload-two",
+				},
+				{
+					Name: "workload-three",
+				},
+			},
+			Volumes: volumes,
+		},
+	}
+}
+func getPVCForMetadataPrefetchWitSCTest(modifier string) *corev1.PersistentVolumeClaim {
+	sc := fmt.Sprintf("my-sc%s", modifier)
+
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("my-pvc%s", modifier),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+
+			StorageClassName: &sc,
+			VolumeName:       fmt.Sprintf("my-pv%s", modifier),
+		},
+	}
 }

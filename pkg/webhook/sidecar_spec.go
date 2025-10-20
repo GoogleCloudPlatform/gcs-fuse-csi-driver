@@ -209,8 +209,10 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 		VolumeMounts: []corev1.VolumeMount{},
 	}
 
+	// metadataPrefetchValIsExplicitlyDefined is used to determine if we should check the sc for metadata prefetch enablement as fallback	metadataPrefetchValIsExplicitlyDefined := false
+	metadataPrefetchValIsExplicitlyDefined := false
 	for _, v := range pod.Spec.Volumes {
-		isGcsFuseCSIVolume, isDynamicMount, volumeAttributes, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
+		isGcsFuseCSIVolume, isDynamicMount, volumeAttributes, _, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
 		if err != nil {
 			klog.Errorf("failed to determine if %s is a GcsFuseCSI backed volume: %v", v.Name, err)
 		}
@@ -222,24 +224,75 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 		}
 
 		if isGcsFuseCSIVolume {
-			enableMetaPrefetchRaw, ok := volumeAttributes[gcsFuseMetadataPrefetchOnMountVolumeAttribute]
 			// We disable metadata prefetch by default, so we skip injection of volume mount when not set.
-			if !ok {
-				continue
+			if enableMetaPrefetchRaw, ok := volumeAttributes[gcsFuseMetadataPrefetchOnMountVolumeAttribute]; ok {
+				metadataPrefetchValIsExplicitlyDefined = true // Even if cx provides invalid value, if they mention metadata prefetch we should not override using sc
+				parseMetadataPrefetchStringAndAppendVolume(enableMetaPrefetchRaw, &container, v.Name)
 			}
+		}
+	}
+	if metadataPrefetchValIsExplicitlyDefined {
+		return container
+	}
 
-			enableMetaPrefetch, err := ParseBool(enableMetaPrefetchRaw)
-			if err != nil {
-				klog.Errorf(`failed to determine if metadata prefetch is needed for volume "%s": %v`, v.Name, err)
-			}
+	profilesEnabledAnnotation, ok := pod.Annotations[GcsfuseProfilesAnnotation]
+	if !ok {
+		return container
+	}
+	profilesEnabledAnnotationAsBool, err := ParseBool(profilesEnabledAnnotation)
+	if err != nil {
+		klog.Warningf("Failed to determine %q value due to error: %v", GcsfuseProfilesAnnotation, err)
+		return container
+	}
 
-			if enableMetaPrefetch {
-				container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: v.Name, MountPath: filepath.Join("/volumes/", v.Name), ReadOnly: true})
-			}
+	if !profilesEnabledAnnotationAsBool || !si.Config.EnableGcsfuseProfiles {
+		return container
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		pv := si.getPVIfVolumeValidForMetadataPrefetch(pod, v)
+		if pv == nil {
+			continue
+		}
+
+		sc, err := si.GetVolumesStorageClass(pv)
+		if err != nil || sc == nil {
+			klog.Warningf("failed to get sc %q for volume %s while checking metadata prefetch status: %v", pv.Spec.StorageClassName, v.Name, err)
+			continue
+		}
+
+		if enableMetaPrefetchRaw, ok := sc.Parameters[gcsFuseMetadataPrefetchOnMountVolumeAttribute]; ok {
+			parseMetadataPrefetchStringAndAppendVolume(enableMetaPrefetchRaw, &container, v.Name)
 		}
 	}
 
 	return container
+}
+
+func (si *SidecarInjector) getPVIfVolumeValidForMetadataPrefetch(pod *corev1.Pod, v corev1.Volume) *corev1.PersistentVolume {
+	isGcsFuseCSIVolume, _, _, pv, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
+	if err != nil {
+		klog.Warningf("failed to determine if %s is a GcsFuseCSI backed volume: %v", v.Name, err)
+	} else if !isGcsFuseCSIVolume {
+		return nil
+	} else if pv == nil {
+		klog.Warningf("failed to retrieve pv for volume: %s", v.Name)
+	} else if pv.Spec.StorageClassName == "" {
+		klog.Warningf("sc should not be empty for volume, skipping metadata prefetch injection: %s", v.Name)
+		return nil
+	}
+	return pv
+}
+
+func parseMetadataPrefetchStringAndAppendVolume(enableMetaPrefetchRaw string, container *corev1.Container, volumeName string) {
+	enableMetaPrefetch, err := ParseBool(enableMetaPrefetchRaw)
+	if err != nil {
+		klog.Errorf("failed to determine value of %q for volume %q: %v", gcsFuseMetadataPrefetchOnMountVolumeAttribute, volumeName, err)
+	}
+
+	if enableMetaPrefetch {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: volumeName, MountPath: filepath.Join("/volumes/", volumeName), ReadOnly: true})
+	}
 }
 
 func GetSATokenVolume(audience string) corev1.Volume {

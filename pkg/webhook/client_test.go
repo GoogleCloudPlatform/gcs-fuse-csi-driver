@@ -20,10 +20,12 @@ package webhook
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
@@ -410,6 +412,107 @@ func TestGetPVC(t *testing.T) {
 
 		if response.String() != testcase.expectedResponse.String() {
 			t.Error("for test: ", testcase.testName, ", want: ", testcase.expectedResponse, " but got: ", response)
+		}
+	}
+}
+
+func TestGetVolumesStorageClass(t *testing.T) {
+	t.Parallel()
+
+	scFound := storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sc-found",
+		},
+	}
+	scOther := storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sc-other",
+		},
+	}
+
+	testcases := []struct {
+		testName         string
+		inputVolume      *corev1.PersistentVolume
+		scsInK8s         []storagev1.StorageClass
+		expectedResponse *storagev1.StorageClass
+		expectedError    error
+	}{
+		{
+			testName:         "nil volume",
+			inputVolume:      nil,
+			scsInK8s:         []storagev1.StorageClass{},
+			expectedResponse: nil,
+			expectedError:    nil,
+		},
+		{
+			testName: "volume with empty storageclass name",
+			inputVolume: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "",
+				},
+			},
+			scsInK8s:         []storagev1.StorageClass{scOther},
+			expectedResponse: nil,
+			expectedError:    nil,
+		},
+		{
+			testName: "storageclass not found",
+			inputVolume: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "sc-not-found",
+				},
+			},
+			scsInK8s:         []storagev1.StorageClass{scOther},
+			expectedResponse: nil,
+			expectedError:    errors.New(`storageclass.storage.k8s.io "sc-not-found" not found`),
+		},
+		{
+			testName: "storageclass found",
+			inputVolume: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					StorageClassName: "sc-found",
+				},
+			},
+			scsInK8s:         []storagev1.StorageClass{scOther, scFound},
+			expectedResponse: &scFound,
+			expectedError:    nil,
+		},
+	}
+
+	for _, testcase := range testcases {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		fakeClient := fake.NewSimpleClientset()
+		for _, scInK8s := range testcase.scsInK8s {
+			sc := scInK8s
+			_, err := fakeClient.StorageV1().StorageClasses().Create(context.TODO(), &sc, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("failed to setup test: %v", err)
+			}
+		}
+
+		csiGroupClient := SidecarInjector{}
+		const resyncDuration = 0 * time.Second
+
+		informer := informers.NewSharedInformerFactory(fakeClient, resyncDuration)
+		csiGroupClient.ScLister = informer.Storage().V1().StorageClasses().Lister()
+
+		informer.Start(ctx.Done())
+		informer.WaitForCacheSync(ctx.Done())
+
+		response, err := csiGroupClient.GetVolumesStorageClass(testcase.inputVolume)
+
+		if err != nil && testcase.expectedError != nil {
+			if err.Error() != testcase.expectedError.Error() {
+				t.Error("for test: ", testcase.testName, ", want error: ", testcase.expectedError.Error(), " but got: ", err.Error())
+			}
+		} else if err != nil || testcase.expectedError != nil {
+			t.Error("for test: ", testcase.testName, ", want error: ", testcase.expectedError, " but got: ", err)
+		}
+
+		if !reflect.DeepEqual(response, testcase.expectedResponse) {
+			t.Error("for test: ", testcase.testName, ", want response: ", testcase.expectedResponse, " but got: ", response)
 		}
 	}
 }

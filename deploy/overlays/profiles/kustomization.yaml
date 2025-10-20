@@ -31,6 +31,7 @@ patchesStrategicMerge:
 - webhook_always_pull.yaml
 - controller.yaml
 - node_setup.yaml
+- webhook_setup.yaml
 - node.yaml
 - webhook_deployment.yaml
 patches:
