@@ -311,8 +311,8 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		}
 	})
 
-	ginkgo.It("should respond to service account permission changes", func() {
-		init()
+	testCasePermissionChanges := func(configPrefix ...string) {
+		init(configPrefix...)
 		defer cleanup()
 
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
@@ -333,6 +333,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
+		if enableSidecarBucketAccessCheck {
+			if slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
+				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
+				return
+			}
+		}
 		tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
 		tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
 
@@ -351,6 +358,15 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Expecting error when write to the volume with permission removed")
 		tPod.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data", mountPath), 1)
+
+	}
+
+	ginkgo.It("should respond to service account permission changes", func() {
+		testCasePermissionChanges("")
+	})
+
+	ginkgo.It("[skip-csi-bucket-access-check] should respond to service account permission changes", func() {
+		testCasePermissionChanges(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
 	testCaseSidecarNotInjected := func(configPrefix string) {
