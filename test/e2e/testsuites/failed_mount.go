@@ -366,6 +366,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	})
 
 	ginkgo.It("[skip-csi-bucket-access-check] should respond to service account permission changes", func() {
+		if !enableSidecarBucketAccessCheck {
+			// We are skipping this test combination because this configuration disables bucket access checks in both the node driver and the sidecar.
+			// This prevents the system from recovering from any permission issues
+			e2eskipper.Skipf("skip permission change test for sidecar bcuekt access check not enabled and skip-csi-bucket-access-check set")
+		}
 		testCasePermissionChanges(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
