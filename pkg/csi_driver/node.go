@@ -148,6 +148,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
+	} else if enableSidecarBucketAccessCheckForSidecarVersion {
+		//Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheck)})
 	}
 
 	if enableSidecarBucketAccessCheckForSidecarVersion {
@@ -161,7 +164,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
 			util.PodNamespaceConst + "=" + vc[VolumeContextKeyPodNamespace],
 			util.ServiceAccountNameConst + "=" + vc[VolumeContextKeyServiceAccountName],
-			util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheck),
 			util.TokenServerIdentityPoolConst + "=" + identityPool})
 	}
 
