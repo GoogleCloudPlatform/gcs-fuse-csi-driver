@@ -184,7 +184,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		defer revokeOIDCBucketAccess(bucketName, projectNumber)
 
 		ginkgo.By("Configuring test pod with OIDC authentication")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(oidcServiceAccountName)
 		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
 		tPod.SetAnnotations(map[string]string{
@@ -218,7 +218,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		defer revokeOIDCBucketAccess(bucketName, projectNumber)
 
 		ginkgo.By("Configuring test pod with OIDC authentication")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(oidcServiceAccountName)
 		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
 		tPod.SetAnnotations(map[string]string{
@@ -266,7 +266,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		defer revokeOIDCBucketAccess(bucketName, projectNumber)
 
 		ginkgo.By("Configuring test pod with OIDC authentication")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(oidcServiceAccountName)
 		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
 		tPod.SetAnnotations(map[string]string{
@@ -320,7 +320,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		defer revokeOIDCBucketAccess(bucketName, projectNumber)
 
 		ginkgo.By("Configuring test pod with OIDC annotation but missing ConfigMap")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(oidcServiceAccountName)
 		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
 		// Reference a ConfigMap that doesn't exist
@@ -348,7 +348,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		defer revokeOIDCBucketAccess(bucketName, projectNumber)
 
 		ginkgo.By("Configuring test pod with OIDC authentication")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(oidcServiceAccountName)
 		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
 		tPod.SetAnnotations(map[string]string{

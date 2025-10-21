@@ -152,6 +152,7 @@ metadata:
     gke-gcsfuse/workload-identity-credential-configmap: "workload-identity-credentials"
 spec:
   serviceAccountName: gcs-fuse-ksa
+  automountServiceAccountToken: true  # Required: Sidecar needs access to Kubernetes API
   containers:
   - name: app
     image: busybox
@@ -261,11 +262,33 @@ kubectl logs gcs-fuse-oidc-example -c gke-gcsfuse-sidecar
    - Verify the webhook is running and healthy
    - Check that the pod has the required annotations
 
+5. **Sidecar fails with "no such file or directory" for Kubernetes token:**
+   - Error: `failed to read kubeconfig: open /var/run/secrets/kubernetes.io/serviceaccount/token: no such file or directory`
+   - **Solution:** Ensure `automountServiceAccountToken: true` is set in the pod spec. The sidecar requires access to the default Kubernetes service account token to communicate with the Kubernetes API, in addition to the projected OIDC token for GCS authentication
+
 ## Important Notes
 
+- **Service Account Token Mounting:** The pod spec **must** include `automountServiceAccountToken: true`. The gcsfuse sidecar requires access to the default Kubernetes service account token to communicate with the Kubernetes API. This is separate from the projected OIDC token used for GCS authentication
 - **Volume Attributes:** The `skipCSIBucketAccessCheck: "true"` volume attribute is required when using OIDC authentication. This is necessary because the CSI driver performs bucket access validation during volume mount, but OIDC credentials (projected service account tokens) are only available at runtime within the pod context. By skipping this initial check, the driver defers authentication to the gcsfuse sidecar which will have access to the projected tokens and credential configuration
 - **ConfigMap Security:** While credential configuration files don't contain private keys, they should still be treated as sensitive configuration
 - **Token Refresh:** Kubernetes automatically handles token refresh for projected service account tokens
+
+## Limitations and Restrictions
+
+### HostNetwork Pods Not Supported
+
+**IMPORTANT:** OIDC authentication with Workload Identity Federation is **not supported** for pods with `hostNetwork: true`.
+
+HostNetwork pods use a different authentication mechanism ([Google Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)) that is incompatible with OIDC Workload Identity Federation. The two authentication methods have different token audiences and network contexts:
+
+- **HostNetwork pods**: Use Google Workload Identity with `{projectID}.svc.id.goog` audience format
+- **OIDC authentication**: Uses Workload Identity Federation with external identity pools and custom audiences
+
+If you attempt to configure both `hostNetwork: true` and the OIDC annotation (`gke-gcsfuse/workload-identity-credential-configmap`), the webhook will reject the pod with an error message.
+
+**Solution:** Choose one authentication method:
+- **For standard pods**: Use OIDC authentication (this guide)
+- **For hostNetwork pods**: Use standard [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) instead
 
 ## Related Documentation
 

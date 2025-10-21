@@ -115,6 +115,15 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
 	// Inject GCP workload identity credential config configmap and token.
 	if configMapName, ok := pod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" && si.K8SClient != nil {
+		// Validate that OIDC authentication is not used with hostNetwork pods
+		if pod.Spec.HostNetwork {
+			return admission.Errored(http.StatusBadRequest,
+				fmt.Errorf("OIDC authentication (annotation %q) is not supported for pods with hostNetwork=true. "+
+					"HostNetwork pods use a different authentication mechanism (Google Workload Identity). "+
+					"Please either remove hostNetwork or use standard Workload Identity authentication. ",
+					GCPWorkloadIdentityCredentialConfigMapAnnotation))
+		}
+
 		filename, credentialConfig, err := appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, configMapName)
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
