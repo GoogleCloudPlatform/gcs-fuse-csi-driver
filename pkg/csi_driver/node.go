@@ -140,35 +140,23 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
 	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
-	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
+	shouldPopulateIdentityProviderForHnwKSA := s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "")
+	if shouldPopulateIdentityProviderForHnwKSA {
 		if userSpecifiedIdentityProvider != "" {
 			identityProvider = userSpecifiedIdentityProvider
 		} else {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 		}
-		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
 	} else if enableSidecarBucketAccessCheckForSidecarVersion {
-		//Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheck)})
+		// As host network and sidecar bucket access check are exclusive the below assignment doesn't overwrite any of host network settings.
+		identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 	}
 
-	if enableSidecarBucketAccessCheckForSidecarVersion {
-		if identityProvider == "" {
-			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
-			fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
-		}
-		klog.Infof("Got identity provider %s", identityProvider)
-
-		identityPool := s.driver.config.TokenManager.GetIdentityPool()
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
-			util.PodNamespaceConst + "=" + vc[VolumeContextKeyPodNamespace],
-			util.ServiceAccountNameConst + "=" + vc[VolumeContextKeyServiceAccountName],
-			util.TokenServerIdentityPoolConst + "=" + identityPool})
-	}
-
-	if enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForSidecar)})
+	enableCloudProfilerForVersion := enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion)
+	identityPool := s.driver.config.TokenManager.GetIdentityPool()
+	fuseMountOptions, err = addFuseMountOptions(identityProvider, identityPool, fuseMountOptions, vc, shouldPopulateIdentityProviderForHnwKSA, enableSidecarBucketAccessCheckForSidecarVersion, enableCloudProfilerForVersion)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to prepare sidecar fuse mount options: %v", err)
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -213,7 +201,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
+	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisfies min version requirement
 	if gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
 		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
 		machineType, ok := node.Labels[clientset.MachineTypeKey]
@@ -395,4 +383,28 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 		}
 	}
 	return ""
+}
+
+func addFuseMountOptions(identityProvider string, identityPool string, fuseMountOptions []string, vc map[string]string, hostNetworkEnabled bool, enableSidecarBucketAccessCheckForSidecarVersion bool, enableCloudProfilerForVersion bool) ([]string, error) {
+	if hostNetworkEnabled {
+		// Identity Provider is populated separately for host network enabled workloads.
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
+	} else if enableSidecarBucketAccessCheckForSidecarVersion {
+		if identityPool == "" || identityProvider == "" {
+			// Identity pool and provider details are used in sidecar mounter to create the metadata service
+			return nil, fmt.Errorf("failed to get either of identity pool %q or identity provider %q", identityPool, identityProvider)
+		}
+		// Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
+			util.PodNamespaceConst + "=" + vc[VolumeContextKeyPodNamespace],
+			util.ServiceAccountNameConst + "=" + vc[VolumeContextKeyServiceAccountName],
+			util.TokenServerIdentityPoolConst + "=" + identityPool,
+			util.TokenServerIdentityProviderConst + "=" + identityProvider,
+			util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(enableSidecarBucketAccessCheckForSidecarVersion)})
+	}
+	klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
+	if enableCloudProfilerForVersion {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(enableCloudProfilerForVersion)})
+	}
+	return fuseMountOptions, nil
 }
