@@ -310,7 +310,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
 
 		projectNumber, _ := setupOIDCInfrastructure()
-		
+
 		// Only create service account, but NOT the ConfigMap
 		ginkgo.By(fmt.Sprintf("Creating Kubernetes service account: %s", oidcServiceAccountName))
 		createServiceAccount(ctx, f, oidcServiceAccountName)

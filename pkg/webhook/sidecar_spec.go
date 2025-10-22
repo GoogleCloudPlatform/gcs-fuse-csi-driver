@@ -34,9 +34,9 @@ const (
 	SidecarContainerBufferVolumeMountPath                = "/gcsfuse-buffer"
 	SidecarContainerCacheVolumeName                      = "gke-gcsfuse-cache"
 	SidecarContainerCacheVolumeMountPath                 = "/gcsfuse-cache"
-	SidecarContainerSATokenVolumeName                    = "gcsfuse-sa-token"  // #nosec G101
-	SidecarContainerSATokenVolumeMountPath               = "/gcsfuse-sa-token" // #nosec G101
-	K8STokenPath                                         = "token"             // #nosec G101
+	SidecarContainerSATokenVolumeName                    = "gcsfuse-sa-token"            // #nosec G101
+	SidecarContainerSATokenVolumeMountPath               = "/gcsfuse-sa-token"           // #nosec G101
+	K8STokenPath                                         = "token"                       // #nosec G101
 	SidecarContainerWITokenVolumeName                    = "gke-workload-identity-token" // Mount path for this volume should be read from the workload identity credential configuration configmap. Typically the mounth path is /var/run/service-account.
 	SidecarContainerWICredentialConfigMapVolumeName      = "gke-workload-identity-credential-configmap"
 	SidecarContainerWICredentialConfigMapVolumeMountPath = "/etc/workload-identity"

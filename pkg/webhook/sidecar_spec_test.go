@@ -20,8 +20,8 @@ package webhook
 import (
 	"testing"
 
-	util "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/google/go-cmp/cmp"
+	util "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 )

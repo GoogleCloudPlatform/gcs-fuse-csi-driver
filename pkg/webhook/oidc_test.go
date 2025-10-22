@@ -875,10 +875,10 @@ func TestCredentialSourceFilePathHandling(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name                string
-		credentialFilePath  string
-		expectedDirectory   string
-		expectedTokenPath   string
+		name               string
+		credentialFilePath string
+		expectedDirectory  string
+		expectedTokenPath  string
 	}{
 		{
 			name:               "standard service account token path",
