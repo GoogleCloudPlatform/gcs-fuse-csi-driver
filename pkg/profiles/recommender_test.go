@@ -56,10 +56,10 @@ var (
 		},
 		MountOptions: []string{
 			"implicit-dirs",
-			"metadata-cache:negative-ttl-secs=0",
-			"metadata-cache:ttl-secs=-1",
-			"file-cache:cache-file-for-range-read=true",
-			"file-system:kernel-list-cache-ttl-secs=-1",
+			"metadata-cache-negative-ttl-secs=0",
+			"metadata-cache-ttl-secs=-1",
+			"file-cache-cache-file-for-range-read=true",
+			"file-system-kernel-list-cache-ttl-secs=-1",
 			"read_ahead_kb=1024",
 		},
 	}
@@ -293,10 +293,10 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					mountOptions: []string{
 						"implicit-dirs",
-						"metadata-cache:negative-ttl-secs=0",
-						"metadata-cache:ttl-secs=-1",
-						"file-cache:cache-file-for-range-read=true",
-						"file-system:kernel-list-cache-ttl-secs=-1",
+						"metadata-cache-negative-ttl-secs=0",
+						"metadata-cache-ttl-secs=-1",
+						"file-cache-cache-file-for-range-read=true",
+						"file-system-kernel-list-cache-ttl-secs=-1",
 						"read_ahead_kb=1024",
 					},
 				},
@@ -1215,13 +1215,14 @@ func TestHasLocalSSDEphemeralStorageAnnotation(t *testing.T) {
 	}
 }
 
-func TestAddRecommendationToMountOptions(t *testing.T) {
+func TestAddInt64RecommendationToMountOptions(t *testing.T) {
 	tests := []struct {
 		name                string
 		initialOptions      []string
 		mountOptionKey      string
 		recommendationBytes int64
 		wantOptions         []string
+		wantErr             bool
 	}{
 		{
 			name:                "Bytes greater than 0 - Should add formatted option",
@@ -1243,6 +1244,13 @@ func TestAddRecommendationToMountOptions(t *testing.T) {
 			mountOptionKey:      "test-key",
 			recommendationBytes: 2 * mib,
 			wantOptions:         []string{"opt1", "test-key:1"},
+		},
+		{
+			name:                "Bytes greater than 0 - Should not add mount option if key already exists in nested key:val format",
+			initialOptions:      []string{"opt1", "file-cache:max-size-mb:existing"},
+			mountOptionKey:      "file-cache-max-size-mb",
+			recommendationBytes: 2 * mib,
+			wantOptions:         []string{"opt1", "file-cache:max-size-mb:existing"},
 		},
 		{
 			name:                "Bytes equals 0 - Should not add option",
@@ -1272,14 +1280,116 @@ func TestAddRecommendationToMountOptions(t *testing.T) {
 			recommendationBytes: mib,
 			wantOptions:         []string{"test-key=1"},
 		},
+		{
+			name:                "Invalid mount option format - Should return error",
+			initialOptions:      nil,
+			mountOptionKey:      "invalid=format=mount=option",
+			recommendationBytes: mib,
+			wantErr:             true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Copy initialOptions to avoid modifying test case data
 			options := append([]string(nil), tt.initialOptions...)
-			got := addRecommendationToMountOptions(options, tt.mountOptionKey, tt.recommendationBytes)
+			got, err := addInt64RecommendationToMountOptions(options, tt.mountOptionKey, tt.recommendationBytes)
+			if err != nil && !tt.wantErr {
+				t.Errorf("addInt64RecommendationToMountOptions(%v, %q, %d) returned unexpected error: %v", tt.initialOptions, tt.mountOptionKey, tt.recommendationBytes, err)
+			}
+			if tt.wantErr {
+				return
+			}
 			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
-				t.Errorf("addRecommendationToMountOptions(%v, %q, %d) returned diff (-want +got):\n%s", tt.initialOptions, tt.mountOptionKey, tt.recommendationBytes, diff)
+				t.Errorf("addInt64RecommendationToMountOptions(%v, %q, %d) returned diff (-want +got):\n%s", tt.initialOptions, tt.mountOptionKey, tt.recommendationBytes, diff)
+			}
+		})
+	}
+}
+
+func TestAddStrRecommendationToMountOptions(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialOptions []string
+		mountOptionKey string
+		recommendation string
+		wantOptions    []string
+		wantErr        bool
+	}{
+		{
+			name:           "Non-empty recommendation - Should add formatted option",
+			initialOptions: []string{"opt1"},
+			mountOptionKey: "test-dir",
+			recommendation: "/path/to/cache",
+			wantOptions:    []string{"opt1", "test-dir=/path/to/cache"},
+		},
+		{
+			name:           "Empty recommendation - Should not add option",
+			initialOptions: []string{"opt1"},
+			mountOptionKey: "test-dir",
+			recommendation: "",
+			wantOptions:    []string{"opt1"},
+		},
+		{
+			name:           "Key already exists - Should not add option",
+			initialOptions: []string{"opt1", "test-dir=/existing"},
+			mountOptionKey: "test-dir",
+			recommendation: "/path/to/new",
+			wantOptions:    []string{"opt1", "test-dir=/existing"},
+		},
+		{
+			name:           "Key exists with key:val format - Should not add option",
+			initialOptions: []string{"opt1", "test-dir:/existing"},
+			mountOptionKey: "test-dir",
+			recommendation: "/path/to/new",
+			wantOptions:    []string{"opt1", "test-dir:/existing"},
+		},
+		{
+			name:           "Key already exists with nested key:val format - Should not add mount option",
+			initialOptions: []string{"opt1", "some-prefix:cache-dir:/path/to/dir"},
+			mountOptionKey: "some-prefix-cache-dir",
+			recommendation: "some/other/path",
+			wantOptions:    []string{"opt1", "some-prefix:cache-dir:/path/to/dir"},
+		},
+		{
+			name:           "Bytes greater than 0 - Should not add mount option if key already exists in nested key=val format",
+			initialOptions: []string{"opt1", "file-cache:max-size-mb=existing"},
+			mountOptionKey: "file-cache:max-size-mb",
+			wantOptions:    []string{"opt1", "file-cache:max-size-mb=existing"},
+		},
+		{
+			name:           "Empty initial options - Should add option",
+			initialOptions: []string{},
+			mountOptionKey: "test-dir",
+			recommendation: "/path/to/cache",
+			wantOptions:    []string{"test-dir=/path/to/cache"},
+		},
+		{
+			name:           "Nil initial options - Should handle nil slice",
+			initialOptions: nil,
+			mountOptionKey: "test-dir",
+			recommendation: "/path/to/cache",
+			wantOptions:    []string{"test-dir=/path/to/cache"},
+		},
+		{
+			name:           "Invalid mount option format - Should return error",
+			initialOptions: nil,
+			mountOptionKey: "invalid=mount-option-key",
+			recommendation: "/path/to/cache",
+			wantErr:        true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options := append([]string(nil), tt.initialOptions...)
+			got, err := addStrRecommendationToMountOptions(options, tt.mountOptionKey, tt.recommendation)
+			if err != nil && !tt.wantErr {
+				t.Errorf("addStrRecommendationToMountOptions(%v, %q, %q) returned unexpected error: %v", tt.initialOptions, tt.mountOptionKey, tt.recommendation, err)
+			}
+			if tt.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
+				t.Errorf("addStrRecommendationToMountOptions(%v, %q, %q) returned diff (-want +got):\n%s", tt.initialOptions, tt.mountOptionKey, tt.recommendation, diff)
 			}
 		})
 	}
@@ -1536,16 +1646,186 @@ func TestRecommendMetadataCacheSize(t *testing.T) {
 	}
 }
 
+func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
+	// Constants for easier reading
+	fileCacheReq := 10 * mib // 10 MiB required
+
+	tests := []struct {
+		name                   string
+		cacheRequirements      *cacheRequirements
+		config                 *ProfileConfig
+		memoryBudget           int64
+		ephemeralStorageBudget int64
+		wantSize               int64
+		wantMedium             string
+		wantErr                bool
+	}{
+		{
+			name:              "GPU node, RAM priority, Sufficient RAM - Should recommend file cache size and medium to RAM",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+			},
+			memoryBudget:           20 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             mediumRAM,
+		},
+		{
+			name:              "GPU node, RAM priority, Insufficient RAM, Sufficient LSSD - Should recommend file cache size and medium to LSSD",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+			},
+			memoryBudget:           5 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             mediumLSSD,
+		},
+		{
+			name:              "GPU node, RAM priority, Insufficient RAM & LSSD - Should disable file cache",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+			},
+			memoryBudget:           5 * mib,
+			ephemeralStorageBudget: 5 * mib,
+			wantSize:               0,
+			wantMedium:             "",
+		},
+		{
+			name:              "GPU node, RAM priority, Sufficient RAM, LSSD not annotated - Should recommend file cache size and medium to RAM",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: false},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+			},
+			memoryBudget:           20 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             mediumRAM,
+		},
+		{
+			name:              "GPU node, LSSD priority, Sufficient LSSD - Should recommend file cache size and medium to LSSD",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumLSSD, mediumRAM}}},
+			},
+			memoryBudget:           5 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             mediumLSSD,
+		},
+		{
+			name:              "GPU node, LSSD priority, LSSD not annotated, Sufficient RAM - Should recommend file cache size and medium to RAM",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: false},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumLSSD, mediumRAM}}},
+			},
+			memoryBudget:           20 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             mediumRAM,
+		},
+		{
+			name:              "TPU node, RAM priority, Sufficient RAM - Should recommend file cache size and medium to RAM",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {mediumRAM}}},
+			},
+			memoryBudget:           20 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             mediumRAM,
+		},
+		{
+			name:              "TPU node, RAM priority, Insufficient RAM - Should recommend file cache size and medium to RAM",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {mediumRAM}}},
+			},
+			memoryBudget:           5 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               0,
+			wantMedium:             "",
+		},
+		{
+			name:              "TPU node, LSSD in priority - Should error",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {mediumRAM, mediumLSSD}}},
+			},
+			wantErr: true,
+		},
+		{
+			name:              "File cache not required (0 bytes) - Should not recommend file cache",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: 0},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+			},
+			memoryBudget:           20 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               0,
+			wantMedium:             "",
+		},
+		{
+			name:              "Unknown Node Type - Should error",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: "unknown"},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM}}},
+			},
+			wantErr: true,
+		},
+		{
+			name:              "Unknown Medium in Priority - Should error",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, "invalid-medium"}}},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSize, gotMedium, err := recommendFileCacheSizeAndMedium(tt.cacheRequirements, tt.config, tt.memoryBudget, tt.ephemeralStorageBudget)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("recommendFileCacheSizeAndMedium() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if gotSize != tt.wantSize || gotMedium != tt.wantMedium {
+				t.Errorf("recommendFileCacheSizeAndMedium() = (%d, %q), want (%d, %q)", gotSize, gotMedium, tt.wantSize, tt.wantMedium)
+			}
+		})
+	}
+}
+
 func TestRecommendCacheConfigs(t *testing.T) {
 	// Constants for easier reading
 	objPerStat := metadataStatCacheBytesPerObject
 	objPerType := metadataTypeCacheBytesPerObject
+	reqStat := 1000 * objPerStat // 1.5MiB
+	reqType := 1000 * objPerType // 0.2MiB
+	reqFile := 100 * mib         // 100 MiB
 
 	// Example config components
-	defaultPV := &pvDetails{numObjects: 1000, totalSizeBytes: 100 * mib}
+	defaultPV := &pvDetails{numObjects: 1000, totalSizeBytes: reqFile}
 	defaultSC := &scDetails{fuseMemoryAllocatableFactor: 1.0, fuseEphemeralStorageAllocatableFactor: 1.0}
-	defaultNode := &nodeDetails{nodeAllocatables: &parsedResourceList{memoryBytes: 5 * mib, ephemeralStorageBytes: 100 * mib}, name: "test-node"}
 	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+	defaultNode := &nodeDetails{nodeType: "general_purpose"}
 
 	tests := []struct {
 		name    string
@@ -1554,67 +1834,201 @@ func TestRecommendCacheConfigs(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "Sufficient budget for all metadata caches - Should recommend full required sizes",
-			config: &ProfileConfig{
-				pvDetails:   defaultPV,
-				scDetails:   defaultSC,
-				nodeDetails: defaultNode,
-				podDetails:  defaultPod,
-			},
-			want: &recommendation{
-				metadataStatCacheBytes: 1000 * objPerStat, // 1.5MiB
-				metadataTypeCacheBytes: 1000 * objPerType, // 0.2MiB
-			},
-			wantErr: false,
-		},
-		{
-			name: "Limited memory budget caps stat cache - Should cap stat cache size",
+			name: "Sufficient budget for all caches (GPU, RAM) - Should recommend RAM",
 			config: &ProfileConfig{
 				pvDetails: defaultPV,
-				scDetails: defaultSC,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+				},
 				nodeDetails: &nodeDetails{
-					nodeAllocatables: &parsedResourceList{memoryBytes: 1 * mib, ephemeralStorageBytes: 100 * mib},
-					name:             "test-node",
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + reqFile,
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: reqStat,
+				metadataTypeCacheBytes: reqType,
+				fileCacheBytes:         reqFile,
+				fileCacheMedium:        mediumRAM,
+			},
+		},
+		{
+			name: "Sufficient budget (GPU, LSSD) - Should recommend LSSD",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType,
+						ephemeralStorageBytes: reqFile,
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-lssd-node",
+				},
+				podDetails: defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: reqStat,
+				metadataTypeCacheBytes: reqType,
+				fileCacheBytes:         reqFile,
+				fileCacheMedium:        mediumLSSD,
+			},
+		},
+		{
+			name: "Limited memory caps stat cache (GPU, RAM) - Should cap stat cache",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           1 * mib, // Less than reqStat
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-gpu-node",
 				},
 				podDetails: defaultPod,
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: 1 * mib,
-				metadataTypeCacheBytes: 0, // No budget left after stat cache
+				metadataTypeCacheBytes: 0,
+				fileCacheBytes:         0, // Not enough RAM for file cache after metadata
 			},
-			wantErr: false,
 		},
 		{
-			name: "Limited memory budget caps type cache - Should cap type cache size",
+			name: "Limited memory caps type cache (GPU, RAM) - Should recommend stat cache and cap type cache",
 			config: &ProfileConfig{
 				pvDetails: defaultPV,
-				scDetails: defaultSC,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+				},
 				nodeDetails: &nodeDetails{
-					// Required stat: 1.5MiB, Required type: 0.2MiB. Total needed: 1.7MiB
-					nodeAllocatables: &parsedResourceList{memoryBytes: (1000 * objPerStat) + (1000 * objPerType) - 1, ephemeralStorageBytes: 100 * mib},
-					name:             "test-node",
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + (reqType / 2), // Enough for stat, half for type
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-gpu-node",
 				},
 				podDetails: defaultPod,
 			},
 			want: &recommendation{
-				metadataStatCacheBytes: 1000 * objPerStat,
-				metadataTypeCacheBytes: (1000 * objPerType) - 1, // Capped
+				metadataStatCacheBytes: reqStat,
+				metadataTypeCacheBytes: reqType / 2,
+				fileCacheBytes:         0, // Not enough RAM for file cache
 			},
-			wantErr: false,
 		},
 		{
-			name: "Zero numObjects - Should recommend zero metadata cache",
+			name: "Insufficient Ephemeral Storage for LSSD (GPU, LSSD priority) - Should disable file cache",
 			config: &ProfileConfig{
-				pvDetails:   &pvDetails{numObjects: 0, totalSizeBytes: 100 * mib},
-				scDetails:   defaultSC,
-				nodeDetails: defaultNode,
-				podDetails:  defaultPod,
+				pvDetails: defaultPV,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + reqFile,
+						ephemeralStorageBytes: reqFile / 2, // Insufficient for file cache
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-lssd-node",
+				},
+				podDetails: defaultPod,
 			},
 			want: &recommendation{
-				metadataStatCacheBytes: 0,
-				metadataTypeCacheBytes: 0,
+				metadataStatCacheBytes: reqStat,
+				metadataTypeCacheBytes: reqType,
+				fileCacheBytes:         0, // LSSD failed, RAM not in priority
 			},
-			wantErr: false,
+		},
+		{
+			name: "File cache bytes 0 - Should recommend zero file cache",
+			config: &ProfileConfig{
+				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + reqFile,
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: reqStat,
+				metadataTypeCacheBytes: reqType,
+				fileCacheBytes:         0,
+				fileCacheMedium:        "",
+			},
+		},
+		{
+			name: "TPU node with LSSD in priority - Should error",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeTPU: {mediumRAM, mediumLSSD}}, // Invalid for TPU
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeTPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + reqFile,
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-tpu-node",
+				},
+				podDetails: defaultPod,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Unknown Node Type in SC Priority - Should error",
+			config: &ProfileConfig{
+				pvDetails: defaultPV,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{"unknown-type": {mediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU, // Does not match SC priority key
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + reqFile,
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: defaultPod,
+			},
+			wantErr: true,
 		},
 		{
 			name:    "Nil pvDetails - Should return error",
@@ -1655,15 +2069,23 @@ func TestRecommendCacheConfigs(t *testing.T) {
 }
 
 func TestRecommendMountOptions(t *testing.T) {
-	// Example config components
-	defaultPV := &pvDetails{numObjects: 1000, totalSizeBytes: 100 * mib}
-	defaultSC := &scDetails{
+	// Constants for easier reading
+	objPerStat := metadataStatCacheBytesPerObject
+	objPerType := metadataTypeCacheBytesPerObject
+	reqStat := 1000 * objPerStat // 1.5MiB -> 2 MiB
+	reqType := 1000 * objPerType // 0.2MiB -> 1 MiB
+	fileCacheSize := 100 * mib   // 100 MiB
+
+	// Base config components
+	basePV := &pvDetails{numObjects: 1000, totalSizeBytes: fileCacheSize}
+	baseSC := &scDetails{
 		mountOptions:                          []string{"implicit-dirs"},
 		fuseMemoryAllocatableFactor:           1.0,
 		fuseEphemeralStorageAllocatableFactor: 1.0,
+		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}},
 	}
-	defaultNode := &nodeDetails{nodeAllocatables: &parsedResourceList{memoryBytes: 5 * mib, ephemeralStorageBytes: 100 * mib}, name: "test-node"}
-	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+	baseNode := &nodeDetails{nodeType: "general_purpose"}
 
 	tests := []struct {
 		name        string
@@ -1672,61 +2094,133 @@ func TestRecommendMountOptions(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name: "Adds recommended metadata cache options - Should include new options",
+			name: "Sufficient memory for all caches (GPU, RAM) - Should recommend all caches to RAM",
 			config: &ProfileConfig{
-				pvDetails:   defaultPV,
-				scDetails:   defaultSC,
-				nodeDetails: defaultNode,
-				podDetails:  defaultPod,
+				pvDetails: basePV,
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache:stat-cache-max-size-mb=2", // ceilDiv(1000 * 1500, mib) = 2
-				"metadata-cache:type-cache-max-size-mb=1", // ceilDiv(1000 * 200, mib) = 1
+				"metadata-cache-stat-cache-max-size-mb=2",
+				"metadata-cache-type-cache-max-size-mb=1",
+				"file-cache-max-size-mb=100",
+				"cache-dir=" + webhook.SidecarContainerFileCacheRamDiskVolumeMountPath,
 			},
-			wantErr: false,
 		},
 		{
-			name: "Zero recommendations - Should not add new options",
+			name: "Sufficient memory for LSSD only (GPU, LSSD) - Should recommend file cache to LSSD",
 			config: &ProfileConfig{
-				pvDetails:   &pvDetails{numObjects: 0, totalSizeBytes: 0}, // Forces zero recommendations
-				scDetails:   defaultSC,
-				nodeDetails: defaultNode,
-				podDetails:  defaultPod,
+				pvDetails: basePV,
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType, // Not enough RAM for file cache
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-lssd-node",
+				},
+				podDetails: basePod,
 			},
-			wantOptions: []string{"implicit-dirs"},
-			wantErr:     false,
+			wantOptions: []string{
+				"implicit-dirs",
+				"metadata-cache-stat-cache-max-size-mb=2",
+				"metadata-cache-type-cache-max-size-mb=1",
+				"file-cache-max-size-mb=100",
+				"cache-dir=" + webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
+			},
+		},
+		{
+			name: "Insufficient budget - Should not recommend file cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType,
+						ephemeralStorageBytes: fileCacheSize / 2, // Insufficient LSSD
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"metadata-cache-stat-cache-max-size-mb=2",
+				"metadata-cache-type-cache-max-size-mb=1",
+			},
+		},
+		{
+			name: "Zero file cache required - Should not recommend file cache",
+			config: &ProfileConfig{
+				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"metadata-cache-stat-cache-max-size-mb=2",
+				"metadata-cache-type-cache-max-size-mb=1",
+			},
+		},
+		{
+			name: "Pre-existing mount options for file cache - Should not override",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dirs", "file-cache-max-size-mb=50", "cache-dir=/mnt/custom"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"file-cache-max-size-mb=50",
+				"cache-dir=/mnt/custom",
+				"metadata-cache-stat-cache-max-size-mb=2",
+				"metadata-cache-type-cache-max-size-mb=1",
+			},
 		},
 		{
 			name: "Error from recommendCacheConfigs - Should propagate error",
 			config: &ProfileConfig{
-				pvDetails:   nil, // This will cause recommendCacheConfigs to error
-				scDetails:   defaultSC,
-				nodeDetails: defaultNode,
-				podDetails:  defaultPod,
+				pvDetails:   nil, // Causes error in recommendCacheConfigs
+				scDetails:   baseSC,
+				nodeDetails: baseNode,
+				podDetails:  basePod,
 			},
 			wantOptions: nil,
 			wantErr:     true,
-		},
-		{
-			name: "Pre-existing mount options - Should append to existing options",
-			config: &ProfileConfig{
-				pvDetails: defaultPV,
-				scDetails: &scDetails{
-					mountOptions:                          []string{"read_ahead_kb=1024", "other-option"},
-					fuseMemoryAllocatableFactor:           1.0,
-					fuseEphemeralStorageAllocatableFactor: 1.0,
-				},
-				nodeDetails: defaultNode,
-				podDetails:  defaultPod,
-			},
-			wantOptions: []string{
-				"read_ahead_kb=1024",
-				"other-option",
-				"metadata-cache:stat-cache-max-size-mb=2",
-				"metadata-cache:type-cache-max-size-mb=1",
-			},
-			wantErr: false,
 		},
 	}
 
@@ -1739,6 +2233,9 @@ func TestRecommendMountOptions(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
+			// Sort both slices for comparison
+			sort.Strings(got)
+			sort.Strings(tt.wantOptions)
 			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
 				t.Errorf("RecommendMountOptions() returned unexpected diff (-want +got):\n%s", diff)
 			}
@@ -1746,92 +2243,209 @@ func TestRecommendMountOptions(t *testing.T) {
 	}
 }
 
+func TestIsValidMountOption(t *testing.T) {
+	tests := []struct {
+		name string
+		opt  string
+		want bool
+	}{
+		{"empty - should be invalid", "", false},
+		{"key_only_a - should be valid", "a", true},
+		{"key_only_a-b - should be valid", "a-b", true},
+		{"key_only_a:b - should be valid", "a:b", true},
+		{"a=b - should be valid", "a=b", true},
+		{"a-b=c - should be valid", "a-b=c", true},
+		{"a=b-c - should be valid", "a=b-c", true},
+		{"a:b - should be valid", "a:b", true},
+		{"a:b:c - should be valid", "a:b:c", true},
+		{"a-b:c - should be valid", "a-b:c", true},
+		{"a:b-c - should be valid", "a:b-c", true},
+
+		{"a=b=c - should be invalid due to multiple equals", "a=b=c", false},
+		{"a=b:c - should be invalid as '=' is with ':'", "a=b:c", false},
+		{"a=b=c=d - should be invalid due to multiple equals", "a=b=c=d", false},
+
+		{"=a - should be invalid because it starts with an equals", "=a", false},
+		{"a= - should be invalid because it ends with an equals", "a=", false},
+
+		{":a - should be invalid because it starts with colon", ":a", false},
+		{"a: - should be invalid because it ends with colon", "a:", false},
+
+		{"a:b=c - should be invalid because colon is with equals", "a:b=c", false},
+		{"a:b:c=d - should be invalid because colon is with equals", "a:b:c=d", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isValidMountOption(tc.opt)
+			if got != tc.want {
+				t.Errorf("isValidMountOption(%q) = %v, want %v", tc.opt, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetMountOptionKey(t *testing.T) {
+	tests := []struct {
+		name string
+		opt  string
+		want string
+	}{
+		{"key_only_a - should extract entire string", "a", "a"},
+		{"key_only_a-b - should extract entire string", "a-b", "a-b"},
+		{"colon_a:b - should extract before last colon", "a:b", "a"},
+		{"colon_a:b:c - should extract before last colon", "a:b:c", "a:b"},
+		{"colon_a-b:c - should extract before last colon", "a-b:c", "a-b"},
+		{"equals_a=b - should extract before first equals", "a=b", "a"},
+		{"equals_a-b=c - should extract before first equals", "a-b=c", "a-b"},
+		{"equals_a=b:c - should extract before first equals", "a=b:c", "a"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := getMountOptionKey(tc.opt)
+			if got != tc.want {
+				t.Errorf("getMountOptionKey(%q) = %q, want %q", tc.opt, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{"no change - should keep hyphens", "a-b", "a-b"},
+		{"replace colon - should convert single colon to hyphen", "a:b", "a-b"},
+		{"multiple colons - should convert all colons to hyphens", "a:b:c", "a-b-c"},
+		{"mixed - should convert colons to hyphens while keeping existing hyphens", "a-b:c-d:e", "a-b-c-d-e"},
+		{"empty - should result in empty string", "", ""},
+		{"only colon - should result in a single hyphen", ":", "-"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeKey(tc.key)
+			if got != tc.want {
+				t.Errorf("normalizeKey(%q) = %q, want %q", tc.key, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 	tests := []struct {
-		name    string
-		srcOpts []string
-		dstOpts []string
-		want    []string
+		name     string
+		dstOpts  []string
+		srcOpts  []string
+		wantOpts []string
+		wantErr  bool
 	}{
 		{
-			name:    "src_empty - Should return dstOpts",
-			srcOpts: []string{},
-			dstOpts: []string{"a=1", "b:2"},
-			want:    []string{"a=1", "b:2"},
+			name:     "empty src - should return dstOpts",
+			dstOpts:  []string{"a=b"},
+			srcOpts:  []string{},
+			wantOpts: []string{"a=b"},
 		},
 		{
-			name:    "dst_empty - Should return srcOpts",
-			srcOpts: []string{"a=1", "b:2"},
-			dstOpts: []string{},
-			want:    []string{"a=1", "b:2"},
+			name:     "empty dst - should return srcOpts",
+			dstOpts:  []string{},
+			srcOpts:  []string{"a=b"},
+			wantOpts: []string{"a=b"},
 		},
 		{
-			name:    "both_empty - Should return empty slice",
-			srcOpts: []string{},
-			dstOpts: []string{},
-			want:    []string{},
+			name:     "new key added - should append srcOpt",
+			dstOpts:  []string{"key1=val1"},
+			srcOpts:  []string{"key2=val2"},
+			wantOpts: []string{"key1=val1", "key2=val2"},
 		},
 		{
-			name:    "nil_src - Should return dstOpts",
-			srcOpts: nil,
-			dstOpts: []string{"a=1"},
-			want:    []string{"a=1"},
+			name:     "existing key not added - should skip srcOpt",
+			dstOpts:  []string{"mykey=val1"},
+			srcOpts:  []string{"mykey=val2"},
+			wantOpts: []string{"mykey=val1"},
 		},
 		{
-			name:    "nil_dst - Should return srcOpts",
-			srcOpts: []string{"a=1"},
-			dstOpts: nil,
-			want:    []string{"a=1"},
+			name:     "case insensitive key - should treat keys as case insensitive",
+			dstOpts:  []string{"MyKey=val1"},
+			srcOpts:  []string{"mykey=val2"},
+			wantOpts: []string{"MyKey=val1"},
 		},
 		{
-			name:    "no_overlap - Should append srcOpts to dstOpts",
-			srcOpts: []string{"c=3"},
-			dstOpts: []string{"a=1", "b:2"},
-			want:    []string{"a=1", "b:2", "c=3"},
+			name:     "colon key in dst, same normalized key in src - should not add srcOpt",
+			dstOpts:  []string{"a:b:c"}, // Key: "a:b", Normalized: "a-b"
+			srcOpts:  []string{"a-b=d"}, // Key: "a-b", Normalized: "a-b"
+			wantOpts: []string{"a:b:c"},
 		},
 		{
-			name:    "overlap_exact - Should not add from srcOpts",
-			srcOpts: []string{"a=new"},
-			dstOpts: []string{"a=1", "b:2"},
-			want:    []string{"a=1", "b:2"},
+			name:     "invalid src opts - should return InvalidArgument error",
+			dstOpts:  []string{"valid=a"},
+			srcOpts:  []string{"invalid=b=c"}, // Invalid
+			wantOpts: nil,
+			wantErr:  true,
 		},
 		{
-			name:    "overlap_case_insensitive - Should not add from srcOpts",
-			srcOpts: []string{"A=new", "B:old"},
-			dstOpts: []string{"a=1", "b:2"},
-			want:    []string{"a=1", "b:2"},
+			name:     "another invalid src opts - should return InvalidArgument error",
+			dstOpts:  []string{"valid=a"},
+			srcOpts:  []string{"valid2=b", ":bad"}, // Invalid ":bad"
+			wantOpts: nil,
+			wantErr:  true,
 		},
 		{
-			name:    "overlap_different_format - Should not add from srcOpts based on key",
-			srcOpts: []string{"a:new"},
-			dstOpts: []string{"a=1", "b:2"},
-			want:    []string{"a=1", "b:2"},
+			name:     "invalid dst opts - should return InvalidArgument error",
+			dstOpts:  []string{"valid=a", "bad:opt=x"}, // Invalid "bad:opt=x"
+			srcOpts:  []string{"valid2=b"},
+			wantOpts: nil,
+			wantErr:  true,
 		},
 		{
-			name:    "mixed_add_and_skip - Should add only new keys",
-			srcOpts: []string{"C=3", "a=new", "d:4"},
-			dstOpts: []string{"a=1", "b:2"},
-			want:    []string{"a=1", "b:2", "C=3", "d:4"},
+			name:    "complex merge with only valid - should merge correctly",
+			dstOpts: []string{"a=1", "b:c"},
+			srcOpts: []string{"a=2", "b:d", "g=h"},
+			// Valid dstOpts keys (normalized, lower): {"a": true, "b": true}
+			// "a=2": Key "a" exists. Skip.
+			// "b:d": Key "b" exists. Skip.
+			// "g=h": Key "g" is new. Add "g=h".
+			wantOpts: []string{"a=1", "b:c", "g=h"},
 		},
 		{
-			name:    "src_has_duplicates_key - Should add only the first instance of a new key",
-			srcOpts: []string{"c=1", "c=2"},
-			dstOpts: []string{"a=1"},
-			want:    []string{"a=1", "c=1"},
+			name:     "complex merge with invalid in dst - should error",
+			dstOpts:  []string{"a=1", "b:c", "d=e=f"}, // "d=e=f" is invalid
+			srcOpts:  []string{"g=h"},
+			wantOpts: nil,
+			wantErr:  true,
 		},
 		{
-			name:    "dst_has_duplicates_key - Should preserve dst duplicates and add new keys",
-			srcOpts: []string{"c=1"},
-			dstOpts: []string{"a=1", "a=2"},
-			want:    []string{"a=1", "a=2", "c=1"},
+			name:     "complex merge with invalid in src - should error",
+			dstOpts:  []string{"a=1", "b:c"},
+			srcOpts:  []string{"a=2", "b:d", "g=h", "b:c=x"}, // "b:c=x" is invalid
+			wantOpts: nil,
+			wantErr:  true,
+		},
+		{
+			name:     "key overlap equals vs colon - should not add srcOpt",
+			dstOpts:  []string{"a=b"}, // Key: "a", Normalized: "a"
+			srcOpts:  []string{"a:c"}, // Key: "a", Normalized: "a"
+			wantOpts: []string{"a=b"},
+		},
+		{
+			name:     "colon key contains colon, overlaps with hyphen key - should not add srcOpt",
+			dstOpts:  []string{"key:sub:val1"}, // Key: "key:sub", Normalized: "key-sub"
+			srcOpts:  []string{"key-sub=val2"}, // Key: "key-sub", Normalized: "key-sub"
+			wantOpts: []string{"key:sub:val1"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mergeMountOptionsIfKeyUnset(tc.dstOpts, tc.srcOpts)
-			if diff := cmp.Diff(sortStrings(tc.want), sortStrings(got)); diff != "" {
-				t.Errorf("MergeMountOptionsIfKeyUnset(%v, %v) returned diff (-want +got):\n%s", tc.srcOpts, tc.dstOpts, diff)
+			gotOpts, gotErr := mergeMountOptionsIfKeyUnset(tc.dstOpts, tc.srcOpts)
+
+			if gotErr == nil && tc.wantErr {
+				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got error %v, want error %v", tc.dstOpts, tc.srcOpts, gotErr, tc.wantErr)
+			}
+			if !reflect.DeepEqual(gotOpts, tc.wantOpts) {
+				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got options \n%v, want \n%v", tc.dstOpts, tc.srcOpts, gotOpts, tc.wantOpts)
 			}
 		})
 	}
