@@ -183,6 +183,13 @@ func (t *TestPod) Create(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
+func (t *TestPod) CreateExpectError(ctx context.Context) {
+	framework.Logf("Creating Pod %s", t.pod.Name)
+	var err error
+	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
+	gomega.Expect(err).Should(gomega.HaveOccurred())
+}
+
 func (t *TestPod) GetPodName() string {
 	return t.pod.Name
 }

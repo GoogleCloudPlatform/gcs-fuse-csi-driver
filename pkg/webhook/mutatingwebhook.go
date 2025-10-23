@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"slices"
 
 	"cloud.google.com/go/compute/metadata"
@@ -30,7 +31,9 @@ import (
 
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,17 +41,23 @@ import (
 )
 
 const (
-	GcsFuseVolumeEnableAnnotation           = "gke-gcsfuse/volumes"
-	GcsFuseNativeSidecarEnableAnnotation    = "gke-gcsfuse/enable-native-sidecar"
-	cpuLimitAnnotation                      = "gke-gcsfuse/cpu-limit"
-	cpuRequestAnnotation                    = "gke-gcsfuse/cpu-request"
-	memoryLimitAnnotation                   = "gke-gcsfuse/memory-limit"
-	memoryRequestAnnotation                 = "gke-gcsfuse/memory-request"
-	ephemeralStorageLimitAnnotation         = "gke-gcsfuse/ephemeral-storage-limit"
-	ephemeralStorageRequestAnnotation       = "gke-gcsfuse/ephemeral-storage-request"
-	metadataPrefetchMemoryLimitAnnotation   = "gke-gcsfuse/metadata-prefetch-memory-limit"
-	metadataPrefetchMemoryRequestAnnotation = "gke-gcsfuse/metadata-prefetch-memory-request"
-	GcsfuseProfilesAnnotation               = "gke-gcsfuse/profiles"
+	GcsFuseVolumeEnableAnnotation                    = "gke-gcsfuse/volumes"
+	GcsFuseNativeSidecarEnableAnnotation             = "gke-gcsfuse/enable-native-sidecar"
+	cpuLimitAnnotation                               = "gke-gcsfuse/cpu-limit"
+	cpuRequestAnnotation                             = "gke-gcsfuse/cpu-request"
+	memoryLimitAnnotation                            = "gke-gcsfuse/memory-limit"
+	memoryRequestAnnotation                          = "gke-gcsfuse/memory-request"
+	ephemeralStorageLimitAnnotation                  = "gke-gcsfuse/ephemeral-storage-limit"
+	ephemeralStorageRequestAnnotation                = "gke-gcsfuse/ephemeral-storage-request"
+	metadataPrefetchMemoryLimitAnnotation            = "gke-gcsfuse/metadata-prefetch-memory-limit"
+	metadataPrefetchMemoryRequestAnnotation          = "gke-gcsfuse/metadata-prefetch-memory-request"
+	GcsfuseProfilesAnnotation                        = "gke-gcsfuse/profiles"
+	GCPWorkloadIdentityCredentialConfigMapAnnotation = "gke-gcsfuse/workload-identity-credential-configmap"
+)
+
+var (
+	defaultMode            = int32(420)
+	tokenExpirationSeconds = int64(3600)
 )
 
 type SidecarInjector struct {
@@ -61,6 +70,7 @@ type SidecarInjector struct {
 	PvcLister              listersv1.PersistentVolumeClaimLister
 	PvLister               listersv1.PersistentVolumeLister
 	ServerVersion          *version.Version
+	K8SClient              kubernetes.Interface
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
@@ -119,10 +129,36 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to verify native sidecar support: %w", err))
 	}
 
+	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
+	// Inject GCP workload identity credential config configmap and token.
+	if configMapName, ok := pod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" && si.K8SClient != nil {
+		// Validate that OIDC authentication is not used with hostNetwork pods
+		if pod.Spec.HostNetwork {
+			return admission.Errored(http.StatusBadRequest,
+				fmt.Errorf("OIDC authentication (annotation %q) is not supported for pods with hostNetwork=true. "+
+					"HostNetwork pods use a different authentication mechanism (Google Workload Identity). "+
+					"Please either remove hostNetwork or use standard Workload Identity authentication. ",
+					GCPWorkloadIdentityCredentialConfigMapAnnotation))
+		}
+
+		filename, credentialConfig, err := appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, configMapName)
+		if err != nil {
+			return admission.Errored(http.StatusBadRequest, err)
+		}
+		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
+			GacEnv: &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
+			CredentialVolumeMounts: []corev1.VolumeMount{
+				{Name: SidecarContainerWITokenVolumeName, MountPath: filepath.Dir(credentialConfig.CredentialSource.File)},
+				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+			},
+		}
+		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
+	}
+
 	// Inject Fuse Side Car container.
 	injected, _ := validatePodHasSidecarContainerInjected(GcsFuseSidecarName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount})
 	if !injected {
-		err = si.injectSidecarContainer(GcsFuseSidecarName, pod, injectAsNativeSidecar)
+		err = si.injectSidecarContainer(GcsFuseSidecarName, pod, injectAsNativeSidecar, sidecarCredentialConfig)
 	}
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
@@ -142,7 +178,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	// Inject metadata prefetch sidecar.
 	injected, _ = validatePodHasSidecarContainerInjected(MetadataPrefetchSidecarName, pod, []corev1.Volume{}, []corev1.VolumeMount{})
 	if !injected {
-		err = si.injectSidecarContainer(MetadataPrefetchSidecarName, pod, injectAsNativeSidecar)
+		err = si.injectSidecarContainer(MetadataPrefetchSidecarName, pod, injectAsNativeSidecar, nil /*credentialConfig*/)
 	}
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
@@ -313,4 +349,101 @@ func volumeMountExists(volumeMounts []corev1.VolumeMount, name string) bool {
 	return slices.ContainsFunc(volumeMounts, func(vm corev1.VolumeMount) bool {
 		return vm.Name == name
 	})
+}
+
+func appendWorkloadCredentialConfigurationVolumes(client kubernetes.Interface, pod *corev1.Pod, configMapName string) (string, *CredentialConfig, error) {
+	// First we want to add the volume for the projected token.
+	// For that we need to read the configMap and get some details from it.
+	filename, credConfig, err := parseCredentialConfigurationConfigMap(client, pod, configMapName)
+	if err != nil {
+		klog.Errorf("failed to parse the workload identity credential configuration configMap %s in namespace %s: %v", configMapName, pod.Namespace, err)
+		return "", nil, err
+	}
+	klog.Infof("Parsed the workload identity credential configuration configMap %s in namespace %s %+v", configMapName, pod.Namespace, credConfig)
+
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: SidecarContainerWITokenVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{
+					{
+						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+							Audience:          fmt.Sprintf("https:%s", credConfig.Audience), // Add the "https:" prefix to the audience.
+							ExpirationSeconds: &tokenExpirationSeconds,
+							Path:              filepath.Base(credConfig.CredentialSource.File),
+						},
+					},
+				},
+				DefaultMode: &defaultMode,
+			},
+		},
+	})
+
+	// Secondly try to add workload identity credential configuration configMap as volume.
+	if !checkConfigMapVolumeExists(pod) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: SidecarContainerWICredentialConfigMapVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
+					DefaultMode: &defaultMode,
+				},
+			},
+		})
+	}
+	return filename, credConfig, nil
+}
+
+// checkConfigMapVolumeExists checks if the configMap volume already exists in the pod volumes.
+// pod: the pod to log information for.
+func checkConfigMapVolumeExists(pod *corev1.Pod) bool {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == SidecarContainerWICredentialConfigMapVolumeName {
+			klog.Warningf("%s was already found in the volume list of the pod name %s namespace %s", volume.Name, pod.Name, pod.Namespace)
+			return true
+		}
+	}
+	return false
+}
+
+type CredentialConfig struct {
+	Audience         string `json:"audience"`
+	CredentialSource struct {
+		File string `json:"file"`
+	} `json:"credential_source"`
+}
+
+// parseCredentialConfigurationConfigMap parses the credential configuration configMap and returns the filename and the parsed content.
+func parseCredentialConfigurationConfigMap(client kubernetes.Interface, pod *corev1.Pod, configMapName string) (string, *CredentialConfig, error) {
+	// Get the ConfigMap
+	ctx := context.Background()
+	configMap, err := client.CoreV1().ConfigMaps(pod.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to get configMap %s in namespace %s: %v", configMapName, pod.Namespace, err)
+	}
+
+	if len(configMap.Data) != 1 {
+		return "", nil, fmt.Errorf("ConfigMap %s in namespace %s must contain exactly one data entry, but found %d", configMapName, pod.Namespace, len(configMap.Data))
+	}
+
+	// Find the file name for the credential configuration. Typically it is credential-configuration.json
+	var filename string
+	for key := range configMap.Data {
+		filename = key
+	}
+
+	if len(filename) == 0 {
+		return "", nil, fmt.Errorf("ill-formatted workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
+	}
+
+	// Parse the JSON content
+	var credConfig CredentialConfig
+	err = json.Unmarshal([]byte(configMap.Data[filename]), &credConfig)
+	if err != nil {
+		return filename, nil, fmt.Errorf("error parsing the workload identity credential configuration configMap %s in namespace %s: %v", configMapName, pod.Namespace, err)
+	}
+
+	return filename, &credConfig, nil
 }

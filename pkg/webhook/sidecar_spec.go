@@ -27,16 +27,19 @@ import (
 )
 
 const (
-	GcsFuseSidecarName                     = "gke-gcsfuse-sidecar"
-	MetadataPrefetchSidecarName            = "gke-gcsfuse-metadata-prefetch"
-	SidecarContainerTmpVolumeMountPath     = "/gcsfuse-tmp"
-	SidecarContainerBufferVolumeName       = "gke-gcsfuse-buffer"
-	SidecarContainerBufferVolumeMountPath  = "/gcsfuse-buffer"
-	SidecarContainerCacheVolumeName        = "gke-gcsfuse-cache"
-	SidecarContainerCacheVolumeMountPath   = "/gcsfuse-cache"
-	SidecarContainerSATokenVolumeName      = "gcsfuse-sa-token"  // #nosec G101
-	SidecarContainerSATokenVolumeMountPath = "/gcsfuse-sa-token" // #nosec G101
-	K8STokenPath                           = "token"             // #nosec G101
+	GcsFuseSidecarName                                   = "gke-gcsfuse-sidecar"
+	MetadataPrefetchSidecarName                          = "gke-gcsfuse-metadata-prefetch"
+	SidecarContainerTmpVolumeMountPath                   = "/gcsfuse-tmp"
+	SidecarContainerBufferVolumeName                     = "gke-gcsfuse-buffer"
+	SidecarContainerBufferVolumeMountPath                = "/gcsfuse-buffer"
+	SidecarContainerCacheVolumeName                      = "gke-gcsfuse-cache"
+	SidecarContainerCacheVolumeMountPath                 = "/gcsfuse-cache"
+	SidecarContainerSATokenVolumeName                    = "gcsfuse-sa-token"            // #nosec G101
+	SidecarContainerSATokenVolumeMountPath               = "/gcsfuse-sa-token"           // #nosec G101
+	K8STokenPath                                         = "token"                       // #nosec G101
+	SidecarContainerWITokenVolumeName                    = "gke-workload-identity-token" // Mount path for this volume should be read from the workload identity credential configuration configmap. Typically the mounth path is /var/run/service-account.
+	SidecarContainerWICredentialConfigMapVolumeName      = "gke-workload-identity-credential-configmap"
+	SidecarContainerWICredentialConfigMapVolumeMountPath = "/etc/workload-identity"
 
 	// Webhook relevant volume attributes.
 	gcsFuseMetadataPrefetchOnMountVolumeAttribute = "gcsfuseMetadataPrefetchOnMount"
@@ -111,15 +114,20 @@ var (
 	}
 )
 
-func GetNativeSidecarContainerSpec(c *Config) corev1.Container {
-	container := GetSidecarContainerSpec(c)
+type SidecarContainerCredentialConfiguration struct {
+	GacEnv                 *corev1.EnvVar       // This is the environment variable for GOOGLE_APPLICATION_CREDENTIALS that will be injected into the sidecar container.
+	CredentialVolumeMounts []corev1.VolumeMount // These are the volume mounts for the credential files that will be injected into the sidecar container.
+}
+
+func GetNativeSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {
+	container := GetSidecarContainerSpec(c, credentialConfig)
 	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
 	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
 
 	return container
 }
 
-func GetSidecarContainerSpec(c *Config) corev1.Container {
+func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {
 	limits, requests := prepareResourceList(c)
 
 	volumeMounts := []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount}
@@ -143,6 +151,19 @@ func GetSidecarContainerSpec(c *Config) corev1.Container {
 			Requests: requests,
 		},
 		VolumeMounts: volumeMounts,
+	}
+
+	// Inject the environment variable and volume mounts for the credential files.
+	if credentialConfig != nil {
+		// Inject the environment variable for GOOGLE_APPLICATION_CREDENTIALS.
+		if credentialConfig.GacEnv != nil {
+			container.Env = append(container.Env, *credentialConfig.GacEnv)
+		}
+
+		// Inject the volume mounts for the credential files.
+		if len(credentialConfig.CredentialVolumeMounts) > 0 {
+			container.VolumeMounts = append(container.VolumeMounts, credentialConfig.CredentialVolumeMounts...)
+		}
 	}
 
 	return container

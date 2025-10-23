@@ -161,6 +161,7 @@ func main() {
 			PvLister:               pvLister,
 			PvcLister:              pvcLister,
 			ServerVersion:          serverVersion,
+			K8SClient:              client,
 		},
 	})
 

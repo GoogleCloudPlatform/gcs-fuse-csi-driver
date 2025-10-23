@@ -382,7 +382,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Update,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -393,7 +393,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 			},
@@ -404,7 +404,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -420,7 +420,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{getWorkloadSpec("workload"), GetSidecarContainerSpec(FakeConfig())},
+					Containers: []corev1.Container{getWorkloadSpec("workload"), GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Volumes:    GetSidecarContainerVolumeSpec(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -436,7 +436,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation: admissionv1.Create,
 			inputPod: &corev1.Pod{
 				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{getWorkloadSpec("init-workload"), GetSidecarContainerSpec(FakeConfig())},
+					InitContainers: []corev1.Container{getWorkloadSpec("init-workload"), GetSidecarContainerSpec(FakeConfig(), nil /*credentialConfig*/)},
 					Containers:     []corev1.Container{getWorkloadSpec("workload")},
 					Volumes:        GetSidecarContainerVolumeSpec(),
 				},
@@ -574,6 +574,27 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantResponseWithIstio(t, true, false, true),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:         "workload identity injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithWorkloadIdentity("test-credentials"),
+			wantResponse: wantWorkloadIdentityResponse(t, "test-credentials"),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "workload identity injection no annotation test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPod(),
+			wantResponse: wantResponse(t, false, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "workload identity injection empty annotation test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithWorkloadIdentity(""),
+			wantResponse: wantResponse(t, false, false, true),
+			nodes:        nativeSupportNodes(),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -591,6 +612,30 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 				}
 			}
 
+			// Create workload identity ConfigMap if the test uses it
+			if tc.inputPod != nil && tc.inputPod.Annotations != nil {
+				if configMapName, ok := tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" {
+					configMap := &corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      configMapName,
+							Namespace: testNamespace,
+						},
+						Data: map[string]string{
+							"credential-configuration.json": `{
+								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+								"credential_source": {
+									"file": "/var/run/service-account/token"
+								}
+							}`,
+						},
+					}
+					_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
+					if err != nil {
+						t.Error("failed to create workload identity configmap")
+					}
+				}
+			}
+
 			informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
 			lister := informerFactory.Core().V1().Nodes().Lister()
 
@@ -600,6 +645,7 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 				MetadataPrefetchConfig: FakePrefetchConfig(),
 				Decoder:                admission.NewDecoder(runtime.NewScheme()),
 				NodeLister:             lister,
+				K8SClient:              fakeClient,
 			}
 
 			stopCh := make(<-chan struct{})
@@ -994,9 +1040,9 @@ func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native b
 	}
 
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config)}, newPod.Spec.InitContainers...)
+		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, nil)}, newPod.Spec.InitContainers...)
 	} else {
-		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
 	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
@@ -1027,9 +1073,9 @@ func wantResponseWithIstio(t *testing.T, customImage bool, nativeCustomImage, na
 	}
 
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, GetNativeSidecarContainerSpec(config)}, newPod.Spec.InitContainers...)
+		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, GetNativeSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.InitContainers...)
 	} else {
-		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config)}, newPod.Spec.Containers...)
+		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
 	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
@@ -1566,4 +1612,301 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validInputPodWithWorkloadIdentity(configMapName string) *corev1.Pod {
+	pod := validInputPod()
+	pod.ObjectMeta.Namespace = testNamespace
+	if configMapName != "" {
+		pod.ObjectMeta.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] = configMapName
+	}
+	return pod
+}
+
+func wantWorkloadIdentityResponse(t *testing.T, configMapName string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithWorkloadIdentity(configMapName)
+	newPod := *modifySpecWithWorkloadIdentity(*originalPod, configMapName)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func modifySpecWithWorkloadIdentity(newPod corev1.Pod, configMapName string) *corev1.Pod {
+	config := FakeConfig()
+
+	// Create sidecar credential configuration
+	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
+	if configMapName != "" {
+		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
+			GacEnv: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "credential-configuration.json"),
+			},
+			CredentialVolumeMounts: []corev1.VolumeMount{
+				{Name: SidecarContainerWITokenVolumeName, MountPath: "/var/run/service-account"},
+				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+			},
+		}
+
+		// Add the workload identity volumes
+		newPod.Spec.Volumes = append(newPod.Spec.Volumes,
+			corev1.Volume{
+				Name: SidecarContainerWITokenVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					Projected: &corev1.ProjectedVolumeSource{
+						Sources: []corev1.VolumeProjection{
+							{
+								ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+									Audience:          "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+									ExpirationSeconds: &tokenExpirationSeconds,
+									Path:              "token",
+								},
+							},
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+			corev1.Volume{
+				Name: SidecarContainerWICredentialConfigMapVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: configMapName,
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+		)
+	}
+
+	// Add native sidecar container
+	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
+
+	return &newPod
+}
+
+func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                string
+		inputPod            *corev1.Pod
+		expectError         bool
+		expectedErrorSubstr string
+	}{
+		{
+			name: "reject pod with hostNetwork=true and OIDC annotation",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation:                    "true",
+						GCPWorkloadIdentityCredentialConfigMapAnnotation: "workload-identity-credentials",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   true,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError:         true,
+			expectedErrorSubstr: "OIDC authentication",
+		},
+		{
+			name: "allow pod with hostNetwork=true without OIDC annotation",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   true,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "allow pod with OIDC annotation without hostNetwork",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation:                    "true",
+						GCPWorkloadIdentityCredentialConfigMapAnnotation: "workload-identity-credentials",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   false,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "allow pod without hostNetwork and without OIDC annotation",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   false,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "allow pod with hostNetwork=true and empty OIDC annotation",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation:                    "true",
+						GCPWorkloadIdentityCredentialConfigMapAnnotation: "",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   true,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError: false, // Empty annotation value should be ignored
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create fake clientset with necessary ConfigMap for OIDC tests
+			fakeClient := fake.NewSimpleClientset()
+			if tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] != "" {
+				configMap := &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation],
+						Namespace: testNamespace,
+					},
+					Data: map[string]string{
+						"credential-configuration.json": `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"file": "/var/run/service-account/token"
+							}
+						}`,
+					},
+				}
+				_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("Failed to create test ConfigMap: %v", err)
+				}
+			}
+
+			// Create informer factory
+			informerFactory := informers.NewSharedInformerFactory(fakeClient, time.Hour)
+			nodeInformer := informerFactory.Core().V1().Nodes()
+			nodeInformer.Informer() // Initialize the informer
+
+			// Create test nodes
+			testNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+				},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{
+						KubeletVersion: "v1.29.0-gke.1234",
+					},
+				},
+			}
+			_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), testNode, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("Failed to create test node: %v", err)
+			}
+
+			// Start informer and wait for cache sync
+			stopCh := make(chan struct{})
+			defer close(stopCh)
+			informerFactory.Start(stopCh)
+			informerFactory.WaitForCacheSync(stopCh)
+
+			// Create SidecarInjector
+			si := &SidecarInjector{
+				Client:                 nil,
+				K8SClient:              fakeClient,
+				Config:                 FakeConfig(),
+				MetadataPrefetchConfig: FakePrefetchConfig(),
+				Decoder:                admission.NewDecoder(runtime.NewScheme()),
+				NodeLister:             nodeInformer.Lister(),
+			}
+
+			// Marshal the pod to create admission request
+			podJSON, err := json.Marshal(tc.inputPod)
+			if err != nil {
+				t.Fatalf("Failed to marshal pod: %v", err)
+			}
+
+			// Create admission request
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Create,
+					Object: runtime.RawExtension{
+						Raw: podJSON,
+					},
+				},
+			}
+
+			// Call Handle
+			resp := si.Handle(context.Background(), req)
+
+			// Verify response
+			if tc.expectError {
+				if resp.Allowed {
+					t.Errorf("Expected request to be denied, but it was allowed")
+				}
+				if tc.expectedErrorSubstr != "" && !stringContains(resp.Result.Message, tc.expectedErrorSubstr) {
+					t.Errorf("Expected error message to contain %q, but got: %q", tc.expectedErrorSubstr, resp.Result.Message)
+				}
+				if resp.Result.Code != http.StatusBadRequest {
+					t.Errorf("Expected status code %d, but got: %d", http.StatusBadRequest, resp.Result.Code)
+				}
+			} else {
+				if !resp.Allowed {
+					t.Errorf("Expected request to be allowed, but it was denied with: %v", resp.Result)
+				}
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring
+func stringContains(s, substr string) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
