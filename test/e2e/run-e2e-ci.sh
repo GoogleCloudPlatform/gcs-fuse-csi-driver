@@ -86,5 +86,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gcsfuse-enable-zb=${enable_zb} \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --gke-gcloud-command='${gke_gcloud_command}' \
-            --gke-gcloud-args='${gke_gcloud_args}'"
+            --gke-gcloud-args='${gke_gcloud_args}'\
+            --deploy-overlay-name=${overlay}"
 eval "$base_cmd"
