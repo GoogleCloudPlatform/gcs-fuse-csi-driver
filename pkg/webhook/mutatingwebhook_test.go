@@ -1285,6 +1285,10 @@ func TestIsGCSFuseProfilesEnabled(t *testing.T) {
 func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 	// Define common structures to be added
 	expectedGate := corev1.PodSchedulingGate{Name: BucketScanPendingSchedulingGate}
+	expectedDefaultCacheVolume := corev1.Volume{
+		Name:         SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
 	expectedEphemeralVolume := corev1.Volume{
 		Name:         SidecarContainerFileCacheEphemeralDiskVolumeName,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
@@ -1294,6 +1298,10 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium: corev1.StorageMediumMemory,
 		}},
+	}
+	expectedDefaultCacheMount := corev1.VolumeMount{
+		Name:      SidecarContainerCacheVolumeName,
+		MountPath: SidecarContainerCacheVolumeMountPath,
 	}
 	expectedEphemeralMount := corev1.VolumeMount{
 		Name:      SidecarContainerFileCacheEphemeralDiskVolumeName,
@@ -1305,10 +1313,11 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name      string
-		inputPod  *corev1.Pod
-		wantPod   *corev1.Pod
-		expectErr bool
+		name               string
+		inputPod           *corev1.Pod
+		wantPod            *corev1.Pod
+		cacheCreatedByUser bool
+		expectErr          bool
 	}{
 		{
 			name: "pod with sidecar in containers list, already has existing scheduling gate",
@@ -1587,6 +1596,55 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		{
+			name: "pod with user provided cache volume, should add user created cache volume label set to true",
+			// Passed by the webhook handler.
+			cacheCreatedByUser: true,
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedDefaultCacheMount,
+							},
+						},
+					},
+					// User provided cache volume.
+					Volumes: []corev1.Volume{expectedDefaultCacheVolume},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pod-1",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+						// Should trigger this annotation.
+						GcsfuseCacheCreatedByUserLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Volumes:         []corev1.Volume{expectedDefaultCacheVolume, expectedEphemeralVolume, expectedRAMVolume},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedDefaultCacheMount,
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1596,7 +1654,7 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 
 			// The function doesn't actually use the client or context,
 			// so we can pass in nil or empty values.
-			err := ModifyPodSpecForGCSFuseProfiles(podToModify)
+			err := ModifyPodSpecForGCSFuseProfiles(podToModify, tc.cacheCreatedByUser)
 			if err != nil || tc.expectErr {
 				if !tc.expectErr {
 					t.Fatalf("ModifyPodSpecForGcsfuseProfiles() returned an unexpected error: %v", err)

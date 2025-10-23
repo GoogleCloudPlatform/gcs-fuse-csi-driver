@@ -107,6 +107,7 @@ func main() {
 				mc.SidecarRetryConfig.Duration = *storageServiceAndBucketAccessDuration
 				mc.SidecarRetryConfig.Jitter = *storageServiceAndBucketAccessJitter
 			}
+
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}

@@ -27,6 +27,7 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
@@ -86,8 +87,44 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
 	}
 
+	// Validate the target path.
+	targetPath := req.GetTargetPath()
+	if len(targetPath) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume target path must be provided")
+	}
+
+	// Get the Pod object.
+	vc := req.GetVolumeContext()
+	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
+	}
+	sidecarInjected, isInitContainer := webhook.ValidatePodHasSidecarContainerInjected(pod)
+	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
+
+	// Recommend VolumeAttributes if the gcsfuse profiles feature is enabled.
+	profilesEnabled := strings.ToLower(pod.Annotations[webhook.GcsfuseProfilesAnnotation]) == util.TrueStr && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
+	var profile *profiles.ProfileConfig
+	if profilesEnabled {
+		klog.V(4).Infof("NodePublishVolume gcsfuse profiles feature is enabled for pod %s/%s", pod.Namespace, pod.Name)
+		profile, err = profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
+			TargetPath:          targetPath,
+			Clientset:           s.k8sClients,
+			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
+			PodNamespace:        pod.Namespace,
+			PodName:             pod.Name,
+			NodeName:            s.driver.config.NodeID,
+			IsInitContainer:     isInitContainer,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build profile config: %v", err)
+		}
+		// Merge profile VolumeAttributes into the VolumeContext, respecting pre-existing keys.
+		vc = profile.LeftJoinOnRecommendedVolumeAttributeKeys(vc)
+	}
+
 	// Validate arguments
-	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, err := parseRequestArguments(req)
+	bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, err := parseRequestArguments(req, vc)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -102,8 +139,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
-
-	vc := req.GetVolumeContext()
 
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
@@ -133,11 +168,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Check if the sidecar container was injected into the Pod
-	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
-	}
-	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
 	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
@@ -188,7 +218,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
 	shouldInjectedByWebhook := strings.ToLower(pod.Annotations[webhook.GcsFuseVolumeEnableAnnotation]) == util.TrueStr
-	sidecarInjected, isInitContainer := webhook.ValidatePodHasSidecarContainerInjected(pod)
 	if !sidecarInjected {
 		if shouldInjectedByWebhook {
 			return nil, status.Error(codes.Internal, "the webhook failed to inject the sidecar container into the Pod spec")
@@ -268,12 +297,21 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
+	if profilesEnabled {
+		// Merge the recommended mount options with user's mount options if the profiles feature
+		// is enabled. This operation respects the user's mount options if they are duplicated.
+		fuseMountOptions, err = profile.LeftJoinOnRecommendedMountOptionKeys(fuseMountOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recommend mount options: %v", err)
+		}
+	}
+
 	disallowedFlags, err := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate disallowed flags map err:%v", err)
 	}
-
 	fuseMountOptions = removeDisallowedMountOptions(fuseMountOptions, disallowedFlags)
+
 	// Start to mount
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)

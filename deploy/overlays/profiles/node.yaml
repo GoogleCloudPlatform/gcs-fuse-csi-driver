@@ -29,3 +29,4 @@ spec:
             - --node=true
             - --identity-provider=$(IDENTITY_PROVIDER)
             - --enable-gcsfuse-profiles=true
+            - --enable-gcsfuse-profiles-internal=true

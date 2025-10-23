@@ -811,14 +811,14 @@ func TestGenerateDisallowedFlagsMap(t *testing.T) {
 		{
 			name:           "sidecar version predates storage profiles - results in disllowed profile flag",
 			image:          "v1.18.0-gke.1",
-			expectedMap:    map[string]bool{GCSFuseProfileFlag: true},
+			expectedMap:    map[string]bool{GCSFuseProfileFlag: true, util.FileCacheMediumConst: true},
 			expectErr:      nil,
 			enableProfiles: true,
 		},
 		{
 			name:           "sidecar version supports storage profiles but feature is disabled - results in disllowed profile flag",
 			image:          "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.2@sha256:abcd",
-			expectedMap:    map[string]bool{GCSFuseProfileFlag: true},
+			expectedMap:    map[string]bool{GCSFuseProfileFlag: true, util.FileCacheMediumConst: true},
 			enableProfiles: false,
 			expectErr:      nil,
 		},

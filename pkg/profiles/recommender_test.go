@@ -56,10 +56,10 @@ var (
 		},
 		MountOptions: []string{
 			"implicit-dirs",
-			"metadata-cache-negative-ttl-secs=0",
-			"metadata-cache-ttl-secs=-1",
-			"file-cache-cache-file-for-range-read=true",
-			"file-system-kernel-list-cache-ttl-secs=-1",
+			"metadata-cache:negative-ttl-secs:0",
+			"metadata-cache:ttl-secs:-1",
+			"file-cache:cache-file-for-range-read:true",
+			"file-system:kernel-list-cache-ttl-secs:-1",
 			"read_ahead_kb=1024",
 		},
 	}
@@ -116,17 +116,6 @@ const (
 // PVConfigBuilder helps create FakePVConfig instances for tests.
 type PVConfigBuilder struct {
 	config clientset.FakePVConfig
-}
-
-// Helper to sort string slices for consistent comparison
-func sortStrings(s []string) []string {
-	if s == nil {
-		return nil
-	}
-	c := make([]string, len(s))
-	copy(c, s)
-	sort.Strings(c)
-	return c
 }
 
 // NewPVConfigBuilder initializes a builder with default testPVConfig values.
@@ -275,7 +264,7 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					fuseMemoryAllocatableFactor:           0.7,
 					fuseEphemeralStorageAllocatableFactor: 0.85,
-					VolumeAttributes: map[string]string{
+					volumeAttributes: map[string]string{
 						"mountOptions":                   "1",
 						"fileCacheCapacity":              "2",
 						"fileCacheForRangeRead":          "3",
@@ -293,10 +282,10 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					mountOptions: []string{
 						"implicit-dirs",
-						"metadata-cache-negative-ttl-secs=0",
-						"metadata-cache-ttl-secs=-1",
-						"file-cache-cache-file-for-range-read=true",
-						"file-system-kernel-list-cache-ttl-secs=-1",
+						"metadata-cache:negative-ttl-secs:0",
+						"metadata-cache:ttl-secs:-1",
+						"file-cache:cache-file-for-range-read:true",
+						"file-system:kernel-list-cache-ttl-secs:-1",
 						"read_ahead_kb=1024",
 					},
 				},
@@ -365,12 +354,12 @@ func TestBuildProfileConfig(t *testing.T) {
 			}
 
 			got, err := BuildProfileConfig(&BuildProfileConfigParams{
-				targetPath:          tt.targetPath,
-				clientset:           fakeClient,
-				volumeAttributeKeys: csiDriverVolumeAttributeKeys,
-				nodeName:            tt.nodeName,
-				podNamespace:        tt.podNamespace,
-				podName:             tt.podName,
+				TargetPath:          tt.targetPath,
+				Clientset:           fakeClient,
+				VolumeAttributeKeys: csiDriverVolumeAttributeKeys,
+				NodeName:            tt.nodeName,
+				PodNamespace:        tt.podNamespace,
+				PodName:             tt.podName,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -623,7 +612,7 @@ func TestBuildSCDetails(t *testing.T) {
 				},
 				fuseMemoryAllocatableFactor:           0.7,
 				fuseEphemeralStorageAllocatableFactor: 0.85,
-				VolumeAttributes: map[string]string{
+				volumeAttributes: map[string]string{
 					"mountOptions":                   "1",
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
@@ -741,7 +730,7 @@ func TestBuildSCDetails(t *testing.T) {
 				},
 				fuseMemoryAllocatableFactor:           0.1,
 				fuseEphemeralStorageAllocatableFactor: 0.1,
-				VolumeAttributes: map[string]string{
+				volumeAttributes: map[string]string{
 					"fileCacheCapacity": "10Gi",
 				},
 				mountOptions: defaultMountOptions,
@@ -1215,186 +1204,6 @@ func TestHasLocalSSDEphemeralStorageAnnotation(t *testing.T) {
 	}
 }
 
-func TestAddInt64RecommendationToMountOptions(t *testing.T) {
-	tests := []struct {
-		name                string
-		initialOptions      []string
-		mountOptionKey      string
-		recommendationBytes int64
-		wantOptions         []string
-		wantErr             bool
-	}{
-		{
-			name:                "Bytes greater than 0 - Should add formatted option",
-			initialOptions:      []string{"opt1"},
-			mountOptionKey:      "test-key",
-			recommendationBytes: 2 * mib,
-			wantOptions:         []string{"opt1", "test-key=2"},
-		},
-		{
-			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key=val format",
-			initialOptions:      []string{"opt1", "test-key=1"},
-			mountOptionKey:      "test-key",
-			recommendationBytes: 2 * mib,
-			wantOptions:         []string{"opt1", "test-key=1"},
-		},
-		{
-			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key:val format",
-			initialOptions:      []string{"opt1", "test-key:1"},
-			mountOptionKey:      "test-key",
-			recommendationBytes: 2 * mib,
-			wantOptions:         []string{"opt1", "test-key:1"},
-		},
-		{
-			name:                "Bytes greater than 0 - Should not add mount option if key already exists in nested key:val format",
-			initialOptions:      []string{"opt1", "file-cache:max-size-mb:existing"},
-			mountOptionKey:      "file-cache-max-size-mb",
-			recommendationBytes: 2 * mib,
-			wantOptions:         []string{"opt1", "file-cache:max-size-mb:existing"},
-		},
-		{
-			name:                "Bytes equals 0 - Should not add option",
-			initialOptions:      []string{"opt1"},
-			mountOptionKey:      "test-key",
-			recommendationBytes: 0,
-			wantOptions:         []string{"opt1"},
-		},
-		{
-			name:                "Empty initial options - Should add option",
-			initialOptions:      []string{},
-			mountOptionKey:      "test-key",
-			recommendationBytes: mib,
-			wantOptions:         []string{"test-key=1"},
-		},
-		{
-			name:                "Bytes require rounding up - Should format with rounded up MiB",
-			initialOptions:      []string{},
-			mountOptionKey:      "test-key",
-			recommendationBytes: mib + 1,
-			wantOptions:         []string{"test-key=2"},
-		},
-		{
-			name:                "Nil initial options - Should handle nil slice",
-			initialOptions:      nil,
-			mountOptionKey:      "test-key",
-			recommendationBytes: mib,
-			wantOptions:         []string{"test-key=1"},
-		},
-		{
-			name:                "Invalid mount option format - Should return error",
-			initialOptions:      nil,
-			mountOptionKey:      "invalid=format=mount=option",
-			recommendationBytes: mib,
-			wantErr:             true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Copy initialOptions to avoid modifying test case data
-			options := append([]string(nil), tt.initialOptions...)
-			got, err := addInt64RecommendationToMountOptions(options, tt.mountOptionKey, tt.recommendationBytes)
-			if err != nil && !tt.wantErr {
-				t.Errorf("addInt64RecommendationToMountOptions(%v, %q, %d) returned unexpected error: %v", tt.initialOptions, tt.mountOptionKey, tt.recommendationBytes, err)
-			}
-			if tt.wantErr {
-				return
-			}
-			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
-				t.Errorf("addInt64RecommendationToMountOptions(%v, %q, %d) returned diff (-want +got):\n%s", tt.initialOptions, tt.mountOptionKey, tt.recommendationBytes, diff)
-			}
-		})
-	}
-}
-
-func TestAddStrRecommendationToMountOptions(t *testing.T) {
-	tests := []struct {
-		name           string
-		initialOptions []string
-		mountOptionKey string
-		recommendation string
-		wantOptions    []string
-		wantErr        bool
-	}{
-		{
-			name:           "Non-empty recommendation - Should add formatted option",
-			initialOptions: []string{"opt1"},
-			mountOptionKey: "test-dir",
-			recommendation: "/path/to/cache",
-			wantOptions:    []string{"opt1", "test-dir=/path/to/cache"},
-		},
-		{
-			name:           "Empty recommendation - Should not add option",
-			initialOptions: []string{"opt1"},
-			mountOptionKey: "test-dir",
-			recommendation: "",
-			wantOptions:    []string{"opt1"},
-		},
-		{
-			name:           "Key already exists - Should not add option",
-			initialOptions: []string{"opt1", "test-dir=/existing"},
-			mountOptionKey: "test-dir",
-			recommendation: "/path/to/new",
-			wantOptions:    []string{"opt1", "test-dir=/existing"},
-		},
-		{
-			name:           "Key exists with key:val format - Should not add option",
-			initialOptions: []string{"opt1", "test-dir:/existing"},
-			mountOptionKey: "test-dir",
-			recommendation: "/path/to/new",
-			wantOptions:    []string{"opt1", "test-dir:/existing"},
-		},
-		{
-			name:           "Key already exists with nested key:val format - Should not add mount option",
-			initialOptions: []string{"opt1", "some-prefix:cache-dir:/path/to/dir"},
-			mountOptionKey: "some-prefix-cache-dir",
-			recommendation: "some/other/path",
-			wantOptions:    []string{"opt1", "some-prefix:cache-dir:/path/to/dir"},
-		},
-		{
-			name:           "Bytes greater than 0 - Should not add mount option if key already exists in nested key=val format",
-			initialOptions: []string{"opt1", "file-cache:max-size-mb=existing"},
-			mountOptionKey: "file-cache:max-size-mb",
-			wantOptions:    []string{"opt1", "file-cache:max-size-mb=existing"},
-		},
-		{
-			name:           "Empty initial options - Should add option",
-			initialOptions: []string{},
-			mountOptionKey: "test-dir",
-			recommendation: "/path/to/cache",
-			wantOptions:    []string{"test-dir=/path/to/cache"},
-		},
-		{
-			name:           "Nil initial options - Should handle nil slice",
-			initialOptions: nil,
-			mountOptionKey: "test-dir",
-			recommendation: "/path/to/cache",
-			wantOptions:    []string{"test-dir=/path/to/cache"},
-		},
-		{
-			name:           "Invalid mount option format - Should return error",
-			initialOptions: nil,
-			mountOptionKey: "invalid=mount-option-key",
-			recommendation: "/path/to/cache",
-			wantErr:        true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			options := append([]string(nil), tt.initialOptions...)
-			got, err := addStrRecommendationToMountOptions(options, tt.mountOptionKey, tt.recommendation)
-			if err != nil && !tt.wantErr {
-				t.Errorf("addStrRecommendationToMountOptions(%v, %q, %q) returned unexpected error: %v", tt.initialOptions, tt.mountOptionKey, tt.recommendation, err)
-			}
-			if tt.wantErr {
-				return
-			}
-			if diff := cmp.Diff(tt.wantOptions, got); diff != "" {
-				t.Errorf("addStrRecommendationToMountOptions(%v, %q, %q) returned diff (-want +got):\n%s", tt.initialOptions, tt.mountOptionKey, tt.recommendation, diff)
-			}
-		})
-	}
-}
-
 func TestBuildCacheRequirements(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1665,31 +1474,31 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
 			memoryBudget:           20 * mib,
 			ephemeralStorageBudget: 20 * mib,
 			wantSize:               fileCacheReq,
-			wantMedium:             mediumRAM,
+			wantMedium:             util.MediumRAM,
 		},
 		{
 			name:              "GPU node, RAM priority, Insufficient RAM, Sufficient LSSD - Should recommend file cache size and medium to LSSD",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
 			memoryBudget:           5 * mib,
 			ephemeralStorageBudget: 20 * mib,
 			wantSize:               fileCacheReq,
-			wantMedium:             mediumLSSD,
+			wantMedium:             util.MediumLSSD,
 		},
 		{
 			name:              "GPU node, RAM priority, Insufficient RAM & LSSD - Should disable file cache",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
 			memoryBudget:           5 * mib,
 			ephemeralStorageBudget: 5 * mib,
@@ -1701,55 +1510,55 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: false},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
 			memoryBudget:           20 * mib,
 			ephemeralStorageBudget: 20 * mib,
 			wantSize:               fileCacheReq,
-			wantMedium:             mediumRAM,
+			wantMedium:             util.MediumRAM,
 		},
 		{
 			name:              "GPU node, LSSD priority, Sufficient LSSD - Should recommend file cache size and medium to LSSD",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumLSSD, mediumRAM}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumLSSD, util.MediumRAM}}},
 			},
 			memoryBudget:           5 * mib,
 			ephemeralStorageBudget: 20 * mib,
 			wantSize:               fileCacheReq,
-			wantMedium:             mediumLSSD,
+			wantMedium:             util.MediumLSSD,
 		},
 		{
 			name:              "GPU node, LSSD priority, LSSD not annotated, Sufficient RAM - Should recommend file cache size and medium to RAM",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: false},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumLSSD, mediumRAM}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumLSSD, util.MediumRAM}}},
 			},
 			memoryBudget:           20 * mib,
 			ephemeralStorageBudget: 20 * mib,
 			wantSize:               fileCacheReq,
-			wantMedium:             mediumRAM,
+			wantMedium:             util.MediumRAM,
 		},
 		{
 			name:              "TPU node, RAM priority, Sufficient RAM - Should recommend file cache size and medium to RAM",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {mediumRAM}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {util.MediumRAM}}},
 			},
 			memoryBudget:           20 * mib,
 			ephemeralStorageBudget: 20 * mib,
 			wantSize:               fileCacheReq,
-			wantMedium:             mediumRAM,
+			wantMedium:             util.MediumRAM,
 		},
 		{
 			name:              "TPU node, RAM priority, Insufficient RAM - Should recommend file cache size and medium to RAM",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {mediumRAM}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {util.MediumRAM}}},
 			},
 			memoryBudget:           5 * mib,
 			ephemeralStorageBudget: 20 * mib,
@@ -1761,7 +1570,7 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {mediumRAM, mediumLSSD}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
 			wantErr: true,
 		},
@@ -1770,7 +1579,7 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			cacheRequirements: &cacheRequirements{fileCacheBytes: 0},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU, hasLocalSSDEphemeralStorageAnnotation: true},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
 			memoryBudget:           20 * mib,
 			ephemeralStorageBudget: 20 * mib,
@@ -1782,7 +1591,7 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: "unknown"},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM}}},
 			},
 			wantErr: true,
 		},
@@ -1791,7 +1600,7 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeGPU},
-				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {mediumRAM, "invalid-medium"}}},
+				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumRAM, "invalid-medium"}}},
 			},
 			wantErr: true,
 		},
@@ -1840,7 +1649,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -1856,7 +1665,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				metadataStatCacheBytes: reqStat,
 				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         reqFile,
-				fileCacheMedium:        mediumRAM,
+				fileCacheMedium:        util.MediumRAM,
 			},
 		},
 		{
@@ -1866,7 +1675,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumLSSD}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumLSSD}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -1883,7 +1692,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				metadataStatCacheBytes: reqStat,
 				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         reqFile,
-				fileCacheMedium:        mediumLSSD,
+				fileCacheMedium:        util.MediumLSSD,
 			},
 		},
 		{
@@ -1893,7 +1702,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -1918,7 +1727,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -1943,7 +1752,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumLSSD}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumLSSD}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -1969,7 +1778,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -1995,7 +1804,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeTPU: {mediumRAM, mediumLSSD}}, // Invalid for TPU
+					fileCacheMediumPriority:               map[string][]string{nodeTypeTPU: {util.MediumRAM, util.MediumLSSD}}, // Invalid for TPU
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeTPU,
@@ -2016,7 +1825,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{"unknown-type": {mediumRAM}},
+					fileCacheMediumPriority:               map[string][]string{"unknown-type": {util.MediumRAM}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU, // Does not match SC priority key
@@ -2068,7 +1877,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 	}
 }
 
-func TestRecommendMountOptions(t *testing.T) {
+func TestLeftJoinOnRecommendedMountOptionKeys(t *testing.T) {
 	// Constants for easier reading
 	objPerStat := metadataStatCacheBytesPerObject
 	objPerType := metadataTypeCacheBytesPerObject
@@ -2082,16 +1891,17 @@ func TestRecommendMountOptions(t *testing.T) {
 		mountOptions:                          []string{"implicit-dirs"},
 		fuseMemoryAllocatableFactor:           1.0,
 		fuseEphemeralStorageAllocatableFactor: 1.0,
-		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM, mediumLSSD}},
+		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
 	}
 	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
 	baseNode := &nodeDetails{nodeType: "general_purpose"}
 
 	tests := []struct {
-		name        string
-		config      *ProfileConfig
-		wantOptions []string
-		wantErr     bool
+		name             string
+		config           *ProfileConfig
+		wantOptions      []string
+		wantErr          bool
+		userMountOptions []string
 	}{
 		{
 			name: "Sufficient memory for all caches (GPU, RAM) - Should recommend all caches to RAM",
@@ -2110,10 +1920,10 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
-				"file-cache-max-size-mb=100",
-				"cache-dir=" + webhook.SidecarContainerFileCacheRamDiskVolumeMountPath,
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache:max-size-mb:100",
+				"file-cache-medium=ram",
 			},
 		},
 		{
@@ -2134,10 +1944,10 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
-				"file-cache-max-size-mb=100",
-				"cache-dir=" + webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache:max-size-mb:100",
+				"file-cache-medium=lssd",
 			},
 		},
 		{
@@ -2158,8 +1968,8 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2179,19 +1989,19 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
-			name: "Pre-existing mount options for file cache - Should not override",
+			name: "Pre-existing mount options for file cache in config - Should not recommend cache configs",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
-					mountOptions:                          []string{"implicit-dirs", "file-cache-max-size-mb=50", "cache-dir=/mnt/custom"},
+					mountOptions:                          []string{"implicit-dirs", "file-cache:max-size-mb:50", "file-cache-medium=fake"},
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
 				},
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -2205,10 +2015,34 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"file-cache-max-size-mb=50",
-				"cache-dir=/mnt/custom",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
+				"file-cache:max-size-mb:50",
+				"file-cache-medium=fake",
+			},
+		},
+		{
+			name: "Pre-existing mount options for metadata cache in user mount options - Should not recommend cache configs",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dir"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			userMountOptions: []string{"stat-cache-max-size-mb=2"},
+			wantOptions: []string{
+				"implicit-dir",
+				"stat-cache-max-size-mb=2",
 			},
 		},
 		{
@@ -2226,7 +2060,7 @@ func TestRecommendMountOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := RecommendMountOptions(tt.config)
+			got, err := tt.config.LeftJoinOnRecommendedMountOptionKeys(tt.userMountOptions)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("RecommendMountOptions() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2311,30 +2145,7 @@ func TestGetMountOptionKey(t *testing.T) {
 	}
 }
 
-func TestNormalizeKey(t *testing.T) {
-	tests := []struct {
-		name string
-		key  string
-		want string
-	}{
-		{"no change - should keep hyphens", "a-b", "a-b"},
-		{"replace colon - should convert single colon to hyphen", "a:b", "a-b"},
-		{"multiple colons - should convert all colons to hyphens", "a:b:c", "a-b-c"},
-		{"mixed - should convert colons to hyphens while keeping existing hyphens", "a-b:c-d:e", "a-b-c-d-e"},
-		{"empty - should result in empty string", "", ""},
-		{"only colon - should result in a single hyphen", ":", "-"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := normalizeKey(tc.key)
-			if got != tc.want {
-				t.Errorf("normalizeKey(%q) = %q, want %q", tc.key, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
+func TestLeftJoinMountOptionsOnKeys(t *testing.T) {
 	tests := []struct {
 		name     string
 		dstOpts  []string
@@ -2373,10 +2184,10 @@ func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 			wantOpts: []string{"MyKey=val1"},
 		},
 		{
-			name:     "colon key in dst, same normalized key in src - should not add srcOpt",
-			dstOpts:  []string{"a:b:c"}, // Key: "a:b", Normalized: "a-b"
-			srcOpts:  []string{"a-b=d"}, // Key: "a-b", Normalized: "a-b"
-			wantOpts: []string{"a:b:c"},
+			name:     "colon key in dst, different key in src - should add srcOpt",
+			dstOpts:  []string{"a:b:c"},
+			srcOpts:  []string{"b=d"},
+			wantOpts: []string{"a:b:c", "b=d"},
 		},
 		{
 			name:     "invalid src opts - should return InvalidArgument error",
@@ -2403,7 +2214,7 @@ func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 			name:    "complex merge with only valid - should merge correctly",
 			dstOpts: []string{"a=1", "b:c"},
 			srcOpts: []string{"a=2", "b:d", "g=h"},
-			// Valid dstOpts keys (normalized, lower): {"a": true, "b": true}
+			// Valid dstOpts keys (lower): {"a": true, "b": true}
 			// "a=2": Key "a" exists. Skip.
 			// "b:d": Key "b" exists. Skip.
 			// "g=h": Key "g" is new. Add "g=h".
@@ -2430,22 +2241,109 @@ func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 			wantOpts: []string{"a=b"},
 		},
 		{
-			name:     "colon key contains colon, overlaps with hyphen key - should not add srcOpt",
-			dstOpts:  []string{"key:sub:val1"}, // Key: "key:sub", Normalized: "key-sub"
-			srcOpts:  []string{"key-sub=val2"}, // Key: "key-sub", Normalized: "key-sub"
-			wantOpts: []string{"key:sub:val1"},
+			name:     "colon key contains colon, no overlap with hyphen key - should add srcOpt",
+			dstOpts:  []string{"key:key-sub:val1"},
+			srcOpts:  []string{"key-sub=val2"},
+			wantOpts: []string{"key:key-sub:val1", "key-sub=val2"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotOpts, gotErr := mergeMountOptionsIfKeyUnset(tc.dstOpts, tc.srcOpts)
+			gotOpts, gotErr := leftJoinMountOptionsOnKeys(tc.dstOpts, tc.srcOpts)
 
 			if gotErr == nil && tc.wantErr {
 				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got error %v, want error %v", tc.dstOpts, tc.srcOpts, gotErr, tc.wantErr)
 			}
 			if !reflect.DeepEqual(gotOpts, tc.wantOpts) {
 				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got options \n%v, want \n%v", tc.dstOpts, tc.srcOpts, gotOpts, tc.wantOpts)
+			}
+		})
+	}
+}
+
+func TestLeftJoinMapsOnKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		src  map[string]string
+		dst  map[string]string
+		want map[string]string
+	}{
+		{
+			name: "dst_nil - Should return src",
+			src:  map[string]string{"a": "1"},
+			dst:  nil,
+			want: map[string]string{"a": "1"},
+		},
+		{
+			name: "src_nil - Should return dst",
+			src:  nil,
+			dst:  map[string]string{"b": "2"},
+			want: map[string]string{"b": "2"},
+		},
+		{
+			name: "both_nil - Should return nil",
+			src:  nil,
+			dst:  nil,
+			want: nil,
+		},
+		{
+			name: "dst_empty - Should return src elements",
+			src:  map[string]string{"a": "1", "b": "2"},
+			dst:  map[string]string{},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+		{
+			name: "src_empty - Should return dst elements",
+			src:  map[string]string{},
+			dst:  map[string]string{"a": "1", "b": "2"},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+		{
+			name: "no_overlap - Should merge all elements",
+			src:  map[string]string{"a": "1"},
+			dst:  map[string]string{"b": "2"},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+		{
+			name: "overlap_exact_key - Should keep dst value",
+			src:  map[string]string{"a": "1", "b": "new"},
+			dst:  map[string]string{"b": "2", "c": "3"},
+			want: map[string]string{"a": "1", "b": "2", "c": "3"},
+		},
+		{
+			name: "overlap_case_insensitive - Should keep dst value based on case-insensitive key",
+			src:  map[string]string{"A": "1", "B": "new"},
+			dst:  map[string]string{"a": "2", "c": "3"},
+			want: map[string]string{"a": "2", "B": "new", "c": "3"},
+		},
+		{
+			name: "mixed_overlap_and_case - Should merge non-conflicting keys",
+			src:  map[string]string{"Key1": "src1", "Key2": "src2", "Key3": "src3"},
+			dst:  map[string]string{"key1": "dst1", "KEY2": "dst2", "Other": "dstOther"},
+			want: map[string]string{"key1": "dst1", "KEY2": "dst2", "Key3": "src3", "Other": "dstOther"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dstOriginal := make(map[string]string)
+			if tc.dst != nil {
+				for k, v := range tc.dst {
+					dstOriginal[k] = v
+				}
+			}
+
+			got := leftJoinMapsOnKeys(tc.dst, tc.src)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("MergeMapsIfKeyUnset(%v, %v) returned diff (-want +got):\n%s", tc.src, dstOriginal, diff)
+			}
+
+			// Verify dst was not modified in place
+			if tc.dst != nil {
+				if diff := cmp.Diff(dstOriginal, tc.dst); diff != "" {
+					t.Errorf("MergeMapsIfKeyUnset(%v, %v) unexpectedly modified dst in place:\n%s", tc.src, dstOriginal, diff)
+				}
 			}
 		})
 	}
