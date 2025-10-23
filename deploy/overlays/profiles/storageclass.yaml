@@ -19,15 +19,8 @@ metadata:
   name: gcsfusecsi-training
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
-  # TODO(urielguzman): Replace mount options with 'profile=aiml-training' when `enable-gcsfuse-profiles-internal` is implemented.
-  - implicit-dirs
-  - metadata-cache:negative-ttl-secs:0
-  - metadata-cache:ttl-secs:-1
-  # - read_ahead_kb=1024  # Disabled                        
-  # Conditional if file cache is set:
-  - file-cache:cache-file-for-range-read:true
-  # Conditional if volume is read-only:
-  - file-system:kernel-list-cache-ttl-secs:-1
+  - profile:aiml-training
+  # - read_ahead_kb=1024  # Disabled for training
 parameters:
   workloadType: "training"
   skipCSIBucketAccessCheck: "true"
@@ -42,15 +35,9 @@ metadata:
   name: gcsfusecsi-inference
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
-  # TODO(urielguzman): Replace mount options with 'profile=aiml-inference' when `enable-gcsfuse-profiles-internal` is implemented.
-  - implicit-dirs
-  - metadata-cache:negative-ttl-secs:0
-  - metadata-cache:ttl-secs:-1
+  # TODO(urielguzman): Refactor the entire profiles code base to align "inference" with "serving".
+  - profile:aiml-serving
   - read_ahead_kb=1024
-  # Conditional if file cache is set:
-  - file-cache:cache-file-for-range-read:true
-  # Conditional if volume is read-only:
-  - file-system:kernel-list-cache-ttl-secs:-1
 parameters:
   workloadType: "inference"
   skipCSIBucketAccessCheck: "true"
@@ -65,17 +52,8 @@ metadata:
   name: gcsfusecsi-checkpointing
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
-  # TODO(urielguzman): Replace mount options with 'profile=aiml-checkpointing' when `enable-gcsfuse-profiles-internal` is implemented.
-  - implicit-dirs
-  - metadata-cache:negative-ttl-secs:0
-  - metadata-cache:ttl-secs:-1
+  - profile:aiml-checkpointing
   - read_ahead_kb=1024
-  # Conditional if file cache is set:
-  - file-cache:cache-file-for-range-read:true
-  # Conditional if volume is read-only:
-  - file-system:kernel-list-cache-ttl-secs:-1
-  # Conditional if using HNS:
-  - file-system:rename-dir-limit:200000
 parameters:
   workloadType: "checkpointing"
   skipCSIBucketAccessCheck: "true"

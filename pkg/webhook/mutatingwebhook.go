@@ -173,6 +173,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		pod.Spec.Volumes = append(pod.Spec.Volumes, GetSATokenVolume(audience))
 	}
 
+	cacheCreatedByUser := volumeExists(pod.Spec.Volumes, SidecarContainerCacheVolumeName)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
 	// Inject metadata prefetch sidecar.
@@ -192,7 +193,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 			return admission.Errored(http.StatusBadRequest, err)
 		}
 		if areProfilesEnabled {
-			err = ModifyPodSpecForGCSFuseProfiles(pod)
+			err = ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser)
 			if err != nil {
 				return admission.Errored(http.StatusBadRequest, err)
 			}
@@ -245,12 +246,19 @@ func audienceForInjectedSATokenVolume(projectID string, pod *corev1.Pod) string 
 }
 
 // Modifies the pod spec to add gcsfuse profile related features. This includes adding a label, scheduling gate, and placeholder file cache volumes
-func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod) error {
+func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool) error {
 	// Always apply the gcsfuse profile label when gcsfuse profiles are enabled for pod informer's Kubernetes API efficient filtering
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
+
+	// This annotation is used by the scanner to efficiently filter relevant Pods from the Kubernetes API server.
 	pod.Labels[GcsfuseProfilesManagedLabel] = "true"
+
+	// This annotation is used by the CSI node to determine whether to respect the user-created cache volume or recommend a caching medium.
+	if cacheCreatedByUser {
+		pod.Labels[GcsfuseCacheCreatedByUserLabel] = fmt.Sprintf("%t", cacheCreatedByUser)
+	}
 
 	// Always apply the scheduling gate when the gcsfuse profiles are enabled. The controller will handle the logistics if its not needed
 	profilesGate := corev1.PodSchedulingGate{Name: BucketScanPendingSchedulingGate}

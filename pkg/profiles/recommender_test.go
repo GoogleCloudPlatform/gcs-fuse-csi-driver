@@ -56,10 +56,10 @@ var (
 		},
 		MountOptions: []string{
 			"implicit-dirs",
-			"metadata-cache-negative-ttl-secs=0",
-			"metadata-cache-ttl-secs=-1",
-			"file-cache-cache-file-for-range-read=true",
-			"file-system-kernel-list-cache-ttl-secs=-1",
+			"metadata-cache:negative-ttl-secs:0",
+			"metadata-cache:ttl-secs:-1",
+			"file-cache:cache-file-for-range-read:true",
+			"file-system:kernel-list-cache-ttl-secs:-1",
 			"read_ahead_kb=1024",
 		},
 	}
@@ -116,17 +116,6 @@ const (
 // PVConfigBuilder helps create FakePVConfig instances for tests.
 type PVConfigBuilder struct {
 	config clientset.FakePVConfig
-}
-
-// Helper to sort string slices for consistent comparison
-func sortStrings(s []string) []string {
-	if s == nil {
-		return nil
-	}
-	c := make([]string, len(s))
-	copy(c, s)
-	sort.Strings(c)
-	return c
 }
 
 // NewPVConfigBuilder initializes a builder with default testPVConfig values.
@@ -275,7 +264,7 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					fuseMemoryAllocatableFactor:           0.7,
 					fuseEphemeralStorageAllocatableFactor: 0.85,
-					VolumeAttributes: map[string]string{
+					volumeAttributes: map[string]string{
 						"mountOptions":                   "1",
 						"fileCacheCapacity":              "2",
 						"fileCacheForRangeRead":          "3",
@@ -293,10 +282,10 @@ func TestBuildProfileConfig(t *testing.T) {
 					},
 					mountOptions: []string{
 						"implicit-dirs",
-						"metadata-cache-negative-ttl-secs=0",
-						"metadata-cache-ttl-secs=-1",
-						"file-cache-cache-file-for-range-read=true",
-						"file-system-kernel-list-cache-ttl-secs=-1",
+						"metadata-cache:negative-ttl-secs:0",
+						"metadata-cache:ttl-secs:-1",
+						"file-cache:cache-file-for-range-read:true",
+						"file-system:kernel-list-cache-ttl-secs:-1",
 						"read_ahead_kb=1024",
 					},
 				},
@@ -365,12 +354,12 @@ func TestBuildProfileConfig(t *testing.T) {
 			}
 
 			got, err := BuildProfileConfig(&BuildProfileConfigParams{
-				targetPath:          tt.targetPath,
-				clientset:           fakeClient,
-				volumeAttributeKeys: csiDriverVolumeAttributeKeys,
-				nodeName:            tt.nodeName,
-				podNamespace:        tt.podNamespace,
-				podName:             tt.podName,
+				TargetPath:          tt.targetPath,
+				Clientset:           fakeClient,
+				VolumeAttributeKeys: csiDriverVolumeAttributeKeys,
+				NodeName:            tt.nodeName,
+				PodNamespace:        tt.podNamespace,
+				PodName:             tt.podName,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -623,7 +612,7 @@ func TestBuildSCDetails(t *testing.T) {
 				},
 				fuseMemoryAllocatableFactor:           0.7,
 				fuseEphemeralStorageAllocatableFactor: 0.85,
-				VolumeAttributes: map[string]string{
+				volumeAttributes: map[string]string{
 					"mountOptions":                   "1",
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
@@ -741,7 +730,7 @@ func TestBuildSCDetails(t *testing.T) {
 				},
 				fuseMemoryAllocatableFactor:           0.1,
 				fuseEphemeralStorageAllocatableFactor: 0.1,
-				VolumeAttributes: map[string]string{
+				volumeAttributes: map[string]string{
 					"fileCacheCapacity": "10Gi",
 				},
 				mountOptions: defaultMountOptions,
@@ -1229,14 +1218,7 @@ func TestAddInt64RecommendationToMountOptions(t *testing.T) {
 			initialOptions:      []string{"opt1"},
 			mountOptionKey:      "test-key",
 			recommendationBytes: 2 * mib,
-			wantOptions:         []string{"opt1", "test-key=2"},
-		},
-		{
-			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key=val format",
-			initialOptions:      []string{"opt1", "test-key=1"},
-			mountOptionKey:      "test-key",
-			recommendationBytes: 2 * mib,
-			wantOptions:         []string{"opt1", "test-key=1"},
+			wantOptions:         []string{"opt1", "test-key:2"},
 		},
 		{
 			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key:val format",
@@ -1246,9 +1228,16 @@ func TestAddInt64RecommendationToMountOptions(t *testing.T) {
 			wantOptions:         []string{"opt1", "test-key:1"},
 		},
 		{
+			name:                "Bytes greater than 0 - Should not add mount option if key already exists in key=val format",
+			initialOptions:      []string{"opt1", "test-key=1"},
+			mountOptionKey:      "test-key",
+			recommendationBytes: 2 * mib,
+			wantOptions:         []string{"opt1", "test-key=1"},
+		},
+		{
 			name:                "Bytes greater than 0 - Should not add mount option if key already exists in nested key:val format",
 			initialOptions:      []string{"opt1", "file-cache:max-size-mb:existing"},
-			mountOptionKey:      "file-cache-max-size-mb",
+			mountOptionKey:      "file-cache:max-size-mb",
 			recommendationBytes: 2 * mib,
 			wantOptions:         []string{"opt1", "file-cache:max-size-mb:existing"},
 		},
@@ -1264,21 +1253,21 @@ func TestAddInt64RecommendationToMountOptions(t *testing.T) {
 			initialOptions:      []string{},
 			mountOptionKey:      "test-key",
 			recommendationBytes: mib,
-			wantOptions:         []string{"test-key=1"},
+			wantOptions:         []string{"test-key:1"},
 		},
 		{
 			name:                "Bytes require rounding up - Should format with rounded up MiB",
 			initialOptions:      []string{},
 			mountOptionKey:      "test-key",
 			recommendationBytes: mib + 1,
-			wantOptions:         []string{"test-key=2"},
+			wantOptions:         []string{"test-key:2"},
 		},
 		{
 			name:                "Nil initial options - Should handle nil slice",
 			initialOptions:      nil,
 			mountOptionKey:      "test-key",
 			recommendationBytes: mib,
-			wantOptions:         []string{"test-key=1"},
+			wantOptions:         []string{"test-key:1"},
 		},
 		{
 			name:                "Invalid mount option format - Should return error",
@@ -1320,7 +1309,7 @@ func TestAddStrRecommendationToMountOptions(t *testing.T) {
 			initialOptions: []string{"opt1"},
 			mountOptionKey: "test-dir",
 			recommendation: "/path/to/cache",
-			wantOptions:    []string{"opt1", "test-dir=/path/to/cache"},
+			wantOptions:    []string{"opt1", "test-dir:/path/to/cache"},
 		},
 		{
 			name:           "Empty recommendation - Should not add option",
@@ -1330,45 +1319,39 @@ func TestAddStrRecommendationToMountOptions(t *testing.T) {
 			wantOptions:    []string{"opt1"},
 		},
 		{
-			name:           "Key already exists - Should not add option",
-			initialOptions: []string{"opt1", "test-dir=/existing"},
-			mountOptionKey: "test-dir",
-			recommendation: "/path/to/new",
-			wantOptions:    []string{"opt1", "test-dir=/existing"},
-		},
-		{
-			name:           "Key exists with key:val format - Should not add option",
+			name:           "Key already exists with key:val format - Should not add option",
 			initialOptions: []string{"opt1", "test-dir:/existing"},
 			mountOptionKey: "test-dir",
 			recommendation: "/path/to/new",
 			wantOptions:    []string{"opt1", "test-dir:/existing"},
 		},
 		{
-			name:           "Key already exists with nested key:val format - Should not add mount option",
-			initialOptions: []string{"opt1", "some-prefix:cache-dir:/path/to/dir"},
-			mountOptionKey: "some-prefix-cache-dir",
-			recommendation: "some/other/path",
-			wantOptions:    []string{"opt1", "some-prefix:cache-dir:/path/to/dir"},
+			name:           "Key exists with key=val format - Should not add option",
+			initialOptions: []string{"opt1", "test-dir=/existing"},
+			mountOptionKey: "test-dir",
+			recommendation: "/path/to/new",
+			wantOptions:    []string{"opt1", "test-dir=/existing"},
 		},
 		{
-			name:           "Bytes greater than 0 - Should not add mount option if key already exists in nested key=val format",
-			initialOptions: []string{"opt1", "file-cache:max-size-mb=existing"},
-			mountOptionKey: "file-cache:max-size-mb",
-			wantOptions:    []string{"opt1", "file-cache:max-size-mb=existing"},
+			name:           "Key already exists with nested key:val format - Should not add mount option",
+			initialOptions: []string{"opt1", "some-prefix:cache-dir-internal:/path/to/dir"},
+			mountOptionKey: "cache-dir-internal",
+			recommendation: "some/other/path",
+			wantOptions:    []string{"opt1", "some-prefix:cache-dir-internal:/path/to/dir"},
 		},
 		{
 			name:           "Empty initial options - Should add option",
 			initialOptions: []string{},
 			mountOptionKey: "test-dir",
 			recommendation: "/path/to/cache",
-			wantOptions:    []string{"test-dir=/path/to/cache"},
+			wantOptions:    []string{"test-dir:/path/to/cache"},
 		},
 		{
 			name:           "Nil initial options - Should handle nil slice",
 			initialOptions: nil,
 			mountOptionKey: "test-dir",
 			recommendation: "/path/to/cache",
-			wantOptions:    []string{"test-dir=/path/to/cache"},
+			wantOptions:    []string{"test-dir:/path/to/cache"},
 		},
 		{
 			name:           "Invalid mount option format - Should return error",
@@ -2068,7 +2051,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 	}
 }
 
-func TestRecommendMountOptions(t *testing.T) {
+func TestLeftJoinWithRecommendedMountOptions(t *testing.T) {
 	// Constants for easier reading
 	objPerStat := metadataStatCacheBytesPerObject
 	objPerType := metadataTypeCacheBytesPerObject
@@ -2110,10 +2093,10 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
-				"file-cache-max-size-mb=100",
-				"cache-dir=" + webhook.SidecarContainerFileCacheRamDiskVolumeMountPath,
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache:max-size-mb:100",
+				"cache-dir-internal:" + webhook.SidecarContainerFileCacheRamDiskVolumeMountPath,
 			},
 		},
 		{
@@ -2134,10 +2117,10 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
-				"file-cache-max-size-mb=100",
-				"cache-dir=" + webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache:max-size-mb:100",
+				"cache-dir-internal:" + webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
 			},
 		},
 		{
@@ -2158,8 +2141,8 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2179,8 +2162,8 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2188,7 +2171,7 @@ func TestRecommendMountOptions(t *testing.T) {
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
-					mountOptions:                          []string{"implicit-dirs", "file-cache-max-size-mb=50", "cache-dir=/mnt/custom"},
+					mountOptions:                          []string{"implicit-dirs", "file-cache:max-size-mb:50", "cache-dir-internal:/mnt/custom"},
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
 					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {mediumRAM}},
@@ -2205,10 +2188,10 @@ func TestRecommendMountOptions(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"file-cache-max-size-mb=50",
-				"cache-dir=/mnt/custom",
-				"metadata-cache-stat-cache-max-size-mb=2",
-				"metadata-cache-type-cache-max-size-mb=1",
+				"file-cache:max-size-mb:50",
+				"cache-dir-internal:/mnt/custom",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2226,7 +2209,7 @@ func TestRecommendMountOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := RecommendMountOptions(tt.config)
+			got, err := tt.config.LeftJoinWithRecommendedMountOptions([]string{})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("RecommendMountOptions() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2285,55 +2268,6 @@ func TestIsValidMountOption(t *testing.T) {
 	}
 }
 
-func TestGetMountOptionKey(t *testing.T) {
-	tests := []struct {
-		name string
-		opt  string
-		want string
-	}{
-		{"key_only_a - should extract entire string", "a", "a"},
-		{"key_only_a-b - should extract entire string", "a-b", "a-b"},
-		{"colon_a:b - should extract before last colon", "a:b", "a"},
-		{"colon_a:b:c - should extract before last colon", "a:b:c", "a:b"},
-		{"colon_a-b:c - should extract before last colon", "a-b:c", "a-b"},
-		{"equals_a=b - should extract before first equals", "a=b", "a"},
-		{"equals_a-b=c - should extract before first equals", "a-b=c", "a-b"},
-		{"equals_a=b:c - should extract before first equals", "a=b:c", "a"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := getMountOptionKey(tc.opt)
-			if got != tc.want {
-				t.Errorf("getMountOptionKey(%q) = %q, want %q", tc.opt, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestNormalizeKey(t *testing.T) {
-	tests := []struct {
-		name string
-		key  string
-		want string
-	}{
-		{"no change - should keep hyphens", "a-b", "a-b"},
-		{"replace colon - should convert single colon to hyphen", "a:b", "a-b"},
-		{"multiple colons - should convert all colons to hyphens", "a:b:c", "a-b-c"},
-		{"mixed - should convert colons to hyphens while keeping existing hyphens", "a-b:c-d:e", "a-b-c-d-e"},
-		{"empty - should result in empty string", "", ""},
-		{"only colon - should result in a single hyphen", ":", "-"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := normalizeKey(tc.key)
-			if got != tc.want {
-				t.Errorf("normalizeKey(%q) = %q, want %q", tc.key, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2374,8 +2308,8 @@ func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 		},
 		{
 			name:     "colon key in dst, same normalized key in src - should not add srcOpt",
-			dstOpts:  []string{"a:b:c"}, // Key: "a:b", Normalized: "a-b"
-			srcOpts:  []string{"a-b=d"}, // Key: "a-b", Normalized: "a-b"
+			dstOpts:  []string{"a:b:c"}, // Key: "a:b", Normalized: "b"
+			srcOpts:  []string{"b=d"},   // Key: "a-b", Normalized: "b"
 			wantOpts: []string{"a:b:c"},
 		},
 		{
@@ -2431,9 +2365,9 @@ func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 		},
 		{
 			name:     "colon key contains colon, overlaps with hyphen key - should not add srcOpt",
-			dstOpts:  []string{"key:sub:val1"}, // Key: "key:sub", Normalized: "key-sub"
-			srcOpts:  []string{"key-sub=val2"}, // Key: "key-sub", Normalized: "key-sub"
-			wantOpts: []string{"key:sub:val1"},
+			dstOpts:  []string{"key:key-sub:val1"}, // Key: "key:sub", Normalized: "key-sub"
+			srcOpts:  []string{"key-sub=val2"},     // Key: "key-sub", Normalized: "key-sub"
+			wantOpts: []string{"key:key-sub:val1"},
 		},
 	}
 
@@ -2446,6 +2380,93 @@ func TestMergeMountOptionsIfKeyUnset(t *testing.T) {
 			}
 			if !reflect.DeepEqual(gotOpts, tc.wantOpts) {
 				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got options \n%v, want \n%v", tc.dstOpts, tc.srcOpts, gotOpts, tc.wantOpts)
+			}
+		})
+	}
+}
+
+func TestMergeMapsIfKeyUnset(t *testing.T) {
+	tests := []struct {
+		name string
+		src  map[string]string
+		dst  map[string]string
+		want map[string]string
+	}{
+		{
+			name: "dst_nil - Should return src",
+			src:  map[string]string{"a": "1"},
+			dst:  nil,
+			want: map[string]string{"a": "1"},
+		},
+		{
+			name: "src_nil - Should return dst",
+			src:  nil,
+			dst:  map[string]string{"b": "2"},
+			want: map[string]string{"b": "2"},
+		},
+		{
+			name: "both_nil - Should return nil",
+			src:  nil,
+			dst:  nil,
+			want: nil,
+		},
+		{
+			name: "dst_empty - Should return src elements",
+			src:  map[string]string{"a": "1", "b": "2"},
+			dst:  map[string]string{},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+		{
+			name: "src_empty - Should return dst elements",
+			src:  map[string]string{},
+			dst:  map[string]string{"a": "1", "b": "2"},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+		{
+			name: "no_overlap - Should merge all elements",
+			src:  map[string]string{"a": "1"},
+			dst:  map[string]string{"b": "2"},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+		{
+			name: "overlap_exact_key - Should keep dst value",
+			src:  map[string]string{"a": "1", "b": "new"},
+			dst:  map[string]string{"b": "2", "c": "3"},
+			want: map[string]string{"a": "1", "b": "2", "c": "3"},
+		},
+		{
+			name: "overlap_case_insensitive - Should keep dst value based on case-insensitive key",
+			src:  map[string]string{"A": "1", "B": "new"},
+			dst:  map[string]string{"a": "2", "c": "3"},
+			want: map[string]string{"a": "2", "B": "new", "c": "3"},
+		},
+		{
+			name: "mixed_overlap_and_case - Should merge non-conflicting keys",
+			src:  map[string]string{"Key1": "src1", "Key2": "src2", "Key3": "src3"},
+			dst:  map[string]string{"key1": "dst1", "KEY2": "dst2", "Other": "dstOther"},
+			want: map[string]string{"key1": "dst1", "KEY2": "dst2", "Key3": "src3", "Other": "dstOther"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dstOriginal := make(map[string]string)
+			if tc.dst != nil {
+				for k, v := range tc.dst {
+					dstOriginal[k] = v
+				}
+			}
+
+			got := mergeMapsIfKeyUnset(tc.dst, tc.src)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("MergeMapsIfKeyUnset(%v, %v) returned diff (-want +got):\n%s", tc.src, dstOriginal, diff)
+			}
+
+			// Verify dst was not modified in place
+			if tc.dst != nil {
+				if diff := cmp.Diff(dstOriginal, tc.dst); diff != "" {
+					t.Errorf("MergeMapsIfKeyUnset(%v, %v) unexpectedly modified dst in place:\n%s", tc.src, dstOriginal, diff)
+				}
 			}
 		})
 	}
