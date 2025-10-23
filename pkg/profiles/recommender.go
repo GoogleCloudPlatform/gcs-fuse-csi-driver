@@ -17,8 +17,9 @@ limitations under the License.
 package profiles
 
 import (
-	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -53,6 +54,10 @@ const (
 	nodeTypeGPU            = "gpu"
 	nodeTypeGeneralPurpose = "general_purpose"
 
+	// Standard medium names
+	mediumRAM  = "ram"
+	mediumLSSD = "lssd"
+
 	// gkeAppliedNodeLabelsAnnotationKey is the annotation key that stores a comma-separated list of node labels.
 	gkeAppliedNodeLabelsAnnotationKey = "node.gke.io/last-applied-node-labels"
 	// EphemeralStorageLocalSSDLabelKey is the specific label key we are looking for within the applied labels.
@@ -66,8 +71,19 @@ const (
 	mib int64 = 1024 * 1024
 
 	// Mount option names.
-	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache:stat-cache-max-size-mb"
-	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache:type-cache-max-size-mb"
+	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache-stat-cache-max-size-mb"
+	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache-type-cache-max-size-mb"
+	fileCacheSizeMiBMountOptionKey            = "file-cache-max-size-mb"
+	fileCacheDirMountOptionKey                = "cache-dir"
+)
+
+var (
+	// Regex patterns to identify invalid mount option formats.
+	// Prohibits multiple '=' signs. Example: "a=b=c"
+	multipleEqualsRE = regexp.MustCompile(`=.*=`)
+
+	// Prohibits an '=' appearing after any ':'. Example: "a:b=c", "a:b:c=d"
+	colonThenEqualsRE = regexp.MustCompile(`:.*=`)
 )
 
 // ProfileConfig holds the consolidated configuration for a volume profile,
@@ -133,7 +149,10 @@ type recommendation struct {
 	metadataStatCacheBytes int64
 	// metadataTypeCacheBytes is the recommended size in bytes for the metadata type cache.
 	metadataTypeCacheBytes int64
-	// TODO(urielguzman): Implement file cache bytes and medium recommendation.
+	// metadataTypeCacheBytes is the recommended size in bytes for the file cache.
+	fileCacheBytes int64
+	// fileCacheMedium is the recommended medium for file cache (ram or lssd).
+	fileCacheMedium string
 }
 
 // BuildProfileConfigParams contains the parameters needed to build a profile configuration.
@@ -233,14 +252,32 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}, nil
 }
 
-// addRecommendationToMountOptions appends a mount option string to the given slice if the recommendationBytes is greater than 0.
+// addInt64RecommendationToMountOptions appends a mount option string to the given slice if the recommendationBytes is greater than 0.
 // The option is formatted as "mountOptionKey:sizeMiB", where sizeMiB is the recommendationBytes converted to MiB.
-func addRecommendationToMountOptions(mountOptions []string, mountOptionKey string, recommendationBytes int64) []string {
+func addInt64RecommendationToMountOptions(mountOptions []string, mountOptionKey string, recommendationBytes int64) ([]string, error) {
 	result := mountOptions
+	var err error
 	if recommendationBytes > 0 {
-		result = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%d", mountOptionKey, bytesToMiB(recommendationBytes))})
+		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%d", mountOptionKey, bytesToMiB(recommendationBytes))})
+		if err != nil {
+			return []string{}, err
+		}
 	}
-	return result
+	return result, nil
+}
+
+// addStrRecommendationToMountOptions appends a mount option string to the given slice if the recommendation string is not empty.
+// The option is formatted as "mountOptionKey:val", where sizeMiB val the recommendation value.
+func addStrRecommendationToMountOptions(mountOptions []string, mountOptionKey string, recommendation string) ([]string, error) {
+	result := mountOptions
+	var err error
+	if recommendation != "" {
+		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%s", mountOptionKey, recommendation)})
+		if err != nil {
+			return []string{}, err
+		}
+	}
+	return result, nil
 }
 
 // RecommendMountOptions generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
@@ -249,18 +286,46 @@ func RecommendMountOptions(config *ProfileConfig) ([]string, error) {
 	recommendation, err := recommendCacheConfigs(config)
 	// TODO(urielguzman): Log the decision summary into a human readable format via a container log / Pod event.
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to recommend cache configs: %v", err)
+		return nil, fmt.Errorf("failed to recommend cache configs: %v", err)
 	}
 
+	// Start with the pre-bundled StorageClass mount option recommendations.
 	recommendedMountOptions := config.scDetails.mountOptions
 
 	// Map the recommended metadata stat cache size to equivalent mount option.
-	recommendedMountOptions = addRecommendationToMountOptions(recommendedMountOptions, metadataStatCacheMaxSizeMiBMountOptionKey, recommendation.metadataStatCacheBytes)
+	recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, metadataStatCacheMaxSizeMiBMountOptionKey, recommendation.metadataStatCacheBytes)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to add metadata stat cache size recommendation to mount options: %v", err)
+	}
 
 	// Map the recommended metadata type cache size to equivalent mount option.
-	recommendedMountOptions = addRecommendationToMountOptions(recommendedMountOptions, metadataTypeCacheMaxSizeMiBMountOptionKey, recommendation.metadataTypeCacheBytes)
+	recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, metadataTypeCacheMaxSizeMiBMountOptionKey, recommendation.metadataTypeCacheBytes)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to add metadata type cache size recommendation to mount options: %v", err)
+	}
 
-	// TODO(urielguzman): Map the recommended file cache size & medium to equivalent mount options.
+	// Map the recommended file cache size & medium to equivalent mount options.
+	if recommendation.fileCacheBytes > 0 && recommendation.fileCacheMedium != "" {
+		cacheDir := ""
+		switch recommendation.fileCacheMedium {
+		case mediumRAM:
+			cacheDir = webhook.SidecarContainerFileCacheRamDiskVolumeMountPath
+		case mediumLSSD:
+			cacheDir = webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath
+		default:
+			return []string{}, status.Errorf(codes.Internal, "unexpected file cache medium recommendation %q", recommendation.fileCacheMedium)
+		}
+
+		recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, fileCacheSizeMiBMountOptionKey, recommendation.fileCacheBytes)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "failed to add file cache size recommendation to mount options: %v", err)
+		}
+		recommendedMountOptions, err = addStrRecommendationToMountOptions(recommendedMountOptions, fileCacheDirMountOptionKey, cacheDir)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "failed to add file cache medium recommendation to mount options: %v", err)
+		}
+	}
+
 	return recommendedMountOptions, nil
 }
 
@@ -311,16 +376,16 @@ func calculateResourceBudgets(config *ProfileConfig) (int64, int64) {
 func recommendCacheConfigs(config *ProfileConfig) (*recommendation, error) {
 	// Validate input.
 	if config.pvDetails == nil {
-		return nil, errors.New("pvDetails cannot be nil")
+		return nil, status.Errorf(codes.Internal, "pvDetails cannot be nil")
 	}
 	if config.scDetails == nil {
-		return nil, errors.New("scDetails cannot be nil")
+		return nil, status.Errorf(codes.Internal, "scDetails cannot be nil")
 	}
 	if config.nodeDetails == nil {
-		return nil, errors.New("nodeDetails cannot be nil")
+		return nil, status.Errorf(codes.Internal, "nodeDetails cannot be nil")
 	}
 	if config.podDetails == nil {
-		return nil, errors.New("podDetails cannot be nil")
+		return nil, status.Errorf(codes.Internal, "podDetails cannot be nil")
 	}
 
 	recommendation := &recommendation{}
@@ -329,15 +394,72 @@ func recommendCacheConfigs(config *ProfileConfig) (*recommendation, error) {
 	cacheRequirements := buildCacheRequirements(config.pvDetails)
 
 	// Calculate memory and ephemeral storage budgets.
-	// TODO(urielguzman): Use ephemeralStorageBudget to calculate file cache size and medium.
-	memoryBudget, _ := calculateResourceBudgets(config)
+	memoryBudget, ephemeralStorageBudget := calculateResourceBudgets(config)
 
 	// Calculate the recommended metadata cache sizes. The memoryBudget gets decreased after each recommendation.
 	recommendation.metadataStatCacheBytes, memoryBudget = recommendMetadataCacheSize(config, cacheRequirements.metadataStatCacheBytes, memoryBudget, "stat")
-	recommendation.metadataTypeCacheBytes, _ = recommendMetadataCacheSize(config, cacheRequirements.metadataTypeCacheBytes, memoryBudget, "type")
+	recommendation.metadataTypeCacheBytes, memoryBudget = recommendMetadataCacheSize(config, cacheRequirements.metadataTypeCacheBytes, memoryBudget, "type")
 
-	// TODO(urielguzman): Calculate the recommended file cache size and medium.
+	// Calculate the recommended file cache size and medium.
+	var err error
+	recommendation.fileCacheBytes, recommendation.fileCacheMedium, err = recommendFileCacheSizeAndMedium(cacheRequirements, config, memoryBudget, ephemeralStorageBudget)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to recommend file cache: %v", err)
+	}
 	return recommendation, nil
+}
+
+// recommendFileCacheSizeAndMedium determines the optimal file cache size and medium.
+// It iterates through a prioritized list of storage mediums (e.g., RAM, LSSD) based on the `config.nodeDetails.nodeType`.
+// For each medium, it checks if the `cacheRequirements.fileCacheBytes` can be satisfied within the provided
+// `memoryBudget` or `ephemeralStorageBudget`, also considering node-specific limitations like LSSD availability.
+// The first suitable medium found in the priority list is returned along with the required cache size.
+// If no medium can satisfy the requirements, it returns 0 bytes and an empty string, indicating the file cache should be disabled.
+func recommendFileCacheSizeAndMedium(cacheRequirements *cacheRequirements, config *ProfileConfig, memoryBudget, ephemeralStorageBudget int64) (int64, string, error) {
+	// Determine priority list & perform node type specific checks
+	priorityList, found := config.scDetails.fileCacheMediumPriority[config.nodeDetails.nodeType]
+	if !found {
+		return 0, "", fmt.Errorf("no file cache medium priority list found for node type %q", config.nodeDetails.nodeType)
+	}
+	klog.V(6).Infof("Using file cache medium priority list for node type %q: %v", config.nodeDetails.nodeType, priorityList)
+
+	// Error if LSSD is in the priority list for TPU
+	// TODO(urielguzman): Re-consider emitting a warning instead of failing here.
+	if config.nodeDetails.nodeType == nodeTypeTPU && slices.Contains(priorityList, mediumLSSD) {
+		return 0, "", fmt.Errorf("LSSD medium is not supported for file cache on TPU node type %q", config.nodeDetails.nodeType)
+	}
+
+	// Skip medium evaluation if no file cache is required
+	if cacheRequirements.fileCacheBytes <= 0 {
+		klog.V(6).Infof("File cache not required (%d bytes). Skipping medium evaluation", cacheRequirements.fileCacheBytes)
+		return 0, "", nil
+	}
+
+	// Calculate file cache medium based on priority list
+	for i, medium := range priorityList {
+		klog.V(6).Infof("Evaluating medium %q (Priority %d/%d)", medium, i+1, len(priorityList))
+		switch medium {
+		case mediumRAM:
+			// Check if the required file cache bytes fit into the available memory (RAM) medium.
+			if cacheRequirements.fileCacheBytes <= memoryBudget {
+				return cacheRequirements.fileCacheBytes, mediumRAM, nil
+			}
+			// Check if the required file cache bytes fir into the available ephemeral storage medium.
+		case mediumLSSD:
+			if !config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation {
+				klog.V(6).Infof("Medium %q skipped on node type %q: Node annotation %q is not 'true'.", medium, config.nodeDetails.nodeType, ephemeralStorageLocalSSDLabelKey)
+				break
+			}
+			if cacheRequirements.fileCacheBytes <= ephemeralStorageBudget {
+				return cacheRequirements.fileCacheBytes, mediumLSSD, nil
+			}
+		default:
+			return 0, "", fmt.Errorf("unkown storage medium: %q", medium)
+		}
+	}
+
+	klog.Warningf("No suitable file cache medium found or requirement exceeded limits for all options based on priority list %v and available resources for node type %q. Disabling file cache.", priorityList, config.nodeDetails.nodeType)
+	return 0, "", nil
 }
 
 // recommendMetadataCacheSize determines the recommended size for a specific metadata cache type
@@ -734,54 +856,104 @@ func ceilDiv64(a, b int64) int64 {
 	return (a + b - 1) / b
 }
 
+// isValidMountOption checks if a mount option string follows the allowed formats.
+// An option is valid unless it meets one of the following prohibited conditions:
+//  1. It is empty.
+//  2. It starts/ends with a colon (e.g., ":a", "a:").
+//  3. It starts/ends with an equal sign (e.g., "=a", "a=").
+//  4. It contains more than one equals sign (e.g., "a=b=c").
+//  5. It contains an equals sign and a colon  (e.g., "a:b=c", "a:b:c=d", "a=b:c", "a=b:c=d").
+func isValidMountOption(opt string) bool {
+	if opt == "" {
+		return false
+	}
+
+	if strings.HasPrefix(opt, ":") || strings.HasSuffix(opt, ":") {
+		return false // Prohibited: Starts with ":" or ends with ":"
+	}
+
+	if strings.HasPrefix(opt, "=") || strings.HasSuffix(opt, "=") {
+		return false // Prohibited: Starts with "=" or ends with "="
+	}
+
+	equalsCount := strings.Count(opt, "=")
+	if strings.Count(opt, "=") > 1 {
+		return false // Prohibited: Multiple '=' signs
+	}
+
+	hasColon := strings.Contains(opt, ":")
+	hasEquals := equalsCount == 1
+
+	if hasColon && hasEquals {
+		return false // Prohibited: ':' can't appear in the same string as '='
+	}
+
+	// If none of the invalid conditions are met, the option is valid.
+	return true
+}
+
 // getMountOptionKey extracts the key part of a mount option string.
+// This function assumes the input `opt` has already been validated by isValidMountOption.
 // Formats supported and precedence:
 // 1. key=value  (Key is everything before the first '=')
 // 2. ...:key:value (Key is everything before the last ':')
 // 3. key        (Key is the entire string)
 func getMountOptionKey(opt string) string {
 	if strings.Contains(opt, "=") {
+		// isValidMountOption ensures at most one '=', so SplitN is safe.
 		parts := strings.SplitN(opt, "=", 2)
 		return parts[0]
 	}
 	if strings.Contains(opt, ":") {
 		lastColon := strings.LastIndex(opt, ":")
-		// If lastColon > 0, the key is the part before the last colon.
-		// Examples: "a:b" -> "a", "a:b:c" -> "a:b"
-		if lastColon > 0 {
-			return opt[:lastColon]
-		}
+		// isValidMountOption ensures it doesn't start with ':', so lastColon > 0 if ':' exists.
+		return opt[:lastColon]
 	}
+	// No '=' or ':', the entire valid string is the key.
 	return opt
 }
 
-// MergeMountOptionsIfKeyUnset merges mount options from srcOpts into dstOpts.
-// An option from srcOpts is added only if its key is not already
+// normalizeKey unifies key representations by replacing all colons with hyphens.
+// This ensures that keys like "a:b" and "a-b" are treated as equivalent.
+func normalizeKey(key string) string {
+	return strings.ReplaceAll(key, ":", "-")
+}
+
+// mergeMountOptionsIfKeyUnset merges mount options from srcOpts into dstOpts.
+// It returns an error if any option in dstOpts or srcOpts is invalid.
+// An option from srcOpts is added only if its *normalized* key is not already
 // present in the keys of options within dstOpts.
-func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) []string {
-	if len(srcOpts) == 0 {
-		return dstOpts
-	}
-
-	if len(dstOpts) == 0 {
-		return srcOpts
-	}
-
-	mountOptions := make([]string, len(dstOpts))
-	copy(mountOptions, dstOpts)
-
+func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) ([]string, error) {
+	var mountOptions []string
 	existingKeys := make(map[string]bool)
-	for _, opt := range mountOptions {
-		key := strings.ToLower(getMountOptionKey(opt))
-		existingKeys[key] = true
+
+	// Validate and collect options from dstOpts.
+	for _, opt := range dstOpts {
+		if !isValidMountOption(opt) {
+			return nil, fmt.Errorf("invalid mount option in dstOpts: %q", opt)
+		}
+		mountOptions = append(mountOptions, opt)
+		key := getMountOptionKey(opt)
+		normalizedKey := strings.ToLower(normalizeKey(key))
+		existingKeys[normalizedKey] = true
 	}
 
+	if len(srcOpts) == 0 {
+		return mountOptions, nil
+	}
+
+	// Validate and process srcOpts, adding only valid options with new normalized keys.
 	for _, opt := range srcOpts {
-		key := strings.ToLower(getMountOptionKey(opt))
-		if !existingKeys[key] {
+		if !isValidMountOption(opt) {
+			return nil, fmt.Errorf("invalid mount option in srcOpts: %q", opt)
+		}
+
+		key := getMountOptionKey(opt)
+		normalizedKey := strings.ToLower(normalizeKey(key))
+		if !existingKeys[normalizedKey] {
 			mountOptions = append(mountOptions, opt)
-			existingKeys[key] = true
+			existingKeys[normalizedKey] = true
 		}
 	}
-	return mountOptions
+	return mountOptions, nil
 }
