@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
@@ -107,19 +108,18 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 	// setupOIDCInfrastructure sets up the GCP OIDC infrastructure (workload identity pool and provider).
 	// Returns projectNumber and credentialConfig.
 	setupOIDCInfrastructure := func() (string, string) {
-		projectID := os.Getenv("PROJECT_ID")
-		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), "PROJECT_ID environment variable must be set")
+		projectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 
 		ginkgo.By("Getting GCP project number")
 		projectNumber := getProjectNumber(projectID)
 		gomega.Expect(projectNumber).NotTo(gomega.BeEmpty(), "Failed to get project number")
 
 		ginkgo.By("Getting cluster information")
-		clusterName := os.Getenv("CLUSTER_NAME")
-		clusterLocation := os.Getenv("CLUSTER_LOCATION")
-		gomega.Expect(clusterName).NotTo(gomega.BeEmpty(), "CLUSTER_NAME environment variable must be set")
-		gomega.Expect(clusterLocation).NotTo(gomega.BeEmpty(), "CLUSTER_LOCATION environment variable must be set")
-
+		clusterName := os.Getenv(utils.ClusterNameEnvVar)
+		clusterLocation := os.Getenv(utils.ClusterLocationEnvVar)
+		gomega.Expect(clusterName).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterNameEnvVar))
+		gomega.Expect(clusterLocation).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterLocationEnvVar))
 		ginkgo.By(fmt.Sprintf("Creating workload identity pool: %s", oidcWorkloadIdentityPoolID))
 		createWorkloadIdentityPool(projectID, oidcWorkloadIdentityPoolID)
 
@@ -408,7 +408,7 @@ func createWorkloadIdentityPool(projectID, poolID string) {
 	if err != nil {
 		// Ignore if pool already exists
 		if !strings.Contains(string(output), "already exists") {
-			klog.Warningf("Failed to create workload identity pool (may already exist): %v, output: %s", err, string(output))
+			klog.Warningf("Failed to create workload identity pool %q (may already exist): %v, output: %s", poolID, err, string(output))
 		}
 	} else {
 		klog.Infof("Created workload identity pool: %s", poolID)
@@ -433,7 +433,7 @@ func createWorkloadIdentityProvider(projectID, poolID, providerID, issuerURI str
 	if err != nil {
 		// Ignore if provider already exists
 		if !strings.Contains(string(output), "already exists") {
-			klog.Warningf("Failed to create workload identity provider (may already exist): %v, output: %s", err, string(output))
+			klog.Warningf("Failed to create workload identity provider %q (may already exist): %v, output: %s", providerID, err, string(output))
 		}
 	} else {
 		klog.Infof("Created workload identity provider: %s", providerID)
