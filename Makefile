@@ -20,11 +20,13 @@ export BUILD_GCSFUSE_FROM_SOURCE ?= false
 export GCSFUSE_TAG ?= master
 export BUILD_ARM ?= false
 export WI_NODE_LABEL_CHECK ?= true
+# assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
+export PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
+export CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
+export CLUSTER_NAME ?= $(shell kubectl config current-context | cut -d '_' -f 4)
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
-# assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
-PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
 CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
 IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
 IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
@@ -48,6 +50,8 @@ endif
 DOCKER_BUILDX_ARGS += --quiet
 
 $(info PROJECT is ${PROJECT})
+$(info CLUSTER_LOCATION is ${CLUSTER_LOCATION})
+$(info CLUSTER_NAME is ${CLUSTER_NAME})
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is ${DRIVER_IMAGE})

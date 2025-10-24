@@ -32,7 +32,8 @@ readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
 readonly overlay="${OVERLAY:-stable}"
 
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
-readonly ginkgo_skip="${E2E_TEST_SKIP:-should.succeed.in.performance.test}"
+# TODO(amacaskill): Remove oidc from default skip when the test can be run without additional configuration.
+readonly ginkgo_skip="${E2E_TEST_SKIP:-'should.succeed.in.performance.test|oidc'}"
 readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-10}"
 readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
 readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"

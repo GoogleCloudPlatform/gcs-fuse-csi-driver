@@ -79,5 +79,5 @@ func setEnvProject(project string) error {
 		return fmt.Errorf("failed to set gcloud project to %s: %s, err: %w", project, out, err)
 	}
 
-	return os.Setenv("PROJECT", project)
+	return os.Setenv(ProjectEnvVar, project)
 }

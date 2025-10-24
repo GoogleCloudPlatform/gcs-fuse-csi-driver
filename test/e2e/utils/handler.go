@@ -84,6 +84,9 @@ const (
 	TestWithNativeSidecarEnvVar            = "TEST_WITH_NATIVE_SIDECAR"
 	TestWithSAVolumeInjectionEnvVar        = "TEST_WITH_SA_VOL_INJECTION"
 	TestWithSidecarBucketAccessCheckEnvVar = "TEST_WITH_SIDECAR_BUCKET_ACCESS_CHECK"
+	ClusterNameEnvVar                      = "CLUSTER_NAME"
+	ClusterLocationEnvVar                  = "CLUSTER_LOCATION"
+	ProjectEnvVar                          = "PROJECT"
 )
 
 func Handle(testParams *TestParameters) error {
@@ -118,6 +121,15 @@ func Handle(testParams *TestParameters) error {
 		}
 		testParams.ProjectID = newProject
 		testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(newProject))
+
+		// Set env variables for OIDC auth prow tests. For local tests, these
+		// env variables are set in the Makefile from kubectl config current-context.
+		if err = os.Setenv(ClusterNameEnvVar, testParams.GkeClusterName); err != nil {
+			klog.Fatalf(`env variable %q could not be set: %v`, ClusterNameEnvVar, err)
+		}
+		if err = os.Setenv(ClusterLocationEnvVar, testParams.GkeClusterRegion); err != nil {
+			klog.Fatalf(`env variable %q could not be set: %v`, ClusterLocationEnvVar, err)
+		}
 
 		// 4. After the test, tear down the cluster, and switch back to the old project.
 		defer func() {
@@ -295,6 +307,12 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if !testParams.SupportMachineTypeAutoconfig {
 		skipTests = append(skipTests, "disable-autoconfig")
+	}
+
+	if testParams.InProw {
+		// TODO(amacaskill): Remove oidc from skipTests when the test can be run without additional configuration.
+		// See https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/pull/979#issuecomment-3445151653.
+		skipTests = append(skipTests, "oidc")
 	}
 
 	skipTests = append(skipTests, "flaky")
