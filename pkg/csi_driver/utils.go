@@ -70,7 +70,7 @@ const (
 	VolumeContextKeyEphemeral              = "csi.storage.k8s.io/ephemeral"
 	VolumeContextKeyBucketName             = "bucketName"
 	TokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
-	SidecarBucketAccessCheckMinVersion     = "v1.99.0-gke.0"
+	SidecarBucketAccessCheckMinVersion     = "v1.20.0-gke.0"
 	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
