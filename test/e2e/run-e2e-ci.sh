@@ -43,6 +43,7 @@ readonly enable_zb=${ENABLE_ZB:-false}
 readonly gke_gcloud_command=${GKE_GCLOUD_COMMAND:-gcloud}
 readonly gke_gcloud_args=${GKE_GCLOUD_ARGS:-}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-false}
+readonly overlay="${OVERLAY:-stable}"
 
 # Install golang
 version=1.22.7
