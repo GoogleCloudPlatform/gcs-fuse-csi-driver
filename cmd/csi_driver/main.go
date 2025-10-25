@@ -68,6 +68,7 @@ var (
 	datafluxParallelism           = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
 	datafluxBatchSize             = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
 	datafluxSkipDirectoryObjects  = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
+	clusterLocation               = flag.String("cluster-location", "", "The location (region/zone) in which the cluster is deployed")
 	enableGcsfuseProfilesInternal = flag.Bool("enable-gcsfuse-profiles-internal", false, "Allow the temporarily disallowed gcsfuse profiles flag ('profile') to be passed for internal use only")
 
 	// Leader election flags.
@@ -169,6 +170,7 @@ func main() {
 					BatchSize:            *datafluxBatchSize,
 					SkipDirectoryObjects: *datafluxSkipDirectoryObjects,
 				},
+				ClusterLocation: *clusterLocation,
 			},
 			EnableGcsfuseProfilesInternal: *enableGcsfuseProfilesInternal,
 		},

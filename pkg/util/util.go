@@ -18,14 +18,19 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"crypto/sha1"
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"cloud.google.com/go/compute/metadata"
+	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 	"k8s.io/klog/v2"
 )
 
@@ -236,6 +241,37 @@ func ParseVolumeID(bucketHandle string) string {
 	return volumeIDRegEx.ReplaceAllString(bucketHandle, "")
 }
 
+func GetZonesForALocation(ctx context.Context, computeService *compute.Service, location string) ([]string, error) {
+	var zones []string
+	projectNumber, err := GetProjectNumber(ctx)
+	if err != nil {
+		return zones, fmt.Errorf("failed to get project number: %v", err)
+	}
+	if parts := strings.Split(location, "-"); len(parts) == 2 {
+		zones = append(zones, location)
+		return zones, nil
+	}
+	klog.Info("Getting zones for region: ", location, " in project: ", projectNumber)
+	if computeService == nil {
+		computeService, err = compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope))
+		if err != nil {
+			return zones, fmt.Errorf("failed to create compute service: %v", err)
+		}
+	}
+
+	regionObj, err := computeService.Regions.Get(projectNumber, location).Do()
+	if err != nil {
+		return zones, fmt.Errorf("failed to get region %s: %v", location, err)
+	}
+
+	for _, zoneURL := range regionObj.Zones {
+		zoneName := path.Base(zoneURL)
+		zones = append(zones, zoneName)
+	}
+
+	return zones, nil
+}
+
 // Returns true if the identity provider is a GKE identity provider in the format:
 // https://container.googleapis.com/v1/projects/{project_id}/locations/{location}/clusters/{cluster_name}.
 // Other GKE environments (staging, staging2, test, sandbox) are supported as well.
@@ -252,4 +288,12 @@ func ParseBool(str string) (bool, error) {
 	default:
 		return false, fmt.Errorf("could not parse string to bool: the acceptable values for %q are 'True', 'true', 'false' or 'False'", str)
 	}
+}
+
+func GetProjectNumber(ctx context.Context) (string, error) {
+	projectNumber, err := metadata.NumericProjectIDWithContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get project number: %w", err)
+	}
+	return projectNumber, nil
 }
