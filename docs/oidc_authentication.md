@@ -25,10 +25,14 @@ The OIDC authentication feature allows Kubernetes pods to authenticate to Google
 
 ## Prerequisites
 
-- Kubernetes cluster with the GCS FUSE CSI driver installed
+- Kubernetes cluster with the non-managed GCS FUSE CSI driver installed according to the [Driver Version Requirements](#driver-version-requirements)
 - Google Cloud project with appropriate APIs enabled
 - `gcloud` CLI tool installed and configured
 - Cluster admin permissions to configure Workload Identity Federation
+
+### Driver Version Requirements
+
+OIDC authentication is supported with the non-managed (self deployed GCS FUSE CSI driver), with driver version tag [v1.20.0](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.0) or later. It is not currently supported with the managed GCS FUSE CSI driver that is installed through the [GcsFuseCsiDriver addon](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-setup#enable). Currently there is no publicly hosted image for the [container in the OSS GCS FUSE CSI Driver Webhook Deployment](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/73c6c41e520f5b8b52abe82ea62287c3db0c16fd/deploy/base/webhook/deployment.yaml#L47), so you will need to build and deploy a custom GCS FUSE CSI driver following the instructions in [GCS FUSE CSI Driver Development Guide](/docs/development.md) and [GCS FUSE CSI Driver Manual Installation](/docs/installation.md). For NON Google Internal projects, follow the instructions in [Cloud Build on NON Google Internal projects](/docs/development.md#cloud-build-on-non-google-internal-projects), and ensure you build from a `LATEST_TAG` that has driver version tag [v1.20.0](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.0) or later.
 
 ## Step 1: Configure GCP IAM for Workload Identity Federation
 
