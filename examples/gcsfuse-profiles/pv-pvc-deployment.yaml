@@ -19,10 +19,10 @@ metadata:
   name: my-pv
   annotations:
     # Optional: Uncomment the following annotations to add custom bucket annotations and bypass the scanner.
-    # gke-gcsfuse/bucket-scan-status: "override"             # Required for "override": Will bypass the scanner with custom results.
-    # gke-gcsfuse/bucket-scan-num-objects: "42"              # Required for "override": Total number of objects in the bucket / directory.
-    # gke-gcsfuse/bucket-scan-total-size-bytes: "123456789"  # Required for "override": Total size in bytes of the bucket / directory.
-    # gke-gcsfuse/bucket-scan-hns-enabled: "true"            # Required for "override": "true" or "false" if HNS is enabled.
+    gke-gcsfuse/bucket-scan-status: "override"             # Required for "override": Will bypass the scanner with custom results.
+    gke-gcsfuse/bucket-scan-num-objects: "200000"              # Required for "override": Total number of objects in the bucket / directory.
+    gke-gcsfuse/bucket-scan-total-size-bytes: "100000000"  # Required for "override": Total size in bytes of the bucket / directory.
+    gke-gcsfuse/bucket-scan-hns-enabled: "true"            # Required for "override": "true" or "false" if HNS is enabled.
 spec:
   accessModes:
   - ReadWriteMany
@@ -32,7 +32,7 @@ spec:
   storageClassName: gcsfusecsi-inference
   csi:
     driver: gcsfuse.csi.storage.gke.io
-    volumeHandle: test-bucket
+    volumeHandle: uriel-bucket
     volumeAttributes:
       # Optional: The timeout for the bucket scan operation before giving up and delivering
       # partial results. The default is 2m.
@@ -42,7 +42,7 @@ spec:
       # scan. The default is 168h (7 days).
       # bucketScanTTL: 168h
   mountOptions:
-  - only-dir=/my-folder/
+  - only-dir=/
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -62,7 +62,7 @@ kind: Deployment
 metadata:
   name: my-deployment
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: my-app
@@ -71,6 +71,8 @@ spec:
       labels:
         app: my-app
       annotations:
+        gke-gcsfuse/memory-limit: "420Mi"
+        gke-gcsfuse/ephemeral-storage-request: "250Mi"
         gke-gcsfuse/volumes: "true"
         # Feature flag
         gke-gcsfuse/profiles: "true"

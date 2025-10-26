@@ -201,6 +201,7 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	invalidArgs := []string{}
+	cacheDirInternal := ""
 
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
@@ -214,6 +215,17 @@ func (mc *MountConfig) prepareMountArgs() {
 					flagMap["prometheus-port"] = "0"
 				}
 
+				continue
+			}
+
+			// This flag can only be passed by the CSI driver if the following two things are true:
+			//   1. User is using the gcsfuse profiles feature.
+			//   2. User did not create a custom cache: https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-sidecar#configure-custom-read-cache-volume
+			//      This allows customers to override the caching medium while using the profiles feature, if they wish.
+			// If this flag exists, the "cache-dir" value will be overriden at the end of this loop.
+			// This is necessary because the "cache-dir" as a mount option is disallowed.
+			if f == "cache-dir-internal" {
+				cacheDirInternal = v
 				continue
 			}
 
@@ -300,6 +312,13 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Warningf("got invalid arguments for volume %q: %v. Will discard invalid args and continue to mount.",
 			invalidArgs, mc.VolumeName)
 	}
+
+	// Override the cache-dir with the cache-dir-internal value passed by the CSI driver.
+	if cacheDirInternal != "" {
+		klog.Infof("Overriding cache-dir with the recommended value %q", cacheDirInternal)
+		configFileFlagMap["cache-dir"] = cacheDirInternal
+	}
+
 	mc.FlagMap, mc.ConfigFileFlagMap = flagMap, configFileFlagMap
 }
 

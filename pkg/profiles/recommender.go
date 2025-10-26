@@ -18,7 +18,6 @@ package profiles
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,19 +70,12 @@ const (
 	mib int64 = 1024 * 1024
 
 	// Mount option names.
-	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache-stat-cache-max-size-mb"
-	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache-type-cache-max-size-mb"
-	fileCacheSizeMiBMountOptionKey            = "file-cache-max-size-mb"
-	fileCacheDirMountOptionKey                = "cache-dir"
-)
-
-var (
-	// Regex patterns to identify invalid mount option formats.
-	// Prohibits multiple '=' signs. Example: "a=b=c"
-	multipleEqualsRE = regexp.MustCompile(`=.*=`)
-
-	// Prohibits an '=' appearing after any ':'. Example: "a:b=c", "a:b:c=d"
-	colonThenEqualsRE = regexp.MustCompile(`:.*=`)
+	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache:stat-cache-max-size-mb"
+	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache:type-cache-max-size-mb"
+	fileCacheSizeMiBMountOptionKey            = "file-cache:max-size-mb"
+	// cache-dir is disallowed: https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/main/pkg/sidecar_mounter/sidecar_mounter_config.go#L92
+	// cache-dir-internal signals the sidecar to override the default cache-dir.
+	fileCacheDirInternalMountOptionKey = "cache-dir-internal"
 )
 
 // ProfileConfig holds the consolidated configuration for a volume profile,
@@ -93,7 +85,6 @@ type ProfileConfig struct {
 	nodeDetails *nodeDetails // Details extracted from the Node.
 	scDetails   *scDetails   // Details extracted from the SC.
 	podDetails  *podDetails  // Details extracted from the Pod.
-
 }
 
 // pvDetails holds a parsed summary of information about a PersistentVolume that are relevant to the recommender.
@@ -116,6 +107,7 @@ type podDetails struct {
 	sidecarLimits *parsedResourceList
 	namespace     string
 	name          string // The name of the Pod.
+	labels        map[string]string
 }
 
 // scDetails holds a parsed summary of information about a StorageClass that are relevant to the recommender.
@@ -123,7 +115,7 @@ type scDetails struct {
 	fileCacheMediumPriority               map[string][]string // Parsed priority map for file cache mediums.
 	fuseMemoryAllocatableFactor           float64             // Factor for calculating FUSE memory allocation.
 	fuseEphemeralStorageAllocatableFactor float64             // Factor for calculating FUSE ephemeral storage allocation.
-	VolumeAttributes                      map[string]string   // Arbitrary volume attributes sourced from the StorageClass.
+	volumeAttributes                      map[string]string   // Arbitrary volume attributes sourced from the StorageClass.
 	mountOptions                          []string            // Mount options sourced from the StorageClass.
 }
 
@@ -157,13 +149,22 @@ type recommendation struct {
 
 // BuildProfileConfigParams contains the parameters needed to build a profile configuration.
 type BuildProfileConfigParams struct {
-	targetPath          string
-	clientset           clientset.Interface
-	volumeAttributeKeys map[string]struct{}
-	nodeName            string
-	podNamespace        string
-	podName             string
-	isInitContainer     bool
+	TargetPath          string
+	Clientset           clientset.Interface
+	VolumeAttributeKeys map[string]struct{}
+	NodeName            string
+	PodNamespace        string
+	PodName             string
+	IsInitContainer     bool
+}
+
+// LeftJoinWithRecommendedVolumeAttributes returns the a copy of the input map, merged with the profile's.
+// recommended VolumeAttributes. This function respects the input's keys in the case of duplication.
+func (c *ProfileConfig) LeftJoinWithRecommendedVolumeAttributes(input map[string]string) map[string]string {
+	if c == nil || c.scDetails == nil {
+		return nil
+	}
+	return mergeMapsIfKeyUnset(input, c.scDetails.volumeAttributes)
 }
 
 // BuildProfileConfig constructs a ProfileConfig by fetching and validating
@@ -172,13 +173,13 @@ type BuildProfileConfigParams struct {
 // treated as volume attributes.
 func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error) {
 	// Get the PV name from target path.
-	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(params.targetPath)
+	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(params.TargetPath)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.targetPath, err)
+		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.TargetPath, err)
 	}
 
 	// Get the PV object using the PV name.
-	pv, err := params.clientset.GetPV(volumeName)
+	pv, err := params.Clientset.GetPV(volumeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "pv %q not found: %v", volumeName, err)
@@ -200,7 +201,7 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}
 
 	// Get the StorageClass object from the StorageClassName.
-	sc, err := params.clientset.GetSC(scName)
+	sc, err := params.Clientset.GetSC(scName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "sc %q not found: %v", scName, err)
@@ -209,18 +210,18 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}
 
 	// Get the scDetails from the StorageClass object.
-	scDetails, err := buildSCDetails(sc, params.volumeAttributeKeys)
+	scDetails, err := buildSCDetails(sc, params.VolumeAttributeKeys)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
 	}
 
 	// Get the Node object using the Node name.
-	node, err := params.clientset.GetNode(params.nodeName)
+	node, err := params.Clientset.GetNode(params.NodeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "node %q not found: %v", params.nodeName, err)
+			return nil, status.Errorf(codes.NotFound, "node %q not found: %v", params.NodeName, err)
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get node %q: %v", params.nodeName, err)
+		return nil, status.Errorf(codes.Internal, "failed to get node %q: %v", params.NodeName, err)
 	}
 
 	// Get the nodeDetails from the Node object.
@@ -230,16 +231,16 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}
 
 	// Get the Pod object using the Pod namespace/name.
-	pod, err := params.clientset.GetPod(params.podNamespace, params.podName)
+	pod, err := params.Clientset.GetPod(params.PodNamespace, params.PodName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "pod %s/%s not found: %v", params.podNamespace, params.podName, err)
+			return nil, status.Errorf(codes.NotFound, "pod %s/%s not found: %v", params.PodNamespace, params.PodName, err)
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", params.podNamespace, params.podName, err)
+		return nil, status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", params.PodNamespace, params.PodName, err)
 	}
 
 	// Get the podDetails from the Pod object.
-	podDetails, err := buildPodDetails(params.isInitContainer, pod)
+	podDetails, err := buildPodDetails(params.IsInitContainer, pod)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod details: %v", err)
 	}
@@ -258,7 +259,7 @@ func addInt64RecommendationToMountOptions(mountOptions []string, mountOptionKey 
 	result := mountOptions
 	var err error
 	if recommendationBytes > 0 {
-		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%d", mountOptionKey, bytesToMiB(recommendationBytes))})
+		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s:%d", mountOptionKey, bytesToMiB(recommendationBytes))})
 		if err != nil {
 			return []string{}, err
 		}
@@ -272,7 +273,7 @@ func addStrRecommendationToMountOptions(mountOptions []string, mountOptionKey st
 	result := mountOptions
 	var err error
 	if recommendation != "" {
-		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%s", mountOptionKey, recommendation)})
+		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s:%s", mountOptionKey, recommendation)})
 		if err != nil {
 			return []string{}, err
 		}
@@ -280,17 +281,59 @@ func addStrRecommendationToMountOptions(mountOptions []string, mountOptionKey st
 	return result, nil
 }
 
-// RecommendMountOptions generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
+// shouldSkipCacheRecommendations returns true if the user provided cache mount options or customized their own cache medium.
+func (config *ProfileConfig) shouldSkipCacheRecommendations(userMountOptions []string) bool {
+	if cacheCreatedByUser, ok := config.podDetails.labels[webhook.GcsfuseCacheCreatedByUserLabel]; ok && cacheCreatedByUser == util.TrueStr {
+		klog.Warning("Detected custom cache medium provided by user, skipping smart cache recommendation to allow override")
+		return true
+	}
+	for _, key := range userMountOptions {
+		switch strings.ToLower(normalizeKey(key)) {
+		case normalizeKey(metadataStatCacheMaxSizeMiBMountOptionKey),
+			normalizeKey(metadataTypeCacheMaxSizeMiBMountOptionKey),
+			normalizeKey(fileCacheSizeMiBMountOptionKey):
+			klog.Warningf("Detected pre-existing cache size mount option: %q, skipping smart cache recommendation to allow override", key)
+			return true
+		}
+	}
+	return false
+}
+
+// LeftJoinWithRecommendedMountOptions generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
 // It calculates optimal cache configurations and translates them into gcsfuse mount option strings.
-func RecommendMountOptions(config *ProfileConfig) ([]string, error) {
+// If the user provides any of the following mount options:
+//   - "metadata-cache:stat-cache-max-size-mb"
+//   - "metadata-cache:type-cache-max-size-mb"
+//   - "file-cache:max-size-mb"
+//
+// the cache recommendation will be skipped, and only the pre-bundled mount options will be merged with the
+// user's mount options, respecting the user's mount options in the case of duplication.
+func (config *ProfileConfig) LeftJoinWithRecommendedMountOptions(userMountOptions []string) ([]string, error) {
+	if config == nil {
+		return nil, status.Errorf(codes.Internal, "config cannot be nil")
+	}
+
+	// Start with the pre-bundled StorageClass mount option recommendations.
+	recommendedMountOptions := config.scDetails.mountOptions
+
+	// Skip the smart cache recommendation and only recommend pre-bundled mount options.
+	// Note: Taking into account user mount options and medium as input for the recommender can be a future improvement,
+	// but it requires careful thinking for corner cases (e.g. Should we pick a medium for unlimited cache sizes?
+	// Should we cap if they exceed allocatable? What if their medium doesn't have enough capacity?)
+	if config.shouldSkipCacheRecommendations(userMountOptions) {
+		var err error
+		recommendedMountOptions, err = mergeMountOptionsIfKeyUnset(userMountOptions, recommendedMountOptions)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "failed to merge mount options: %v", err)
+		}
+		return recommendedMountOptions, nil
+	}
+
 	recommendation, err := recommendCacheConfigs(config)
 	// TODO(urielguzman): Log the decision summary into a human readable format via a container log / Pod event.
 	if err != nil {
 		return nil, fmt.Errorf("failed to recommend cache configs: %v", err)
 	}
-
-	// Start with the pre-bundled StorageClass mount option recommendations.
-	recommendedMountOptions := config.scDetails.mountOptions
 
 	// Map the recommended metadata stat cache size to equivalent mount option.
 	recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, metadataStatCacheMaxSizeMiBMountOptionKey, recommendation.metadataStatCacheBytes)
@@ -320,12 +363,17 @@ func RecommendMountOptions(config *ProfileConfig) ([]string, error) {
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "failed to add file cache size recommendation to mount options: %v", err)
 		}
-		recommendedMountOptions, err = addStrRecommendationToMountOptions(recommendedMountOptions, fileCacheDirMountOptionKey, cacheDir)
+		recommendedMountOptions, err = addStrRecommendationToMountOptions(recommendedMountOptions, fileCacheDirInternalMountOptionKey, cacheDir)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "failed to add file cache medium recommendation to mount options: %v", err)
 		}
 	}
 
+	// Merge the final recommended mount options to the user's mount options, respecting the user's mount options in the case of duplication.
+	recommendedMountOptions, err = mergeMountOptionsIfKeyUnset(userMountOptions, recommendedMountOptions)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to merge mount options: %v", err)
+	}
 	return recommendedMountOptions, nil
 }
 
@@ -447,7 +495,7 @@ func recommendFileCacheSizeAndMedium(cacheRequirements *cacheRequirements, confi
 			// Check if the required file cache bytes fir into the available ephemeral storage medium.
 		case mediumLSSD:
 			if !config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation {
-				klog.V(6).Infof("Medium %q skipped on node type %q: Node annotation %q is not 'true'.", medium, config.nodeDetails.nodeType, ephemeralStorageLocalSSDLabelKey)
+				klog.Warningf("Medium %q skipped on node type %q: Node annotation %q is not 'true'.", medium, config.nodeDetails.nodeType, ephemeralStorageLocalSSDLabelKey)
 				break
 			}
 			if cacheRequirements.fileCacheBytes <= ephemeralStorageBudget {
@@ -632,6 +680,7 @@ func buildPodDetails(isInitContainer bool, pod *corev1.Pod) (*podDetails, error)
 		namespace:     pod.Namespace,
 		name:          pod.Name,
 		sidecarLimits: sidecarLimits,
+		labels:        pod.Labels,
 	}, nil
 }
 
@@ -709,7 +758,7 @@ func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}
 		fileCacheMediumPriority:               fileCacheMediumPriority,
 		fuseMemoryAllocatableFactor:           fuseMemoryAllocatableFactor,
 		fuseEphemeralStorageAllocatableFactor: fuseEphemeralStorageAllocatableFactor,
-		VolumeAttributes:                      volumeAttributes,
+		volumeAttributes:                      volumeAttributes,
 		mountOptions:                          sc.MountOptions,
 	}, nil
 }
@@ -892,31 +941,47 @@ func isValidMountOption(opt string) bool {
 	return true
 }
 
-// getMountOptionKey extracts the key part of a mount option string.
-// This function assumes the input `opt` has already been validated by isValidMountOption.
-// Formats supported and precedence:
-// 1. key=value  (Key is everything before the first '=')
-// 2. ...:key:value (Key is everything before the last ':')
-// 3. key        (Key is the entire string)
-func getMountOptionKey(opt string) string {
-	if strings.Contains(opt, "=") {
-		// isValidMountOption ensures at most one '=', so SplitN is safe.
-		parts := strings.SplitN(opt, "=", 2)
-		return parts[0]
+// normalizeKey converts a mount option string (which might be in either
+// the config file or CLI format) into a consistent, base flag name.
+// This is primarily used for deduplication when merging flag maps.
+//
+// Examples:
+// - "logging:log-rotate:max-file-size-mb:1000" -> "max-file-size-mb"
+// - "read:global-max-blocks:1000" -> "global-max-blocks"
+// - "implicit-dirs=true"          -> "implicit-dirs"
+// - "debug_gcs"                   -> "debug_gcs"
+func normalizeKey(option string) string {
+	// 1. Strip the value part first.
+	// If the option contains a colon (config file format), the value is after the last colon.
+	// We want to keep the key:key part, and discard the :value part.
+	if strings.Contains(option, ":") {
+		// Find the index of the *last* colon.
+		lastColonIndex := strings.LastIndex(option, ":")
+		if lastColonIndex != -1 {
+			option = option[:lastColonIndex]
+		}
 	}
-	if strings.Contains(opt, ":") {
-		lastColon := strings.LastIndex(opt, ":")
-		// isValidMountOption ensures it doesn't start with ':', so lastColon > 0 if ':' exists.
-		return opt[:lastColon]
-	}
-	// No '=' or ':', the entire valid string is the key.
-	return opt
-}
 
-// normalizeKey unifies key representations by replacing all colons with hyphens.
-// This ensures that keys like "a:b" and "a-b" are treated as equivalent.
-func normalizeKey(key string) string {
-	return strings.ReplaceAll(key, ":", "-")
+	// 2. Normalize based on equals sign (CLI format).
+	// If the option contains an equals sign (CLI format), the value is after the equals.
+	// We want to keep the flag, and discard the =value part.
+	if strings.Contains(option, "=") {
+		parts := strings.SplitN(option, "=", 2)
+		option = parts[0]
+	}
+
+	// 3. Remove the hierarchy prefix (e.g., "read:" or "logging:log-rotate").
+	// We remove the prefix up to the *last* remaining colon.
+	if strings.Contains(option, ":") {
+		lastColonIndex := strings.LastIndex(option, ":")
+		if lastColonIndex != -1 {
+			// The base flag name is everything after the last colon.
+			return option[lastColonIndex+1:]
+		}
+	}
+
+	// If no separators were found, the option is already the base flag name.
+	return option
 }
 
 // mergeMountOptionsIfKeyUnset merges mount options from srcOpts into dstOpts.
@@ -933,8 +998,7 @@ func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) ([]string, error) {
 			return nil, fmt.Errorf("invalid mount option in dstOpts: %q", opt)
 		}
 		mountOptions = append(mountOptions, opt)
-		key := getMountOptionKey(opt)
-		normalizedKey := strings.ToLower(normalizeKey(key))
+		normalizedKey := strings.ToLower(normalizeKey(opt))
 		existingKeys[normalizedKey] = true
 	}
 
@@ -948,12 +1012,38 @@ func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) ([]string, error) {
 			return nil, fmt.Errorf("invalid mount option in srcOpts: %q", opt)
 		}
 
-		key := getMountOptionKey(opt)
-		normalizedKey := strings.ToLower(normalizeKey(key))
+		normalizedKey := strings.ToLower(normalizeKey(opt))
 		if !existingKeys[normalizedKey] {
 			mountOptions = append(mountOptions, opt)
 			existingKeys[normalizedKey] = true
 		}
 	}
 	return mountOptions, nil
+}
+
+// mergeMapsIfKeyUnset merges key/value pairs from src into dst.
+// A key/value pair from src is added to dst only if the key
+// does NOT already exist in dst.
+func mergeMapsIfKeyUnset(dst, src map[string]string) map[string]string {
+	if dst == nil {
+		return src
+	}
+	if src == nil {
+		return dst
+	}
+	result := map[string]string{}
+	caseInsensitiveDstKeys := map[string]struct{}{}
+	for k, v := range dst {
+		result[k] = v
+		caseInsensitiveDstKeys[strings.ToLower(k)] = struct{}{}
+	}
+	// Check if the case-insensitive keys match before adding the source key/val pair to the destination map.
+	for key, value := range src {
+		caseInsensitiveSrcKey := strings.ToLower(key)
+		if _, exists := caseInsensitiveDstKeys[caseInsensitiveSrcKey]; !exists {
+			result[key] = value
+			caseInsensitiveDstKeys[caseInsensitiveSrcKey] = struct{}{}
+		}
+	}
+	return result
 }
