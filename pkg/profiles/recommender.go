@@ -18,7 +18,6 @@ package profiles
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,7 +37,7 @@ import (
 const (
 	// StorageClass param keys.
 	workloadTypeKey                          = "workloadType"
-	workloadTypeInferenceKey                 = "inference"
+	workloadTypeServingKey                   = "serving"
 	workloadTypeTrainingKey                  = "training"
 	workloadTypeCheckpointingKey             = "checkpointing"
 	fuseFileCacheMediumPriorityKey           = "fuseFileCacheMediumPriority"
@@ -71,19 +70,9 @@ const (
 	mib int64 = 1024 * 1024
 
 	// Mount option names.
-	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache-stat-cache-max-size-mb"
-	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache-type-cache-max-size-mb"
-	fileCacheSizeMiBMountOptionKey            = "file-cache-max-size-mb"
-	fileCacheDirMountOptionKey                = "cache-dir"
-)
-
-var (
-	// Regex patterns to identify invalid mount option formats.
-	// Prohibits multiple '=' signs. Example: "a=b=c"
-	multipleEqualsRE = regexp.MustCompile(`=.*=`)
-
-	// Prohibits an '=' appearing after any ':'. Example: "a:b=c", "a:b:c=d"
-	colonThenEqualsRE = regexp.MustCompile(`:.*=`)
+	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache:stat-cache-max-size-mb"
+	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache:type-cache-max-size-mb"
+	fileCacheSizeMiBMountOptionKey            = "file-cache:max-size-mb"
 )
 
 // ProfileConfig holds the consolidated configuration for a volume profile,
@@ -93,7 +82,6 @@ type ProfileConfig struct {
 	nodeDetails *nodeDetails // Details extracted from the Node.
 	scDetails   *scDetails   // Details extracted from the SC.
 	podDetails  *podDetails  // Details extracted from the Pod.
-
 }
 
 // pvDetails holds a parsed summary of information about a PersistentVolume that are relevant to the recommender.
@@ -123,7 +111,7 @@ type scDetails struct {
 	fileCacheMediumPriority               map[string][]string // Parsed priority map for file cache mediums.
 	fuseMemoryAllocatableFactor           float64             // Factor for calculating FUSE memory allocation.
 	fuseEphemeralStorageAllocatableFactor float64             // Factor for calculating FUSE ephemeral storage allocation.
-	VolumeAttributes                      map[string]string   // Arbitrary volume attributes sourced from the StorageClass.
+	volumeAttributes                      map[string]string   // Arbitrary volume attributes sourced from the StorageClass.
 	mountOptions                          []string            // Mount options sourced from the StorageClass.
 }
 
@@ -252,80 +240,80 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}, nil
 }
 
-// addInt64RecommendationToMountOptions appends a mount option string to the given slice if the recommendationBytes is greater than 0.
-// The option is formatted as "mountOptionKey:sizeMiB", where sizeMiB is the recommendationBytes converted to MiB.
-func addInt64RecommendationToMountOptions(mountOptions []string, mountOptionKey string, recommendationBytes int64) ([]string, error) {
-	result := mountOptions
-	var err error
-	if recommendationBytes > 0 {
-		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%d", mountOptionKey, bytesToMiB(recommendationBytes))})
-		if err != nil {
-			return []string{}, err
+// shouldSkipCacheRecommendations returns true if the user provided cache mount options or configured their own custom cache medium.
+func (config *ProfileConfig) shouldSkipCacheRecommendations(userMountOptions []string) bool {
+	// TODO(urielguzman): Also skip if the customer configured their own custom cache medium:
+	// https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-sidecar#configure-custom-read-cache-volume
+	// This will require adding a label to the Pod if a pre-existing gke-gcsfuse-cache volume is found before injection.
+	for _, option := range userMountOptions {
+		if isCacheMountOptionKey(option) {
+			klog.Warningf("Detected pre-existing cache size mount option: %q, skipping smart cache recommendation to allow override", option)
+			return true
 		}
 	}
-	return result, nil
+	return false
 }
 
-// addStrRecommendationToMountOptions appends a mount option string to the given slice if the recommendation string is not empty.
-// The option is formatted as "mountOptionKey:val", where sizeMiB val the recommendation value.
-func addStrRecommendationToMountOptions(mountOptions []string, mountOptionKey string, recommendation string) ([]string, error) {
-	result := mountOptions
-	var err error
-	if recommendation != "" {
-		result, err = mergeMountOptionsIfKeyUnset(result, []string{fmt.Sprintf("%s=%s", mountOptionKey, recommendation)})
-		if err != nil {
-			return []string{}, err
-		}
-	}
-	return result, nil
-}
-
-// RecommendMountOptions generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
+// LeftJoinOnRecommendedMountOptionKeys generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
 // It calculates optimal cache configurations and translates them into gcsfuse mount option strings.
-func RecommendMountOptions(config *ProfileConfig) ([]string, error) {
+// If the user provides any of the following mount options:
+//   - "metadata-cache:stat-cache-max-size-mb"
+//   - "metadata-cache:type-cache-max-size-mb"
+//   - "file-cache:max-size-mb"
+//
+// the cache recommendation will be skipped, and only the pre-bundled mount options will be merged with the
+// user's mount options, respecting the user's mount options in the case of duplication.
+func (config *ProfileConfig) LeftJoinOnRecommendedMountOptionKeys(userMountOptions []string) ([]string, error) {
+	if config == nil {
+		return nil, status.Errorf(codes.Internal, "config cannot be nil")
+	}
+
+	// Start with merging the pre-bundled StorageClass mount option recommendations into the user's mount options,
+	// respecting user's mount options in the case of duplicates.
+	recommendedMountOptions, err := leftJoinMountOptionsOnKeys(userMountOptions, config.scDetails.mountOptions)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to merge mount options: %v", err)
+	}
+
+	// Skip the smart cache recommendation and only recommend pre-bundled mount options.
+	// Note: Taking into account user mount options and medium as input for the recommender can be a future improvement,
+	// but it requires careful thinking for corner cases (e.g. Should we pick a medium for unlimited cache sizes?
+	// Should we cap if they exceed allocatable? What if their medium doesn't have enough capacity?)
+	if config.shouldSkipCacheRecommendations(recommendedMountOptions) {
+		return recommendedMountOptions, nil
+	}
+
 	recommendation, err := recommendCacheConfigs(config)
 	// TODO(urielguzman): Log the decision summary into a human readable format via a container log / Pod event.
 	if err != nil {
 		return nil, fmt.Errorf("failed to recommend cache configs: %v", err)
 	}
 
-	// Start with the pre-bundled StorageClass mount option recommendations.
-	recommendedMountOptions := config.scDetails.mountOptions
+	cacheOptions := []string{}
 
 	// Map the recommended metadata stat cache size to equivalent mount option.
-	recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, metadataStatCacheMaxSizeMiBMountOptionKey, recommendation.metadataStatCacheBytes)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to add metadata stat cache size recommendation to mount options: %v", err)
+	if recommendation.metadataStatCacheBytes > 0 {
+		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", metadataStatCacheMaxSizeMiBMountOptionKey, bytesToMiB(recommendation.metadataStatCacheBytes)))
 	}
 
 	// Map the recommended metadata type cache size to equivalent mount option.
-	recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, metadataTypeCacheMaxSizeMiBMountOptionKey, recommendation.metadataTypeCacheBytes)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to add metadata type cache size recommendation to mount options: %v", err)
+	if recommendation.metadataTypeCacheBytes > 0 {
+		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", metadataTypeCacheMaxSizeMiBMountOptionKey, bytesToMiB(recommendation.metadataTypeCacheBytes)))
 	}
 
 	// Map the recommended file cache size & medium to equivalent mount options.
 	if recommendation.fileCacheBytes > 0 && recommendation.fileCacheMedium != "" {
-		cacheDir := ""
-		switch recommendation.fileCacheMedium {
-		case mediumRAM:
-			cacheDir = webhook.SidecarContainerFileCacheRamDiskVolumeMountPath
-		case mediumLSSD:
-			cacheDir = webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath
-		default:
-			return []string{}, status.Errorf(codes.Internal, "unexpected file cache medium recommendation %q", recommendation.fileCacheMedium)
-		}
-
-		recommendedMountOptions, err = addInt64RecommendationToMountOptions(recommendedMountOptions, fileCacheSizeMiBMountOptionKey, recommendation.fileCacheBytes)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to add file cache size recommendation to mount options: %v", err)
-		}
-		recommendedMountOptions, err = addStrRecommendationToMountOptions(recommendedMountOptions, fileCacheDirMountOptionKey, cacheDir)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to add file cache medium recommendation to mount options: %v", err)
-		}
+		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", fileCacheSizeMiBMountOptionKey, bytesToMiB(recommendation.fileCacheBytes)))
+		// Note: File cache medium *must* be delimeted with an "=" sign, since it's an internal CSI flag.
+		// TODO(urielguzman): Add a sidecar version check in the driver before passing this flag down to the sidecar mounter.
+		cacheOptions = append(cacheOptions, fmt.Sprintf("%s=%s", util.FileCacheMediumConst, recommendation.fileCacheMedium))
 	}
 
+	// Merge the final cache mount options to the recommended mount options, respecting the user's mount options in the case of duplication.
+	recommendedMountOptions, err = leftJoinMountOptionsOnKeys(recommendedMountOptions, cacheOptions)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to merge mount options: %v", err)
+	}
 	return recommendedMountOptions, nil
 }
 
@@ -425,7 +413,7 @@ func recommendFileCacheSizeAndMedium(cacheRequirements *cacheRequirements, confi
 
 	// Error if LSSD is in the priority list for TPU
 	// TODO(urielguzman): Re-consider emitting a warning instead of failing here.
-	if config.nodeDetails.nodeType == nodeTypeTPU && slices.Contains(priorityList, mediumLSSD) {
+	if config.nodeDetails.nodeType == nodeTypeTPU && slices.Contains(priorityList, util.MediumLSSD) {
 		return 0, "", fmt.Errorf("LSSD medium is not supported for file cache on TPU node type %q", config.nodeDetails.nodeType)
 	}
 
@@ -435,23 +423,22 @@ func recommendFileCacheSizeAndMedium(cacheRequirements *cacheRequirements, confi
 		return 0, "", nil
 	}
 
-	// Calculate file cache medium based on priority list
 	for i, medium := range priorityList {
 		klog.V(6).Infof("Evaluating medium %q (Priority %d/%d)", medium, i+1, len(priorityList))
 		switch medium {
-		case mediumRAM:
+		case util.MediumRAM:
 			// Check if the required file cache bytes fit into the available memory (RAM) medium.
 			if cacheRequirements.fileCacheBytes <= memoryBudget {
-				return cacheRequirements.fileCacheBytes, mediumRAM, nil
+				return cacheRequirements.fileCacheBytes, util.MediumRAM, nil
 			}
 			// Check if the required file cache bytes fir into the available ephemeral storage medium.
-		case mediumLSSD:
+		case util.MediumLSSD:
 			if !config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation {
-				klog.V(6).Infof("Medium %q skipped on node type %q: Node annotation %q is not 'true'.", medium, config.nodeDetails.nodeType, ephemeralStorageLocalSSDLabelKey)
+				klog.Warningf("Medium %q skipped on node type %q: Node annotation %q is not 'true'.", medium, config.nodeDetails.nodeType, ephemeralStorageLocalSSDLabelKey)
 				break
 			}
 			if cacheRequirements.fileCacheBytes <= ephemeralStorageBudget {
-				return cacheRequirements.fileCacheBytes, mediumLSSD, nil
+				return cacheRequirements.fileCacheBytes, util.MediumLSSD, nil
 			}
 		default:
 			return 0, "", fmt.Errorf("unkown storage medium: %q", medium)
@@ -709,7 +696,7 @@ func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}
 		fileCacheMediumPriority:               fileCacheMediumPriority,
 		fuseMemoryAllocatableFactor:           fuseMemoryAllocatableFactor,
 		fuseEphemeralStorageAllocatableFactor: fuseEphemeralStorageAllocatableFactor,
-		VolumeAttributes:                      volumeAttributes,
+		volumeAttributes:                      volumeAttributes,
 		mountOptions:                          sc.MountOptions,
 	}, nil
 }
@@ -735,7 +722,7 @@ func selectFromMapIfKeysMatch(target map[string]string, keys map[string]struct{}
 // validateWorkloadType checks if the workload type is valid.
 func validateWorkloadType(workloadType string) error {
 	switch workloadType {
-	case workloadTypeInferenceKey, workloadTypeTrainingKey, workloadTypeCheckpointingKey:
+	case workloadTypeServingKey, workloadTypeTrainingKey, workloadTypeCheckpointingKey:
 	default:
 		return fmt.Errorf("invalid %q parameter %q", workloadTypeKey, workloadType)
 	}
@@ -913,17 +900,34 @@ func getMountOptionKey(opt string) string {
 	return opt
 }
 
-// normalizeKey unifies key representations by replacing all colons with hyphens.
-// This ensures that keys like "a:b" and "a-b" are treated as equivalent.
-func normalizeKey(key string) string {
-	return strings.ReplaceAll(key, ":", "-")
+// isCacheMountOptionKey returns true if the key is a managed cache mount option.
+// The function checks if it's either in the "config-file" format or the "gcsfuse CLI"
+// format.
+func isCacheMountOptionKey(opt string) bool {
+	key := getMountOptionKey(opt)
+	switch key {
+	// The mapping is hardcoded because there does not exist a programatic way
+	// of normalizing the keys, due to grouping inconsistencies.
+	case metadataStatCacheMaxSizeMiBMountOptionKey, "stat-cache-max-size-mb",
+		metadataTypeCacheMaxSizeMiBMountOptionKey, "type-cache-max-size-mb",
+		fileCacheSizeMiBMountOptionKey, "file-cache-max-size-mb":
+		return true
+	default:
+		return false
+	}
 }
 
-// mergeMountOptionsIfKeyUnset merges mount options from srcOpts into dstOpts.
+// leftJoinMountOptionsOnKeys merges mount options from srcOpts into dstOpts.
 // It returns an error if any option in dstOpts or srcOpts is invalid.
-// An option from srcOpts is added only if its *normalized* key is not already
+// An option from srcOpts is added only if the key is not already
 // present in the keys of options within dstOpts.
-func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) ([]string, error) {
+//
+// Note: Complete deduplication is impossible, since there doesn't exist
+// any consistent mapping between gcsfuse config-file groups and CLI options.
+// In the rare scenario that this happens, the user's CLI option will
+// take precedence by the gcsfuse process hierarchy downstream. The CSI recommender
+// should always ensure to only recommend config-file to respect this behavior.
+func leftJoinMountOptionsOnKeys(dstOpts, srcOpts []string) ([]string, error) {
 	var mountOptions []string
 	existingKeys := make(map[string]bool)
 
@@ -933,9 +937,7 @@ func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) ([]string, error) {
 			return nil, fmt.Errorf("invalid mount option in dstOpts: %q", opt)
 		}
 		mountOptions = append(mountOptions, opt)
-		key := getMountOptionKey(opt)
-		normalizedKey := strings.ToLower(normalizeKey(key))
-		existingKeys[normalizedKey] = true
+		existingKeys[strings.ToLower(getMountOptionKey(opt))] = true
 	}
 
 	if len(srcOpts) == 0 {
@@ -948,11 +950,10 @@ func mergeMountOptionsIfKeyUnset(dstOpts, srcOpts []string) ([]string, error) {
 			return nil, fmt.Errorf("invalid mount option in srcOpts: %q", opt)
 		}
 
-		key := getMountOptionKey(opt)
-		normalizedKey := strings.ToLower(normalizeKey(key))
-		if !existingKeys[normalizedKey] {
+		key := strings.ToLower(getMountOptionKey(opt))
+		if !existingKeys[key] {
 			mountOptions = append(mountOptions, opt)
-			existingKeys[normalizedKey] = true
+			existingKeys[key] = true
 		}
 	}
 	return mountOptions, nil

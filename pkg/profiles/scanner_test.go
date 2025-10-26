@@ -63,7 +63,7 @@ const (
 )
 
 var (
-	validSCParams = map[string]string{workloadTypeKey: workloadTypeInferenceKey}
+	validSCParams = map[string]string{workloadTypeKey: workloadTypeServingKey}
 	validSC       = createStorageClass(testSCName, validSCParams)
 	podLabels     = map[string]string{profileManagedLabelKey: profileManagedLabelValue}
 	scanResult    = &bucketInfo{
@@ -384,10 +384,10 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantBucket:   testBucketName,
 		},
 		{
-			name: "Relevant PV - Inference",
+			name: "Relevant PV - Serving",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeInferenceKey}),
+				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeServingKey}),
 			},
 			wantRelevant: true,
 			wantBucket:   testBucketName,

@@ -29,7 +29,7 @@ spec:
   capacity:
     storage: 10Gi
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: gcsfusecsi-inference
+  storageClassName: gcsfusecsi-serving
   csi:
     driver: gcsfuse.csi.storage.gke.io
     volumeHandle: test-bucket
@@ -55,7 +55,7 @@ spec:
     requests:
       storage: 10Gi
   volumeName: my-pv
-  storageClassName: gcsfusecsi-inference 
+  storageClassName: gcsfusecsi-serving 
 ---
 apiVersion: apps/v1
 kind: Deployment
