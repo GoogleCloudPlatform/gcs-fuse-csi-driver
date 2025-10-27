@@ -74,6 +74,7 @@ const (
 	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
+	GCSFuseFileCacheMediumMinVersion       = "v1.99.0-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 )
@@ -623,9 +624,16 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 	if gcsFuseSidecarImage == "" {
 		return disallowedFlags, fmt.Errorf("unable to get disallowed flags, sidecar image is empty")
 	}
-	GCSFuseProfileFlagVal := !(driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion))
-	if GCSFuseProfileFlagVal {
-		disallowedFlags[GCSFuseProfileFlag] = GCSFuseProfileFlagVal
+
+	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)
+	if !shouldPassProfilesFlag {
+		disallowedFlags[GCSFuseProfileFlag] = true
 	}
+
+	shouldPassFileCacheMediumFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseFileCacheMediumMinVersion)
+	if !shouldPassFileCacheMediumFlag {
+		disallowedFlags[util.FileCacheMediumConst] = true
+	}
+
 	return disallowedFlags, nil
 }
