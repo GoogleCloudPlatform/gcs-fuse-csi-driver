@@ -104,6 +104,7 @@ type podDetails struct {
 	sidecarLimits *parsedResourceList
 	namespace     string
 	name          string // The name of the Pod.
+	labels        map[string]string
 }
 
 // scDetails holds a parsed summary of information about a StorageClass that are relevant to the recommender.
@@ -242,7 +243,10 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 
 // shouldSkipCacheRecommendations returns true if the user provided cache mount options or configured their own custom cache medium.
 func (config *ProfileConfig) shouldSkipCacheRecommendations(userMountOptions []string) bool {
-	// TODO(urielguzman): Also skip if the customer configured their own custom cache medium:
+	if cacheCreatedByUser, ok := config.podDetails.labels[webhook.GcsfuseCacheCreatedByUserLabel]; ok && cacheCreatedByUser == util.TrueStr {
+		klog.Warning("Detected custom cache medium provided by user, skipping smart cache recommendation to allow override")
+		return true
+	}
 	// https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-sidecar#configure-custom-read-cache-volume
 	// This will require adding a label to the Pod if a pre-existing gke-gcsfuse-cache volume is found before injection.
 	for _, option := range userMountOptions {
@@ -619,6 +623,7 @@ func buildPodDetails(isInitContainer bool, pod *corev1.Pod) (*podDetails, error)
 		namespace:     pod.Namespace,
 		name:          pod.Name,
 		sidecarLimits: sidecarLimits,
+		labels:        pod.Labels,
 	}, nil
 }
 

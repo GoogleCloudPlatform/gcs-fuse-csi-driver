@@ -46,6 +46,7 @@ const (
 
 	// gcsfuse profiles constants
 	GcsfuseProfilesManagedLabel                           = "gke-gcsfuse/profile-managed"
+	GcsfuseCacheCreatedByUserLabel                        = "gke-gcsfuse/cache-created-by-user"
 	BucketScanPendingSchedulingGate                       = "gke-gcsfuse/bucket-scan-pending"
 	SidecarContainerFileCacheEphemeralDiskVolumeName      = "gcsfuse-file-cache-ephemeral-disk"
 	SidecarContainerFileCacheEphemeralDiskVolumeMountPath = "/gcsfuse-file-cache-ephemeral-disk"
