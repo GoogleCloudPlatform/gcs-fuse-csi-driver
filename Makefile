@@ -34,12 +34,11 @@ IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
 
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
-WEBHOOK_BINARY = gcs-fuse-csi-driver-webhook
 PREFETCH_BINARY = gcs-fuse-csi-driver-metadata-prefetch
 
 DRIVER_IMAGE = ${REGISTRY}/${DRIVER_BINARY}
 SIDECAR_IMAGE = ${REGISTRY}/${SIDECAR_BINARY}
-WEBHOOK_IMAGE = ${REGISTRY}/${WEBHOOK_BINARY}
+WEBHOOK_IMAGE = ${REGISTRY}/gcs-fuse-csi-driver-webhook
 PREFETCH_IMAGE = ${REGISTRY}/${PREFETCH_BINARY}
 
 DOCKER_BUILDX_ARGS ?= --push --builder multiarch-multiplatform-builder --build-arg STAGINGVERSION=${STAGINGVERSION}
@@ -58,23 +57,11 @@ $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
 $(info SIDECAR_IMAGE is ${SIDECAR_IMAGE})
 $(info WEBHOOK_IMAGE is ${WEBHOOK_IMAGE})
 
-all: driver sidecar-mounter webhook metadata-prefetch
+all: driver
 
 driver:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
-
-sidecar-mounter:
-	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${SIDECAR_BINARY} cmd/sidecar_mounter/main.go
-
-metadata-prefetch:
-	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${PREFETCH_BINARY} cmd/metadata_prefetch/main.go
-
-webhook:
-	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${WEBHOOK_BINARY} cmd/webhook/main.go
 
 download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
@@ -148,20 +135,12 @@ else
 	docker manifest create ${PREFETCH_IMAGE}:${STAGINGVERSION} ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64
 endif
 
-	docker manifest create ${WEBHOOK_IMAGE}:${STAGINGVERSION} ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64
-
 	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${PREFETCH_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
 
 build-image-linux-amd64:
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/metadata_prefetch/Dockerfile \
-		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 \
-		--build-arg TARGETPLATFORM=linux/amd64 .
-
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_amd64 \
@@ -174,23 +153,27 @@ build-image-linux-amd64:
 		--platform linux/amd64 .
 
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/sidecar_mounter/Dockerfile \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg BINARY_NAME=${DRIVER_BINARY} \
+		--build-arg ENTRYPOINT_ARGS="--webhook" .
+
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_amd64 \
 		--platform linux/amd64 \
-		--build-arg TARGETPLATFORM=linux/amd64 .
+		--build-arg BINARY_NAME=${DRIVER_BINARY} \
+		--build-arg ENTRYPOINT_ARGS="--sidecar" .
 
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/webhook/Dockerfile \
-		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 .
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg BINARY_NAME=${DRIVER_BINARY} \
+		--build-arg ENTRYPOINT_ARGS="--metadata-prefetch" .
 
 build-image-linux-arm64:
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/metadata_prefetch/Dockerfile \
-		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 \
-		--build-arg TARGETPLATFORM=linux/arm64 .
-	\
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_arm64 \
@@ -203,10 +186,25 @@ build-image-linux-arm64:
 		--platform linux/arm64 .
 	\
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/sidecar_mounter/Dockerfile \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg BINARY_NAME=${DRIVER_BINARY} \
+		--build-arg ENTRYPOINT_ARGS="--webhook" .
+	\
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 \
-		--build-arg TARGETPLATFORM=linux/arm64 .
+		--build-arg BINARY_NAME=${DRIVER_BINARY} \
+		--build-arg ENTRYPOINT_ARGS="--sidecar" .
+	\
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg BINARY_NAME=${DRIVER_BINARY} \
+		--build-arg ENTRYPOINT_ARGS="--metadata-prefetch" .
 
 install:
 	$(MAKE) generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
@@ -226,11 +224,11 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
-	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_POOL}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
-	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
-	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
-	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"${IDENTITY_POOL}\"}]" > ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
-	echo "[{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--wi-node-label-check=${WI_NODE_LABEL_CHECK}\"}]" > ./deploy/overlays/${OVERLAY}/wi_node_label_check_patch.json
+	echo "[{{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_POOL}\"}}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
+	echo "[{{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
+	echo "[{{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${IDENTITY_PROVIDER}\"}}]" > ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
+	echo "[{{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"${IDENTITY_POOL}\"}}]" > ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
+	echo "[{{\"op\": \"add\",\"path\": \"/spec/template/spec/containers/0/args/-\",\"value\": \"--wi-node-label-check=${WI_NODE_LABEL_CHECK}\"}}]" > ./deploy/overlays/${OVERLAY}/wi_node_label_check_patch.json
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml > /dev/null
 	git restore ./deploy/overlays/${OVERLAY}/kustomization.yaml
 	git restore ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json

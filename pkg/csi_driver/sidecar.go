@@ -1,3 +1,4 @@
+
 /*
 Copyright 2018 The Kubernetes Authors.
 Copyright 2022 Google LLC
@@ -15,11 +16,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package driver
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -30,43 +30,34 @@ import (
 	"time"
 
 	"cloud.google.com/go/profiler"
-	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
 
 var (
-	gcsfusePath                           = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath                        = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	_                                     = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
-	kubeconfigPath                        = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	informerResyncDurationSec             = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
-	storageServiceAndBucketAccessCap      = flag.Duration("storage-service-check-retry-cap", 60*time.Minute, "storage service creation and bucket access check exponential retry cap")
-	storageServiceAndBucketAccessSteps    = flag.Int("storage-service-check-retry-steps", math.MaxInt, "storage service creation and bucket access check exponential retry cap") // Effectively infinite retry steps
-	storageServiceAndBucketAccessFactor   = flag.Float64("storage-service-check-retry-factor", 2.0, "storage service creation and bucket access check exponential retry factor")
-	storageServiceAndBucketAccessJitter   = flag.Float64("storage-service-check-retry-jitter", 0.1, "storage service creation and bucket access check exponential retry jitter")
-	storageServiceAndBucketAccessDuration = flag.Duration("storage-service-check-retry-duration", 5*time.Second, "storage service creation and bucket access check exponential retry initial duration")
-
-	// This is set at compile time.
-	version = "unknown"
+	gcsfusePath                           = "/gcsfuse"
+	volumeBasePath                        = webhook.SidecarContainerTmpVolumeMountPath + "/.volumes"
+	gracePeriod                           = 0
+	storageServiceAndBucketAccessCap      = 60 * time.Minute
+	storageServiceAndBucketAccessSteps    = math.MaxInt // Effectively infinite retry steps
+	storageServiceAndBucketAccessFactor   = 2.0
+	storageServiceAndBucketAccessJitter   = 0.1
+	storageServiceAndBucketAccessDuration = 5 * time.Second
 )
 
-func main() {
-	klog.InitFlags(nil)
-	flag.Parse()
-
+func RunSidecar(version string) {
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 
-	socketPathPattern := *volumeBasePath + "/*/socket"
+	socketPathPattern := volumeBasePath + "/*/socket"
 	socketPaths, err := filepath.Glob(socketPathPattern)
 	if err != nil {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
-	mounter := sidecarmounter.New(*gcsfusePath)
+	mounter := sidecarmounter.New(gcsfusePath)
 	ctx, cancel := context.WithCancel(context.Background())
 	flagsFromDriver := map[string]string{}
-	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
+	defaultingFlagFilePath := volumeBasePath + "/" + FlagFileForDefaultingPath
 	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
 	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
 		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
@@ -74,7 +65,7 @@ func main() {
 			klog.Fatalf("failed to read defaulting-flag file: %v", err)
 		}
 		fileContent := string(machineTypeBytes)
-		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
+		flagsFromDriver = ParseFlagMapFromFlagFile(fileContent)
 	}
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
@@ -101,14 +92,15 @@ func main() {
 				}
 				mounter.TokenManager = tm
 				mounter.StorageServiceManager = ssm
-				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap
-				mc.SidecarRetryConfig.Steps = *storageServiceAndBucketAccessSteps
-				mc.SidecarRetryConfig.Factor = *storageServiceAndBucketAccessFactor
-				mc.SidecarRetryConfig.Duration = *storageServiceAndBucketAccessDuration
-				mc.SidecarRetryConfig.Jitter = *storageServiceAndBucketAccessJitter
+				mc.SidecarRetryConfig.Cap = storageServiceAndBucketAccessCap
+				mc.SidecarRetryConfig.Steps = storageServiceAndBucketAccessSteps
+				mc.SidecarRetryConfig.Factor = storageServiceAndBucketAccessFactor
+				mc.SidecarRetryConfig.Duration = storageServiceAndBucketAccessDuration
+				mc.SidecarRetryConfig.Jitter = storageServiceAndBucketAccessJitter
 			}
 			if err := mounter.Mount(ctx, mc); err != nil {
-				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v
+", mc.BucketName, mc.VolumeName, err))
 			}
 		}
 	}
@@ -123,14 +115,14 @@ func main() {
 		for {
 			<-ticker.C
 			// If exit file is detected, send a syscall.SIGTERM signal to the signal channel.
-			if _, err := os.Stat(*volumeBasePath + "/exit"); err == nil {
+			if _, err := os.Stat(volumeBasePath + "/exit"); err == nil {
 				klog.Info("all the other containers terminated in the Pod, exiting the sidecar container.")
 
 				// After the Kubernetes native sidecar container feature is adopted,
 				// we should propagate the SIGTERM signal outside of this goroutine.
 				cancel()
 
-				if err := os.Remove(*volumeBasePath + "/exit"); err != nil {
+				if err := os.Remove(volumeBasePath + "/exit"); err != nil {
 					klog.Error("failed to remove the exit file from emptyDir.")
 				}
 
@@ -144,7 +136,7 @@ func main() {
 	envVar := os.Getenv("NATIVE_SIDECAR")
 	isNativeSidecar, err := strconv.ParseBool(envVar)
 	if envVar != "" && err != nil {
-		klog.Warningf(`env variable "%s" could not be converted to boolean`, envVar)
+		klog.Warningf("env variable '%s' could not be converted to boolean", envVar)
 	}
 	// When the pod contains a regular container, we monitor for the exit file.
 	if !isNativeSidecar {

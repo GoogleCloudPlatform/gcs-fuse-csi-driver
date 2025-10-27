@@ -18,6 +18,8 @@ FROM --platform=$BUILDPLATFORM golang:1.24.6 AS driver-builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
+ARG BINARY_NAME=gcs-fuse-csi-driver
+ARG ENTRYPOINT_ARGS=""
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
@@ -74,6 +76,6 @@ RUN if ldd /bin/mountpoint | grep "not found"; then echo "!!! Missing deps for m
 # Final build stage, create the real Docker image with ENTRYPOINT
 FROM output-image
 
-COPY --from=driver-builder /bin/gcs-fuse-csi-driver /gcs-fuse-csi-driver
+COPY --from=driver-builder /bin/${BINARY_NAME} /${BINARY_NAME}
 
-ENTRYPOINT ["/gcs-fuse-csi-driver"]
+ENTRYPOINT ["/${BINARY_NAME}", ${ENTRYPOINT_ARGS}]

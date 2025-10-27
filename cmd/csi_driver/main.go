@@ -79,11 +79,54 @@ var (
 
 	// These are set at compile time.
 	version = "unknown"
+
+	// Identity and access
+	runSidecar          = flag.Bool("sidecar", false, "Run sidecar mounter.")
+	runWebhook          = flag.Bool("webhook", false, "Run admission webhook.")
+	runMetadataPrefetch = flag.Bool("metadata-prefetch", false, "Run metadata prefetcher.")
+
+	// Webhook flags
+	port                                    = flag.Int("port", 443, "The port that the webhook server serves at.")
+	healthProbeBindAddress                  = flag.String("health-probe-bind-address", ":8080", "The TCP address that the controller should bind to for serving health probes.")
+	certDir                                 = flag.String("cert-dir", "/etc/tls-certs", "The directory that contains the server key and certificate.")
+	certName                                = flag.String("cert-name", "cert.pem", "The server certificate name.")
+	keyName                                 = flag.String("key-name", "key.pem", "The server key name.")
+	imagePullPolicy                         = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
+	cpuRequest                              = flag.String("sidecar-cpu-request", "250m", "The default CPU request for gcsfuse sidecar container.")
+	cpuLimit                                = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
+	memoryRequest                           = flag.String("sidecar-memory-request", "256Mi", "The default memory request for gcsfuse sidecar container.")
+	memoryLimit                             = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
+	ephemeralStorageRequest                 = flag.String("sidecar-ephemeral-storage-request", "5Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
+	ephemeralStorageLimit                   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
+	sidecarImage                            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
+	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
+	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
+	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
+	metadataMemoryLimit                     = flag.String("metadata-sidecar-memory-limit", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory limit.")
+	metadataPrefetchCPURequest              = flag.String("metadata-sidecar-cpu-request", "10m", "The default cpu request for gcsfuse memory prefetch sidecar container cpu request.")
+	metadataPrefetchCPULimit                = flag.String("metadata-sidecar-cpu-limit", "50m", "Flag to use default value for gcsfuse memory prefetch sidecar container cpu limit.")
+	metadataPrefetchEphemeralStorageRequest = flag.String("metadata-sidecar-ephemeral-storage-request", "10Mi", "The default value for gcsfuse memory prefetch sidecar ephemeral storage request.")
+	metadataPrefetchEphemeralStorageLimit   = flag.String("metadata-sidecar-ephemeral-storage-limit", "10Mi", "The default value for gcsfuse memory prefetch sidecar ephemeral storage limit.")
 )
 
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	if *runSidecar {
+		driver.RunSidecar(version)
+		os.Exit(0)
+	}
+
+	if *runWebhook {
+		driver.RunWebhook(version, *sidecarImage, *imagePullPolicy, *cpuRequest, *cpuLimit, *memoryRequest, *memoryLimit, *ephemeralStorageRequest, *ephemeralStorageLimit, *metadataSidecarImage, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit, *certDir, *certName, *keyName, *healthProbeBindAddress, *port, *injectSAVol, *enableGCSFuseProfiles)
+		os.Exit(0)
+	}
+
+	if *runMetadataPrefetch {
+		driver.RunMetadataPrefetch()
+		os.Exit(0)
+	}
 
 	// ctx enables graceful shutdown. Application components should
 	// respect ctx.Done() for cleanup.

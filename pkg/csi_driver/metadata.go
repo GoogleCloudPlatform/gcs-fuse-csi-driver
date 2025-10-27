@@ -1,3 +1,4 @@
+
 /*
 Copyright 2024 Google LLC
 
@@ -14,11 +15,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package driver
 
 import (
 	"context"
-	"flag"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -32,10 +32,7 @@ const (
 	mountPathsLocation = "/volumes/"
 )
 
-func main() {
-	klog.InitFlags(nil)
-	flag.Parse()
-
+func RunMetadataPrefetch() {
 	// Create cancellable context to pass into exec.
 	ctx, cancel := context.WithCancel(context.Background())
 

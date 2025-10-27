@@ -179,24 +179,6 @@ steps:
         --build-arg STAGINGVERSION=${_STAGINGVERSION} \
         --file ./cmd/csi_driver/Dockerfile .
 
-  - id: 'build-and-push-sidecar'
-    name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['prepare-gcsfuse-binary']
-    entrypoint: 'bash'
-    args:
-    - '-c'
-    - |
-      set -ex
-      PLATFORM="linux/amd64"
-      [[ "${_BUILD_ARM}" == "true" ]] && PLATFORM="linux/amd64,linux/arm64"
-      
-      docker buildx build \
-        --platform $$PLATFORM --push --provenance=false --quiet \
-        --tag ${_REGISTRY}/gcs-fuse-csi-driver-sidecar-mounter:${_STAGINGVERSION} \
-        --build-arg STAGINGVERSION=${_STAGINGVERSION} \
-        --build-arg TARGETPLATFORM=$$PLATFORM \
-        --file ./cmd/sidecar_mounter/Dockerfile .
-
   - id: 'build-and-push-webhook'
     name: 'gcr.io/cloud-builders/docker'
     waitFor: ['prepare-gcsfuse-binary']
@@ -210,22 +192,6 @@ steps:
         --platform linux/amd64 --push --provenance=false --quiet \
         --tag ${_REGISTRY}/gcs-fuse-csi-driver-webhook:${_STAGINGVERSION} \
         --build-arg STAGINGVERSION=${_STAGINGVERSION} \
-        --file ./cmd/webhook/Dockerfile .
-
-  - id: 'build-and-push-prefetch'
-    name: 'gcr.io/cloud-builders/docker'
-    waitFor: ['prepare-gcsfuse-binary']
-    entrypoint: 'bash'
-    args:
-    - '-c'
-    - |
-      set -ex
-      PLATFORM="linux/amd64"
-      [[ "${_BUILD_ARM}" == "true" ]] && PLATFORM="linux/amd64,linux/arm64"
-      
-      docker buildx build \
-        --platform $$PLATFORM --push --provenance=false --quiet \
-        --tag ${_REGISTRY}/gcs-fuse-csi-driver-metadata-prefetch:${_STAGINGVERSION} \
-        --build-arg STAGINGVERSION=${_STAGINGVERSION} \
-        --build-arg TARGETPLATFORM=$$PLATFORM \
-        --file ./cmd/metadata_prefetch/Dockerfile .
+        --build-arg BINARY_NAME=gcs-fuse-csi-driver \
+        --build-arg ENTRYPOINT_ARGS="--webhook" \
+        --file ./cmd/csi_driver/Dockerfile .
