@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -887,5 +888,49 @@ func gotExpectedError(t *testing.T, wantErr error, gotErr error, testName string
 	}
 	if gotErr.Error() != wantErr.Error() {
 		t.Errorf("%s: got error message: %q, expected: %q", testName, gotErr.Error(), wantErr.Error())
+	}
+}
+
+func TestTransformKeysToSet(t *testing.T) {
+	tests := []struct {
+		name     string
+		inputMap map[string]string
+		wantSet  map[string]struct{}
+	}{
+		{
+			name:     "Basic case with multiple keys",
+			inputMap: map[string]string{"key1": "valueA", "key2": "valueB", "key3": "valueC"},
+			wantSet:  map[string]struct{}{"key1": {}, "key2": {}, "key3": {}},
+		},
+		{
+			name:     "Empty input map",
+			inputMap: map[string]string{},
+			wantSet:  map[string]struct{}{},
+		},
+		{
+			name:     "Map with single key",
+			inputMap: map[string]string{"single": "value"},
+			wantSet:  map[string]struct{}{"single": {}},
+		},
+		{
+			name:     "Input map with empty string key",
+			inputMap: map[string]string{"": "empty", "valid": "data"},
+			wantSet:  map[string]struct{}{"": {}, "valid": {}},
+		},
+		{
+			name:     "Nil input map",
+			inputMap: nil,
+			wantSet:  map[string]struct{}{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSet := transformKeysToSet(tt.inputMap)
+
+			if !reflect.DeepEqual(gotSet, tt.wantSet) {
+				t.Errorf("transformKeysToSet() = %v, want %v", gotSet, tt.wantSet)
+			}
+		})
 	}
 }
