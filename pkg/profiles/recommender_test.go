@@ -2046,6 +2046,31 @@ func TestLeftJoinOnRecommendedMountOptionKeys(t *testing.T) {
 			},
 		},
 		{
+			name: "Pre-existing cache in customer's pod spec - Should not recommend cache configs",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dir"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: &podDetails{labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}},
+			},
+			wantOptions: []string{
+				"implicit-dir",
+				// No cache recommendations.
+			},
+		},
+		{
 			name: "Error from recommendCacheConfigs - Should propagate error",
 			config: &ProfileConfig{
 				pvDetails:   nil, // Causes error in recommendCacheConfigs
