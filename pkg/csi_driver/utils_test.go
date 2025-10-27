@@ -792,50 +792,78 @@ func TestGenerateDisallowedFlagsMap(t *testing.T) {
 	driver.config.FeatureOptions = &GCSDriverFeatureOptions{
 		FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{
 			EnableGcsfuseProfilesInternal: false,
+			Enabled:                       false,
 		},
 	}
 	cases := []struct {
-		name           string
-		image          string
-		expectedMap    map[string]bool
-		expectErr      error
-		enableProfiles bool
+		name                   string
+		image                  string
+		expectedMap            map[string]bool
+		expectErr              error
+		enableProfilesInternal bool
+		enableProfiles         bool
 	}{
 		{
-			name:           "nil sidecar image results in failed map generation",
-			image:          "",
-			expectedMap:    map[string]bool{},
-			expectErr:      fmt.Errorf("unable to get disallowed flags, sidecar image is empty"),
-			enableProfiles: false,
+			name:                   "nil sidecar image results in failed map generation",
+			image:                  "",
+			expectedMap:            map[string]bool{},
+			expectErr:              fmt.Errorf("unable to get disallowed flags, sidecar image is empty"),
+			enableProfilesInternal: false,
+			enableProfiles:         false,
 		},
 		{
-			name:           "sidecar version predates storage profiles - results in disllowed profile flag",
-			image:          "v1.18.0-gke.1",
-			expectedMap:    map[string]bool{GCSFuseProfileFlag: true},
-			expectErr:      nil,
-			enableProfiles: true,
+			name:                   "unsupported sidecar version for profiles mount option and file cache medium, should disallow both flags",
+			image:                  "v1.18.0-gke.1",
+			expectedMap:            map[string]bool{GCSFuseProfileFlag: true, util.FileCacheMediumConst: true},
+			expectErr:              nil,
+			enableProfilesInternal: true,
+			enableProfiles:         true,
 		},
 		{
-			name:           "sidecar version supports storage profiles but feature is disabled - results in disllowed profile flag",
-			image:          "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.2@sha256:abcd",
-			expectedMap:    map[string]bool{GCSFuseProfileFlag: true},
-			enableProfiles: false,
-			expectErr:      nil,
+			name:                   "enable-gcsfuse-profiles=false & enable-gcsfuse-profiles-internal=false - should disallow both flags",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+			expectedMap:            map[string]bool{GCSFuseProfileFlag: true, util.FileCacheMediumConst: true},
+			enableProfilesInternal: false,
+			enableProfiles:         false,
+			expectErr:              nil,
 		},
 		{
-			name:           "sidecar version supports storage profiles and feature is enables - results in empty map",
-			image:          "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.4-gke.2@sha256:abcd",
-			expectedMap:    map[string]bool{},
-			enableProfiles: true,
-			expectErr:      nil,
+			name:                   "supported sidecar version for profiles mount option only - should disable file-cache-medium flag",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.2@sha256:abcd",
+			expectedMap:            map[string]bool{util.FileCacheMediumConst: true},
+			expectErr:              nil,
+			enableProfilesInternal: true,
+			enableProfiles:         true,
+		},
+		{
+			name:                   "supported sidecar version for profiles and file cache medium, enable-gcsfuse-profiles-internal=false - should disable profile mount option only",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+			expectedMap:            map[string]bool{GCSFuseProfileFlag: true},
+			expectErr:              nil,
+			enableProfilesInternal: false,
+			enableProfiles:         true,
+		},
+		{
+			name:                   "supported sidecar version for profiles and file cache medium, enable-gcsfuse-profiles=false - should disable file cache medium option only",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.2@sha256:abcd",
+			expectedMap:            map[string]bool{util.FileCacheMediumConst: true},
+			expectErr:              nil,
+			enableProfilesInternal: true,
+			enableProfiles:         false,
+		},
+		{
+			name:                   "supported sidecar version for both profiles mount option and file cache medium - should enable both flags",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+			expectedMap:            map[string]bool{},
+			enableProfilesInternal: true,
+			enableProfiles:         true,
+			expectErr:              nil,
 		},
 	}
 
 	for _, test := range cases {
-		driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal = false
-		if test.enableProfiles {
-			driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal = true
-		}
+		driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal = test.enableProfilesInternal
+		driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = test.enableProfiles
 		resultMap, err := driver.generateDisallowedFlagsMap(test.image)
 		gotExpectedError(t, test.expectErr, err, test.name)
 		if diff := cmp.Diff(resultMap, test.expectedMap); diff != "" {

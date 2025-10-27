@@ -63,6 +63,7 @@ type MountConfig struct {
 	EnableSidecarBucketAccessCheck bool                  `json:"-"`
 	TokenServerIdentityPool        string                `json:"-"`
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
+	FileCacheMedium                string                `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -277,6 +278,10 @@ func (mc *MountConfig) prepareMountArgs() {
 		case util.EnableCloudProfilerForSidecarConst:
 			mc.EnableCloudProfilerForSidecar = value == util.TrueStr
 			continue
+
+		case util.FileCacheMediumConst:
+			mc.FileCacheMedium = value
+			continue
 		}
 
 		switch {
@@ -300,6 +305,28 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Warningf("got invalid arguments for volume %q: %v. Will discard invalid args and continue to mount.",
 			invalidArgs, mc.VolumeName)
 	}
+
+	// This flag can only be passed by the CSI driver if the following two things are true:
+	//   1. User is using the gcsfuse profiles feature.
+	//   2. User did not create a custom cache: https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-sidecar#configure-custom-read-cache-volume
+	// This allows customers to override the caching medium while using the profiles feature, if they wish.
+	if mc.FileCacheMedium != "" {
+		cacheDir := ""
+		switch mc.FileCacheMedium {
+		case util.MediumRAM:
+			cacheDir = webhook.SidecarContainerFileCacheRamDiskVolumeMountPath
+		case util.MediumLSSD:
+			cacheDir = webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath
+		default:
+			klog.Warningf("got invalid value for %q: %q. Will discard and continue to mount.", util.FileCacheMediumConst, mc.FileCacheMedium)
+		}
+		// Ensure a unique directory is passed for each volume.
+		cacheDir = filepath.Join(cacheDir, ".volumes", mc.VolumeName)
+		configFileFlagMap["cache-dir"] = cacheDir
+		mc.CacheDir = cacheDir
+		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
+	}
+
 	mc.FlagMap, mc.ConfigFileFlagMap = flagMap, configFileFlagMap
 }
 
