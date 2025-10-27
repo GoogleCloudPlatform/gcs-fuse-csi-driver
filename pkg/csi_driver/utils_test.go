@@ -739,15 +739,15 @@ func TestRemoveDisallowedMountOptions(t *testing.T) {
 		},
 		{
 			name:            "nil disallowed flags, results in original mountOptions",
-			mountOptions:    []string{"debug_fuse", "profile=inference"},
+			mountOptions:    []string{"debug_fuse", "profile=aiml-serving"},
 			disallowedFlags: nil,
-			expected:        []string{"debug_fuse", "profile=inference"},
+			expected:        []string{"debug_fuse", "profile=aiml-serving"},
 		},
 		{
 			name:            "no disallowed flags specified, results in original mountOptions",
-			mountOptions:    []string{"debug_fuse", "profile=inference"},
+			mountOptions:    []string{"debug_fuse", "profile=aiml-serving"},
 			disallowedFlags: map[string]bool{"NA": true},
-			expected:        []string{"debug_fuse", "profile=inference"},
+			expected:        []string{"debug_fuse", "profile=aiml-serving"},
 		},
 		{
 			name:         "debug_fuse in disallowed flags, results in mountOptions stripped of debug_fuse",
@@ -759,7 +759,7 @@ func TestRemoveDisallowedMountOptions(t *testing.T) {
 		},
 		{
 			name:         "all flags are disallowed, results in all flags stripped from mount options",
-			mountOptions: []string{"debug_gcs", "profile=inference", "profile:inference"},
+			mountOptions: []string{"debug_gcs", "profile=aiml-serving", "profile:aiml-serving"},
 			disallowedFlags: map[string]bool{
 				"debug_gcs": true,
 				"profile":   true,

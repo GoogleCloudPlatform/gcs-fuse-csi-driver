@@ -1028,7 +1028,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 
 // checkPVRelevance determines if a PersistentVolume is relevant for scanning.
 // A PV is relevant if it uses the gcsfuse CSI driver and its StorageClass
-// has a workloadType parameter set to inference, training, or checkpointing.
+// has a workloadType parameter set to serving, training, or checkpointing.
 // The PV is relevant if the current time - last scan time > scan TTL, or if the status is "override".
 // This function returns a bucketInfo with the bucket name and the directory if
 // relevant, otherwise, it will return nil and any error.
