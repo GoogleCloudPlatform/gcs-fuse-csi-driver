@@ -146,13 +146,22 @@ type recommendation struct {
 
 // BuildProfileConfigParams contains the parameters needed to build a profile configuration.
 type BuildProfileConfigParams struct {
-	targetPath          string
-	clientset           clientset.Interface
-	volumeAttributeKeys map[string]struct{}
-	nodeName            string
-	podNamespace        string
-	podName             string
-	isInitContainer     bool
+	TargetPath          string
+	Clientset           clientset.Interface
+	VolumeAttributeKeys map[string]struct{}
+	NodeName            string
+	PodNamespace        string
+	PodName             string
+	IsInitContainer     bool
+}
+
+// LeftJoinOnRecommendedVolumeAttributeKeys returns the a copy of the input map, merged with the profile's.
+// recommended VolumeAttributes. This function respects the input's keys in the case of duplication.
+func (c *ProfileConfig) LeftJoinOnRecommendedVolumeAttributeKeys(input map[string]string) map[string]string {
+	if c == nil || c.scDetails == nil {
+		return nil
+	}
+	return leftJoinMapsOnKeys(input, c.scDetails.volumeAttributes)
 }
 
 // BuildProfileConfig constructs a ProfileConfig by fetching and validating
@@ -161,13 +170,13 @@ type BuildProfileConfigParams struct {
 // treated as volume attributes.
 func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error) {
 	// Get the PV name from target path.
-	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(params.targetPath)
+	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(params.TargetPath)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.targetPath, err)
+		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.TargetPath, err)
 	}
 
 	// Get the PV object using the PV name.
-	pv, err := params.clientset.GetPV(volumeName)
+	pv, err := params.Clientset.GetPV(volumeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "pv %q not found: %v", volumeName, err)
@@ -189,7 +198,7 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}
 
 	// Get the StorageClass object from the StorageClassName.
-	sc, err := params.clientset.GetSC(scName)
+	sc, err := params.Clientset.GetSC(scName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "sc %q not found: %v", scName, err)
@@ -198,18 +207,18 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}
 
 	// Get the scDetails from the StorageClass object.
-	scDetails, err := buildSCDetails(sc, params.volumeAttributeKeys)
+	scDetails, err := buildSCDetails(sc, params.VolumeAttributeKeys)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
 	}
 
 	// Get the Node object using the Node name.
-	node, err := params.clientset.GetNode(params.nodeName)
+	node, err := params.Clientset.GetNode(params.NodeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "node %q not found: %v", params.nodeName, err)
+			return nil, status.Errorf(codes.NotFound, "node %q not found: %v", params.NodeName, err)
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get node %q: %v", params.nodeName, err)
+		return nil, status.Errorf(codes.Internal, "failed to get node %q: %v", params.NodeName, err)
 	}
 
 	// Get the nodeDetails from the Node object.
@@ -219,16 +228,16 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	}
 
 	// Get the Pod object using the Pod namespace/name.
-	pod, err := params.clientset.GetPod(params.podNamespace, params.podName)
+	pod, err := params.Clientset.GetPod(params.PodNamespace, params.PodName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "pod %s/%s not found: %v", params.podNamespace, params.podName, err)
+			return nil, status.Errorf(codes.NotFound, "pod %s/%s not found: %v", params.PodNamespace, params.PodName, err)
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", params.podNamespace, params.podName, err)
+		return nil, status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", params.PodNamespace, params.PodName, err)
 	}
 
 	// Get the podDetails from the Pod object.
-	podDetails, err := buildPodDetails(params.isInitContainer, pod)
+	podDetails, err := buildPodDetails(params.IsInitContainer, pod)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod details: %v", err)
 	}
@@ -962,4 +971,31 @@ func leftJoinMountOptionsOnKeys(dstOpts, srcOpts []string) ([]string, error) {
 		}
 	}
 	return mountOptions, nil
+}
+
+// leftJoinMapsOnKeys merges key/value pairs from src into dst.
+// A key/value pair from src is added to dst only if the key
+// does NOT already exist in dst.
+func leftJoinMapsOnKeys(dst, src map[string]string) map[string]string {
+	if dst == nil {
+		return src
+	}
+	if src == nil {
+		return dst
+	}
+	result := map[string]string{}
+	caseInsensitiveDstKeys := map[string]struct{}{}
+	for k, v := range dst {
+		result[k] = v
+		caseInsensitiveDstKeys[strings.ToLower(k)] = struct{}{}
+	}
+	// Check if the case-insensitive keys match before adding the source key/val pair to the destination map.
+	for key, value := range src {
+		caseInsensitiveSrcKey := strings.ToLower(key)
+		if _, exists := caseInsensitiveDstKeys[caseInsensitiveSrcKey]; !exists {
+			result[key] = value
+			caseInsensitiveDstKeys[caseInsensitiveSrcKey] = struct{}{}
+		}
+	}
+	return result
 }
