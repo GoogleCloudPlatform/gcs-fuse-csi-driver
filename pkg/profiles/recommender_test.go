@@ -354,12 +354,12 @@ func TestBuildProfileConfig(t *testing.T) {
 			}
 
 			got, err := BuildProfileConfig(&BuildProfileConfigParams{
-				TargetPath:          tt.targetPath,
-				Clientset:           fakeClient,
-				VolumeAttributeKeys: csiDriverVolumeAttributeKeys,
-				NodeName:            tt.nodeName,
-				PodNamespace:        tt.podNamespace,
-				PodName:             tt.podName,
+				targetPath:          tt.targetPath,
+				clientset:           fakeClient,
+				volumeAttributeKeys: csiDriverVolumeAttributeKeys,
+				nodeName:            tt.nodeName,
+				podNamespace:        tt.podNamespace,
+				podName:             tt.podName,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -2282,93 +2282,6 @@ func TestLeftJoinMountOptionsOnKeys(t *testing.T) {
 			}
 			if !reflect.DeepEqual(gotOpts, tc.wantOpts) {
 				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got options \n%v, want \n%v", tc.dstOpts, tc.srcOpts, gotOpts, tc.wantOpts)
-			}
-		})
-	}
-}
-
-func TestLeftJoinMapsOnKeys(t *testing.T) {
-	tests := []struct {
-		name string
-		src  map[string]string
-		dst  map[string]string
-		want map[string]string
-	}{
-		{
-			name: "dst_nil - Should return src",
-			src:  map[string]string{"a": "1"},
-			dst:  nil,
-			want: map[string]string{"a": "1"},
-		},
-		{
-			name: "src_nil - Should return dst",
-			src:  nil,
-			dst:  map[string]string{"b": "2"},
-			want: map[string]string{"b": "2"},
-		},
-		{
-			name: "both_nil - Should return nil",
-			src:  nil,
-			dst:  nil,
-			want: nil,
-		},
-		{
-			name: "dst_empty - Should return src elements",
-			src:  map[string]string{"a": "1", "b": "2"},
-			dst:  map[string]string{},
-			want: map[string]string{"a": "1", "b": "2"},
-		},
-		{
-			name: "src_empty - Should return dst elements",
-			src:  map[string]string{},
-			dst:  map[string]string{"a": "1", "b": "2"},
-			want: map[string]string{"a": "1", "b": "2"},
-		},
-		{
-			name: "no_overlap - Should merge all elements",
-			src:  map[string]string{"a": "1"},
-			dst:  map[string]string{"b": "2"},
-			want: map[string]string{"a": "1", "b": "2"},
-		},
-		{
-			name: "overlap_exact_key - Should keep dst value",
-			src:  map[string]string{"a": "1", "b": "new"},
-			dst:  map[string]string{"b": "2", "c": "3"},
-			want: map[string]string{"a": "1", "b": "2", "c": "3"},
-		},
-		{
-			name: "overlap_case_insensitive - Should keep dst value based on case-insensitive key",
-			src:  map[string]string{"A": "1", "B": "new"},
-			dst:  map[string]string{"a": "2", "c": "3"},
-			want: map[string]string{"a": "2", "B": "new", "c": "3"},
-		},
-		{
-			name: "mixed_overlap_and_case - Should merge non-conflicting keys",
-			src:  map[string]string{"Key1": "src1", "Key2": "src2", "Key3": "src3"},
-			dst:  map[string]string{"key1": "dst1", "KEY2": "dst2", "Other": "dstOther"},
-			want: map[string]string{"key1": "dst1", "KEY2": "dst2", "Key3": "src3", "Other": "dstOther"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			dstOriginal := make(map[string]string)
-			if tc.dst != nil {
-				for k, v := range tc.dst {
-					dstOriginal[k] = v
-				}
-			}
-
-			got := leftJoinMapsOnKeys(tc.dst, tc.src)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("MergeMapsIfKeyUnset(%v, %v) returned diff (-want +got):\n%s", tc.src, dstOriginal, diff)
-			}
-
-			// Verify dst was not modified in place
-			if tc.dst != nil {
-				if diff := cmp.Diff(dstOriginal, tc.dst); diff != "" {
-					t.Errorf("MergeMapsIfKeyUnset(%v, %v) unexpectedly modified dst in place:\n%s", tc.src, dstOriginal, diff)
-				}
 			}
 		})
 	}

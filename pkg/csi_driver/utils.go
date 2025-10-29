@@ -299,12 +299,18 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 }
 
 // parseRequestArguments parses arguments from given NodePublishVolumeRequest.
-func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]string) (string, string, []string, bool, bool, bool, bool, error) {
+func parseRequestArguments(req *csi.NodePublishVolumeRequest) (string, string, string, []string, bool, bool, bool, bool, error) {
+	targetPath := req.GetTargetPath()
+	if len(targetPath) == 0 {
+		return "", "", "", nil, false, false, false, false, errors.New("NodePublishVolume target path must be provided")
+	}
+
+	vc := req.GetVolumeContext()
 	bucketName := util.ParseVolumeID(req.GetVolumeId())
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
-			return "", "", nil, false, false, false, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+			return "", "", "", nil, false, false, false, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
 		}
 	}
 	fuseMountOptions := []string{}
@@ -324,10 +330,10 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]stri
 
 	fuseMountOptions, userSpecifiedIdentityProvider, skipCSIBucketAccessCheck, enableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, err := parseVolumeAttributes(fuseMountOptions, vc)
 	if err != nil {
-		return "", "", nil, false, false, false, false, err
+		return "", "", "", nil, false, false, false, false, err
 	}
 
-	return bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, nil
+	return targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, nil
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {
@@ -630,12 +636,4 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 	}
 
 	return disallowedFlags, nil
-}
-
-func transformKeysToSet(inputMap map[string]string) map[string]struct{} {
-	outputSet := make(map[string]struct{})
-	for key := range inputMap {
-		outputSet[key] = struct{}{}
-	}
-	return outputSet
 }
