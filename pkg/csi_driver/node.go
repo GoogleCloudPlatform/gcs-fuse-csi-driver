@@ -117,10 +117,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			IsInitContainer:     isInitContainer,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to build profile config: %v", err)
+			return nil, fmt.Errorf("failed to build profile config: %w", err)
 		}
 		// Merge profile VolumeAttributes into the VolumeContext, respecting pre-existing keys.
-		vc = profile.LeftJoinOnRecommendedVolumeAttributeKeys(vc)
+		vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
 	}
 
 	// Validate arguments
@@ -167,7 +167,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// Check if the sidecar container was injected into the Pod
 	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "") {
@@ -300,9 +299,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if profilesEnabled {
 		// Merge the recommended mount options with user's mount options if the profiles feature
 		// is enabled. This operation respects the user's mount options if they are duplicated.
-		fuseMountOptions, err = profile.LeftJoinOnRecommendedMountOptionKeys(fuseMountOptions)
+		fuseMountOptions, err = profile.MergeRecommendedMountOptionsOnMissingKeys(fuseMountOptions)
 		if err != nil {
-			return nil, fmt.Errorf("failed to recommend mount options: %v", err)
+			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
 		}
 	}
 
