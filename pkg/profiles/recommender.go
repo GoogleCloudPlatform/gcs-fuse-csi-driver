@@ -17,6 +17,7 @@ limitations under the License.
 package profiles
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -266,6 +267,111 @@ func (config *ProfileConfig) shouldSkipCacheRecommendations(userMountOptions []s
 	return false
 }
 
+// Structured log format for GCSFuseCSIRecommendation
+type GCSFuseCSIRecommendationLog struct {
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Target   struct {
+		PVName   string `json:"pvName"`
+		NodeName string `json:"nodeName"`
+		PodName  string `json:"podName"`
+	} `json:"target"`
+	InputSignals struct {
+		BucketTotalObjects                   int64  `json:"bucketTotalObjects"`
+		BucketTotalDataSizeBytes             int64  `json:"bucketTotalDataSizeBytes"`
+		RequiredFileCacheBytes               int64  `json:"requiredFileCacheBytes"`
+		RequiredMetadataStatCacheBytes       int64  `json:"requiredMetadataStatCacheBytes"`
+		RequiredMetadataTypeCacheBytes       int64  `json:"requiredMetadataTypeCacheBytes"`
+		NodeType                             string `json:"nodeType"`
+		NodeAllocatableMemoryBytes           int64  `json:"nodeAllocatableMemoryBytes"`
+		NodeAllocatableEphemeralStorageBytes int64  `json:"nodeAllocatableEphemeralStorageBytes"`
+		SidecarLimitMemoryBytes              int64  `json:"sidecarLimitMemoryBytes"`
+		SidecarLimitEphemeralStorageBytes    int64  `json:"sidecarLimitEphemeralStorageBytes"`
+		FuseBudgetMemoryBytes                int64  `json:"fuseBudgetMemoryBytes"`
+		FuseBudgetEphemeralStorageBytes      int64  `json:"fuseBudgetEphemeralStorageBytes"`
+	} `json:"inputSignals"`
+	Decision struct {
+		MetadataStatCacheBytes int64  `json:"metadataStatCacheBytes"`
+		MetadataTypeCacheBytes int64  `json:"metadataTypeCacheBytes"`
+		FileCacheBytes         int64  `json:"fileCacheBytes"`
+		FileCacheMedium        string `json:"fileCacheMedium"`
+	} `json:"decision"`
+}
+
+// logRecommendation logs a summary of the decisions made by the recommender. Users can click on the message
+// to expand a JSON log with input signals, target information, and decisions used for a complete understanding
+// of the recommendation.
+func logRecommendation(config *ProfileConfig, recommendation *recommendation, requirement *cacheRequirements, memoryBudget, ephemeralStorageBudget int64) error {
+	summaryMessage := fmt.Sprintf("GCSFuseCSIRecommendation: Recommended cache configs for PV %s and Pod %s/%s:", config.pvDetails.name, config.podDetails.namespace, config.podDetails.name)
+
+	if recommendation.fileCacheBytes > 0 && recommendation.fileCacheMedium != "" {
+		summaryMessage = fmt.Sprintf("%s FileCache: %dMiB (%s)", summaryMessage, bytesToMiB(recommendation.fileCacheBytes), recommendation.fileCacheMedium)
+	} else {
+		summaryMessage = fmt.Sprintf("%s FileCache: DISABLED", summaryMessage)
+	}
+
+	summaryMessage = fmt.Sprintf("%s | MetadataStatCache: %dMiB", summaryMessage, bytesToMiB(recommendation.metadataStatCacheBytes))
+	if recommendation.metadataStatCacheBytes < requirement.metadataStatCacheBytes && requirement.metadataStatCacheBytes > 0 {
+		summaryMessage = fmt.Sprintf("%s (capped) ", summaryMessage)
+	}
+
+	summaryMessage = fmt.Sprintf("%s | MetadataTypeCache: %dMiB", summaryMessage, bytesToMiB(recommendation.metadataTypeCacheBytes))
+	if recommendation.metadataTypeCacheBytes < requirement.metadataTypeCacheBytes && requirement.metadataTypeCacheBytes > 0 {
+		summaryMessage = fmt.Sprintf("%s (capped)", summaryMessage)
+	}
+
+	// The full JSON log below is only visibile until the user clicks on the message and expands it.
+	summaryMessage = fmt.Sprintf("%s | Expand for full details", summaryMessage)
+
+	logEntry := GCSFuseCSIRecommendationLog{
+		Severity: "INFO",
+		Message:  summaryMessage,
+	}
+
+	// Target
+	logEntry.Target.PVName = config.pvDetails.name
+	logEntry.Target.NodeName = config.nodeDetails.name
+	logEntry.Target.PodName = fmt.Sprintf("%s/%s", config.podDetails.namespace, config.podDetails.name)
+
+	// Requirements
+	logEntry.InputSignals.RequiredFileCacheBytes = requirement.fileCacheBytes
+	logEntry.InputSignals.RequiredMetadataStatCacheBytes = requirement.metadataStatCacheBytes
+	logEntry.InputSignals.RequiredMetadataTypeCacheBytes = requirement.metadataTypeCacheBytes
+
+	// Bucket signals
+	logEntry.InputSignals.BucketTotalObjects = config.pvDetails.numObjects
+	logEntry.InputSignals.BucketTotalDataSizeBytes = config.pvDetails.totalSizeBytes
+
+	// Node signals
+	logEntry.InputSignals.NodeType = config.nodeDetails.nodeType
+	logEntry.InputSignals.NodeAllocatableMemoryBytes = config.nodeDetails.nodeAllocatables.memoryBytes
+	logEntry.InputSignals.NodeAllocatableEphemeralStorageBytes = config.nodeDetails.nodeAllocatables.ephemeralStorageBytes
+
+	// Pod signals
+	logEntry.InputSignals.SidecarLimitMemoryBytes = config.podDetails.sidecarLimits.memoryBytes
+	logEntry.InputSignals.SidecarLimitEphemeralStorageBytes = config.podDetails.sidecarLimits.ephemeralStorageBytes
+
+	// Resource budgets are min(node allocatable, sidecar limit) * allocatable factor, i.e budget available for this resource for the fuse process.
+	logEntry.InputSignals.FuseBudgetMemoryBytes = memoryBudget
+	logEntry.InputSignals.FuseBudgetEphemeralStorageBytes = ephemeralStorageBudget
+
+	// Decision
+	logEntry.Decision.MetadataStatCacheBytes = recommendation.metadataStatCacheBytes
+	logEntry.Decision.MetadataTypeCacheBytes = recommendation.metadataTypeCacheBytes
+	logEntry.Decision.FileCacheBytes = recommendation.fileCacheBytes
+	logEntry.Decision.FileCacheMedium = recommendation.fileCacheMedium
+
+	// Marshal the struct to JSON
+	logJSON, err := json.Marshal(logEntry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal json: %v", err)
+	}
+	// Print the JSON string directly to standard output so it doesn't look like an error.
+	// This bypasses klog's prefixing and one-line formatting.
+	fmt.Println(string(logJSON))
+	return nil
+}
+
 // MergeRecommendedMountOptionsOnMissingKeys generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
 // It calculates optimal cache configurations and translates them into gcsfuse mount option strings.
 // If the user provides any of the following mount options:
@@ -296,7 +402,6 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 	}
 
 	recommendation, err := recommendCacheConfigs(config)
-	// TODO(urielguzman): Log the decision summary into a human readable format via a container log / Pod event.
 	if err != nil {
 		return nil, fmt.Errorf("failed to recommend cache configs: %v", err)
 	}
@@ -397,14 +502,19 @@ func recommendCacheConfigs(config *ProfileConfig) (*recommendation, error) {
 	memoryBudget, ephemeralStorageBudget := calculateResourceBudgets(config)
 
 	// Calculate the recommended metadata cache sizes. The memoryBudget gets decreased after each recommendation.
-	recommendation.metadataStatCacheBytes, memoryBudget = recommendMetadataCacheSize(config, cacheRequirements.metadataStatCacheBytes, memoryBudget, "stat")
-	recommendation.metadataTypeCacheBytes, memoryBudget = recommendMetadataCacheSize(config, cacheRequirements.metadataTypeCacheBytes, memoryBudget, "type")
+	var memoryBudgetAfterStat int64
+	var memoryBudgetAfterType int64
+	recommendation.metadataStatCacheBytes, memoryBudgetAfterStat = recommendMetadataCacheSize(config, cacheRequirements.metadataStatCacheBytes, memoryBudget, "stat")
+	recommendation.metadataTypeCacheBytes, memoryBudgetAfterType = recommendMetadataCacheSize(config, cacheRequirements.metadataTypeCacheBytes, memoryBudgetAfterStat, "type")
 
 	// Calculate the recommended file cache size and medium.
 	var err error
-	recommendation.fileCacheBytes, recommendation.fileCacheMedium, err = recommendFileCacheSizeAndMedium(cacheRequirements, config, memoryBudget, ephemeralStorageBudget)
+	recommendation.fileCacheBytes, recommendation.fileCacheMedium, err = recommendFileCacheSizeAndMedium(cacheRequirements, config, memoryBudgetAfterType, ephemeralStorageBudget)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to recommend file cache: %v", err)
+	}
+	if err := logRecommendation(config, recommendation, cacheRequirements, memoryBudget, ephemeralStorageBudget); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to log recommendation: %v", err)
 	}
 	return recommendation, nil
 }
