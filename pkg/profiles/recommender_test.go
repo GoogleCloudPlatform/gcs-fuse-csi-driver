@@ -1877,7 +1877,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 	}
 }
 
-func TestLeftJoinOnRecommendedMountOptionKeys(t *testing.T) {
+func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 	// Constants for easier reading
 	objPerStat := metadataStatCacheBytesPerObject
 	objPerType := metadataTypeCacheBytesPerObject
@@ -2085,9 +2085,9 @@ func TestLeftJoinOnRecommendedMountOptionKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.config.LeftJoinOnRecommendedMountOptionKeys(tt.userMountOptions)
+			got, err := tt.config.MergeRecommendedMountOptionsOnMissingKeys(tt.userMountOptions)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("RecommendMountOptions() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("MergeRecommendedMountOptionsOnMissingKeys() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.wantErr {
 				return
@@ -2170,7 +2170,7 @@ func TestGetMountOptionKey(t *testing.T) {
 	}
 }
 
-func TestLeftJoinMountOptionsOnKeys(t *testing.T) {
+func TestMergeMountOptionsOnMissingKeys(t *testing.T) {
 	tests := []struct {
 		name     string
 		dstOpts  []string
@@ -2275,7 +2275,7 @@ func TestLeftJoinMountOptionsOnKeys(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotOpts, gotErr := leftJoinMountOptionsOnKeys(tc.dstOpts, tc.srcOpts)
+			gotOpts, gotErr := mergeMountOptionsOnMissingKeys(tc.dstOpts, tc.srcOpts)
 
 			if gotErr == nil && tc.wantErr {
 				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got error %v, want error %v", tc.dstOpts, tc.srcOpts, gotErr, tc.wantErr)
@@ -2287,7 +2287,7 @@ func TestLeftJoinMountOptionsOnKeys(t *testing.T) {
 	}
 }
 
-func TestLeftJoinMapsOnKeys(t *testing.T) {
+func TestMergeMapsOnMissingKeys(t *testing.T) {
 	tests := []struct {
 		name string
 		src  map[string]string
@@ -2359,15 +2359,15 @@ func TestLeftJoinMapsOnKeys(t *testing.T) {
 				}
 			}
 
-			got := leftJoinMapsOnKeys(tc.dst, tc.src)
+			got := mergeMapsOnMissingKeys(tc.dst, tc.src)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("MergeMapsIfKeyUnset(%v, %v) returned diff (-want +got):\n%s", tc.src, dstOriginal, diff)
+				t.Errorf("mergeMapsOnMissingKeys(%v, %v) returned diff (-want +got):\n%s", tc.src, dstOriginal, diff)
 			}
 
 			// Verify dst was not modified in place
 			if tc.dst != nil {
 				if diff := cmp.Diff(dstOriginal, tc.dst); diff != "" {
-					t.Errorf("MergeMapsIfKeyUnset(%v, %v) unexpectedly modified dst in place:\n%s", tc.src, dstOriginal, diff)
+					t.Errorf("mergeMapsOnMissingKeys(%v, %v) unexpectedly modified dst in place:\n%s", tc.src, dstOriginal, diff)
 				}
 			}
 		})

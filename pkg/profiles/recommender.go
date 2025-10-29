@@ -155,13 +155,13 @@ type BuildProfileConfigParams struct {
 	IsInitContainer     bool
 }
 
-// LeftJoinOnRecommendedVolumeAttributeKeys returns the a copy of the input map, merged with the profile's.
+// MergeVolumeAttributesOnRecommendedMissingKeys returns the a copy of the input map, merged with the profile's.
 // recommended VolumeAttributes. This function respects the input's keys in the case of duplication.
-func (c *ProfileConfig) LeftJoinOnRecommendedVolumeAttributeKeys(input map[string]string) map[string]string {
+func (c *ProfileConfig) MergeVolumeAttributesOnRecommendedMissingKeys(input map[string]string) map[string]string {
 	if c == nil || c.scDetails == nil {
 		return nil
 	}
-	return leftJoinMapsOnKeys(input, c.scDetails.volumeAttributes)
+	return mergeMapsOnMissingKeys(input, c.scDetails.volumeAttributes)
 }
 
 // BuildProfileConfig constructs a ProfileConfig by fetching and validating
@@ -267,7 +267,7 @@ func (config *ProfileConfig) shouldSkipCacheRecommendations(userMountOptions []s
 	return false
 }
 
-// LeftJoinOnRecommendedMountOptionKeys generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
+// MergeRecommendedMountOptionsOnMissingKeys generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
 // It calculates optimal cache configurations and translates them into gcsfuse mount option strings.
 // If the user provides any of the following mount options:
 //   - "metadata-cache:stat-cache-max-size-mb"
@@ -276,14 +276,14 @@ func (config *ProfileConfig) shouldSkipCacheRecommendations(userMountOptions []s
 //
 // the cache recommendation will be skipped, and only the pre-bundled mount options will be merged with the
 // user's mount options, respecting the user's mount options in the case of duplication.
-func (config *ProfileConfig) LeftJoinOnRecommendedMountOptionKeys(userMountOptions []string) ([]string, error) {
+func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMountOptions []string) ([]string, error) {
 	if config == nil {
 		return nil, status.Errorf(codes.Internal, "config cannot be nil")
 	}
 
 	// Start with merging the pre-bundled StorageClass mount option recommendations into the user's mount options,
 	// respecting user's mount options in the case of duplicates.
-	recommendedMountOptions, err := leftJoinMountOptionsOnKeys(userMountOptions, config.scDetails.mountOptions)
+	recommendedMountOptions, err := mergeMountOptionsOnMissingKeys(userMountOptions, config.scDetails.mountOptions)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to merge mount options: %v", err)
 	}
@@ -323,7 +323,7 @@ func (config *ProfileConfig) LeftJoinOnRecommendedMountOptionKeys(userMountOptio
 	}
 
 	// Merge the final cache mount options to the recommended mount options, respecting the user's mount options in the case of duplication.
-	recommendedMountOptions, err = leftJoinMountOptionsOnKeys(recommendedMountOptions, cacheOptions)
+	recommendedMountOptions, err = mergeMountOptionsOnMissingKeys(recommendedMountOptions, cacheOptions)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to merge mount options: %v", err)
 	}
@@ -931,7 +931,7 @@ func isCacheMountOptionKey(opt string) bool {
 	}
 }
 
-// leftJoinMountOptionsOnKeys merges mount options from srcOpts into dstOpts.
+// mergeMountOptionsOnMissingKeys merges mount options from srcOpts into dstOpts.
 // It returns an error if any option in dstOpts or srcOpts is invalid.
 // An option from srcOpts is added only if the key is not already
 // present in the keys of options within dstOpts.
@@ -941,7 +941,7 @@ func isCacheMountOptionKey(opt string) bool {
 // In the rare scenario that this happens, the user's CLI option will
 // take precedence by the gcsfuse process hierarchy downstream. The CSI recommender
 // should always ensure to only recommend config-file to respect this behavior.
-func leftJoinMountOptionsOnKeys(dstOpts, srcOpts []string) ([]string, error) {
+func mergeMountOptionsOnMissingKeys(dstOpts, srcOpts []string) ([]string, error) {
 	var mountOptions []string
 	existingKeys := make(map[string]bool)
 
@@ -973,10 +973,10 @@ func leftJoinMountOptionsOnKeys(dstOpts, srcOpts []string) ([]string, error) {
 	return mountOptions, nil
 }
 
-// leftJoinMapsOnKeys merges key/value pairs from src into dst.
+// mergeMapsOnMissingKeys merges key/value pairs from src into dst.
 // A key/value pair from src is added to dst only if the key
 // does NOT already exist in dst.
-func leftJoinMapsOnKeys(dst, src map[string]string) map[string]string {
+func mergeMapsOnMissingKeys(dst, src map[string]string) map[string]string {
 	if dst == nil {
 		return src
 	}
