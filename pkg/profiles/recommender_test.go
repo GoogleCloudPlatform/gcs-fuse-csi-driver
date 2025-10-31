@@ -1566,13 +1566,16 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			wantMedium:             "",
 		},
 		{
-			name:              "TPU node, LSSD in priority - Should error",
+			name:              "TPU node, LSSD in priority - Should fallback to RAM",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
 				nodeDetails: &nodeDetails{nodeType: nodeTypeTPU},
 				scDetails:   &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeTPU: {util.MediumRAM, util.MediumLSSD}}},
 			},
-			wantErr: true,
+			memoryBudget:           20 * mib,
+			ephemeralStorageBudget: 20 * mib,
+			wantSize:               fileCacheReq,
+			wantMedium:             util.MediumRAM,
 		},
 		{
 			name:              "File cache not required (0 bytes) - Should not recommend file cache",
@@ -1798,7 +1801,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 		},
 		{
-			name: "TPU node with LSSD in priority - Should error",
+			name: "TPU node with LSSD in priority - Should fallback to RAM",
 			config: &ProfileConfig{
 				pvDetails: defaultPV,
 				scDetails: &scDetails{
@@ -1816,7 +1819,12 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				},
 				podDetails: defaultPod,
 			},
-			wantErr: true,
+			want: &recommendation{
+				metadataStatCacheBytes: reqStat,
+				metadataTypeCacheBytes: reqType,
+				fileCacheBytes:         reqFile,
+				fileCacheMedium:        util.MediumRAM,
+			},
 		},
 		{
 			name: "Unknown Node Type in SC Priority - Should error",

@@ -18,7 +18,6 @@ package profiles
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -424,12 +423,6 @@ func recommendFileCacheSizeAndMedium(cacheRequirements *cacheRequirements, confi
 	}
 	klog.V(6).Infof("Using file cache medium priority list for node type %q: %v", config.nodeDetails.nodeType, priorityList)
 
-	// Error if LSSD is in the priority list for TPU
-	// TODO(urielguzman): Re-consider emitting a warning instead of failing here.
-	if config.nodeDetails.nodeType == nodeTypeTPU && slices.Contains(priorityList, util.MediumLSSD) {
-		return 0, "", fmt.Errorf("LSSD medium is not supported for file cache on TPU node type %q", config.nodeDetails.nodeType)
-	}
-
 	// Skip medium evaluation if no file cache is required
 	if cacheRequirements.fileCacheBytes <= 0 {
 		klog.V(6).Infof("File cache not required (%d bytes). Skipping medium evaluation", cacheRequirements.fileCacheBytes)
@@ -446,6 +439,14 @@ func recommendFileCacheSizeAndMedium(cacheRequirements *cacheRequirements, confi
 			}
 			// Check if the required file cache bytes fir into the available ephemeral storage medium.
 		case util.MediumLSSD:
+			if config.nodeDetails.nodeType == nodeTypeTPU {
+				// The customer may have accidentally put LSSD in the priority list for TPU. Fallback to RAM, since it's the only option.
+				klog.Warningf("Medium %q skipped on node type %q: %q in %q but TPU doesn't support LSSD. Falling back to RAM.", medium, config.nodeDetails.nodeType, medium, priorityList)
+				if cacheRequirements.fileCacheBytes <= memoryBudget {
+					return cacheRequirements.fileCacheBytes, util.MediumRAM, nil
+				}
+				break
+			}
 			if !config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation {
 				klog.Warningf("Medium %q skipped on node type %q: Node annotation %q is not 'true'.", medium, config.nodeDetails.nodeType, ephemeralStorageLocalSSDLabelKey)
 				break
