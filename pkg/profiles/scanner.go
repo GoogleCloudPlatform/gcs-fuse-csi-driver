@@ -28,8 +28,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/googleapis/gax-go/v2"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -56,8 +58,12 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	control "cloud.google.com/go/storage/control/apiv2"
+	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
+	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -67,19 +73,24 @@ import (
 )
 
 const (
-	scannerComponentName          = "gke-gcsfuse-scanner"
-	csiDriverName                 = "gcsfuse.csi.storage.gke.io"
-	volumeAttributeScanTimeoutKey = "bucketScanTimeout"
-	volumeAttributeScanTTLKey     = "bucketScanTTL"
-	leaseName                     = "gke-gcsfuse-scanner-leader"
+	scannerComponentName                        = "gke-gcsfuse-scanner"
+	csiDriverName                               = "gcsfuse.csi.storage.gke.io"
+	volumeAttributeScanTimeoutKey               = "bucketScanTimeout"
+	volumeAttributeScanTTLKey                   = "bucketScanTTL"
+	volumeAttributeAnywhereCacheAdmissionPolicy = "anywhereCacheAdmissionPolicy"
+	volumeAttributeEnableAnywhereCache          = "enableAnywhereCache"
+	volumeAttributeAnywhereCacheTTL             = "anywhereCacheTTL"
+	leaseName                                   = "gke-gcsfuse-scanner-leader"
 
 	// Event reasons
-	reasonScanOperationStartError     = "ScanOperationStartError"
-	reasonScanOperationStartSucceeded = "ScanOperationStartSucceeded"
-	reasonScanOperationFailed         = "ScanOperationFailed"
-	reasonScanOperationWarning        = "ScanOperationWarning"
-	reasonScanOperationSucceeded      = "ScanOperationSucceeded"
-	reasonScanOperationTimedOut       = "ScanOperationTimedOut"
+	reasonScanOperationStartError                   = "ScanOperationStartError"
+	reasonScanOperationStartSucceeded               = "ScanOperationStartSucceeded"
+	reasonScanOperationFailed                       = "ScanOperationFailed"
+	reasonScanOperationWarning                      = "ScanOperationWarning"
+	reasonScanOperationSucceeded                    = "ScanOperationSucceeded"
+	reasonScanOperationTimedOut                     = "ScanOperationTimedOut"
+	reasonScanOperationAnywhereCacheCreateError     = "ScanOperationAnywhereCacheCreateError"
+	reasonScanOperationAnywhereCacheCreateSucceeded = "ScanOperationAnywhereCacheCreateSucceeded"
 
 	// Bucket scan status values
 	scanCompleted = "completed"
@@ -99,6 +110,10 @@ const (
 	// Cloud Monitoring metrics
 	objectCountMetric = "storage.googleapis.com/storage/object_count"
 	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
+
+	// Anywhere Cache constants
+	admitOnFirstMiss  = "admit-on-first-miss"
+	admitOnSecondMiss = "admit-on-second-miss"
 )
 
 var (
@@ -117,6 +132,12 @@ var (
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
 	scanBucketWithDataflux = defaultScanBucketWithDataflux
+
+	// anywhere cache vars
+	hourDuration = durationpb.New(time.Hour)
+
+	// Used for testing
+	utilGetZonesForClusterLocation = util.GetZonesForALocation
 )
 
 // stringPtr returns a pointer to the passed string.
@@ -148,6 +169,8 @@ type ScannerConfig struct {
 	LeaderElectionLeaseDuration time.Duration
 	LeaderElectionRenewDeadline time.Duration
 	LeaderElectionRetryPeriod   time.Duration
+	ClusterLocation             string
+	ProjectNumber               string
 }
 
 // bucketInfo holds the results of a bucket scan.
@@ -165,23 +188,25 @@ type bucketInfo struct {
 
 // Scanner is the main controller structure.
 type Scanner struct {
-	kubeClient     kubernetes.Interface
-	pvLister       v1listers.PersistentVolumeLister
-	pvcLister      v1listers.PersistentVolumeClaimLister
-	scLister       storagelisters.StorageClassLister
-	podLister      v1listers.PodLister
-	pvSynced       cache.InformerSynced
-	pvcSynced      cache.InformerSynced
-	scSynced       cache.InformerSynced
-	podSynced      cache.InformerSynced
-	factory        informers.SharedInformerFactory
-	podFactory     informers.SharedInformerFactory
-	queue          workqueue.TypedRateLimitingInterface[string]
-	eventRecorder  record.EventRecorder
-	datafluxConfig *DatafluxConfig
-	gcsClient      *storage.Client
-	metricClient   *monitoring.MetricClient
-	config         *ScannerConfig
+	kubeClient           kubernetes.Interface
+	pvLister             v1listers.PersistentVolumeLister
+	pvcLister            v1listers.PersistentVolumeClaimLister
+	scLister             storagelisters.StorageClassLister
+	podLister            v1listers.PodLister
+	pvSynced             cache.InformerSynced
+	pvcSynced            cache.InformerSynced
+	scSynced             cache.InformerSynced
+	podSynced            cache.InformerSynced
+	factory              informers.SharedInformerFactory
+	podFactory           informers.SharedInformerFactory
+	queue                workqueue.TypedRateLimitingInterface[string]
+	eventRecorder        record.EventRecorder
+	datafluxConfig       *DatafluxConfig
+	gcsClient            *storage.Client
+	metricClient         *monitoring.MetricClient
+	config               *ScannerConfig
+	computeService       *compute.Service
+	storageControlClient storageControlClient
 
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
 	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
@@ -205,6 +230,13 @@ type Scanner struct {
 	// Identity of this controller, generated at creation time and not persisted
 	// across restarts. Useful only for debugging, for seeing the source of events.
 	id string
+}
+
+// storageControlClient defines the interface that the real and mock clients satisfy.
+// This allows us to swap the real client with a mock one during tests.
+type storageControlClient interface {
+	CreateAnywhereCache(context.Context, *controlpb.CreateAnywhereCacheRequest, ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error)
+	Close() error
 }
 
 // buildConfig creates a Kubernetes rest.Config for the client.
@@ -375,6 +407,25 @@ func (s *Scanner) run(ctx context.Context) {
 	defer func() {
 		if err := metricClient.Close(); err != nil {
 			klog.Errorf("Failed to close metric client: %v", err)
+		}
+	}()
+
+	computeService, err := compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope))
+	if err != nil {
+		klog.Errorf("Failed to create compute service: %v", err)
+		return
+	}
+	s.computeService = computeService
+
+	storageControlClient, err := control.NewStorageControlClient(ctx)
+	if err != nil {
+		klog.Errorf("Failed to create storage control client: %v", err)
+		return
+	}
+	s.storageControlClient = storageControlClient
+	defer func() {
+		if err := storageControlClient.Close(); err != nil {
+			klog.Errorf("Failed to close storage control client: %v", err)
 		}
 	}()
 
@@ -583,7 +634,13 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			return fmt.Errorf("failed to get PV %q: %w", pvName, err) // API server error, retry with backoff
 		}
 
-		bucketI, err := s.checkPVRelevance(pv)
+		sc, err := s.getStorageClass(pv)
+		if err != nil {
+			klog.Errorf("Failed to get Profiles enabled StorageClass for PV %q: %v", key, err)
+			return err
+		}
+
+		bucketI, err := s.checkPVRelevance(pv, sc)
 		if err != nil {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
@@ -705,9 +762,14 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		return err
 	}
 
+	sc, err := s.getStorageClass(pv)
+	if err != nil {
+		klog.Errorf("Failed to get Profiles enabled StorageClass for PV %q: %v", key, err)
+		return err
+	}
 	// Skip PVs that are not relevant, e.g. PVs that don't use the gcsfuse profiles feature or
 	// that have been scanned too recently.
-	bucketI, err := s.checkPVRelevance(pv)
+	bucketI, err := s.checkPVRelevance(pv, sc)
 	if err != nil {
 		klog.Errorf("Relevance check failed for PV %q: %v", pv.Name, err)
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Relevance check failed: %v", err)
@@ -763,7 +825,117 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanCompleted); patchErr != nil {
 		return fmt.Errorf("failed to patch PV %q results, err: %w", pv.Name, patchErr)
 	}
-	return nil // Remove since this is a complete and successful scan.
+
+	// Check if the pv uses a anywhere cache enabled storage class.
+	shouldEnableAnywhereCache := false
+	enableAnywhereCache, ok := sc.Parameters[volumeAttributeEnableAnywhereCache]
+	if !ok {
+		return nil
+	}
+	shouldEnableAnywhereCache, err = strconv.ParseBool(enableAnywhereCache)
+	if err != nil {
+		err = status.Errorf(codes.InvalidArgument, "failed to enable anywhere cache for PV %q: %v", pv.Spec.StorageClassName, err)
+		klog.Error(err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, "%v", err)
+		return err
+	}
+
+	if !shouldEnableAnywhereCache {
+		return nil
+	}
+
+	err = s.createAnywhereCache(ctx, pv)
+	if err != nil {
+		klog.Error(err)
+		s.eventRecorder.Event(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, err.Error())
+		return err
+	}
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationAnywhereCacheCreateSucceeded, "Submitted anywhere cache requests for for bucket: %s", bucketI.name)
+	return nil
+}
+
+// createAnywhereCache does prework and makes request to create anywherecache.
+// Prework: get zones, create clients, and sets up the request for anywhere cache.
+// Create request: sends a create anywhere cache for each zone of the cluster (api is idempotent).
+// If any retryable error occurs we requeue the pv to try again later.
+func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolume) error {
+	anywhereCacheTTL, err := getAnywhereCacheTTLFromPV(pv)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: %v", pv.Name, err)
+	}
+	anywhereCacheAdmissionPolicy, err := getAnywhereCacheAdmissionPolicyFromPV(pv)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
+	}
+
+	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
+	if err != nil {
+		return fmt.Errorf("failed to get zones for region: %v", err)
+	}
+	if s.storageControlClient == nil {
+		return fmt.Errorf("storage control client should not be nil")
+	}
+
+	var errs []error
+	for _, zone := range zones {
+		req := &controlpb.CreateAnywhereCacheRequest{
+			// projects/{project}/buckets/{bucket} is the required format for the api
+			Parent: fmt.Sprintf(`projects/_/buckets/%s`, util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)),
+			AnywhereCache: &controlpb.AnywhereCache{
+				Ttl:             anywhereCacheTTL,
+				Zone:            zone,
+				AdmissionPolicy: anywhereCacheAdmissionPolicy,
+			},
+		}
+
+		_, err = s.storageControlClient.CreateAnywhereCache(ctx, req)
+		if err != nil {
+			if status.Code(err) == codes.AlreadyExists {
+				// AC already exists for this bucket/zone no further action needed.
+				continue
+			}
+			errs = append(errs, fmt.Errorf("%s:[%v]", zone, err))
+		}
+	}
+	if len(errs) <= 0 {
+		return nil
+	}
+	return fmt.Errorf("errors occurred while creating anywhere caches: %w", errors.Join(errs...))
+}
+
+// getAnywhereCacheTTLFromPV returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
+func getAnywhereCacheTTLFromPV(pv *v1.PersistentVolume) (*durationpb.Duration, error) {
+	// TODO(fuechr) Check StorageClass for ttl as fallback
+	ttl, ok := pv.Spec.CSI.VolumeAttributes[volumeAttributeAnywhereCacheTTL]
+
+	if !ok {
+		klog.Infof("no ttl volume attribute provided, defaulting the anywhere cache ttl to 1h for pv: %s", pv.Name)
+		return hourDuration, nil
+	}
+
+	ttlAsDuration, err := time.ParseDuration(ttl)
+	if err != nil {
+		return nil, err
+	}
+
+	return durationpb.New(ttlAsDuration), nil
+}
+
+// getAnywhereCacheAdmissionPolicyFromPV returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
+func getAnywhereCacheAdmissionPolicyFromPV(pv *v1.PersistentVolume) (string, error) {
+	// TODO(fuechr) Check StorageClass for admission policy as fallback
+	admissionPolicy, ok := pv.Spec.CSI.VolumeAttributes[volumeAttributeAnywhereCacheAdmissionPolicy]
+	if !ok {
+		klog.Infof("no admission policy volume attribute provided, defaulting the anywhere cache admission policy to %q for pv: %s", admitOnFirstMiss, pv.Name)
+		return admitOnFirstMiss, nil
+	}
+
+	switch admissionPolicy {
+	case admitOnFirstMiss, admitOnSecondMiss:
+		return admissionPolicy, nil
+	default:
+		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, admitOnFirstMiss, admitOnSecondMiss)
+	}
 }
 
 func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
@@ -1032,29 +1204,11 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 // The PV is relevant if the current time - last scan time > scan TTL, or if the status is "override".
 // This function returns a bucketInfo with the bucket name and the directory if
 // relevant, otherwise, it will return nil and any error.
-func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error) {
+func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*bucketInfo, error) {
 	if pv == nil {
 		return nil, nil
 	}
 	if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csiDriverName || pv.Spec.CSI.VolumeHandle == "" {
-		return nil, nil
-	}
-
-	scName := pv.Spec.StorageClassName
-	if scName == "" {
-		return nil, nil
-	}
-	sc, err := s.scLister.Get(scName)
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get StorageClass %q: %w", scName, err)
-		}
-		// If the customer specifies a "dummy" StorageClass, this must be handled gracefully. Example:
-		// https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-pv#create-a-persistentvolume
-		// TODO(urielguzman): Add a notificaiton map so that the PV is re-processed when the StorageClass exists.
-		// We shouldn't re-process the PV indefinetely because the "dummy" StorageClass may never exist.
-		// Example: https://github.com/kubernetes-csi/lib-volume-populator/blob/master/populator-machinery/controller.go#L685
-		klog.Warningf("StorageClass %q not found for PV %q", scName, pv.Name)
 		return nil, nil
 	}
 
@@ -1064,7 +1218,7 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume) (*bucketInfo, error)
 	}
 	workloadType, ok := scParams[workloadTypeKey]
 	if !ok {
-		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", workloadTypeKey, scName, pv.Name)
+		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", workloadTypeKey, sc.Name, pv.Name)
 		return nil, nil
 	}
 
@@ -1309,4 +1463,29 @@ func (s *Scanner) enqueuePod(pod *v1.Pod) {
 	}
 	klog.V(6).Infof("Enqueuing Pod %q", key)
 	s.queue.Add(podPrefix + key)
+}
+
+func (s *Scanner) getStorageClass(pv *v1.PersistentVolume) (*storagev1.StorageClass, error) {
+	if pv == nil || pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csiDriverName || pv.Spec.CSI.VolumeHandle == "" {
+		return nil, nil
+	}
+
+	scName := pv.Spec.StorageClassName
+	if scName == "" {
+		return nil, nil
+	}
+	sc, err := s.scLister.Get(scName)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get StorageClass %q: %w", scName, err)
+		}
+		// If the customer specifies a "dummy" StorageClass, this must be handled gracefully. Example:
+		// https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-pv#create-a-persistentvolume
+		// TODO(urielguzman): Add a notificaiton map so that the PV is re-processed when the StorageClass exists.
+		// We shouldn't re-process the PV indefinetely because the "dummy" StorageClass may never exist.
+		// Example: https://github.com/kubernetes-csi/lib-volume-populator/blob/master/populator-machinery/controller.go#L685
+		klog.Warningf("StorageClass %q not found for PV %q", scName, pv.Name)
+		return nil, nil
+	}
+	return sc, nil
 }
