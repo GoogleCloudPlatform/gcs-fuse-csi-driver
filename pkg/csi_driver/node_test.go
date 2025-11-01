@@ -458,3 +458,125 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestAddFuseMountOptions(t *testing.T) {
+	t.Parallel()
+
+	vc := map[string]string{
+		VolumeContextKeyPodNamespace:       "sample-namespace",
+		VolumeContextKeyServiceAccountName: "sample-service-account",
+	}
+	sampleIdentityPool := "sample-identity-pool"
+	sampleIdentityProvider := "sample-identity-provider"
+	cases := []struct {
+		name                                     string
+		inputFuseMountOptions                    []string
+		expectedFuseMountOptions                 []string
+		identityProvider                         string
+		volumeContextParams                      map[string]string
+		enableSidecarBucketAccessCheckForVersion bool
+		enableCloudProfilerForVersion            bool
+		hostNetworkEnabled                       bool
+		identityPool                             string
+		expectErr                                bool
+	}{
+		{
+			name:                                     "validate fuse mount options for host network workloads",
+			enableSidecarBucketAccessCheckForVersion: false,
+			hostNetworkEnabled:                       true,
+			identityProvider:                         sampleIdentityProvider,
+			identityPool:                             sampleIdentityPool,
+			inputFuseMountOptions:                    []string{},
+			expectedFuseMountOptions: []string{
+				util.OptInHnw + "=true",
+				util.TokenServerIdentityProviderConst + "=" + sampleIdentityProvider,
+			},
+		},
+		{
+			name:                                     "validate sidecar bucket access check is disabled when host network is enabled",
+			enableSidecarBucketAccessCheckForVersion: true,
+			hostNetworkEnabled:                       true,
+			identityProvider:                         sampleIdentityProvider,
+			identityPool:                             sampleIdentityPool,
+			inputFuseMountOptions:                    []string{},
+			expectedFuseMountOptions: []string{
+				util.OptInHnw + "=true",
+				util.TokenServerIdentityProviderConst + "=" + sampleIdentityProvider,
+			},
+		},
+		{
+			name:                                     "enable sidecar bucket access check on non-host network and validate fuse mount options are correctly set",
+			volumeContextParams:                      vc,
+			enableSidecarBucketAccessCheckForVersion: true,
+			identityProvider:                         sampleIdentityProvider,
+			identityPool:                             sampleIdentityPool,
+			inputFuseMountOptions:                    []string{},
+			expectedFuseMountOptions: []string{
+				util.PodNamespaceConst + "=" + vc[VolumeContextKeyPodNamespace],
+				util.ServiceAccountNameConst + "=" + vc[VolumeContextKeyServiceAccountName],
+				util.TokenServerIdentityPoolConst + "=" + sampleIdentityPool,
+				util.TokenServerIdentityProviderConst + "=" + sampleIdentityProvider,
+				util.EnableSidecarBucketAccessCheckConst + "=true",
+			},
+		},
+		{
+			name:                                     "verify sidecar bucket access disabled does not set fuse mount options",
+			volumeContextParams:                      vc,
+			enableSidecarBucketAccessCheckForVersion: false,
+			identityProvider:                         sampleIdentityProvider,
+			identityPool:                             sampleIdentityPool,
+			inputFuseMountOptions:                    []string{},
+			expectedFuseMountOptions:                 []string{},
+		},
+		{
+			name:                          "validate cloud profiler flag is correctly set",
+			enableCloudProfilerForVersion: true,
+			inputFuseMountOptions:         []string{},
+			expectedFuseMountOptions: []string{
+				util.EnableCloudProfilerForSidecarConst + "=true",
+			},
+		},
+		{
+			name:                                     "validate sidecar bucket access check when identity provider is not set",
+			volumeContextParams:                      vc,
+			enableSidecarBucketAccessCheckForVersion: true,
+			identityProvider:                         "",
+			identityPool:                             sampleIdentityPool,
+			expectedFuseMountOptions:                 nil,
+			expectErr:                                true,
+		},
+		{
+			name:                                     "validate sidecar bucket access check when identity pool is not set",
+			volumeContextParams:                      vc,
+			enableSidecarBucketAccessCheckForVersion: true,
+			identityProvider:                         sampleIdentityProvider,
+			identityPool:                             "",
+			expectedFuseMountOptions:                 nil,
+			expectErr:                                true,
+		},
+		{
+			name:                          "validate cloud profiler with host network",
+			hostNetworkEnabled:            true,
+			enableCloudProfilerForVersion: true,
+			identityProvider:              sampleIdentityProvider,
+			expectedFuseMountOptions: []string{
+				util.EnableCloudProfilerForSidecarConst + "=true",
+				util.OptInHnw + "=true",
+				util.TokenServerIdentityProviderConst + "=" + sampleIdentityProvider,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotFuseMountOption, err := addFuseMountOptions(tc.identityProvider, tc.identityPool, tc.inputFuseMountOptions, tc.volumeContextParams, tc.hostNetworkEnabled, tc.enableSidecarBucketAccessCheckForVersion, tc.enableCloudProfilerForVersion)
+			if (err != nil) != tc.expectErr {
+				t.Errorf("for test case %q, got error: %v, but expectErr: %v", tc.name, err, tc.expectErr)
+			}
+			less := func(a, b string) bool { return a < b }
+			if diff := cmp.Diff(tc.expectedFuseMountOptions, gotFuseMountOption, cmpopts.SortSlices(less)); diff != "" {
+				t.Errorf("got unexpected options args for testcase %s (-got, +want)\n%s", tc.name, diff)
+			}
+		})
+	}
+}
