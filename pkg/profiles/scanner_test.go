@@ -58,7 +58,7 @@ const (
 	oldAnnotationKey      = "old"
 	newAnnotationKey      = "new"
 	newAnnotationVal      = "newval"
-	onlyDirMountOptPrefix = "only-dir="
+	onlyDirMountOptPrefix = "only-dir"
 	testProjectNumber     = "123456"
 )
 
@@ -368,7 +368,7 @@ func TestCheckPVRelevance(t *testing.T) {
 	}{
 		{
 			name:         "Relevant PV",
-			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, []string{onlyDirMountOptPrefix + testDirName}, nil, nil),
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, []string{onlyDirMountOptPrefix + ":" + testDirName}, nil, nil),
 			scs:          []*storagev1.StorageClass{validSC},
 			wantRelevant: true,
 			wantBucket:   testBucketName,
@@ -1244,14 +1244,20 @@ func TestGetOnlyDirValue(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "Valid mount option with dir name surrounded by '/'",
-			input: onlyDirMountOptPrefix + "/" + testDirName + "/",
+			name:  "Valid mount option in key:val format with dir name surrounded by '/'",
+			input: onlyDirMountOptPrefix + ":/" + testDirName + "/",
+			want:  testDirName,
+			ok:    true,
+		},
+		{
+			name:  "Valid mount option in key=val format with dir name surrounded by '/'",
+			input: onlyDirMountOptPrefix + "=/" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
 		{
 			name:  "Valid mount option without dir name",
-			input: onlyDirMountOptPrefix,
+			input: onlyDirMountOptPrefix + ":",
 			want:  "",
 			ok:    true,
 		},

@@ -1180,10 +1180,12 @@ func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, boo
 // It returns the directory value and true if the prefix is found, otherwise empty string and false.
 // The directory value is trimmed to exclude leading or trailing '/'.
 func onlyDirValue(s string) (string, bool) {
-	prefix := "only-dir="
-	if strings.HasPrefix(s, prefix) {
-		val := strings.TrimPrefix(s, prefix)
-		return strings.Trim(val, "/"), true
+	prefix := "only-dir"
+	for _, delim := range []string{"=", ":"} {
+		if strings.HasPrefix(s, prefix+delim) {
+			val := strings.TrimPrefix(s, prefix+delim)
+			return strings.Trim(val, "/"), true
+		}
 	}
 	return "", false
 }
