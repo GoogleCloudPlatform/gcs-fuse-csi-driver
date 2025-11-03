@@ -481,7 +481,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 		expectErr                                bool
 	}{
 		{
-			name:                                     "validate fuse mount options for host network workloads",
+			name:                                     "identity provider is added in fuse mount options for host network workloads",
 			enableSidecarBucketAccessCheckForVersion: false,
 			hostNetworkEnabled:                       true,
 			identityProvider:                         sampleIdentityProvider,
@@ -493,7 +493,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 			},
 		},
 		{
-			name:                                     "validate sidecar bucket access check is disabled when host network is enabled",
+			name:                                     "fuse mount options related to sidecar bucket access check are not set for host network",
 			enableSidecarBucketAccessCheckForVersion: true,
 			hostNetworkEnabled:                       true,
 			identityProvider:                         sampleIdentityProvider,
@@ -505,7 +505,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 			},
 		},
 		{
-			name:                                     "enable sidecar bucket access check on non-host network and validate fuse mount options are correctly set",
+			name:                                     "validate respective fuse mount options for sidecar bucket access check are set when host network is disabled",
 			volumeContextParams:                      vc,
 			enableSidecarBucketAccessCheckForVersion: true,
 			identityProvider:                         sampleIdentityProvider,
@@ -520,7 +520,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 			},
 		},
 		{
-			name:                                     "verify sidecar bucket access disabled does not set fuse mount options",
+			name:                                     "validate no fuse mount options are added when host network and sidecar bucket check is disabled",
 			volumeContextParams:                      vc,
 			enableSidecarBucketAccessCheckForVersion: false,
 			identityProvider:                         sampleIdentityProvider,
@@ -529,7 +529,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 			expectedFuseMountOptions:                 []string{},
 		},
 		{
-			name:                          "validate cloud profiler flag is correctly set",
+			name:                          "validate cloud profiler fuse mount option is set when cloud profiler is enabled",
 			enableCloudProfilerForVersion: true,
 			inputFuseMountOptions:         []string{},
 			expectedFuseMountOptions: []string{
@@ -537,7 +537,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 			},
 		},
 		{
-			name:                                     "validate sidecar bucket access check when identity provider is not set",
+			name:                                     "missing identity provider should fail when sidecar bucket access check is enabled",
 			volumeContextParams:                      vc,
 			enableSidecarBucketAccessCheckForVersion: true,
 			identityProvider:                         "",
@@ -546,7 +546,7 @@ func TestAddFuseMountOptions(t *testing.T) {
 			expectErr:                                true,
 		},
 		{
-			name:                                     "validate sidecar bucket access check when identity pool is not set",
+			name:                                     "missing identity pool should fail when sidecar bucket access check is enabled",
 			volumeContextParams:                      vc,
 			enableSidecarBucketAccessCheckForVersion: true,
 			identityProvider:                         sampleIdentityProvider,
@@ -555,10 +555,22 @@ func TestAddFuseMountOptions(t *testing.T) {
 			expectErr:                                true,
 		},
 		{
-			name:                          "validate cloud profiler with host network",
+			name:                          "verify fuse mount options are not overwritten when multiple features are enabled",
 			hostNetworkEnabled:            true,
 			enableCloudProfilerForVersion: true,
 			identityProvider:              sampleIdentityProvider,
+			expectedFuseMountOptions: []string{
+				util.EnableCloudProfilerForSidecarConst + "=true",
+				util.OptInHnw + "=true",
+				util.TokenServerIdentityProviderConst + "=" + sampleIdentityProvider,
+			},
+		},
+		{
+			name:                          "verify new mount options are appended to existing fuse mount options",
+			hostNetworkEnabled:            true,
+			enableCloudProfilerForVersion: true,
+			identityProvider:              sampleIdentityProvider,
+			inputFuseMountOptions:         []string{util.EnableCloudProfilerForSidecarConst + "=true"},
 			expectedFuseMountOptions: []string{
 				util.EnableCloudProfilerForSidecarConst + "=true",
 				util.OptInHnw + "=true",

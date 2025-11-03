@@ -138,7 +138,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
 	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
+	if gcsFuseSidecarImage == "" {
+		return nil, status.Errorf(codes.Internal, "failed to fetch gcs fuse sidecar container image from pod")
+	}
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
 	shouldPopulateIdentityProviderForHnwKSA := s.shouldPopulateIdentityProvider(pod, optInHostnetworkKSA, userSpecifiedIdentityProvider != "")
 	if shouldPopulateIdentityProviderForHnwKSA {
@@ -152,7 +155,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 	}
 
-	enableCloudProfilerForVersion := enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion)
+	enableCloudProfilerForVersion := enableCloudProfilerForSidecar && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion)
 	identityPool := s.driver.config.TokenManager.GetIdentityPool()
 	fuseMountOptions, err = addFuseMountOptions(identityProvider, identityPool, fuseMountOptions, vc, shouldPopulateIdentityProviderForHnwKSA, enableSidecarBucketAccessCheckForSidecarVersion, enableCloudProfilerForVersion)
 	if err != nil {
@@ -202,7 +205,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisfies min version requirement
-	if gcsFuseSidecarImage != "" && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
+	if isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
 		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
 		machineType, ok := node.Labels[clientset.MachineTypeKey]
 		if ok {
@@ -385,6 +388,7 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	return ""
 }
 
+// addFuseMountOptions modifies the input array of existing FUSE mount options by appending additional options for respective enabled features.
 func addFuseMountOptions(identityProvider string, identityPool string, fuseMountOptions []string, vc map[string]string, hostNetworkEnabled bool, enableSidecarBucketAccessCheckForSidecarVersion bool, enableCloudProfilerForVersion bool) ([]string, error) {
 	if hostNetworkEnabled {
 		// Identity Provider is populated separately for host network enabled workloads.
