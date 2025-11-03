@@ -70,7 +70,6 @@ var (
 			"gke-gcsfuse/bucket-scan-num-objects":       "1000",
 			"gke-gcsfuse/bucket-scan-total-size-bytes":  "1000000000",
 			"gke-gcsfuse/bucket-scan-last-updated-time": "2025-10-08T22:17:48Z",
-			"gke-gcsfuse/bucket-scan-hns-enabled":       "true",
 		},
 		SCName: "gcsfusecsi-training",
 	}

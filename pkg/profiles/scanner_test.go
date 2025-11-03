@@ -70,7 +70,6 @@ var (
 		name:           testBucketName,
 		numObjects:     1234,
 		totalSizeBytes: 567890,
-		isHNSEnabled:   true,
 	}
 	origbucketAttrs            = bucketAttrs
 	origScanBucketWithMetrics  = scanBucketWithMetrics
@@ -145,7 +144,6 @@ func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, buc
 		if f.err == nil && f.bucketI != nil {
 			bucketI.numObjects = f.bucketI.numObjects
 			bucketI.totalSizeBytes = f.bucketI.totalSizeBytes
-			bucketI.isHNSEnabled = f.bucketI.isHNSEnabled
 		}
 		return f.err
 	}
@@ -353,7 +351,6 @@ func TestCheckPVRelevance(t *testing.T) {
 		putil.AnnotationStatus:     putil.ScanOverride,
 		putil.AnnotationNumObjects: "1000",
 		putil.AnnotationTotalSize:  "200000",
-		putil.AnnotationHNSEnabled: "true",
 	}
 
 	testCases := []struct {
@@ -464,7 +461,6 @@ func TestCheckPVRelevance(t *testing.T) {
 				putil.AnnotationStatus:     putil.ScanOverride,
 				putil.AnnotationNumObjects: "not-a-number",
 				putil.AnnotationTotalSize:  "200000",
-				putil.AnnotationHNSEnabled: "true",
 			}, nil),
 			scs:          []*storagev1.StorageClass{validSC},
 			wantRelevant: false,
@@ -476,19 +472,6 @@ func TestCheckPVRelevance(t *testing.T) {
 				putil.AnnotationStatus:     putil.ScanOverride,
 				putil.AnnotationNumObjects: "-100",
 				putil.AnnotationTotalSize:  "200000",
-				putil.AnnotationHNSEnabled: "true",
-			}, nil),
-			scs:          []*storagev1.StorageClass{validSC},
-			wantRelevant: false,
-			wantErr:      true,
-		},
-		{
-			name: "Irrelevant - Override mode - Invalid HNSEnabled - Should return error",
-			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationStatus:     putil.ScanOverride,
-				putil.AnnotationNumObjects: "1000",
-				putil.AnnotationTotalSize:  "200000",
-				putil.AnnotationHNSEnabled: "not-a-bool",
 			}, nil),
 			scs:          []*storagev1.StorageClass{validSC},
 			wantRelevant: false,
@@ -553,7 +536,6 @@ func TestSyncPV(t *testing.T) {
 		putil.AnnotationStatus:     putil.ScanOverride,
 		putil.AnnotationNumObjects: "111",
 		putil.AnnotationTotalSize:  "2222",
-		putil.AnnotationHNSEnabled: "false",
 	}
 	pvOverride := createPV(pvName, scName, bucketName, csiDriverName, nil, overrideAnnotations, nil)
 
@@ -634,7 +616,6 @@ func TestSyncPV(t *testing.T) {
 			expectedAnnots: map[string]string{
 				putil.AnnotationNumObjects: "111",
 				putil.AnnotationTotalSize:  "2222",
-				putil.AnnotationHNSEnabled: "false",
 			},
 		},
 	}
@@ -711,7 +692,6 @@ func TestSyncPod(t *testing.T) {
 		putil.AnnotationStatus:     putil.ScanOverride,
 		putil.AnnotationNumObjects: "100",
 		putil.AnnotationTotalSize:  "200",
-		putil.AnnotationHNSEnabled: "true",
 	}
 	pvOverride := createPV("pv-override", testSCName, testBucketName, csiDriverName, nil, pvOverrideAnnotations, nil)
 	pvcBoundOverride := createPVC("pvc-override", testNamespace, "pv-override", testSCName)
@@ -1163,7 +1143,6 @@ func TestUpdatePVScanResult(t *testing.T) {
 	bucketI := &bucketInfo{
 		numObjects:     999,
 		totalSizeBytes: 8888,
-		isHNSEnabled:   true,
 	}
 	status := scanCompleted
 
@@ -1188,7 +1167,6 @@ func TestUpdatePVScanResult(t *testing.T) {
 		putil.AnnotationStatus:          status,
 		putil.AnnotationNumObjects:      "999",
 		putil.AnnotationTotalSize:       "8888",
-		putil.AnnotationHNSEnabled:      "true",
 		putil.AnnotationLastUpdatedTime: now.UTC().Format(time.RFC3339),
 	}
 
@@ -1280,12 +1258,7 @@ func TestDefaultScanBucket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("strconv.ParseUint() error = %v", err)
 	}
-	hnsEnabledAttrs := &storage.BucketAttrs{
-		Name:                  testBucketName,
-		ProjectNumber:         projectNumber,
-		HierarchicalNamespace: &storage.HierarchicalNamespace{Enabled: true},
-	}
-	hnsDisabledAttrs := &storage.BucketAttrs{
+	attrs := &storage.BucketAttrs{
 		Name:          testBucketName,
 		ProjectNumber: projectNumber,
 	}
@@ -1307,14 +1280,14 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:         "onlyDir - Dataflux success",
 			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: attrs},
 			fakeDataflux: fakeScanFunc{
 				numObjects:     200,
 				totalSizeBytes: 2000,
 			},
 			wantBucketI: &bucketInfo{
 				name: testBucketName, dir: testDirName, onlyDirSpecified: true,
-				numObjects: 200, totalSizeBytes: 2000, isHNSEnabled: true, projectNumber: testProjectNumber,
+				numObjects: 200, totalSizeBytes: 2000, projectNumber: testProjectNumber,
 			},
 			expectMetricsCall:  false,
 			expectDatafluxCall: true,
@@ -1322,7 +1295,7 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:               "onlyDir - Dataflux error",
 			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
-			fakeGetAttrs:       fakebucketAttrsFunc{attrs: hnsDisabledAttrs},
+			fakeGetAttrs:       fakebucketAttrsFunc{attrs: attrs},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  false,
@@ -1331,13 +1304,13 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:         "no onlyDir - Metrics success",
 			inputBucketI: &bucketInfo{name: testBucketName},
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: attrs},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
 				totalSizeBytes: 1000,
 			},
 			wantBucketI: &bucketInfo{
-				name: testBucketName, numObjects: 100, totalSizeBytes: 1000, isHNSEnabled: true, projectNumber: testProjectNumber,
+				name: testBucketName, numObjects: 100, totalSizeBytes: 1000, projectNumber: testProjectNumber,
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: false,
@@ -1345,7 +1318,7 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:         "no onlyDir - Metrics error, Dataflux success (Fallback)",
 			inputBucketI: &bucketInfo{name: testBucketName},
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: hnsDisabledAttrs},
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: attrs},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
 				totalSizeBytes: 1000,
@@ -1356,7 +1329,7 @@ func TestDefaultScanBucket(t *testing.T) {
 				totalSizeBytes: 2000,
 			},
 			wantBucketI: &bucketInfo{
-				name: testBucketName, numObjects: 200, totalSizeBytes: 2000, isHNSEnabled: false, projectNumber: testProjectNumber,
+				name: testBucketName, numObjects: 200, totalSizeBytes: 2000, projectNumber: testProjectNumber,
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: true,
@@ -1364,7 +1337,7 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:               "no onlyDir - Metrics error, Dataflux error (Fallback Fails)",
 			inputBucketI:       &bucketInfo{name: testBucketName},
-			fakeGetAttrs:       fakebucketAttrsFunc{attrs: hnsEnabledAttrs},
+			fakeGetAttrs:       fakebucketAttrsFunc{attrs: attrs},
 			fakeMetrics:        fakeScanFunc{err: errors.New("metrics failed")},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,

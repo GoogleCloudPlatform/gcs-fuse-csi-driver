@@ -776,7 +776,6 @@ func TestValidateMutatingWebhookResponseForPV(t *testing.T) {
 						putil.AnnotationStatus:     putil.ScanOverride,
 						putil.AnnotationNumObjects: "-10",
 						putil.AnnotationTotalSize:  "10",
-						putil.AnnotationHNSEnabled: "true",
 					},
 				},
 			},
