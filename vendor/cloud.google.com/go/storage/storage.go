@@ -208,9 +208,7 @@ func NewClient(ctx context.Context, opts ...option.ClientOption) (*Client, error
 		return nil, fmt.Errorf("dialing: %w", err)
 	}
 	// RawService should be created with the chosen endpoint to take account of user override.
-	// Preserve other user-supplied options as well.
-	opts = append(opts, option.WithEndpoint(ep), option.WithHTTPClient(hc))
-	rawService, err := raw.NewService(ctx, opts...)
+	rawService, err := raw.NewService(ctx, option.WithEndpoint(ep), option.WithHTTPClient(hc))
 	if err != nil {
 		return nil, fmt.Errorf("storage client: %w", err)
 	}
@@ -1199,7 +1197,8 @@ func (o *ObjectHandle) Restore(ctx context.Context, opts *RestoreOptions) (*Obje
 }
 
 // Move changes the name of the object to the destination name.
-// It can only be used to rename an object within the same bucket.
+// It can only be used to rename an object within the same bucket. The
+// bucket must have [HierarchicalNamespace] enabled to use this method.
 //
 // Any preconditions set on the ObjectHandle will be applied for the source
 // object. Set preconditions on the destination object using
@@ -1288,14 +1287,12 @@ func (o *ObjectHandle) NewWriterFromAppendableObject(ctx context.Context, opts *
 	if o.gen < 0 {
 		return nil, 0, errors.New("storage: ObjectHandle.Generation must be set to use NewWriterFromAppendableObject")
 	}
-	toc := make(chan int64)
 	w := &Writer{
-		ctx:               ctx,
-		o:                 o,
-		donec:             make(chan struct{}),
-		ObjectAttrs:       ObjectAttrs{Name: o.object},
-		Append:            true,
-		setTakeoverOffset: func(to int64) { toc <- to },
+		ctx:         ctx,
+		o:           o,
+		donec:       make(chan struct{}),
+		ObjectAttrs: ObjectAttrs{Name: o.object},
+		Append:      true,
 	}
 	opts.apply(w)
 	if w.ChunkSize == 0 {
@@ -1305,16 +1302,7 @@ func (o *ObjectHandle) NewWriterFromAppendableObject(ctx context.Context, opts *
 	if err != nil {
 		return nil, 0, err
 	}
-	// Block until we discover the takeover offset, or the stream fails
-	select {
-	case to, ok := <-toc:
-		if !ok {
-			return nil, 0, errors.New("storage: unexpectedly did not discover takeover offset")
-		}
-		return w, to, nil
-	case <-w.donec:
-		return nil, 0, w.err
-	}
+	return w, w.takeoverOffset, nil
 }
 
 // AppendableWriterOpts provides options to set on a Writer initialized

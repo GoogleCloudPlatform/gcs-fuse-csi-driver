@@ -52,29 +52,23 @@ func populateSpan(rs stats.RPCStats, ai *attemptInfo) {
 		)
 		// increment previous rpc attempts applicable for next attempt
 		atomic.AddUint32(&ai.previousRPCAttempts, 1)
-	case *stats.DelayedPickComplete:
+	case *stats.PickerUpdated:
 		span.AddEvent("Delayed LB pick complete")
 	case *stats.InPayload:
 		// message id - "must be calculated as two different counters starting
 		// from one for sent messages and one for received messages."
-		attrs := []attribute.KeyValue{
+		span.AddEvent("Inbound compressed message", trace.WithAttributes(
 			attribute.Int64("sequence-number", int64(ai.countRecvMsg)),
 			attribute.Int64("message-size", int64(rs.Length)),
-		}
-		if rs.CompressedLength != rs.Length {
-			attrs = append(attrs, attribute.Int64("message-size-compressed", int64(rs.CompressedLength)))
-		}
-		span.AddEvent("Inbound message", trace.WithAttributes(attrs...))
+			attribute.Int64("message-size-compressed", int64(rs.CompressedLength)),
+		))
 		ai.countRecvMsg++
 	case *stats.OutPayload:
-		attrs := []attribute.KeyValue{
+		span.AddEvent("Outbound compressed message", trace.WithAttributes(
 			attribute.Int64("sequence-number", int64(ai.countSentMsg)),
 			attribute.Int64("message-size", int64(rs.Length)),
-		}
-		if rs.CompressedLength != rs.Length {
-			attrs = append(attrs, attribute.Int64("message-size-compressed", int64(rs.CompressedLength)))
-		}
-		span.AddEvent("Outbound message", trace.WithAttributes(attrs...))
+			attribute.Int64("message-size-compressed", int64(rs.CompressedLength)),
+		))
 		ai.countSentMsg++
 	case *stats.End:
 		if rs.Error != nil {

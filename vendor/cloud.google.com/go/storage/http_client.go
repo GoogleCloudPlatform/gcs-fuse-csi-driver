@@ -963,15 +963,7 @@ func (c *httpStorageClient) newRangeReaderJSON(ctx context.Context, params *newR
 	return parseReadResponse(res, params, reopen)
 }
 
-type httpInternalWriter struct {
-	*io.PipeWriter
-}
-
-func (hiw httpInternalWriter) Flush() (int64, error) {
-	return 0, errors.New("Writer.Flush is only supported for gRPC-based clients")
-}
-
-func (c *httpStorageClient) OpenWriter(params *openWriterParams, opts ...storageOption) (internalWriter, error) {
+func (c *httpStorageClient) OpenWriter(params *openWriterParams, opts ...storageOption) (*io.PipeWriter, error) {
 	if params.append {
 		return nil, errors.New("storage: append not supported on HTTP Client; use gRPC")
 	}
@@ -981,6 +973,9 @@ func (c *httpStorageClient) OpenWriter(params *openWriterParams, opts ...storage
 	setObj := params.setObj
 	progress := params.progress
 	attrs := params.attrs
+	params.setFlush(func() (int64, error) {
+		return 0, errors.New("Writer.Flush is only supported for gRPC-based clients")
+	})
 
 	mediaOpts := []googleapi.MediaOption{
 		googleapi.ChunkSize(params.chunkSize),
@@ -1064,7 +1059,7 @@ func (c *httpStorageClient) OpenWriter(params *openWriterParams, opts ...storage
 		setObj(newObject(resp))
 	}()
 
-	return httpInternalWriter{pw}, nil
+	return pw, nil
 }
 
 // IAM methods.

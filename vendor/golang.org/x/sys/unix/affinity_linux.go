@@ -38,7 +38,9 @@ func SchedSetaffinity(pid int, set *CPUSet) error {
 
 // Zero clears the set s, so that it contains no CPUs.
 func (s *CPUSet) Zero() {
-	clear(s[:])
+	for i := range s {
+		s[i] = 0
+	}
 }
 
 func cpuBitsIndex(cpu int) int {
