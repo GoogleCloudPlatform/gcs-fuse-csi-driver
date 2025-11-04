@@ -28,13 +28,7 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/storage"
-	control "cloud.google.com/go/storage/control/apiv2"
-	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	"github.com/google/go-cmp/cmp"
-	"github.com/googleapis/gax-go/v2"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -42,10 +36,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog/v2"
 
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
-	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -362,24 +354,22 @@ func TestCheckPVRelevance(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name              string
-		pv                *v1.PersistentVolume
-		scs               []*storagev1.StorageClass
-		wantRelevant      bool
-		wantErr           bool
-		wantBucket        string
-		wantDir           string
-		wantIsOverride    bool
-		wantIsPendingScan bool
+		name           string
+		pv             *v1.PersistentVolume
+		scs            []*storagev1.StorageClass
+		wantRelevant   bool
+		wantErr        bool
+		wantBucket     string
+		wantDir        string
+		wantIsOverride bool
 	}{
 		{
-			name:              "Relevant PV",
-			pv:                createPV(testPVName, testSCName, testBucketName, csiDriverName, []string{onlyDirMountOptPrefix + ":" + testDirName}, nil, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantDir:           testDirName,
-			wantIsPendingScan: true,
+			name:         "Relevant PV",
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, []string{onlyDirMountOptPrefix + ":" + testDirName}, nil, nil),
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: true,
+			wantBucket:   testBucketName,
+			wantDir:      testDirName,
 		},
 		{
 			name: "Relevant PV - Training",
@@ -387,9 +377,8 @@ func TestCheckPVRelevance(t *testing.T) {
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeTrainingKey}),
 			},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantIsPendingScan: true,
+			wantRelevant: true,
+			wantBucket:   testBucketName,
 		},
 		{
 			name: "Relevant PV - Serving",
@@ -397,9 +386,8 @@ func TestCheckPVRelevance(t *testing.T) {
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeServingKey}),
 			},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantIsPendingScan: true,
+			wantRelevant: true,
+			wantBucket:   testBucketName,
 		},
 		{
 			name: "Relevant PV - Checkpointing",
@@ -407,9 +395,8 @@ func TestCheckPVRelevance(t *testing.T) {
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
 			},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantIsPendingScan: true,
+			wantRelevant: true,
+			wantBucket:   testBucketName,
 		},
 		{
 			name: "Irrelevant - Wrong Driver",
@@ -417,8 +404,13 @@ func TestCheckPVRelevance(t *testing.T) {
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
 			},
-			wantRelevant:      false,
-			wantIsPendingScan: false,
+			wantRelevant: false,
+		},
+		{
+			name:         "Irrelevant - SC Not Found",
+			pv:           createPV(testPVName, "blah", testBucketName, csiDriverName, nil, nil, nil),
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: false,
 		},
 		{
 			name: "Error - Invalid Workload Type",
@@ -426,37 +418,32 @@ func TestCheckPVRelevance(t *testing.T) {
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: "blah"}),
 			},
-			wantErr:           true,
-			wantIsPendingScan: false,
+			wantErr: true,
 		},
 		{
-			name: "Relevant but no scan pending - Within TTL",
+			name: "Irrelevant - Within TTL",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
 				putil.AnnotationLastUpdatedTime: lastUpdateTimeWithinTTL,
 			}, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantBucket:        testBucketName,
-			wantRelevant:      true,
-			wantIsPendingScan: false,
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: false,
 		},
 		{
-			name: "Relevant scan is pending - Outside TTL",
+			name: "Relevant - Outside TTL",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
 				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
 			}, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantIsPendingScan: true,
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: true,
+			wantBucket:   testBucketName,
 		},
 		{
-			name:              "Relevant - Override mode - Should return relevant and override",
-			pv:                createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, validOverrideAnnotations, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantIsOverride:    true,
-			wantIsPendingScan: false,
+			name:           "Relevant - Override mode - Should return relevant and override",
+			pv:             createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, validOverrideAnnotations, nil),
+			scs:            []*storagev1.StorageClass{validSC},
+			wantRelevant:   true,
+			wantBucket:     testBucketName,
+			wantIsOverride: true,
 		},
 		{
 			name: "Irrelevant - Override mode - Missing Annotations - Should return error",
@@ -464,10 +451,9 @@ func TestCheckPVRelevance(t *testing.T) {
 				putil.AnnotationStatus: putil.ScanOverride,
 				// Missing other required annotations
 			}, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      false,
-			wantErr:           true,
-			wantIsPendingScan: false,
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: false,
+			wantErr:      true,
 		},
 		{
 			name: "Irrelevant - Override mode - Invalid NumObjects - Should return error",
@@ -476,10 +462,9 @@ func TestCheckPVRelevance(t *testing.T) {
 				putil.AnnotationNumObjects: "not-a-number",
 				putil.AnnotationTotalSize:  "200000",
 			}, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      false,
-			wantErr:           true,
-			wantIsPendingScan: false,
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: false,
+			wantErr:      true,
 		},
 		{
 			name: "Irrelevant - Override mode - Negative NumObjects - Should return error",
@@ -488,10 +473,9 @@ func TestCheckPVRelevance(t *testing.T) {
 				putil.AnnotationNumObjects: "-100",
 				putil.AnnotationTotalSize:  "200000",
 			}, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      false,
-			wantErr:           true,
-			wantIsPendingScan: false,
+			scs:          []*storagev1.StorageClass{validSC},
+			wantRelevant: false,
+			wantErr:      true,
 		},
 	}
 
@@ -506,7 +490,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			}
 			f := newTestFixture(t, objs...)
 			f.mockTimeImpl.currentTime = now
-			bucketI, isPendingScan, err := f.scanner.checkPVRelevance(tc.pv, tc.scs[0])
+			bucketI, err := f.scanner.checkPVRelevance(tc.pv)
 
 			if tc.wantErr {
 				if err == nil {
@@ -533,9 +517,6 @@ func TestCheckPVRelevance(t *testing.T) {
 				if bucketI.isOverride != tc.wantIsOverride {
 					t.Errorf("checkPVRelevance(%v) isOverride = %v, want %v", tc.pv.Name, bucketI.isOverride, tc.wantIsOverride)
 				}
-			}
-			if isPendingScan != tc.wantIsPendingScan {
-				t.Errorf("checkPVRelevance(%v) isPendingScan = %v, want %v", tc.pv.Name, isPendingScan, tc.wantIsPendingScan)
 			}
 		})
 	}
@@ -1416,392 +1397,6 @@ func TestDefaultScanBucket(t *testing.T) {
 
 			if tc.fakeDataflux.called != tc.expectDatafluxCall {
 				t.Errorf("scanBucketWithDataflux called = %v, want %v", tc.fakeDataflux.called, tc.expectDatafluxCall)
-			}
-		})
-	}
-}
-
-func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
-	// Define test cases
-	testCases := []struct {
-		name           string
-		pv             *v1.PersistentVolume
-		expectedPolicy string
-		expectError    bool
-		expectedError  string
-	}{
-		{
-			name: "should return 'admit-on-first-miss' when explicitly set",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-1"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"anywhereCacheAdmissionPolicy": "admit-on-first-miss",
-							},
-						},
-					},
-				},
-			},
-			expectedPolicy: "admit-on-first-miss",
-			expectError:    false,
-		},
-		{
-			name: "should return 'admit-on-second-miss' when explicitly set",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-2"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"anywhereCacheAdmissionPolicy": "admit-on-second-miss",
-							},
-						},
-					},
-				},
-			},
-			expectedPolicy: "admit-on-second-miss",
-			expectError:    false,
-		},
-		{
-			name: "should return default 'admit-on-first-miss' when attribute is not set",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-3"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{}, // Empty attributes
-						},
-					},
-				},
-			},
-			expectedPolicy: "admit-on-first-miss",
-			expectError:    false,
-		},
-		{
-			name: "should return an error for an invalid admission policy",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-4"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"anywhereCacheAdmissionPolicy": "invalid-policy",
-							},
-						},
-					},
-				},
-			},
-			expectedPolicy: "",
-			expectError:    true,
-			expectedError:  "invalid anywhere cache admission policy provided provided: invalid-policy, valid values are \"admit-on-first-miss\" or \"admit-on-second-miss\"",
-		},
-	}
-
-	// Run tests
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			policy, err := getAnywhereCacheAdmissionPolicyFromPV(tc.pv)
-
-			if tc.expectError {
-				if err == nil {
-					t.Errorf("Expected an error, but got nil")
-				}
-				if err != nil && err.Error() != tc.expectedError {
-					t.Errorf("Expected error message '%s', but got '%s'", tc.expectedError, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error, but got: %v", err)
-				}
-			}
-
-			if policy != tc.expectedPolicy {
-				t.Errorf("Expected policy '%s', but got '%s'", tc.expectedPolicy, policy)
-			}
-		})
-	}
-}
-
-func TestGetAnywhereCacheTtlFromPV(t *testing.T) {
-	testCases := []struct {
-		name             string
-		pv               *v1.PersistentVolume
-		expectedDuration *durationpb.Duration
-		expectError      bool
-	}{
-		{
-			name: "should return correct duration when ttl is explicitly set",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-1"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"anywhereCacheTTL": "15m",
-							},
-						},
-					},
-				},
-			},
-			expectedDuration: durationpb.New(15 * time.Minute),
-			expectError:      false,
-		},
-		{
-			name: "should return default 1h duration when attribute is not set",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-2"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{}, // Empty attributes
-						},
-					},
-				},
-			},
-			expectedDuration: durationpb.New(1 * time.Hour),
-			expectError:      false,
-		},
-		{
-			name: "should return an error for an invalid duration string",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-3"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"anywhereCacheTTL": "invalid-duration",
-							},
-						},
-					},
-				},
-			},
-			expectedDuration: nil,
-			expectError:      true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			duration, err := getAnywhereCacheTTLFromPV(tc.pv)
-
-			if tc.expectError {
-				if err == nil {
-					t.Errorf("Expected an error, but got nil")
-				}
-				return // End test here if error was expected
-			}
-
-			if err != nil {
-				t.Errorf("Expected no error, but got: %v", err)
-			}
-
-			if duration.GetSeconds() != tc.expectedDuration.GetSeconds() || duration.GetNanos() != tc.expectedDuration.GetNanos() {
-				t.Errorf("Expected duration %v, but got %v", tc.expectedDuration, duration)
-			}
-		})
-	}
-}
-
-// ====================================================================================
-// Anywherecache create testing: Mocks and Test Infrastructure
-// ====================================================================================
-
-// mockStorageControlClient is our fake storage client for tests.
-type mockStorageControlClient struct {
-	CreateAnywhereCacheFunc func(context.Context, *controlpb.CreateAnywhereCacheRequest, ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error)
-}
-
-func (m mockStorageControlClient) CreateAnywhereCache(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
-	if m.CreateAnywhereCacheFunc != nil {
-		return m.CreateAnywhereCacheFunc(ctx, req, opts...)
-	}
-	// Default success response if no specific behavior is set
-	return &control.CreateAnywhereCacheOperation{}, nil
-}
-
-func (m mockStorageControlClient) Close() error {
-	// No-op for the mock
-	return nil
-}
-
-// ====================================================================================
-// Anywherecache create testing: Tests
-// ====================================================================================
-func TestCreateAnywhereCache(t *testing.T) {
-	// --- Shared Test Variables ---
-	ctx := context.Background()
-	validpv := &v1.PersistentVolume{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-pv",
-			// Add annotations needed by the real buildCreateAnywhereCacheRequest
-			Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
-		},
-		Spec: v1.PersistentVolumeSpec{
-			PersistentVolumeSource: v1.PersistentVolumeSource{
-				CSI: &v1.CSIPersistentVolumeSource{
-					VolumeHandle: "my-bucket",
-				},
-			},
-		},
-	}
-
-	testCases := []struct {
-		name                 string
-		setupMocks           func()
-		err                  error
-		pv                   *v1.PersistentVolume
-		storageControlClient storageControlClient
-	}{
-		{
-			name: "Happy Path - All zones succeed",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b"}, nil
-				}
-			},
-			err:                  nil,
-			storageControlClient: mockStorageControlClient{},
-		},
-		{
-			name: "Failure - GetZonesForClusterRegion fails",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return nil, fmt.Errorf("mock region error")
-				}
-			},
-			err: fmt.Errorf("failed to get zones for region: mock region error"),
-		},
-		{
-			name: "Failure - NoStorageControlClient fails",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a"}, nil
-				}
-			},
-			err: fmt.Errorf("storage control client should not be nil"),
-		},
-		{
-			name: "Failure - Invalid TTL format",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a"}, nil
-				}
-			},
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pv",
-					// Missing required annotation to trigger build error
-					Annotations: map[string]string{},
-				},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeHandle: "my-bucket",
-							VolumeAttributes: map[string]string{
-								"anywhereCacheTTL": "invalid-duration",
-							},
-						},
-					},
-				},
-			},
-			storageControlClient: &mockStorageControlClient{},
-			err:                  status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: time: invalid duration %q", "test-pv", "invalid-duration"),
-		},
-		{
-			name: "One zone fails API Failure",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
-				}
-			},
-			err: fmt.Errorf("errors occurred while creating anywhere caches: zone-a:[rpc error: code = Internal desc = failed]"),
-			storageControlClient: &mockStorageControlClient{
-				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
-					if req.AnywhereCache.Zone != "zone-a" {
-						return &control.CreateAnywhereCacheOperation{}, nil
-					}
-					return nil, status.Errorf(codes.Internal, "failed")
-				},
-			},
-		},
-		{
-			name: "One zone fails API Failure, one ac zone already exists",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
-				}
-			},
-			err: fmt.Errorf("errors occurred while creating anywhere caches: zone-a:[rpc error: code = Internal desc = failed retry]"),
-			storageControlClient: &mockStorageControlClient{
-				// This function signature now matches the interface exactly.
-				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
-					if req.AnywhereCache.Zone == "zone-a" {
-						return nil, status.Errorf(codes.Internal, "failed retry")
-					}
-					if req.AnywhereCache.Zone == "zone-b" {
-						return nil, status.Errorf(codes.AlreadyExists, "failed not retry")
-					}
-					return &control.CreateAnywhereCacheOperation{}, nil
-				},
-			},
-		},
-		{
-			name: "One zone fails - already exists",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
-				}
-			},
-			err: nil,
-			storageControlClient: &mockStorageControlClient{
-				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
-					if req.AnywhereCache.Zone != "zone-a" {
-						return &control.CreateAnywhereCacheOperation{}, nil
-					}
-					return nil, status.Errorf(codes.AlreadyExists, "failed to build anywhere cache request: Already Exists")
-				},
-			},
-		},
-		{
-			name: "Edge Case - No zones returned",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(_ context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{}, nil
-				}
-			},
-			storageControlClient: &mockStorageControlClient{},
-			err:                  nil,
-		},
-	}
-
-	// --- Test Runner ---
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			klog.Infof("\n\nStarting test: %s", tc.name)
-			if tc.pv == nil {
-				tc.pv = validpv
-			}
-
-			fakeRecorder := record.NewFakeRecorder(10)
-			tc.setupMocks()
-
-			s := &Scanner{eventRecorder: fakeRecorder, config: &ScannerConfig{ClusterLocation: "us-central1", ProjectNumber: "123"}, storageControlClient: tc.storageControlClient}
-
-			err := s.createAnywhereCache(ctx, tc.pv)
-
-			if tc.err != nil {
-				if err == nil {
-					t.Errorf("Expected an error, but got nil")
-				}
-				if err != nil && err.Error() != tc.err.Error() {
-					t.Errorf("Expected error message '%s', but got '%s'", tc.err.Error(), err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error, but got: %v", err)
-				}
 			}
 		})
 	}
