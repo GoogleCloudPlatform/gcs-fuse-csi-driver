@@ -1976,12 +1976,6 @@ const (
 	SYMBOLIC_LINK_FLAG_DIRECTORY     = 0x1
 )
 
-// FILE_ZERO_DATA_INFORMATION from winioctl.h
-type FileZeroDataInformation struct {
-	FileOffset      int64
-	BeyondFinalZero int64
-}
-
 const (
 	ComputerNameNetBIOS                   = 0
 	ComputerNameDnsHostname               = 1

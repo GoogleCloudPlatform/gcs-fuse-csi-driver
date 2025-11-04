@@ -106,6 +106,12 @@ func (scs *ServerConfigs) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &servers); err != nil {
 		return fmt.Errorf("xds: failed to JSON unmarshal server configurations during bootstrap: %v, config:\n%s", err, string(data))
 	}
+	// Only use the first server config if fallback support is disabled.
+	if !envconfig.XDSFallbackSupport {
+		if len(servers) > 1 {
+			servers = servers[:1]
+		}
+	}
 	*scs = servers
 	return nil
 }
@@ -200,7 +206,7 @@ func (sc *ServerConfig) ServerFeatures() []string {
 //
 // This feature controls the behavior of the xDS client when the server deletes
 // a previously sent Listener or Cluster resource. If set, the xDS client will
-// not invoke the watchers' ResourceError() method when a resource is
+// not invoke the watchers' OnResourceDoesNotExist() method when a resource is
 // deleted, nor will it remove the existing resource value from its cache.
 func (sc *ServerConfig) ServerFeaturesIgnoreResourceDeletion() bool {
 	for _, sf := range sc.serverFeatures {
@@ -211,16 +217,10 @@ func (sc *ServerConfig) ServerFeaturesIgnoreResourceDeletion() bool {
 	return false
 }
 
-// SelectedCreds returns the selected credentials configuration for
-// communicating with this server.
-func (sc *ServerConfig) SelectedCreds() ChannelCreds {
-	return sc.selectedCreds
-}
-
 // DialOptions returns a slice of all the configured dial options for this
-// server except grpc.WithCredentialsBundle().
+// server.
 func (sc *ServerConfig) DialOptions() []grpc.DialOption {
-	var dopts []grpc.DialOption
+	dopts := []grpc.DialOption{sc.credsDialOption}
 	if sc.extraDialOptions != nil {
 		dopts = append(dopts, sc.extraDialOptions...)
 	}
@@ -570,9 +570,6 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 // the presence of the errors) and may return a Config object with certain
 // fields left unspecified, in which case the caller should use some sane
 // defaults.
-//
-// This function returns an error if it's unable to parse the contents of the
-// bootstrap config. It returns (nil, nil) if none of the env vars are set.
 func GetConfiguration() (*Config, error) {
 	fName := envconfig.XDSBootstrapFileName
 	fContent := envconfig.XDSBootstrapFileContent
@@ -595,7 +592,7 @@ func GetConfiguration() (*Config, error) {
 		return NewConfigFromContents([]byte(fContent))
 	}
 
-	return nil, nil
+	return nil, fmt.Errorf("bootstrap environment variables (%q or %q) not defined", envconfig.XDSBootstrapFileNameEnv, envconfig.XDSBootstrapFileContentEnv)
 }
 
 // NewConfigFromContents creates a new bootstrap configuration from the provided
