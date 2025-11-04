@@ -31,8 +31,6 @@ CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "
 IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
 IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
 
-CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
-PROJECT_NUMBER ?= $(shell gcloud projects describe $(PROJECT) --format="value(projectNumber)")
 
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
@@ -228,11 +226,6 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
-	if [ "$(OVERLAY)" = "profiles" ]; then \
-		echo "Applying profiles configmap..."; \
-		cd ./deploy/overlays/profiles; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=create --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION}; \
-		cd ./deploy/overlays/profiles; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=create --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER}; \
-	fi
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_POOL}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
 	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json

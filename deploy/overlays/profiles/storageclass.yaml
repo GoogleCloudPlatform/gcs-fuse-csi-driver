@@ -39,7 +39,6 @@ mountOptions:
   - read_ahead_kb=1024
 parameters:
   workloadType: "serving"
-  enableAnywhereCache: "true"
   skipCSIBucketAccessCheck: "true"
   gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"

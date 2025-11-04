@@ -31,8 +31,6 @@ spec:
             - "--dataflux-parallelism=0"
             - "--leader-election=true"
             - "--leader-election-namespace=$(CLOUDSTORAGECSI_NAMESPACE)"
-            - "--cluster-location=$(CLUSTER_LOCATION)"
-            - "--project-number=$(PROJECT_NUMBER)"
           resources:
             limits:
               # It is recommended to leave CPU limits unset for master Pods.
@@ -48,14 +46,3 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: CLUSTER_LOCATION
-              valueFrom:
-                configMapKeyRef:
-                  name: gcsfusecsi-profiles-config
-                  key: cluster-location
-            - name: PROJECT_NUMBER
-              valueFrom:
-                configMapKeyRef:
-                  name: gcsfusecsi-profiles-config
-                  key: project-number
-          
