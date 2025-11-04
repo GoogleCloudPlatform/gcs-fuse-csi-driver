@@ -182,7 +182,6 @@ type bucketInfo struct {
 	onlyDirSpecified bool
 	numObjects       int64
 	totalSizeBytes   int64
-	isHNSEnabled     bool
 	isOverride       bool
 }
 
@@ -738,7 +737,7 @@ func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVo
 
 	// The status annotation is already "override", but we patch it here along with
 	// the timestamp to mark the operation as complete and update the in-memory map.
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes, HNS enabled: %t", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes, bucketI.isHNSEnabled)
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes: %t", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes)
 	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, profilesutil.ScanOverride); patchErr != nil {
 		return patchErr
 	}
@@ -956,7 +955,7 @@ func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketNa
 }
 
 // defaultScanBucket performs a bucket scan.
-// It collects the number of objects, total size, and HNS status.
+// It collects the number of objects, total size.
 // This function respects the provided context and the scanTimeout.
 // It returns partial results if the timeout is reached (context.DeadlineExceeded).
 //
@@ -967,15 +966,13 @@ func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketNa
 //
 // Optionally, GCS Dataflux client scanning on the entire bucket can be forced by specifying `only-dir=/`
 func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
-	// Get bucket attributes to determine HNS status and project number.
+	// Get bucket attributes to determine project number.
 	// Use the parent context for this, as it's a quick metadata call.
 	bucketAttrs, err := bucketAttrs(ctx, s.gcsClient, bucketI.name)
 	if err != nil {
 		return err
 	}
-	bucketI.isHNSEnabled = bucketAttrs.HierarchicalNamespace != nil && bucketAttrs.HierarchicalNamespace.Enabled
 	bucketI.projectNumber = fmt.Sprint(bucketAttrs.ProjectNumber)
-	klog.Infof("Bucket %q HNS enabled: %t", bucketI.name, bucketI.isHNSEnabled)
 
 	if bucketI.onlyDirSpecified {
 		klog.Infof("'only-dir' is set for bucket %q, dir %q. Scanning with Dataflux.", bucketI.name, bucketI.dir)
@@ -1174,7 +1171,7 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 }
 
 // updatePVScanResult updates the PV annotations with the results of a bucket scan.
-// It sets the status, number of objects, total size, HNS status, and last updated time.
+// It sets the status, number of objects, total size, and last updated time.
 // It also updates the in-memory lastSuccessfulScan map.
 func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolume, bucketI *bucketInfo, status string) error {
 	currentTime := timeNow()
@@ -1183,7 +1180,6 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 		profilesutil.AnnotationNumObjects:      int64Ptr(bucketI.numObjects),
 		profilesutil.AnnotationTotalSize:       int64Ptr(bucketI.totalSizeBytes),
 		profilesutil.AnnotationLastUpdatedTime: stringPtr(currentTime.UTC().Format(time.RFC3339)),
-		profilesutil.AnnotationHNSEnabled:      boolPtr(bucketI.isHNSEnabled),
 	}
 	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, status)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
@@ -1254,14 +1250,13 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 	// Handle the override annotation, if set.
 	if bucketStatus, ok := pv.Annotations[profilesutil.AnnotationStatus]; ok && bucketStatus == profilesutil.ScanOverride {
 		// Enforce required annotations for override mode and validate formats.
-		numObjects, totalSizeBytes, isHNSEnabled, err := profilesutil.ParseOverrideStatus(pv)
+		numObjects, totalSizeBytes, err := profilesutil.ParseOverrideStatus(pv)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to validate arguments for PV %q with override mode: %v", pv.Name, err)
 		}
 		overrideInfo := &bucketInfo{
 			numObjects:     numObjects,
 			totalSizeBytes: totalSizeBytes,
-			isHNSEnabled:   isHNSEnabled,
 		}
 
 		klog.Infof("PV %q: Override mode detected. Bypassing scan.", pv.Name)
@@ -1301,7 +1296,6 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 		profilesutil.AnnotationStatus,
 		profilesutil.AnnotationNumObjects,
 		profilesutil.AnnotationTotalSize,
-		profilesutil.AnnotationHNSEnabled,
 	}); len(annotationsUsed) > 0 {
 		return nil, false, status.Errorf(codes.InvalidArgument, "scanner annotations for PV %q found in non-override mode: %+v", pv.Name, annotationsUsed)
 	}

@@ -35,7 +35,6 @@ const (
 	AnnotationNumObjects      = AnnotationPrefix + "/bucket-scan-num-objects"
 	AnnotationTotalSize       = AnnotationPrefix + "/bucket-scan-total-size-bytes"
 	AnnotationLastUpdatedTime = AnnotationPrefix + "/bucket-scan-last-updated-time"
-	AnnotationHNSEnabled      = AnnotationPrefix + "/bucket-scan-hns-enabled"
 
 	ScanOverride = "override"
 )
@@ -44,7 +43,6 @@ var (
 	requiredOverrideAnnotations = []string{
 		AnnotationNumObjects,
 		AnnotationTotalSize,
-		AnnotationHNSEnabled,
 	}
 )
 
@@ -55,14 +53,13 @@ func ValidateStorageProfilesOverrideStatus(pv *corev1.PersistentVolume) error {
 			AnnotationStatus,
 			AnnotationNumObjects,
 			AnnotationTotalSize,
-			AnnotationHNSEnabled,
 		}); len(annotationsUsed) > 0 {
 			return status.Errorf(codes.InvalidArgument, "scanner annotations for PV %q found in non-override mode: %+v", pv.Name, annotationsUsed)
 		}
 		return nil
 	}
 
-	_, _, _, err := ParseOverrideStatus(pv)
+	_, _, err := ParseOverrideStatus(pv)
 	if err != nil {
 		return err
 	}
@@ -98,38 +95,31 @@ func ParseNonNegativeIntegerFromString(val string) (int64, error) {
 // parseOverrideStatus checks that, if the override mode is set, the
 // PV has the required annotations with valid format/types.
 // Returns the required annotations (parsed) if valid, or returns an error otherwise.
-func ParseOverrideStatus(pv *v1.PersistentVolume) (int64, int64, bool, error) {
+func ParseOverrideStatus(pv *v1.PersistentVolume) (int64, int64, error) {
 	// Enforce required annotations for override mode and validate formats.
 	var numObjects int64
 	var totalSizeBytes int64
-	var isHNSEnabled bool
 	for _, key := range requiredOverrideAnnotations {
 		if _, exists := pv.Annotations[key]; !exists {
-			return numObjects, totalSizeBytes, isHNSEnabled, status.Errorf(codes.InvalidArgument, "status %q requires annotation %q", ScanOverride, key)
+			return numObjects, totalSizeBytes, status.Errorf(codes.InvalidArgument, "status %q requires annotation %q", ScanOverride, key)
 		}
 		switch key {
 		case AnnotationNumObjects:
 			val, err := ParseNonNegativeIntegerFromString(pv.Annotations[key])
 			if err != nil {
-				return numObjects, totalSizeBytes, isHNSEnabled, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
+				return numObjects, totalSizeBytes, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
 			}
 			numObjects = val
 		case AnnotationTotalSize:
 			val, err := ParseNonNegativeIntegerFromString(pv.Annotations[key])
 			if err != nil {
-				return numObjects, totalSizeBytes, isHNSEnabled, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
+				return numObjects, totalSizeBytes, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
 			}
 			totalSizeBytes = val
-		case AnnotationHNSEnabled:
-			val, err := strconv.ParseBool(pv.Annotations[AnnotationHNSEnabled])
-			if err != nil {
-				return numObjects, totalSizeBytes, isHNSEnabled, status.Errorf(codes.InvalidArgument, "invalid value for annotation %q: %v", key, err)
-			}
-			isHNSEnabled = val
 		default:
 			// This should never happen, but it's safer to check.
-			return numObjects, totalSizeBytes, isHNSEnabled, status.Errorf(codes.Internal, "unexpected key for override mode requiredAnnotations: %q", key)
+			return numObjects, totalSizeBytes, status.Errorf(codes.Internal, "unexpected key for override mode requiredAnnotations: %q", key)
 		}
 	}
-	return numObjects, totalSizeBytes, isHNSEnabled, nil
+	return numObjects, totalSizeBytes, nil
 }

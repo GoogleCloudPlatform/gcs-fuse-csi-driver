@@ -163,7 +163,6 @@ func TestValidateStorageProfilesOverrideStatus(t *testing.T) {
 						AnnotationStatus:     ScanOverride,
 						AnnotationNumObjects: "1000",
 						AnnotationTotalSize:  "2048",
-						AnnotationHNSEnabled: "true",
 					},
 				},
 			},
@@ -178,7 +177,6 @@ func TestValidateStorageProfilesOverrideStatus(t *testing.T) {
 						AnnotationStatus:     ScanOverride,
 						AnnotationNumObjects: "1000",
 						// annotationTotalSize is missing
-						AnnotationHNSEnabled: "true",
 					},
 				},
 			},
@@ -193,7 +191,6 @@ func TestValidateStorageProfilesOverrideStatus(t *testing.T) {
 						AnnotationStatus:     ScanOverride,
 						AnnotationNumObjects: "not-a-number",
 						AnnotationTotalSize:  "2048",
-						AnnotationHNSEnabled: "true",
 					},
 				},
 			},
@@ -208,22 +205,6 @@ func TestValidateStorageProfilesOverrideStatus(t *testing.T) {
 						AnnotationStatus:     ScanOverride,
 						AnnotationNumObjects: "1000",
 						AnnotationTotalSize:  "-2048",
-						AnnotationHNSEnabled: "true",
-					},
-				},
-			},
-			wantErr:     true,
-			wantErrCode: codes.InvalidArgument,
-		},
-		{
-			name: "Override mode: failure with invalid boolean value",
-			pv: &corev1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						AnnotationStatus:     ScanOverride,
-						AnnotationNumObjects: "1000",
-						AnnotationTotalSize:  "2048",
-						AnnotationHNSEnabled: "yes", // not a valid bool
 					},
 				},
 			},
