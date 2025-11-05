@@ -3,6 +3,7 @@
 cel.dev/expr
 # cloud.google.com/go v0.121.2
 ## explicit; go 1.23.0
+cloud.google.com/go
 cloud.google.com/go/internal
 cloud.google.com/go/internal/optional
 cloud.google.com/go/internal/trace
@@ -37,6 +38,11 @@ cloud.google.com/go/iam/apiv1/iampb
 cloud.google.com/go/iam/credentials/apiv1
 cloud.google.com/go/iam/credentials/apiv1/credentialspb
 cloud.google.com/go/iam/internal
+# cloud.google.com/go/longrunning v0.6.7
+## explicit; go 1.23.0
+cloud.google.com/go/longrunning
+cloud.google.com/go/longrunning/autogen
+cloud.google.com/go/longrunning/autogen/longrunningpb
 # cloud.google.com/go/monitoring v1.24.2
 ## explicit; go 1.23.0
 cloud.google.com/go/monitoring/apiv3/v2
@@ -49,6 +55,8 @@ cloud.google.com/go/profiler/internal
 # cloud.google.com/go/storage v1.55.0
 ## explicit; go 1.23.0
 cloud.google.com/go/storage
+cloud.google.com/go/storage/control/apiv2
+cloud.google.com/go/storage/control/apiv2/controlpb
 cloud.google.com/go/storage/dataflux
 cloud.google.com/go/storage/experimental
 cloud.google.com/go/storage/internal
@@ -524,6 +532,7 @@ golang.org/x/time/rate
 gomodules.xyz/jsonpatch/v2
 # google.golang.org/api v0.235.0
 ## explicit; go 1.23.0
+google.golang.org/api/compute/v1
 google.golang.org/api/googleapi
 google.golang.org/api/googleapi/transport
 google.golang.org/api/iamcredentials/v1

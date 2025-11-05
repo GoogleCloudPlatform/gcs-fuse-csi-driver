@@ -12,6 +12,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/go-logr/logr v1.4.2
 	github.com/google/go-cmp v0.7.0
+	github.com/googleapis/gax-go/v2 v2.14.2
 	github.com/kubernetes-csi/csi-lib-utils v0.22.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
@@ -40,6 +41,7 @@ require (
 	cloud.google.com/go v0.121.2 // indirect
 	cloud.google.com/go/auth v0.16.1 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
+	cloud.google.com/go/longrunning v0.6.7 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.27.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.51.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.51.0 // indirect
@@ -71,7 +73,6 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
-	github.com/googleapis/gax-go/v2 v2.14.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
