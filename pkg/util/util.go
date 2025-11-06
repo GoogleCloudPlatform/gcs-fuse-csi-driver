@@ -30,6 +30,8 @@ import (
 	"strings"
 
 	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 )
 
@@ -248,10 +250,10 @@ func GetZonesForALocation(ctx context.Context, projectNumber string, computeServ
 
 	// Validating inputs.
 	if projectNumber == "" {
-		return []string{}, fmt.Errorf("no project number provided")
+		return []string{}, status.Errorf(codes.Internal, "no project number provided")
 	}
 	if computeService == nil {
-		return []string{}, fmt.Errorf("compute service can't be null")
+		return []string{}, status.Errorf(codes.Internal, "compute service can't be nil")
 	}
 
 	// Handle the zonal cluster case.

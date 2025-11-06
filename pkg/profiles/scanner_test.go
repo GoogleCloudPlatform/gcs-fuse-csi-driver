@@ -769,11 +769,10 @@ func TestSyncPod(t *testing.T) {
 			initialObjects: []runtime.Object{},
 		},
 		{
-			name:             "PVC found, but PV not found (error)",
+			name:             "PVC found, but PV not found",
 			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant}, podLabels, true),
 			initialObjects:   []runtime.Object{pvcBoundRelevant},
-			wantErr:          true,
-			expectRequeueErr: false,
+			expectRequeueErr: true,
 		},
 		{
 			name:              "Pod with Override PV - Should remove gate",
@@ -1680,7 +1679,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return []string{"zone-a"}, nil
 				}
 			},
-			err: fmt.Errorf("storage control client should not be nil"),
+			err: status.Errorf(codes.Internal, "storage control client should not be nil"),
 		},
 		{
 			name: "Failure - Invalid TTL format",
