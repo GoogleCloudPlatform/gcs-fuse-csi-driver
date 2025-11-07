@@ -44,6 +44,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
@@ -256,6 +257,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		lastSuccessfulScan: make(map[string]time.Time),
 		datafluxConfig:     &DatafluxConfig{}, // Use default or test-specific config
 		scanBucketImpl:     fsb.Scan,          // Inject the fake scan function
+		metricManager:      metrics.NewFakePrometheusMetricsManager(),
 	}
 
 	factory.Start(stopCh)
@@ -869,63 +871,76 @@ func TestProcessNextWorkItem(t *testing.T) {
 	podRelevant := createPod(podName, namespace, []v1.Volume{volForPod}, podLabels, true)
 
 	testCases := []struct {
-		name              string
-		keyToAdd          string
-		initialObjects    []runtime.Object
-		bucketI           *bucketInfo // For PV sync
-		scanErr           error       // For PV sync
-		patchErr          error       // For PV or Pod sync
-		expectRequeue     bool
-		expectAnnotate    bool   // For PV sync
-		expectedStatus    string // For PV sync
-		expectGateRemoved bool   // For Pod sync
+		name                 string
+		keyToAdd             string
+		initialObjects       []runtime.Object
+		bucketI              *bucketInfo // For PV sync
+		scanErr              error       // For PV sync
+		patchErr             error       // For PV or Pod sync
+		expectRequeue        bool
+		expectAnnotate       bool   // For PV sync
+		expectedStatus       string // For PV sync
+		expectGateRemoved    bool   // For Pod sync
+		expectSyncPVCounter  map[string]int
+		expectSyncPodCounter map[string]int
 	}{
 		// PV Key Tests
 		{
-			name:           "PV Sync Successful",
-			keyToAdd:       pvQueueKey,
-			initialObjects: []runtime.Object{pvRelevant, scValid},
-			bucketI:        scanResult,
-			expectRequeue:  false,
-			expectAnnotate: true,
-			expectedStatus: scanCompleted,
+			name:                 "PV Sync Successful",
+			keyToAdd:             pvQueueKey,
+			initialObjects:       []runtime.Object{pvRelevant, scValid},
+			bucketI:              scanResult,
+			expectRequeue:        false,
+			expectAnnotate:       true,
+			expectedStatus:       scanCompleted,
+			expectSyncPVCounter:  map[string]int{codes.OK.String(): 1},
+			expectSyncPodCounter: map[string]int{},
 		},
 		{
-			name:           "PV Sync Scan Error",
-			keyToAdd:       pvQueueKey,
-			initialObjects: []runtime.Object{pvRelevant, scValid},
-			scanErr:        fmt.Errorf("scan failed"),
-			expectRequeue:  true,
+			name:                 "PV Sync Scan Error",
+			keyToAdd:             pvQueueKey,
+			initialObjects:       []runtime.Object{pvRelevant, scValid},
+			scanErr:              status.Errorf(codes.Internal, "scan failed"),
+			expectRequeue:        true,
+			expectSyncPVCounter:  map[string]int{codes.Internal.String(): 1},
+			expectSyncPodCounter: map[string]int{},
 		},
 		{
-			name:           "PV Sync Patch Error",
-			keyToAdd:       pvQueueKey,
-			initialObjects: []runtime.Object{pvRelevant, scValid},
-			bucketI:        scanResult,
-			patchErr:       fmt.Errorf("patch failed"),
-			expectRequeue:  true,
+			name:                 "PV Sync Patch Error",
+			keyToAdd:             pvQueueKey,
+			initialObjects:       []runtime.Object{pvRelevant, scValid},
+			bucketI:              scanResult,
+			patchErr:             fmt.Errorf("patch failed"),
+			expectRequeue:        true,
+			expectSyncPVCounter:  map[string]int{codes.Unknown.String(): 1},
+			expectSyncPodCounter: map[string]int{},
 		},
 		// Pod Key Tests
 		{
-			name:              "Pod Sync Successful - Gate Removed",
-			keyToAdd:          podQueueKey,
-			initialObjects:    []runtime.Object{createPod(podName, namespace, nil, podLabels, true)}, // No volumes, gate should be removed
-			expectRequeue:     false,
-			expectGateRemoved: true,
+			name:                 "Pod Sync Successful - Gate Removed",
+			keyToAdd:             podQueueKey,
+			initialObjects:       []runtime.Object{createPod(podName, namespace, nil, podLabels, true)}, // No volumes, gate should be removed
+			expectRequeue:        false,
+			expectGateRemoved:    true,
+			expectSyncPVCounter:  map[string]int{},
+			expectSyncPodCounter: map[string]int{codes.OK.String(): 1},
 		},
 		{
-			name:           "Pod Sync Requeue - Relevant PV",
-			keyToAdd:       podQueueKey,
-			initialObjects: []runtime.Object{podRelevant, pvcForPod, pvRelevant, scValid},
-			expectRequeue:  true, // Pod requeued because PV needs scan
+			name:                 "Pod Sync Requeue - Relevant PV",
+			keyToAdd:             podQueueKey,
+			initialObjects:       []runtime.Object{podRelevant, pvcForPod, pvRelevant, scValid},
+			expectRequeue:        true, // Pod requeued because PV needs scan
+			expectSyncPVCounter:  map[string]int{},
+			expectSyncPodCounter: map[string]int{codes.OK.String(): 1},
 		},
 		{
-			name:          "Unknown Key Prefix",
-			keyToAdd:      "unknown/" + pvKey,
-			expectRequeue: false,
+			name:                 "Unknown Key Prefix",
+			keyToAdd:             "unknown/" + pvKey,
+			expectRequeue:        false,
+			expectSyncPVCounter:  map[string]int{},
+			expectSyncPodCounter: map[string]int{},
 		},
 	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTestFixture(t, tc.initialObjects...)
