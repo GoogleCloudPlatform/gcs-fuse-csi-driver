@@ -99,6 +99,12 @@ const (
 	pollTimeout      = 1 * time.Minute
 	pollIntervalSlow = 10 * time.Second
 	pollTimeoutSlow  = 20 * time.Minute
+
+	backoffDuration = 5 * time.Second
+	backoffFactor   = 2.0
+	backoffCap      = 2 * time.Minute
+	backoffSteps    = 8
+	backoffJitter   = 0.1
 )
 
 type TestPod struct {
@@ -209,7 +215,7 @@ func (t *TestPod) VerifyExecInPodSucceed(f *framework.Framework, containerName, 
 
 // VerifyExecInPodSucceedWithOutput verifies shell cmd in target pod succeed.
 func (t *TestPod) VerifyExecInPodSucceedWithOutput(f *framework.Framework, containerName, shExec string) string {
-	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	framework.ExpectNoError(err,
 		"%q should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
 		shExec, err, stdout, stderr)
@@ -219,7 +225,7 @@ func (t *TestPod) VerifyExecInPodSucceedWithOutput(f *framework.Framework, conta
 
 // VerifyExecInPodSucceedWithFullOutput verifies shell cmd in target pod succeed with full output.
 func (t *TestPod) VerifyExecInPodSucceedWithFullOutput(f *framework.Framework, containerName, shExec string) {
-	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	framework.ExpectNoError(err,
 		"%q should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
 		shExec, err, stdout, stderr)
@@ -229,9 +235,34 @@ func (t *TestPod) VerifyExecInPodSucceedWithFullOutput(f *framework.Framework, c
 
 // VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code.
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
-	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	gomega.Expect(err).Should(gomega.HaveOccurred(),
 		fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
+}
+
+// execCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
+func execCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podName, containerName string, cmd ...string) (string, string, error) {
+
+	backoff := wait.Backoff{
+		Duration: backoffDuration,
+		Factor:   backoffFactor,
+		Cap:      backoffCap,
+		Steps:    backoffSteps,
+		Jitter:   backoffJitter,
+	}
+	var err error
+	var stdout, stderr string
+
+	wait.ExponentialBackoff(backoff, func() (bool, error) {
+		stdout, stderr, err = e2epod.ExecCommandInContainerWithFullOutput(f, podName, containerName, cmd...)
+		if err != nil {
+			framework.Logf("Exec command failed with error: %v. Retrying...", err)
+			return false, nil
+		}
+		return true, nil
+	})
+
+	return stdout, stderr, err
 }
 
 func (t *TestPod) WaitForRunning(ctx context.Context) {
@@ -1223,7 +1254,7 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 	tPod.WaitForRunning(ctx)
 	defer tPod.Cleanup(ctx)
 
-	stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, tPod.pod.Name, webhook.GcsFuseSidecarName, "/gcsfuse", "--version")
+	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, tPod.pod.Name, webhook.GcsFuseSidecarName, "/gcsfuse", "--version")
 	framework.ExpectNoError(err,
 		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
 		err, stdout, stderr)
