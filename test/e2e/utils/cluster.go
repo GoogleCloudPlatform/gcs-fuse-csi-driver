@@ -37,7 +37,7 @@ var (
 	metadataPrefetchMinimumVersion              = version.MustParseGeneric("1.32.0")
 	longMountOptionsMinimumVersion              = version.MustParseGeneric("1.32.0")
 	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")
-	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.0")
+	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.1-gke.2931000")
 )
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
