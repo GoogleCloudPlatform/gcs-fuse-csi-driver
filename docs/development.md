@@ -39,11 +39,12 @@ gcloud artifacts repositories create csi-dev \
 --repository-format=docker \
 --location=$REGION  --project=$PROJECT_ID \
 --description="Docker repository"
+export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 ```
 
 ## Build
 
-You have two options for building a custom image for the Cloud Storage FUSE CSI Driver. You can use [Cloud build](#cloud-build), or [Makefile commands](#makefile-commands). Please note that building the image will take several minutes.
+You have two options for building a custom image for the Cloud Storage FUSE CSI Driver. You can use [Cloud build](#cloud-build), or [Makefile commands](#makefile-commands). Please note that building the image will take several minutes.  If you don't want to build a custom image, you can also [deploy the driver from a publicly hosted image](installation.md#install-with-publicly-hosted-images).
 
 ### Prerequisites
 
@@ -62,7 +63,8 @@ export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 export GCSFUSE_BINARY_GCS_PATH=$(cat cmd/sidecar_mounter/gcsfuse_binary)
-gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_GCSFUSE_BINARY_GCS_PATH=$GCSFUSE_BINARY_GCS_PATH
+export STAGINGVERSION=v999.999.999
+gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_GCSFUSE_BINARY_GCS_PATH=$GCSFUSE_BINARY_GCS_PATH,_STAGINGVERSION=$STAGINGVERSION
 ```
 
 #### Cloud Build on NON Google Internal projects
@@ -81,18 +83,26 @@ echo "latest GCSFuse CSI driver release is $LATEST_TAG, which uses GCSFuse versi
 export PROJECT_ID=$(gcloud config get project)
 export REGION='us-central1'
 export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
-gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_BUILD_GCSFUSE_FROM_SOURCE=true,_GCSFUSE_TAG=$GCSFUSE_TAG
+export STAGINGVERSION=v999.999.999
+gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_BUILD_GCSFUSE_FROM_SOURCE=true,_GCSFUSE_TAG=$GCSFUSE_TAG,_STAGINGVERSION=$STAGINGVERSION
 ```
 
 ### Makefile Commands
 
-Run the following command to build and push the images using the Makefile:
+Run the following command to build and push the images using the Makefile. For non-Google Internal projects, you must set `BUILD_GCSFUSE_FROM_SOURCE=true`. By default, `BUILD_GCSFUSE_FROM_SOURCE` will build GCSFuse from head of the master branch, which isn't always stable. Instead, we recommend setting `GCSFUSE_TAG` to build from a qualified GCSFuse tag. 
+
+```bash
+export LATEST_TAG=$(curl -s "https://api.github.com/repos/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/latest" | jq -r .tag_name)
+export GCSFUSE_TAG=$(curl -sL "https://raw.githubusercontent.com/GoogleCloudPlatform/gcs-fuse-csi-driver/$LATEST_TAG/cmd/sidecar_mounter/gcsfuse_binary" | cut -d'/' -f5 | cut -d'-' -f1)
+echo "latest GCSFuse CSI driver release is $LATEST_TAG, which uses GCSFuse version $GCSFUSE_TAG"
+```
 
 ```bash
 # REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
 # STAGINGVERSION=<staging-version>: Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.
 # BUILD_GCSFUSE_FROM_SOURCE=<true|false>: Optional, default: false. Indicate if you want to build the gcsfuse binary from source. This is required for building images from non-google internal projects OR if you want to test any CSI change depend on an unreleased GCSFuse enhancement. If BUILD_GCSFUSE_FROM_SOURCE is true, by default it builts GCSFuse from head of the master branch. If you want to build GCSFuse from a particular tag, then set GCSFUSE_TAG as explained in cloudbuild sections above.
-make build-image-and-push-multi-arch REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
+# GCSFUSE_TAG=<gcsfuse-tag>: Optional. The GCSFuse tag you would like to build GCSFuse from. This is only used if BUILD_GCSFUSE_FROM_SOURCE is set to true.
+make build-image-and-push-multi-arch REGISTRY=$REGISTRY STAGINGVERSION=v999.999.999
 ```
 
 ## Manual installation

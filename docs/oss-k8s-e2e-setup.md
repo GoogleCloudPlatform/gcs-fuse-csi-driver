@@ -864,34 +864,11 @@ kubectl exec example --namespace $NAMESPACE -- gcloud auth print-access-token
 
 # Configure GCS Fuse Driver
 
-We recommend installing the driver from a fully released + GKE cluster qualified GCSFuse CSI Driver image, as these images have passed extensive qualification on GKE clusters; 
-however, support for using these qualified images directly is not supported because the OSS image for `gcs-fuse-csi-driver-webhook` is not currently hosted in a public repository. As a workaround until this is supported, you will need to build and push images for the GCSFuse CSI driver before you can start the installation process. 
+We recommend installing the driver from a fully released, fully qualified GCSFuse CSI Driver image. Alternatively, you can build and push a custom driver image by following the  [Cloud Build on NON Google Internal projects](development.md#cloud-build-on-non-google-internal-projects) guide.
 
-To build and push your image, we recommend checking out the GCSFuse CSI driver from the latest release tag, and building from that tag. **The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.19.3](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.19.3)**
+**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.20.4](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.4)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.20.4`.
 
-To find the latest GCSFuse CSI Driver release tag, run the following curl command, or look for the release with the latest tag in [Releases](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases).
-
-```bash
-export LATEST_TAG=$(curl -s "https://api.github.com/repos/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/latest" | jq -r .tag_name)
-export GCSFUSE_TAG=$(curl -sL "https://raw.githubusercontent.com/GoogleCloudPlatform/gcs-fuse-csi-driver/$LATEST_TAG/cmd/sidecar_mounter/gcsfuse_binary" | cut -d'/' -f5 | cut -d'-' -f1)
-echo "latest GCSFuse CSI driver release is $LATEST_TAG, which uses GCSFuse version $GCSFUSE_TAG"
-```
-
-## Building GCSFuse CSI Driver Image
-
-1. **Create your Artifact registry** following the steps in [Development Prerequisites](./development.md#prerequisites)
-
-2. **Use cloud build to build and push image** to your artifact registry. 
-
-```bash
-git clone https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver.git
-cd gcs-fuse-csi-driver
-git checkout $LATEST_TAG
-# Set REGISTRY to your own value based on the name you chose in Create your Artifact registry.
-export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
-gcloud builds submit . --config=cloudbuild-build-image.yaml --substitutions=_REGISTRY=$REGISTRY,_BUILD_GCSFUSE_FROM_SOURCE=true,_GCSFUSE_TAG=$GCSFUSE_TAG,_STAGINGVERSION=custom-$LATEST_TAG
-```
-
+This guide demonstrates the preferred approach: installing from a publicly hosted, fully qualified image.
 
 ## Installing the GCSFuse CSI driver
 
@@ -929,10 +906,9 @@ gcloud secrets add-iam-policy-binding $KUBECONFIG_SECRET \
 ```bash
 # Replace all env variables with your own values based on the names you chose throughout this tutorial. These are just an example based on the values I used throughout this tutorial.
 export PROJECT_ID="amacaskill-joonix"
-# The region from your subnet and VM configuration
-export REGION='us-central1'
-# The Artifact Registry path, constructed from the variables above
-export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
+# Set the REGISTRY and STAGINGVERSION to the latest publicly hosted / fully qualified image.
+export STAGINGVERSION=$(gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver --format="value(tags)" | tr ';' '\n' | grep '^v' | sort -V | tail -n 1)
+export REGISTRY="gcr.io/gke-release"
 # The name of the Workload Identity Pool you created
 export WORKLOAD_IDENTITY_POOL="wi-pool-amacaskill-k8s-cluster"
 # The full URI for the Workload Identity Provider, constructed from your setup
@@ -942,7 +918,7 @@ export WORKER_POOL_NAME=amacaskill-worker
 export WORKER_POOL=projects/$PROJECT_ID/locations/$REGION/workerPools/$WORKER_POOL_NAME
 
 # Submit the Cloud Build job with the configured values
-gcloud builds submit . --config=cloudbuild-install.yaml --worker-pool=$WORKER_POOL --region=$REGION --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL,_IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET,_STAGINGVERSION=custom-$LATEST_TAG
+gcloud builds submit . --config=cloudbuild-install.yaml --worker-pool=$WORKER_POOL --region=$REGION --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL,_IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET,_STAGINGVERSION=$STAGINGVERSION
 ```
 3. **Confirm the GCSFuse CSI Driver is running.**
 

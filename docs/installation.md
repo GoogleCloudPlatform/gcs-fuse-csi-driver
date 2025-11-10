@@ -62,6 +62,47 @@ limitations under the License.
   kubectl config current-context
   ```
 
+### Set an Image Registry
+
+You can deploy the non-managed GCS FUSE CSI Driver using either publicly hosted images or by building and deploying a custom driver.
+
+#### Install with Publicly Hosted Images
+
+Publicly hosted container images for the driver, sidecar, metadata prefetch, and OSS webhook are available within the `gcr.io/gke-release registry. You can list the available tags for each image using the following commands:
+
+```bash
+gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver
+gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter
+gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver-metadata-prefetch
+gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver-webhook
+```
+
+New images with features and CVE fixes are regularly released to these registries. We recommend periodically updating your images to ensure you have the latest improvements.
+
+To install using these images, set the `STAGINGVERSION` environment variable to the latest version available in the registry and `REGISTRY` to `gcr.io/gke-release` using the following commands:
+
+```bash
+export STAGINGVERSION=$(gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver --format="value(tags)" | tr ';' '\n' | grep '^v' | sort -V | tail -n 1)
+export REGISTRY="gcr.io/gke-release"
+```
+
+**Important**: Use the same version (e.g., `v1.20.4`) across all components, as version skew is not extensively tested. While these values are set by default, explicitly setting them ensures compatibility with the rest of this guide for both public and custom image installations.
+
+#### Install with a Custom Built Driver Image
+
+To deploy a custom driver, set `REGISTRY` and `STAGINGVERSION` to the values used during the build process, as described in the [GCS FUSE CSI Driver Development Guide](/docs/development.md).
+
+If you used the default build values, set the variables as follows:
+
+```bash
+export REGION='us-central1'
+export PROJECT_ID=$(gcloud config get project)
+export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
+export STAGINGVERSION=v999.999.999
+```
+
+For complete instructions on custom driver development and manual installation, refer to the [GCS FUSE CSI Driver Development Guide](/docs/development.md) and [GCS FUSE CSI Driver Manual Installation](#install-with-a-custom-built-driver-image).
+
 ## Install
 
 You have two options for installing the Cloud Storage FUSE CSI Driver. You can use [Cloud build](#cloud-build), or [Makefile commands](#makefile-commands). The installation may take a few minutes.
@@ -72,13 +113,17 @@ If you would like to build your own images, follow the [Cloud Storage FUSE CSI D
 
 #### Prerequisites
 
-Run the following command to grant the Cloud Build service account the Kubernetes Engine Admin (`roles/container.admin`) role which is required for the cluster to create cluster-wide resources (ClusterRole, ClusterRoleBinding), which is an admin-level task. `roles/container.developer` is also required for Cloud Build to be able to install the driver on the cluster, but this is covered within the `roles/container.admin` role. Also ensure your node service account has the `roles/artifactregistry.reader` permission (or more permissive role that includes this role) to pull images from Artifact Registry.
+Run the following command to grant the Cloud Build service account the Kubernetes Engine Admin (`roles/container.admin`) role which is required for the cluster to create cluster-wide resources (ClusterRole, ClusterRoleBinding), which is an admin-level task. `roles/container.developer` is also required for Cloud Build to be able to install the driver on the cluster, but this is covered within the `roles/container.admin` role. Also ensure your node service account has the `roles/artifactregistry.reader` permission (or more permissive role that includes this role) to pull images from Artifact Registry. You may also need to grant `roles/container.admin` role to your VM's service account. Both commands are listed below: 
 
 ```bash
 export PROJECT_ID=$(gcloud config get project)
 export PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
 gcloud projects add-iam-policy-binding $PROJECT_ID \
 --member="serviceAccount:$PROJECT_NUMBER@cloudbuild.gserviceaccount.com" \
+    --role="roles/container.admin"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
     --role="roles/container.admin"
 ```
 
@@ -87,8 +132,9 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 #### Installing with Cloud Build on GKE Clusters
 
-For GKE clusters, the cloud build script discovers the GKE cluster `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` automatically, and these cannot be customized for GKE clusters. Note, the `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `_STAGING_VERSION` unset.
+For GKE clusters, the cloud build script discovers the GKE cluster `_IDENTITY_PROVIDER` and `_IDENTITY_POOL` automatically, and these cannot be customized for GKE clusters. Note, the `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. 
 
+Ensure you have set `REGISTRY` and `STAGINGVERSION` appropriately, depending on whether you are [installing from a custom built driver image](#install-with-a-custom-built-driver-image) or a [publicly hosted driver image](#install-with-publicly-hosted-images). If you used a custom `STAGINGVERSION` when [building your image](development.md#cloud-build), you must use the same version here by setting the _STAGINGVERSION=<staging-version> substitution.
 
 ```bash
 # Replace with your cluster name
@@ -96,10 +142,8 @@ export CLUSTER_NAME=<cluster-name>
 # Replace with your cluster location. This can be a zone, or a region depending on if your cluster is zonal or regional.
 export CLUSTER_LOCATION=<cluster-location>
 export PROJECT_ID=$(gcloud config get project)
-export REGION='us-central1'
-export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 gcloud builds submit . --config=cloudbuild-install.yaml \
-  --substitutions=_REGISTRY=$REGISTRY,_CLUSTER_NAME=$CLUSTER_NAME,_CLUSTER_LOCATION=$CLUSTER_LOCATION
+  --substitutions=_REGISTRY=$REGISTRY,_STAGINGVERSION=$STAGINGVERSION,_CLUSTER_NAME=$CLUSTER_NAME,_CLUSTER_LOCATION=$CLUSTER_LOCATION
 ```
 
 #### Installing with Cloud Build on self built K8s Clusters
@@ -112,14 +156,11 @@ For non-GKE clusters (installing the driver on a self built k8s cluster), the in
    - `_IDENTITY_PROVIDER` should be the full URI (e.g  `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WORKLOAD_IDENTITY_POOL/providers/WORKLOAD_IDENTITY_POOL_PROVIDER`). See [Configure Workload Identity Federation with other identity providers](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers) for details. `WORKLOAD_IDENTITY_POOL` should be created with `gcloud iam workload-identity-pools create` and `WORKLOAD_IDENTITY_POOL_PROVIDER` should be created with `gcloud iam workload-identity-pools providers create-oidc`.
 4. Create a private pool of Cloud Build workers that runs inside your network, following instructions in [Creating a private pool](#creating-a-private-pool). Pass this private pool to the `--worker-pool` `gcloud builds submit` flag.
    -  This is required for Cloud Build to access your cluster's API server. Failure to configure the private pool will cause the Cloud Build install job to fail with a `dial tcp <internal ip address>: i/o timeout` error because the Cloud Build Job can't access the self-managed Kubernetes cluster's API server at its private IP address.
-5. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. 
-   - If you used the default when you [built your custom image](development.md#cloud-build), you should leave `_STAGING_VERSION` unset.
+5. Ensure you have set `REGISTRY` and `STAGINGVERSION` appropriately, depending on whether you are [installing from a custom built driver image](#install-with-a-custom-built-driver-image) or a [publicly hosted driver image](#install-with-publicly-hosted-images). If you used a custom `STAGINGVERSION` when [building your image](development.md#cloud-build), you must use the same version here by setting the _STAGINGVERSION=<staging-version> substitution.
 
 
 ```bash
 export PROJECT_ID=$(gcloud config get project)
-export REGION='us-central1'
-export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 export WORKLOAD_IDENTITY_POOL=<your identity pool>
 # Note this should be the full URI (e.g. //iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WORKLOAD_IDENTITY_POOL/providers/WORKLOAD_IDENTITY_POOL_PROVIDER)
 export WORKLOAD_IDENTITY_PROVIDER=<your identity provider>
@@ -130,7 +171,7 @@ gcloud builds submit . --config=cloudbuild-install.yaml \
   --worker-pool=$WORKER_POOL \
   # Region must match the region where your private pool was created in the "Creating a private pool" section. This should be the same as your cluster region.
   --region=$CLUSTER_LOCATION \
-  --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL,_IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
+  --substitutions=_REGISTRY=$REGISTRY,_STAGINGVERSION=$STAGINGVERSION,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL,_IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
 ```
 
 #### Creating a KUBECONFIG_SECRET
@@ -254,24 +295,16 @@ Now that the network bridge exists, this final step creates the pool of workers.
 
 ### Makefile Commands
 
-- Run the following command to install the latest driver version. Note, the default registry is a GOOGLE internal project, so only Google Internal employees can currently run this. The driver will be installed under a new namespace `gcs-fuse-csi-driver`.
+Run the following command to install the driver. Ensure `REGISTRY` and `STAGINGVERSION` are configured according to your chosen installation source: [a custom built driver image](#install-with-a-custom-built-driver-image), or [a publicly hosted driver image](#install-with-publicly-hosted-images).
 
-  ```bash
-  latest_version=$(git tag --sort=-creatordate | head -n 1)
-  # Replace <cluster-project-id> with your cluster project ID.
-  make install STAGINGVERSION=$latest_version PROJECT=<cluster-project-id>
-  ```
-
-- If you would like to build your own images, follow the [Cloud Storage FUSE CSI Driver Development Guide](development.md) to build and push the images. Run the following command to install the driver.
-
-  ```bash
-  # Specify the image registry and image version if you have built the images from source code.
-  make install REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version> PROJECT=<cluster-project-id>
-  ```
+```bash 
+make install REGISTRY=$REGISTRY STAGINGVERSION=$STAGINGVERSION
+```
 
 By default, the `Makefile` discovers the GKE cluster Workload Identity Provider and Workload Identity Pool automatically. To override them, pass the variables with the `make` command (note: this custom override does not work for pods with host network yet). For example:
+
 ```bash
-make install REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version> IDENTITY_PROVIDER=<your-identity-provider> IDENTITY_POOL=<your-identity-pool>
+make install REGISTRY=$REGISTRY STAGINGVERSION=$STAGINGVERSION IDENTITY_PROVIDER=<your-identity-provider> IDENTITY_POOL=<your-identity-pool>
 ```
 
 By default, the CSI driver performs a Workload Identity node label check during NodePublishVolume to ensure the GKE metadata server is available on the node. To disable this check, set the `WI_NODE_LABEL_CHECK` environment variable to `false`:
@@ -315,29 +348,24 @@ Important: You must use the same substitution variables for the uninstall comman
 
 #### Uninstalling from GKE Clusters
 
-The `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. If you set a custom `_STAGINGVERSION` when you [built your custom image](development.md#cloud-build), you must set the same `_STAGINGVERSION` here via the `_STAGINGVERSION=<staging-version>` substitution. If you used the default when you [built your custom image](development.md#cloud-build), you should leave `_STAGING_VERSION` unset.
+The `_CLUSTER_NAME` and `_CLUSTER_LOCATION` are required to set up the kubectl config for the cloud build env. You must provide the same `_KUBECONFIG_SECRET`, `_IDENTITY_PROVIDER`, `_IDENTITY_POOL`, `_REGISTRY`, and `_STAGINGVERSION` variables that were used during [installation](#installing-with-cloud-build-on-gke-clusters).
 
 ```bash
 # Replace with your cluster name
 export CLUSTER_NAME=<cluster-name>
 # Replace with your cluster location. This can be a zone, or a region.
 export CLUSTER_LOCATION=<cluster-location>
-export PROJECT_ID=$(gcloud config get project)
-export REGION='us-central1'
-export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 gcloud builds submit . --config=cloudbuild-uninstall.yaml \
-  --substitutions=_REGISTRY=$REGISTRY,_CLUSTER_NAME=$CLUSTER_NAME,_CLUSTER_LOCATION=$CLUSTER_LOCATION
+  --substitutions=_REGISTRY=$REGISTRY,_STAGINGVERSION=$STAGINGVERSION,_CLUSTER_NAME=$CLUSTER_NAME,_CLUSTER_LOCATION=$CLUSTER_LOCATION
 ```
 
 
 #### Uninstalling with Cloud Build on self built K8s Clusters
 
-Uninstalling from a self-managed Kubernetes cluster requires providing credentials and configuration details so Cloud Build can connect to your cluster and generate the correct manifest for deletion. You must set `_SELF_MANAGED_K8S=true`. You must provide the same `_KUBECONFIG_SECRET`, `_IDENTITY_PROVIDER`, `_IDENTITY_POOL`, and `_STAGINGVERSION` variables that were used during installation. If your cluster is in a private network, you must use a Cloud Build private pool by specifying the `--worker-pool` and `--region` flags.
+Uninstalling from a self-managed Kubernetes cluster requires providing credentials and configuration details so Cloud Build can connect to your cluster and generate the correct manifest for deletion. You must set `_SELF_MANAGED_K8S=true`. You must provide the same `_KUBECONFIG_SECRET`, `_IDENTITY_PROVIDER`, `_IDENTITY_POOL`, `_REGISTRY`, and `_STAGINGVERSION` variables that were used during [installation](#installing-with-cloud-build-on-self-built-k8s-clusters). If your cluster is in a private network, you must use a Cloud Build private pool by specifying the `--worker-pool` and `--region` flags.
 
 ```bash
 export PROJECT_ID=$(gcloud config get project)
-export REGION='us-central1'
-export REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/csi-dev"
 export WORKLOAD_IDENTITY_POOL=<your-identity-pool>
 # Note this should be the full URI (e.g. //iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WORKLOAD_IDENTITY_POOL/providers/WORKLOAD_IDENTITY_POOL_PROVIDER)
 export WORKLOAD_IDENTITY_PROVIDER=<your-identity-provider>
@@ -348,7 +376,7 @@ gcloud builds submit . --config=cloudbuild-uninstall.yaml \
   --worker-pool=$WORKER_POOL \
     # Region must match the region where your private pool was created in the "Creating a private pool" section. This should be the same as your cluster region.
   --region=$REGION \
-  --substitutions=_REGISTRY=$REGISTRY,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL,_IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
+  --substitutions=_REGISTRY=$REGISTRY,_STAGINGVERSION=$STAGINGVERSION,_PROJECT_ID=$PROJECT_ID,_IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL,_IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER,_SELF_MANAGED_K8S=true,_KUBECONFIG_SECRET=$KUBECONFIG_SECRET
 ```
 
 ### Makefile Commands

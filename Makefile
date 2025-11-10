@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-export REGISTRY ?= jiaxun
+export REGISTRY ?= gcr.io/gke-release
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false

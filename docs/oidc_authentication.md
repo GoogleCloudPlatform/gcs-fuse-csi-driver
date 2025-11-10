@@ -32,7 +32,23 @@ The OIDC authentication feature allows Kubernetes pods to authenticate to Google
 
 ### Driver Version Requirements
 
-OIDC authentication is supported with the non-managed (self deployed GCS FUSE CSI driver), with driver version tag [v1.20.0](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.0) or later. It is not currently supported with the managed GCS FUSE CSI driver that is installed through the [GcsFuseCsiDriver addon](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-setup#enable). Currently there is no publicly hosted image for the [container in the OSS GCS FUSE CSI Driver Webhook Deployment](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/73c6c41e520f5b8b52abe82ea62287c3db0c16fd/deploy/base/webhook/deployment.yaml#L47), so you will need to build and deploy a custom GCS FUSE CSI driver following the instructions in [GCS FUSE CSI Driver Development Guide](/docs/development.md) and [GCS FUSE CSI Driver Manual Installation](/docs/installation.md). For NON Google Internal projects, follow the instructions in [Cloud Build on NON Google Internal projects](/docs/development.md#cloud-build-on-non-google-internal-projects), and ensure you build from a `LATEST_TAG` that has driver version tag [v1.20.0](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.0) or later.
+OIDC authentication is supported with the non-managed (self deployed GCS FUSE CSI driver), with driver version tag [v1.20.4](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.4) or later. It is **not** currently supported with the managed GCS FUSE CSI driver that is installed through the [GcsFuseCsiDriver addon](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-setup#enable). 
+
+You can deploy the non-managed driver using either publicly hosted images or by building a custom driver.
+
+#### Deploy with Publicly Hosted Images
+
+To install the non-managed driver using these publicly hosted images, run the following commands based on the [Makefile Install instructions](installation.md#makefile-commands). You should use the same version (e.g. `v1.20.4`) across all of these sidecars as version skew between these components is not extensively tested. Note that this is the default behavior, unless you change the installation scripts themselves.
+
+```bash
+export REGISTRY="gcr.io/gke-release"
+export STAGINGVERSION=$(gcloud container images list-tags gcr.io/gke-release/gcs-fuse-csi-driver --format="value(tags)" | tr ';' '\n' | grep '^v' | sort -V | tail -n 1)
+make install STAGINGVERSION=$STAGINGVERSION REGISTRY=$REGISTRY
+```
+
+#### Deploy with Custom Built driver
+
+For non-Google internal projects, follow the instructions in [Cloud Build on NON Google Internal projects](/docs/development.md#cloud-build-on-non-google-internal-projects), and ensure you build from a `LATEST_TAG` with driver version tag [v1.20.4](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.4) or later.
 
 ## Step 1: Configure GCP IAM for Workload Identity Federation
 
