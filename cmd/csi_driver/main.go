@@ -56,7 +56,8 @@ var (
 	retryIntervalStart             = flag.Duration("retry-interval-start", time.Second, "Initial retry interval for a failed PV processing operation. It doubles with each failure, up to retry-interval-max.")
 	retryIntervalMax               = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval for a failed PV processing operation.")
 	fuseSocketDir                  = flag.String("fuse-socket-dir", "/sockets", "FUSE socket directory.")
-	metricsEndpoint                = flag.String("metrics-endpoint", "", "The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled.")
+	metricsEndpoint                = flag.String("metrics-endpoint", "", "(deprecated) The TCP network address where the Prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means that the metrics endpoint is disabled. If set, `--http-endpoint` cannot be set")
+	httpEndpoint                   = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including CSI driver health check and metrics (example: :8080). The default is empty string, which means the server is disabled. If set, `--metrics-endpoint` cannot be explicitly set.")
 	maximumNumberOfCollectors      = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
 	disableAutoconfig              = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type.")
 	wiNodeLabelCheck               = flag.Bool("wi-node-label-check", true, "Workload Identity node label check.")
@@ -72,11 +73,12 @@ var (
 	enableGcsfuseProfilesInternal = flag.Bool("enable-gcsfuse-profiles-internal", false, "Allow the temporarily disallowed gcsfuse profiles flag ('profile') to be passed for internal use only")
 	projectNumber                 = flag.String("project-number", "", "The GKE Project Number for which the cluster is deployed")
 	// Leader election flags.
-	leaderElection              = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
-	leaderElectionNamespace     = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
-	leaderElectionLeaseDuration = flag.Duration("leader-election-lease-duration", 15*time.Second, "Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.")
-	leaderElectionRenewDeadline = flag.Duration("leader-election-renew-deadline", 10*time.Second, "Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.")
-	leaderElectionRetryPeriod   = flag.Duration("leader-election-retry-period", 5*time.Second, "Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.")
+	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
+	leaderElectionNamespace          = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
+	leaderElectionLeaseDuration      = flag.Duration("leader-election-lease-duration", 15*time.Second, "Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.")
+	leaderElectionRenewDeadline      = flag.Duration("leader-election-renew-deadline", 10*time.Second, "Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.")
+	leaderElectionRetryPeriod        = flag.Duration("leader-election-retry-period", 5*time.Second, "Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.")
+	leaderElectionHealthCheckTimeout = flag.Duration("leader-election-health-check-timeout", 20*time.Second, "Duration, in seconds, the LeaderElector clients should time out when performing a health check. Defaults to 20 seconds.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -85,6 +87,21 @@ var (
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	// All CSI sidecars use http-endpoint for metrics and health checks.
+	// Example: https://gke-internal.googlesource.com/third_party/kubernetes-csi/livenessprobe/+/refs/heads/master/cmd/livenessprobe/main.go#113
+	// At some point, we should replace "metrics-endpoint" with "http-endpoint".
+	// Until then, we'll treat them as the same in order to not break any
+	// existing CSI deployments.
+	if *metricsEndpoint != "" && *httpEndpoint != "" {
+		klog.Fatalf("Only one of `--metrics-endpoint` and `--http-endpoint` can be explicitly set")
+	}
+	var addr string
+	if *httpEndpoint != "" {
+		addr = *httpEndpoint
+	} else if *metricsEndpoint != "" {
+		addr = *metricsEndpoint
+	}
 
 	// ctx enables graceful shutdown. Application components should
 	// respect ctx.Done() for cleanup.
@@ -155,16 +172,18 @@ func main() {
 		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
 			Enabled: *enableGCSFuseProfiles,
 			ScannerConfig: &profiles.ScannerConfig{
-				KubeAPIQPS:                  *kubeAPIQPS,
-				KubeAPIBurst:                *kubeAPIBurst,
-				ResyncPeriod:                time.Duration(*informerResyncDurationSec) * time.Second,
-				KubeConfigPath:              *kubeconfigPath,
-				RateLimiter:                 workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
-				LeaderElection:              *leaderElection,
-				LeaderElectionNamespace:     *leaderElectionNamespace,
-				LeaderElectionLeaseDuration: *leaderElectionLeaseDuration,
-				LeaderElectionRenewDeadline: *leaderElectionRenewDeadline,
-				LeaderElectionRetryPeriod:   *leaderElectionRetryPeriod,
+				KubeAPIQPS:                       *kubeAPIQPS,
+				KubeAPIBurst:                     *kubeAPIBurst,
+				ResyncPeriod:                     time.Duration(*informerResyncDurationSec) * time.Second,
+				KubeConfigPath:                   *kubeconfigPath,
+				RateLimiter:                      workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+				LeaderElection:                   *leaderElection,
+				LeaderElectionNamespace:          *leaderElectionNamespace,
+				LeaderElectionLeaseDuration:      *leaderElectionLeaseDuration,
+				LeaderElectionRenewDeadline:      *leaderElectionRenewDeadline,
+				LeaderElectionRetryPeriod:        *leaderElectionRetryPeriod,
+				LeaderElectionHealthCheckTimeout: *leaderElectionHealthCheckTimeout,
+				HTTPEndpoint:                     addr,
 				DatafluxConfig: &profiles.DatafluxConfig{
 					Parallelism:          *datafluxParallelism,
 					BatchSize:            *datafluxBatchSize,
@@ -198,8 +217,8 @@ func main() {
 			klog.Fatalf("Failed to prepare CSI mounter: %v", err)
 		}
 
-		if *metricsEndpoint != "" {
-			mm = metrics.NewMetricsManager(*metricsEndpoint, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
+		if addr != "" {
+			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
 			mm.InitializeHTTPHandler()
 		}
 	}

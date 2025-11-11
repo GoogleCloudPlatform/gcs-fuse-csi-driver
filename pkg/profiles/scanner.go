@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/googleapis/gax-go/v2"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -155,19 +157,21 @@ type DatafluxConfig struct {
 
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
-	KubeAPIQPS                  float64       // QPS limit for Kubernetes API client.
-	KubeAPIBurst                int           // Burst limit for Kubernetes API client.
-	ResyncPeriod                time.Duration // Resync period for informers.
-	KubeConfigPath              string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
-	RateLimiter                 workqueue.TypedRateLimiter[string]
-	DatafluxConfig              *DatafluxConfig
-	LeaderElection              bool
-	LeaderElectionNamespace     string
-	LeaderElectionLeaseDuration time.Duration
-	LeaderElectionRenewDeadline time.Duration
-	LeaderElectionRetryPeriod   time.Duration
-	ClusterLocation             string
-	ProjectNumber               string
+	KubeAPIQPS                       float64       // QPS limit for Kubernetes API client.
+	KubeAPIBurst                     int           // Burst limit for Kubernetes API client.
+	ResyncPeriod                     time.Duration // Resync period for informers.
+	KubeConfigPath                   string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
+	RateLimiter                      workqueue.TypedRateLimiter[string]
+	DatafluxConfig                   *DatafluxConfig
+	LeaderElection                   bool
+	LeaderElectionNamespace          string
+	LeaderElectionLeaseDuration      time.Duration
+	LeaderElectionRenewDeadline      time.Duration
+	LeaderElectionRetryPeriod        time.Duration
+	LeaderElectionHealthCheckTimeout time.Duration
+	ClusterLocation                  string
+	ProjectNumber                    string
+	HTTPEndpoint                     string
 }
 
 // bucketInfo holds the results of a bucket scan.
@@ -203,6 +207,8 @@ type Scanner struct {
 	config               *ScannerConfig
 	computeService       *compute.Service
 	storageControlClient storageControlClient
+	metricManager        metrics.PrometheusMetricManager
+	mux                  *http.ServeMux
 
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
 	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
@@ -335,6 +341,7 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	eventRecorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: scannerComponentName})
+	mux := http.NewServeMux()
 
 	scanner := &Scanner{
 		kubeClient:         kubeClient,
@@ -356,6 +363,8 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		scanBucketImpl:     defaultScanBucket,
 		config:             config,
 		id:                 id,
+		metricManager:      metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
+		mux:                mux,
 	}
 
 	klog.Info("Setting up event handlers for PersistentVolumes")
@@ -464,6 +473,16 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 		klog.Fatalf("Error creating resourcelock: %v", err)
 	}
 
+	healthCheck := leaderelection.NewLeaderHealthzAdaptor(s.config.LeaderElectionHealthCheckTimeout)
+	s.mux.Handle("/healthz/leader-election", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := healthCheck.Check(r)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("internal server error: %v", err), http.StatusInternalServerError)
+		} else {
+			fmt.Fprint(w, "ok")
+		}
+	}))
+
 	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
 		Name:          scannerComponentName,
 		Lock:          rl,
@@ -480,6 +499,7 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 				cancel() // Trigger graceful shutdown.
 			},
 		},
+		WatchDog: healthCheck,
 	})
 }
 
@@ -487,6 +507,10 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 // It will use leader election if s.config.LeaderElection is true,
 // otherwise it starts the scanner directly.
 func (s *Scanner) Start(ctx context.Context, cancel context.CancelFunc) {
+	// Start HTTP server for metrics and leader election health checks
+	// (if leader election is enabled).
+	s.metricManager.InitializeHTTPHandler()
+
 	if s.config.LeaderElection {
 		s.runWithLeaderElection(ctx, cancel)
 	} else {
@@ -513,16 +537,27 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 	syncType := "Unknown"
 	itemKey := key
 
-	if strings.HasPrefix(key, podPrefix) {
+	// Process the queued item based on its key prefix.
+	// The prefix determines the item type (e.g., Pod, PV) and dictates
+	// the synchronization logic to be applied.
+	switch {
+	case strings.HasPrefix(key, podPrefix):
 		syncType = "Pod"
 		itemKey = strings.TrimPrefix(key, podPrefix)
 		klog.V(6).Infof("Processing %q %q", syncType, itemKey)
 		err = s.syncPod(ctx, itemKey)
-	} else if strings.HasPrefix(key, pvPrefix) {
+		if errors.Is(err, errRequeuePod) {
+			// errRequeuePod is not a real error, so don't count it as a failure.
+			s.metricManager.RecordSyncPodMetric(nil)
+		} else {
+			s.metricManager.RecordSyncPodMetric(err)
+		}
+	case strings.HasPrefix(key, pvPrefix):
 		syncType = "PV"
 		itemKey = strings.TrimPrefix(key, pvPrefix)
 		klog.V(6).Infof("Processing %q %q", syncType, itemKey)
 		err = s.syncPV(ctx, itemKey)
+		s.metricManager.RecordSyncPVMetric(err)
 
 		// PV specific tracking removal
 		if err == nil {
@@ -533,24 +568,26 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 			}
 			s.pvMutex.Unlock()
 		}
-	} else {
+	default:
 		klog.Errorf("Unknown key prefix for %q", key)
 		s.queue.Forget(key)
 		return true
 	}
 
-	if err == nil {
+	// Handle the result of the sync operation.
+	// Based on the error, an item is either removed from the queue,
+	// re-queued for a later retry, or logged as a permanent failure.
+	switch {
+	case err == nil:
 		s.queue.Forget(key)
 		klog.V(6).Infof("Successfully synced %q %q", syncType, itemKey)
-	} else if errors.Is(err, errRequeuePod) {
+	case errors.Is(err, errRequeuePod):
 		// Specific requeue signal for Pods waiting on PV scans or PVC binds.
 		// This is not a "true" error, so it doesn't need to be logged as such.
 		klog.Infof("Requeuing %q %q: %v", syncType, itemKey, err)
 		s.queue.AddRateLimited(key)
-	} else {
+	default:
 		klog.Errorf("Error syncing %q %q: %v", syncType, itemKey, err)
-		// TODO(urielguzman): Update the rest of the errors to return a categorized status
-		// error code. This will be done during SLO / SLI metrics implementation.
 		if status.Code(err) != codes.InvalidArgument {
 			// Don't re-queue InvalidArgument  errors since these are fixed
 			// until the user fixes their spec and re-deploys.
@@ -559,6 +596,7 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 			s.queue.AddRateLimited(key)
 		}
 	}
+
 	return true
 }
 

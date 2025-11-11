@@ -28,7 +28,7 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
             - --identity-provider=$(IDENTITY_PROVIDER)
-            - --metrics-endpoint=:9920
+            - --http-endpoint=:9920
             - --enable-profiling=true
           ports:
             - containerPort: 6060

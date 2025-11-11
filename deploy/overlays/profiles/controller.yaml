@@ -21,6 +21,14 @@ spec:
   template:
     spec:
       containers:
+        # We don't need this CSI liveness probe sidecar anymore now that the controller instantiates a new
+        # HTTP server with leader election enabled. Otherwise, the liveness probe's healthz server
+        # will conflict with the metrics server and panic.
+        # TODO(urielguzman): Delete from stable when the profiles overlay is merged to stable.
+        - name: liveness-probe
+          $patch: delete
+        - name: csi-external-provisioner
+          $patch: delete
         - name: gcs-fuse-csi-driver
           args:
             - "--v=5"
@@ -33,6 +41,19 @@ spec:
             - "--leader-election-namespace=$(CLOUDSTORAGECSI_NAMESPACE)"
             - "--cluster-location=$(CLUSTER_LOCATION)"
             - "--project-number=$(PROJECT_NUMBER)"
+            - "--http-endpoint=:29633"
+          ports:
+            - containerPort: 29633
+              name: http-endpoint
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 1
+            httpGet:
+              path: /healthz/leader-election
+              port: http-endpoint
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
           resources:
             limits:
               # It is recommended to leave CPU limits unset for master Pods.
