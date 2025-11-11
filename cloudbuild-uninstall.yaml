@@ -22,7 +22,7 @@
 
 substitutions:
   # (Required) The Artifact Registry or GCR path where your images are stored.
-  _REGISTRY: ''
+  _REGISTRY: 'gcr.io/gke-release'
   # (Optional) The version tag for the images that were deployed. Must match the installed version.
   _STAGINGVERSION: 'v999.999.999'
   # (Conditionally Required) Required for self-managed K8s. Optional for GKE.
