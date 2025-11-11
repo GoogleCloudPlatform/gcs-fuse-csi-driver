@@ -42,7 +42,7 @@ readonly build_gcsfuse_from_source=${BUILD_GCSFUSE_FROM_SOURCE:-false}
 readonly enable_zb=${ENABLE_ZB:-false}
 readonly gke_gcloud_command=${GKE_GCLOUD_COMMAND:-gcloud}
 readonly gke_gcloud_args=${GKE_GCLOUD_ARGS:-}
-readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-false}
+readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly overlay="${OVERLAY:-stable}"
 
 # Install golang
