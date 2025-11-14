@@ -215,10 +215,9 @@ func Handle(testParams *TestParameters) error {
 	if err != nil {
 		klog.Fatalf(`managed driver version for sidecar bucket access check support could not be determined: %v`, err)
 	}
-	if !testParams.UseGKEManagedDriver || (testParams.UseGKEManagedDriver && supportSidecarBucketAccessCheck) {
-		if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(testParams.EnableSidecarBucketAccessCheck)); err != nil {
-			klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
-		}
+
+	if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(supportSidecarBucketAccessCheck && testParams.EnableSidecarBucketAccessCheck)); err != nil {
+		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
 	}
 
 	supportsMachineTypeAutoConfig, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, supportsMachineTypeAutoConfigMinimumVersion)
