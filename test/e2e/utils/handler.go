@@ -150,18 +150,6 @@ func Handle(testParams *TestParameters) error {
 				klog.Errorf("failed to cluster down: %v", err)
 			}
 		}()
-
-		// Fetch the cluster version.
-		cmd := exec.Command("bash", "-c",
-			fmt.Sprintf("gcloud container clusters describe %s --location %s | grep version | grep -Eo '[0-9]+\\.[0-9]+\\.[0-9]+(-gke\\.[0-9]+)?$'",
-				testParams.GkeClusterName,
-				testParams.GkeClusterRegion))
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to get cluster version, output: %s, err: %w", string(output), err)
-		}
-		testParams.GkeClusterVersion = strings.TrimSpace(string(output))
-		klog.Infof("GKE cluster version: %s", testParams.GkeClusterVersion)
 	}
 	// TODO(jaimebz): Extract server version using kubeapi if not present.
 
@@ -227,6 +215,7 @@ func Handle(testParams *TestParameters) error {
 	if err != nil {
 		klog.Fatalf(`managed driver version for sidecar bucket access check support could not be determined: %v`, err)
 	}
+
 	if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(supportSidecarBucketAccessCheck && testParams.EnableSidecarBucketAccessCheck)); err != nil {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
 	}
