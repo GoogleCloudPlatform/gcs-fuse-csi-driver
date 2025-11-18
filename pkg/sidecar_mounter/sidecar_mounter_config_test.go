@@ -312,10 +312,10 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
-				"logging:file-path":                "/dev/fd/1",
-				"logging:format":                   "json",
-				"cache-dir":                        "",
-				"gcs-connection:custom-endpoint": "p2p-main-server-service.cache-system.svc.cluster.local:8080",
+				"logging:file-path":              "/dev/fd/1",
+				"logging:format":                 "json",
+				"cache-dir":                      "",
+				"gcs-connection:custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
 			},
 		},
 	}
