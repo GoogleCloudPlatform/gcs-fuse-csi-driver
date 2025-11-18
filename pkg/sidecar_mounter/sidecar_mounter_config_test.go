@@ -308,7 +308,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				BufferDir:  "test-buffer-dir",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
-				Options:    []string{"gcs-connection:custom-endpoint:p2p-main-server-service.cache-system.svc.cluster.local:8080"},
+				Options:    []string{"gcs-connection:custom-endpoint:custom-service.my-system.svc.cluster.local:8080"},
 			},
 			expectedArgs: defaultFlagMap,
 			expectedConfigMapArgs: map[string]string{
