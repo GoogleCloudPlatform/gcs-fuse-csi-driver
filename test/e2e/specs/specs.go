@@ -107,6 +107,10 @@ const (
 	backoffJitter   = 0.1
 )
 
+// Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
+// konnectivity agents are wrapped with retry logic, see `runKubectlWithFullOutputWithRetry` as an example.
+// See here for the list of commands that require the agents - go/konnectivity-network-proxy#egress_traffic.
+
 type TestPod struct {
 	client    clientset.Interface
 	pod       *corev1.Pod
@@ -242,7 +246,14 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 
 // execCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
 func execCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podName, containerName string, cmd ...string) (string, string, error) {
+	return RetryWithBackoffTwoReturnValues(func() (string, string, error) {
+		return e2epod.ExecCommandInContainerWithFullOutput(f, podName, containerName, cmd...)
+	})
+}
 
+// Retry executes a generic operation (op) with exponential backoff.
+// T can be any type (string, a struct, a slice, etc).
+func Retry[T any](op func() (T, error)) (T, error) {
 	backoff := wait.Backoff{
 		Duration: backoffDuration,
 		Factor:   backoffFactor,
@@ -250,19 +261,39 @@ func execCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podNa
 		Steps:    backoffSteps,
 		Jitter:   backoffJitter,
 	}
-	var err error
-	var stdout, stderr string
+
+	var result T
+	var lastErr error
 
 	wait.ExponentialBackoff(backoff, func() (bool, error) {
-		stdout, stderr, err = e2epod.ExecCommandInContainerWithFullOutput(f, podName, containerName, cmd...)
-		if err != nil {
-			framework.Logf("Exec command failed with error: %v. Retrying...", err)
+		result, lastErr = op()
+
+		if lastErr != nil {
+			framework.Logf("Operation failed with error: %v. Retrying...", lastErr)
 			return false, nil
 		}
 		return true, nil
 	})
 
-	return stdout, stderr, err
+	if lastErr != nil {
+		framework.Logf("Operation failed after %d steps (total time/cap: %v). Last error: %v", backoff.Steps, backoff.Cap, lastErr)
+	} else {
+		framework.Logf("Operation succeeded.")
+	}
+
+	return result, lastErr
+}
+
+func RetryWithBackoffOneReturnValue(op func() (string, error)) (string, error) {
+	return Retry(op)
+}
+
+func RetryWithBackoffTwoReturnValues(op func() (string, string, error)) (string, string, error) {
+	res, err := Retry(func() ([2]string, error) {
+		stdout, stderr, err := op()
+		return [2]string{stdout, stderr}, err
+	})
+	return res[0], res[1], err
 }
 
 func (t *TestPod) WaitForRunning(ctx context.Context) {
@@ -316,8 +347,14 @@ func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context) {
 }
 
 func (t *TestPod) WaitForLog(ctx context.Context, container string, expectedString string) {
-	_, err := e2epodooutput.LookForStringInLogWithoutKubectl(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, pollTimeout)
+	_, err := lookForStringInLogWithoutKubectlWithRetry(ctx, t.client, t.namespace.Name, t.pod.Name, container, expectedString, pollTimeout)
 	framework.ExpectNoError(err)
+}
+
+func lookForStringInLogWithoutKubectlWithRetry(ctx context.Context, client clientset.Interface, namespace, podName, container, expectedString string, timeout time.Duration) (string, error) {
+	return RetryWithBackoffOneReturnValue(func() (string, error) {
+		return e2epodooutput.LookForStringInLogWithoutKubectl(ctx, client, namespace, podName, container, expectedString, timeout)
+	})
 }
 
 func (t *TestPod) CheckSidecarNeverTerminatedAfterAWhile(ctx context.Context, isNativeSidecar bool) {
@@ -1271,15 +1308,15 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 }
 
 func DeployIstioSidecar(namespace string) {
-	e2ekubectl.RunKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-sidecar.yaml")
+	runKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-sidecar.yaml")
 }
 
 func DeployIstioServiceEntry(namespace string) {
-	e2ekubectl.RunKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-service-entry.yaml")
+	runKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-service-entry.yaml")
 }
 
 func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachineTypeFlag string, expectedDisableAutoconfigFlag bool) {
-	stdout, stderr, err := e2ekubectl.RunKubectlWithFullOutput(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
 	framework.ExpectNoError(err,
 		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
 		t.pod.Name, err, stdout, stderr)
@@ -1294,7 +1331,7 @@ func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachi
 }
 
 func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
-	stdout, stderr, err := e2ekubectl.RunKubectlWithFullOutput(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
 	framework.ExpectNoError(err,
 		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
 		t.pod.Name, err, stdout, stderr)
@@ -1306,4 +1343,15 @@ func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
 	// handles profile:aiml-training case
 	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*profile:aiml-training.*\]`)),
 		"Should NOT find 'profile:aiml-training' within the gcsfuse config file content map, but it was found.")
+}
+
+func runKubectlOrDie(namespace string, args ...string) {
+	_, _, err := runKubectlWithFullOutputWithRetry(namespace, args...)
+	framework.ExpectNoError(err)
+}
+
+func runKubectlWithFullOutputWithRetry(namespace string, args ...string) (string, string, error) {
+	return RetryWithBackoffTwoReturnValues(func() (string, string, error) {
+		return e2ekubectl.RunKubectlWithFullOutput(namespace, args...)
+	})
 }
