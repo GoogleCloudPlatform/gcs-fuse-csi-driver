@@ -301,6 +301,23 @@ func TestPrepareMountArgs(t *testing.T) {
 				"cache-dir":         "/gcsfuse-file-cache-ephemeral-disk/.volumes/volume-name",
 			},
 		},
+		{
+			name: "should correctly parse custom-endpoint with a port",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"gcs-connection:custom-endpoint:p2p-main-server-service.cache-system.svc.cluster.local:8080"},
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":                "/dev/fd/1",
+				"logging:format":                   "json",
+				"cache-dir":                        "",
+				"gcs-connection:custom-endpoint": "p2p-main-server-service.cache-system.svc.cluster.local:8080",
+			},
+		},
 	}
 
 	testPrometheusPort := prometheusPort

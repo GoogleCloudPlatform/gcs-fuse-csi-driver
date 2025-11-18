@@ -206,10 +206,16 @@ func (mc *MountConfig) prepareMountArgs() {
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
 
-		if strings.Contains(arg, ":") && !strings.Contains(arg, "https") {
-			i := strings.LastIndex(arg, ":")
-			f, v := arg[:i], arg[i+1:]
-
+		        if strings.Contains(arg, ":") && !strings.Contains(arg, "https") {
+		            var f, v string
+		            if strings.HasPrefix(arg, "gcs-connection:custom-endpoint:") {
+		                parts := strings.SplitN(arg, ":", 3)
+		                f = parts[0] + ":" + parts[1]
+		                v = parts[2]
+		            } else {
+		                i := strings.LastIndex(arg, ":")
+		                f, v = arg[:i], arg[i+1:]
+		            }
 			if f == util.DisableMetricsForGKE {
 				if v == util.TrueStr {
 					flagMap["prometheus-port"] = "0"
