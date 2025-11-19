@@ -206,7 +206,9 @@ func (mc *MountConfig) prepareMountArgs() {
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
 
-		if strings.Contains(arg, ":") && !strings.Contains(arg, "https") {
+		// Config file flags are identified by not containing '=' and containing ':'.
+		// e.g., "logging:severity:error"
+		if !strings.Contains(arg, "=") && strings.Contains(arg, ":") && !strings.Contains(arg, "https") {
 			var f, v string
 			if strings.HasPrefix(arg, "gcs-connection:custom-endpoint:") {
 				parts := strings.SplitN(arg, ":", 3)

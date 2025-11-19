@@ -318,6 +318,26 @@ func TestPrepareMountArgs(t *testing.T) {
 				"gcs-connection:custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
 			},
 		},
+		{
+			name: "should correctly parse custom-endpoint with a port in CLI format",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"custom-endpoint=custom-service.my-system.svc.cluster.local:8080"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":        GCSFuseAppName,
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
 	}
 
 	testPrometheusPort := prometheusPort
