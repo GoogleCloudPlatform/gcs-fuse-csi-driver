@@ -301,6 +301,43 @@ func TestPrepareMountArgs(t *testing.T) {
 				"cache-dir":         "/gcsfuse-file-cache-ephemeral-disk/.volumes/volume-name",
 			},
 		},
+		{
+			name: "should correctly parse custom-endpoint with a port",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"gcs-connection:custom-endpoint:custom-service.my-system.svc.cluster.local:8080"},
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":              "/dev/fd/1",
+				"logging:format":                 "json",
+				"cache-dir":                      "",
+				"gcs-connection:custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
+			},
+		},
+		{
+			name: "should correctly parse custom-endpoint with a port in CLI format",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"custom-endpoint=custom-service.my-system.svc.cluster.local:8080"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":        GCSFuseAppName,
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
 	}
 
 	testPrometheusPort := prometheusPort
