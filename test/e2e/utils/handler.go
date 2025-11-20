@@ -150,6 +150,18 @@ func Handle(testParams *TestParameters) error {
 				klog.Errorf("failed to cluster down: %v", err)
 			}
 		}()
+
+		// Fetch the cluster version.
+		cmd := exec.Command("bash", "-c",
+			fmt.Sprintf("gcloud container clusters describe %s --location %s --format=\"value(currentMasterVersion)\"",
+				testParams.GkeClusterName,
+				testParams.GkeClusterRegion))
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to get cluster version, output: %s, err: %w", string(output), err)
+		}
+		testParams.GkeClusterVersion = strings.TrimSpace(string(output))
+		klog.Infof("GKE cluster version: %s", testParams.GkeClusterVersion)
 	}
 	// TODO(jaimebz): Extract server version using kubeapi if not present.
 
