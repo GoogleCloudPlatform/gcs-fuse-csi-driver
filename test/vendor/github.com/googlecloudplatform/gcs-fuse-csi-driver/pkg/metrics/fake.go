@@ -24,3 +24,25 @@ func (*FakeMetricsManager) InitializeHTTPHandler() {}
 func (*FakeMetricsManager) RegisterMetricsCollector(_, _, _, _ string) {}
 
 func (*FakeMetricsManager) UnregisterMetricsCollector(_ string) {}
+
+type FakePrometheusMetricManager struct {
+	syncPVCounter  map[string]int
+	syncPodCounter map[string]int
+}
+
+func (*FakePrometheusMetricManager) InitializeHTTPHandler() {}
+
+func (m *FakePrometheusMetricManager) RecordSyncPVMetric(err error) {
+	m.syncPVCounter[GetErrorCode(err)]++
+}
+
+func (m *FakePrometheusMetricManager) RecordSyncPodMetric(err error) {
+	m.syncPodCounter[GetErrorCode(err)]++
+}
+
+func NewFakePrometheusMetricsManager() PrometheusMetricManager {
+	return &FakePrometheusMetricManager{
+		syncPVCounter:  make(map[string]int),
+		syncPodCounter: make(map[string]int),
+	}
+}

@@ -20,6 +20,7 @@ package util
 import (
 	"context"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -29,7 +30,6 @@ import (
 	"strings"
 
 	compute "google.golang.org/api/compute/v1"
-	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -246,44 +246,37 @@ func ParseVolumeID(bucketHandle string) string {
 }
 
 func GetZonesForALocation(ctx context.Context, projectNumber string, computeService *compute.Service, location string) ([]string, error) {
-	var zones []string
-	var err error
 	klog.Info("Getting zones for location: ", location, " in project: ", projectNumber)
 
 	// Validating inputs.
 	if projectNumber == "" {
-		return zones, fmt.Errorf("no project number provided")
+		return []string{}, status.Errorf(codes.Internal, "no project number provided")
 	}
 	if computeService == nil {
-		computeService, err = compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope))
-		if err != nil {
-			return zones, fmt.Errorf("failed to create compute service: %v", err)
-		}
+		return []string{}, status.Errorf(codes.Internal, "compute service can't be nil")
 	}
+
+	// Handle the zonal cluster case.
+	_, err := computeService.Zones.Get(projectNumber, location).Context(ctx).Do()
+	if err == nil {
+		return []string{location}, nil
+	}
+	errs := []error{err}
 
 	// Handle the regional cluster case.
 	regionObj, err := computeService.Regions.Get(projectNumber, location).Context(ctx).Do()
 	if err == nil {
+		var zones []string
 		for _, zoneURL := range regionObj.Zones {
 			zoneName := path.Base(zoneURL)
 			zones = append(zones, zoneName)
 		}
 		return zones, nil
 	}
-	if status.Code(err) != codes.NotFound {
-		return zones, fmt.Errorf("failed to get location %s: %v", location, err)
-	}
+	errs = append(errs, err)
 
-	// No region found for the location, checking if its a zone.
-	_, err = computeService.Zones.Get(projectNumber, location).Context(ctx).Do()
-	if err == nil {
-		zones = append(zones, location)
-		return zones, nil
-	}
-	if status.Code(err) != codes.NotFound {
-		return zones, fmt.Errorf("location %s is not a valid region or zone: %v", location, err)
-	}
-	return zones, fmt.Errorf("failed to get location %s: %v", location, err)
+	// region and zonal API errors are both non-nil. The API request failed either because it's not a zone nor a region or some internal error.
+	return []string{}, fmt.Errorf("failed to get location %s: %v", location, errors.Join(errs...))
 }
 
 // Returns true if the identity provider is a GKE identity provider in the format:
