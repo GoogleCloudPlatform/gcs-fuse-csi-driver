@@ -78,17 +78,17 @@ type sidecarRetryConfig struct {
 var prometheusPort = 62990
 
 var disallowedFlags = map[string]bool{
-	"temp-dir":                             true,
-	"config-file":                          true,
-	"foreground":                           true,
-	"log-file":                             true,
-	"log-format":                           true,
-	"key-file":                             true,
-	"token-url":                            true,
-	"reuse-token-from-url":                 true,
-	"o":                                    true,
-	"cache-dir":                            true,
-	"prometheus-port":                      true,
+	"temp-dir":             true,
+	"config-file":          true,
+	"foreground":           true,
+	"log-file":             true,
+	"log-format":           true,
+	"key-file":             true,
+	"token-url":            true,
+	"reuse-token-from-url": true,
+	"o":                    true,
+	"cache-dir":            true,
+	"prometheus-port":      true,
 }
 
 var boolFlags = map[string]bool{
