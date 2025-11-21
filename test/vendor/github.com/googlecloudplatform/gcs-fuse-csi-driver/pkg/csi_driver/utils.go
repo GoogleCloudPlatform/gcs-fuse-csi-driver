@@ -45,6 +45,10 @@ const (
 	DeleteVolumeCSIFullMethod      = "/csi.v1.Controller/DeleteVolume"
 	NodePublishVolumeCSIFullMethod = "/csi.v1.Node/NodePublishVolume"
 
+	// Do NOT add new VolumeAttributes without exporting them from the GKE
+	// kubestore sawmill logs. See example in cl/833527120.
+
+	// START of GCS Fuse Volume Attributes
 	VolumeContextKeyMountOptions               = "mountOptions"
 	VolumeContextKeyFileCacheCapacity          = "fileCacheCapacity"
 	VolumeContextKeyFileCacheForRangeRead      = "fileCacheForRangeRead"
@@ -58,9 +62,10 @@ const (
 	VolumeContextKeyDisableMetrics             = "disableMetrics"
 	VolumeContextKeyIdentityPool               = "identityPool"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
-
+	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
+	// END of GCS Fuse Volume Attributes
 
 	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
 	//nolint:gosec
@@ -74,7 +79,7 @@ const (
 	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
-	GCSFuseFileCacheMediumMinVersion       = "v1.99.0-gke.0"
+	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 )

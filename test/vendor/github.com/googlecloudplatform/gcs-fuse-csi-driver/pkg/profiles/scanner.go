@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/googleapis/gax-go/v2"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -143,9 +145,6 @@ var (
 // stringPtr returns a pointer to the passed string.
 func stringPtr(s string) *string { return &s }
 
-// boolPtr returns a pointer to the string representation of the passed bool.
-func boolPtr(b bool) *string { return stringPtr(strconv.FormatBool(b)) }
-
 // int64Ptr returns a pointer to the string representation of the passed int64.
 func int64Ptr(i int64) *string { return stringPtr(strconv.FormatInt(i, 10)) }
 
@@ -158,19 +157,21 @@ type DatafluxConfig struct {
 
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
-	KubeAPIQPS                  float64       // QPS limit for Kubernetes API client.
-	KubeAPIBurst                int           // Burst limit for Kubernetes API client.
-	ResyncPeriod                time.Duration // Resync period for informers.
-	KubeConfigPath              string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
-	RateLimiter                 workqueue.TypedRateLimiter[string]
-	DatafluxConfig              *DatafluxConfig
-	LeaderElection              bool
-	LeaderElectionNamespace     string
-	LeaderElectionLeaseDuration time.Duration
-	LeaderElectionRenewDeadline time.Duration
-	LeaderElectionRetryPeriod   time.Duration
-	ClusterLocation             string
-	ProjectNumber               string
+	KubeAPIQPS                       float64       // QPS limit for Kubernetes API client.
+	KubeAPIBurst                     int           // Burst limit for Kubernetes API client.
+	ResyncPeriod                     time.Duration // Resync period for informers.
+	KubeConfigPath                   string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
+	RateLimiter                      workqueue.TypedRateLimiter[string]
+	DatafluxConfig                   *DatafluxConfig
+	LeaderElection                   bool
+	LeaderElectionNamespace          string
+	LeaderElectionLeaseDuration      time.Duration
+	LeaderElectionRenewDeadline      time.Duration
+	LeaderElectionRetryPeriod        time.Duration
+	LeaderElectionHealthCheckTimeout time.Duration
+	ClusterLocation                  string
+	ProjectNumber                    string
+	HTTPEndpoint                     string
 }
 
 // bucketInfo holds the results of a bucket scan.
@@ -206,6 +207,8 @@ type Scanner struct {
 	config               *ScannerConfig
 	computeService       *compute.Service
 	storageControlClient storageControlClient
+	metricManager        metrics.PrometheusMetricManager
+	mux                  *http.ServeMux
 
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
 	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
@@ -338,6 +341,7 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	eventRecorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: scannerComponentName})
+	mux := http.NewServeMux()
 
 	scanner := &Scanner{
 		kubeClient:         kubeClient,
@@ -359,6 +363,8 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		scanBucketImpl:     defaultScanBucket,
 		config:             config,
 		id:                 id,
+		metricManager:      metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
+		mux:                mux,
 	}
 
 	klog.Info("Setting up event handlers for PersistentVolumes")
@@ -467,6 +473,16 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 		klog.Fatalf("Error creating resourcelock: %v", err)
 	}
 
+	healthCheck := leaderelection.NewLeaderHealthzAdaptor(s.config.LeaderElectionHealthCheckTimeout)
+	s.mux.Handle("/healthz/leader-election", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := healthCheck.Check(r)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("internal server error: %v", err), http.StatusInternalServerError)
+		} else {
+			fmt.Fprint(w, "ok")
+		}
+	}))
+
 	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
 		Name:          scannerComponentName,
 		Lock:          rl,
@@ -483,6 +499,7 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 				cancel() // Trigger graceful shutdown.
 			},
 		},
+		WatchDog: healthCheck,
 	})
 }
 
@@ -490,6 +507,10 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 // It will use leader election if s.config.LeaderElection is true,
 // otherwise it starts the scanner directly.
 func (s *Scanner) Start(ctx context.Context, cancel context.CancelFunc) {
+	// Start HTTP server for metrics and leader election health checks
+	// (if leader election is enabled).
+	s.metricManager.InitializeHTTPHandler()
+
 	if s.config.LeaderElection {
 		s.runWithLeaderElection(ctx, cancel)
 	} else {
@@ -516,16 +537,27 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 	syncType := "Unknown"
 	itemKey := key
 
-	if strings.HasPrefix(key, podPrefix) {
+	// Process the queued item based on its key prefix.
+	// The prefix determines the item type (e.g., Pod, PV) and dictates
+	// the synchronization logic to be applied.
+	switch {
+	case strings.HasPrefix(key, podPrefix):
 		syncType = "Pod"
 		itemKey = strings.TrimPrefix(key, podPrefix)
 		klog.V(6).Infof("Processing %q %q", syncType, itemKey)
 		err = s.syncPod(ctx, itemKey)
-	} else if strings.HasPrefix(key, pvPrefix) {
+		if errors.Is(err, errRequeuePod) {
+			// errRequeuePod is not a real error, so don't count it as a failure.
+			s.metricManager.RecordSyncPodMetric(nil)
+		} else {
+			s.metricManager.RecordSyncPodMetric(err)
+		}
+	case strings.HasPrefix(key, pvPrefix):
 		syncType = "PV"
 		itemKey = strings.TrimPrefix(key, pvPrefix)
 		klog.V(6).Infof("Processing %q %q", syncType, itemKey)
 		err = s.syncPV(ctx, itemKey)
+		s.metricManager.RecordSyncPVMetric(err)
 
 		// PV specific tracking removal
 		if err == nil {
@@ -536,24 +568,26 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 			}
 			s.pvMutex.Unlock()
 		}
-	} else {
+	default:
 		klog.Errorf("Unknown key prefix for %q", key)
 		s.queue.Forget(key)
 		return true
 	}
 
-	if err == nil {
+	// Handle the result of the sync operation.
+	// Based on the error, an item is either removed from the queue,
+	// re-queued for a later retry, or logged as a permanent failure.
+	switch {
+	case err == nil:
 		s.queue.Forget(key)
 		klog.V(6).Infof("Successfully synced %q %q", syncType, itemKey)
-	} else if errors.Is(err, errRequeuePod) {
+	case errors.Is(err, errRequeuePod):
 		// Specific requeue signal for Pods waiting on PV scans or PVC binds.
 		// This is not a "true" error, so it doesn't need to be logged as such.
 		klog.Infof("Requeuing %q %q: %v", syncType, itemKey, err)
 		s.queue.AddRateLimited(key)
-	} else {
+	default:
 		klog.Errorf("Error syncing %q %q: %v", syncType, itemKey, err)
-		// TODO(urielguzman): Update the rest of the errors to return a categorized status
-		// error code. This will be done during SLO / SLI metrics implementation.
 		if status.Code(err) != codes.InvalidArgument {
 			// Don't re-queue InvalidArgument  errors since these are fixed
 			// until the user fixes their spec and re-deploys.
@@ -562,6 +596,7 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 			s.queue.AddRateLimited(key)
 		}
 	}
+
 	return true
 }
 
@@ -579,8 +614,8 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 func (s *Scanner) syncPod(ctx context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		klog.Errorf("Failed to split meta namespace key %q: %v", key, err)
-		return nil // Don't re-queue bad keys
+		// Return internal error, since the key is formatted by the controller.
+		return status.Errorf(codes.Internal, "failed to split meta namespace key %q: %v", key, err)
 	}
 
 	pod, err := s.podLister.Pods(namespace).Get(name)
@@ -589,8 +624,8 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			klog.Infof("Pod %q in namespace %q has been deleted", name, namespace)
 			return nil
 		}
-		klog.Errorf("Failed to get Pod %q in namespace %q: %v", name, namespace, err)
-		return err
+		// API server error, retry with backoff.
+		return status.Errorf(codes.Internal, "failed to get Pod %q in namespace %q: %v", name, namespace, err)
 	}
 
 	klog.Infof("Syncing Pod: %q/%q", pod.Namespace, pod.Name)
@@ -611,8 +646,8 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 				needsRequeue = true
 				continue
 			}
-			klog.Errorf("Failed to get PVC %q/%q for Pod %q: %v", namespace, pvcName, key, err)
-			return fmt.Errorf("failed to get PVC %q/%q: %w", namespace, pvcName, err) // API server error, retry with backoff
+			// API server error, retry with backoff.
+			return status.Errorf(codes.Internal, "failed to get PVC %q/%q: %v", namespace, pvcName, err)
 		}
 
 		pvName := pvc.Spec.VolumeName
@@ -627,16 +662,16 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("PV %q (from PVC %q/%q) for Pod %q not found, this should not happen if PVC is bound", pvName, namespace, pvcName, key)
 				// This state is unexpected, but treat as transient.
-				return fmt.Errorf("PV %q not found: %w", pvName, err)
+				needsRequeue = true
+				continue
 			}
-			klog.Errorf("Failed to get PV %q for Pod %q (from PVC %q/%q): %v", pvName, key, namespace, pvcName, err)
-			return fmt.Errorf("failed to get PV %q: %w", pvName, err) // API server error, retry with backoff
+			// API server error, retry with backoff
+			return status.Errorf(codes.Internal, "failed to get PV %q: %v", pvName, err)
 		}
 
 		sc, err := s.getStorageClass(pv)
 		if err != nil {
-			klog.Errorf("Failed to get Profiles enabled StorageClass for PV %q: %v", key, err)
-			return err
+			return status.Errorf(codes.Internal, "failed to get StorageClass for PV %q: %v", key, err)
 		}
 
 		bucketI, isScanPending, err := s.checkPVRelevance(pv, sc)
@@ -667,7 +702,10 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 	}
 
 	// If no PVs are relevant (including the override case) and no other reason to requeue, remove the scheduling gate
-	return s.removeSchedulingGate(ctx, pod)
+	if err := s.removeSchedulingGate(ctx, pod); err != nil {
+		return status.Errorf(codes.Internal, "failed to remove scheduling gate from Pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	return nil
 }
 
 func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
@@ -757,27 +795,26 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 			klog.Infof("PV %q has been deleted, removing from tracking", key)
 			return nil
 		}
-		klog.Errorf("Failed to get PV %q from lister: %v", key, err)
-		return err
+		// Internal API error, retry with exponential back-off.
+		return status.Errorf(codes.Internal, "failed to get PV %q: %v", key, err)
 	}
 
 	sc, err := s.getStorageClass(pv)
 	if err != nil {
-		klog.Errorf("Failed to get Profiles enabled StorageClass for PV %q: %v", key, err)
-		return err
+		return status.Errorf(codes.Internal, "failed to get StorageClass for PV %q: %v", key, err)
 	}
 	// Skip PVs that are not relevant, e.g. PVs that don't use the gcsfuse profiles feature or
 	// that have been scanned too recently.
 	bucketI, isScanPending, err := s.checkPVRelevance(pv, sc)
 	if err != nil {
-		klog.Errorf("Relevance check failed for PV %q: %v", pv.Name, err)
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Relevance check failed: %v", err)
 		return fmt.Errorf("relevance check failed for PV %q: %w", pv.Name, err)
 	}
 	pvRelevant := bucketI != nil
 	if !pvRelevant {
 		klog.V(6).Infof("PV %q is not relevant, skipping sync", key)
-		return nil // Remove irrelevant PV from queue
+		// Remove irrelevant PV from queue.
+		return nil
 	}
 
 	klog.Infof("PV %q is relevant, bucket: %q, dir: %q, onlyDirSpecified: %t", key, bucketI.name, bucketI.dir, bucketI.onlyDirSpecified)
@@ -797,7 +834,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		currentScanTimeout, err := s.getDurationAttribute(pv, volumeAttributeScanTimeoutKey, defaultScanTimeoutDuration)
 		if err != nil {
 			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Bucket scan timeout configuration error: %v", err)
-			return nil // Avoid re-queueing on static customer misconfig.
+			return status.Errorf(codes.InvalidArgument, "bucket scan timeout configuration error: %v", err)
 		}
 
 		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationStartSucceeded, "Started bucket scan for PV %q, bucket %q, directory %q, with timeout %s", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
@@ -814,7 +851,8 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 				if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanTimeout); patchErr != nil {
 					return fmt.Errorf("failed to patch PV %q after timeout, err: %w", pv.Name, patchErr)
 				}
-				return nil // Remove since we still consider this a successful scan.
+				// Remove since we still consider this a successful scan.
+				return nil
 			}
 			// For any other error, re-queue.
 			klog.Errorf("Error scanning bucket for PV %q: %v", pv.Name, err)
@@ -838,10 +876,9 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	}
 	shouldEnableAnywhereCache, err = strconv.ParseBool(enableAnywhereCache)
 	if err != nil {
-		err = status.Errorf(codes.InvalidArgument, "failed to enable anywhere cache for PV %q: %v", pv.Spec.StorageClassName, err)
-		klog.Error(err)
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, "%v", err)
-		return err
+		klog.Errorf("Failed to enable Anywhere Cache requests for PV %q: %v", pv.Spec.StorageClassName, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, "Failed to enable Anywhere Cache for PV %q: %v", pv.Spec.StorageClassName, err)
+		return status.Errorf(codes.InvalidArgument, "failed to parse enableAnywhereCache for PV %q: %v", pv.Spec.StorageClassName, err)
 	}
 
 	if !shouldEnableAnywhereCache {
@@ -850,9 +887,9 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 
 	err = s.createAnywhereCache(ctx, pv)
 	if err != nil {
-		klog.Error(err)
-		s.eventRecorder.Event(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, err.Error())
-		return err
+		klog.Errorf("Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, "Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
+		return fmt.Errorf("failed to create Anywhere Cache request for PV %q: %w", pv.Name, err)
 	}
 	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationAnywhereCacheCreateSucceeded, "Submitted anywhere cache requests for for bucket: %s", bucketI.name)
 	return nil
@@ -874,10 +911,10 @@ func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolu
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
-		return fmt.Errorf("failed to get zones for region: %v", err)
+		return fmt.Errorf("failed to get zones for region: %w", err)
 	}
 	if s.storageControlClient == nil {
-		return fmt.Errorf("storage control client should not be nil")
+		return status.Errorf(codes.Internal, "storage control client should not be nil")
 	}
 
 	var errs []error
@@ -898,7 +935,7 @@ func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolu
 				// AC already exists for this bucket/zone no further action needed.
 				continue
 			}
-			errs = append(errs, fmt.Errorf("%s:[%v]", zone, err))
+			errs = append(errs, fmt.Errorf("%s:[%w]", zone, err))
 		}
 	}
 	if len(errs) <= 0 {
@@ -970,7 +1007,7 @@ func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, sca
 	// Use the parent context for this, as it's a quick metadata call.
 	bucketAttrs, err := bucketAttrs(ctx, s.gcsClient, bucketI.name)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Internal, "failed to get bucket attributes for %q: %v", bucketI.name, err)
 	}
 	bucketI.projectNumber = fmt.Sprint(bucketAttrs.ProjectNumber)
 
@@ -1045,19 +1082,19 @@ func fetchMetricValue(ctx context.Context, metricClient *monitoring.MetricClient
 
 	it := metricClient.ListTimeSeries(ctx, req)
 	if it == nil {
-		return 0, fmt.Errorf("ListTimeSeries returned nil iterator for metric %q", metricType)
+		return 0, status.Errorf(codes.Internal, "ListTimeSeries returned nil iterator for metric %q", metricType)
 	}
 
 	resp, err := it.Next()
 	if err == iterator.Done {
-		return 0, fmt.Errorf("no time series data found for metric %q in bucket %q", metricType, bucketI.name)
+		return 0, status.Errorf(codes.NotFound, "no time series data found for metric %q in bucket %q", metricType, bucketI.name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("error iterating over time series for metric %q: %w", metricType, err)
+		return 0, status.Errorf(codes.Internal, "error iterating over time series for metric %q: %v", metricType, err)
 	}
 
 	if len(resp.Points) == 0 {
-		return 0, fmt.Errorf("no points found in time series for metric %q in bucket %q", metricType, bucketI.name)
+		return 0, status.Errorf(codes.NotFound, "no points found in time series for metric %q in bucket %q", metricType, bucketI.name)
 	}
 
 	latestPoint := resp.Points[0]
@@ -1068,7 +1105,7 @@ func fetchMetricValue(ctx context.Context, metricClient *monitoring.MetricClient
 		return int64(latestPoint.Value.GetDoubleValue()), nil
 	}
 
-	return 0, fmt.Errorf("unsupported value type for metric %q: %v", metricType, resp.ValueType)
+	return 0, status.Errorf(codes.Internal, "unsupported value type for metric %q: %v", metricType, resp.ValueType)
 }
 
 // defaultScanBucketWithDataflux performs a bucket scan using the GCS Dataflux library.
@@ -1078,7 +1115,7 @@ func defaultScanBucketWithDataflux(ctx context.Context, gcsClient *storage.Clien
 	defer cancel()
 
 	if datafluxConfig == nil {
-		return fmt.Errorf("datafluxConfig is nil")
+		return status.Errorf(codes.Internal, "datafluxConfig is nil")
 	}
 
 	dfInput := &dataflux.ListerInput{
@@ -1138,8 +1175,7 @@ func defaultScanBucketWithDataflux(ctx context.Context, gcsClient *storage.Clien
 			accumulate(objects)
 			klog.V(6).Infof("Bucket %q, dir %q: Scanned %d objects, total size %d bytes so far", bucketI.name, bucketI.dir, numObjects, totalSizeBytes)
 		default:
-			klog.Errorf("Error getting next batch from dataflux for bucket %q, dir %q: %v", bucketI.name, bucketI.dir, err)
-			return err
+			return status.Errorf(codes.Internal, "error getting next batch from dataflux for bucket %q, dir %q: %v", bucketI.name, bucketI.dir, err)
 		}
 	}
 }
@@ -1155,7 +1191,7 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 	}
 	patchBytes, err := json.Marshal(patchData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal annotation patch data for PV %q: %w", pvName, err)
+		return status.Errorf(codes.Internal, "failed to marshal annotation patch data for PV %q: %v", pvName, err)
 	}
 	klog.V(6).Infof("Patching PV %q annotations with: %q", pvName, string(patchBytes))
 	_, err = s.kubeClient.CoreV1().PersistentVolumes().Patch(ctx, pvName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
@@ -1164,7 +1200,7 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 			klog.Warningf("Failed to patch PV %q because it was not found", pvName)
 			return nil
 		}
-		return fmt.Errorf("failed to patch PV %q annotations: %w", pvName, err)
+		return status.Errorf(codes.Internal, "failed to patch PV %q annotations: %v", pvName, err)
 	}
 	klog.V(6).Infof("Successfully patched annotations for PV %q", pvName)
 	return nil
@@ -1269,7 +1305,7 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 	}
 	lastScanTime, found, err := s.calculateLastScanTime(pv)
 	if err != nil {
-		return nil, false, err
+		return nil, false, status.Errorf(codes.Internal, "failed to calculate last scan time: %v", err)
 	}
 
 	if found {
@@ -1324,7 +1360,7 @@ func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, boo
 	}
 	parsedTime, err := time.Parse(time.RFC3339, lastScanTimeFromAnnotation)
 	if err != nil {
-		return time.Time{}, false, status.Errorf(codes.InvalidArgument, "PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
+		return time.Time{}, false, fmt.Errorf("PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
 	}
 	klog.V(6).Infof("PV %q: Found last scan time in annotation: %q", pv.Name, lastScanTimeFromAnnotation)
 	return parsedTime, true, nil
