@@ -54,11 +54,7 @@ var (
 		"token-url",
 		"reuse-token-from-url",
 		"o",
-		"logging:log-rotate:max-file-size-mb:test",
-		"logging:log-rotate:backup-file-count:test",
-		"logging:log-rotate:compress:test",
 		"cache-dir",
-		"experimental-local-file-cache",
 	}
 )
 
@@ -337,6 +333,33 @@ func TestPrepareMountArgs(t *testing.T) {
 				"custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
 			},
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
+			name: "should return valid args with newly allowed flags",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"experimental-local-file-cache", "logging:log-rotate:max-file-size-mb:100", "logging:log-rotate:backup-file-count:3", "logging:log-rotate:compress:true"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":                      GCSFuseAppName,
+				"temp-dir":                      "test-buffer-dir/temp-dir",
+				"config-file":                   "test-config-file",
+				"foreground":                    "",
+				"uid":                           "0",
+				"gid":                           "0",
+				"experimental-local-file-cache": "",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":                    "/dev/fd/1",
+				"logging:format":                       "json",
+				"cache-dir":                            "",
+				"logging:log-rotate:max-file-size-mb":  "100",
+				"logging:log-rotate:backup-file-count": "3",
+				"logging:log-rotate:compress":          "true",
+			},
 		},
 	}
 
