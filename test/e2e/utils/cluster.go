@@ -31,13 +31,14 @@ import (
 var (
 	nativeSidecarMinimumVersion = version.MustParseGeneric("1.29.0")
 	// TODO(@siyanshen): to enable hostnetwork tests for managed drivers, update min version when GCW feature flag is on.
+	// MustParseGeneric only outputs major.minor.patch format
 	SaTokenVolInjectionMinimumVersion           = version.MustParseGeneric("1.100.0")
 	skipBucketCheckMinimumVersion               = version.MustParseGeneric("1.29.0")
 	kernelReadAheadMinimumVersion               = version.MustParseGeneric("1.32.0")
 	metadataPrefetchMinimumVersion              = version.MustParseGeneric("1.32.0")
 	longMountOptionsMinimumVersion              = version.MustParseGeneric("1.32.0")
 	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")
-	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.1-gke.2931000")
+	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.1")
 )
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
