@@ -30,12 +30,16 @@ import (
 	"time"
 
 	"github.com/googleapis/gax-go/v2"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gopkg.in/gcfg.v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -148,6 +152,15 @@ func stringPtr(s string) *string { return &s }
 // int64Ptr returns a pointer to the string representation of the passed int64.
 func int64Ptr(i int64) *string { return stringPtr(strconv.FormatInt(i, 10)) }
 
+type ConfigFile struct {
+	Global ConfigGlobal `gcfg:"global"`
+}
+
+type ConfigGlobal struct {
+	TokenURL  string `gcfg:"token-url"`
+	TokenBody string `gcfg:"token-body"`
+}
+
 // DatafluxConfig holds the configuration for the Dataflux lister.
 type DatafluxConfig struct {
 	Parallelism          int
@@ -161,6 +174,7 @@ type ScannerConfig struct {
 	KubeAPIBurst                     int           // Burst limit for Kubernetes API client.
 	ResyncPeriod                     time.Duration // Resync period for informers.
 	KubeConfigPath                   string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
+	CloudConfigPath                  string
 	RateLimiter                      workqueue.TypedRateLimiter[string]
 	DatafluxConfig                   *DatafluxConfig
 	LeaderElection                   bool
@@ -241,8 +255,8 @@ type storageControlClient interface {
 	Close() error
 }
 
-// buildConfig creates a Kubernetes rest.Config for the client.
-func buildConfig(kubeconfigPath string) (*rest.Config, error) {
+// buildKubeConfig creates a Kubernetes rest.Config for the client.
+func buildKubeConfig(kubeconfigPath string) (*rest.Config, error) {
 	if kubeconfigPath != "" {
 		cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
@@ -288,9 +302,53 @@ func trimPodObject(obj any) (any, error) {
 	return trimmedPod, nil
 }
 
+func generateTokenSource(ctx context.Context, configFile *ConfigFile) (oauth2.TokenSource, error) {
+	// If configFile.Global.TokenURL is defined use AltTokenSource
+	if configFile != nil && configFile.Global.TokenURL != "" && configFile.Global.TokenURL != "nil" {
+		tokenSource := auth.NewAltTokenSource(ctx, configFile.Global.TokenURL, configFile.Global.TokenBody)
+		klog.Infof("Using AltTokenSource %#v", tokenSource)
+		return tokenSource, nil
+	}
+
+	// Use DefaultTokenSource
+	tokenSource, err := google.DefaultTokenSource(
+		ctx,
+		compute.CloudPlatformScope)
+
+	// DefaultTokenSource relies on GOOGLE_APPLICATION_CREDENTIALS env var being set.
+	if gac, ok := os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS"); ok {
+		klog.Infof("GOOGLE_APPLICATION_CREDENTIALS env var set %v", gac)
+	} else {
+		klog.Warningf("GOOGLE_APPLICATION_CREDENTIALS env var not set")
+	}
+	klog.Infof("Using DefaultTokenSource %#v", tokenSource)
+
+	return tokenSource, err
+}
+
+func buildCloudConfig(configPath string) (*ConfigFile, error) {
+	if configPath == "" {
+		return nil, nil
+	}
+
+	reader, err := os.Open(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't open cloud provider configuration at %s: %w", configPath, err)
+	}
+	defer reader.Close()
+
+	cfg := &ConfigFile{}
+	if err := gcfg.FatalOnly(gcfg.ReadInto(cfg, reader)); err != nil {
+		return nil, fmt.Errorf("couldn't read cloud provider configuration at %s: %w", configPath, err)
+	}
+	klog.Infof("Config file read %#v", cfg)
+
+	return cfg, nil
+}
+
 // NewScanner creates a new Scanner instance.
 func NewScanner(config *ScannerConfig) (*Scanner, error) {
-	kubeconfig, err := buildConfig(config.KubeConfigPath)
+	kubeconfig, err := buildKubeConfig(config.KubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build kubeconfig: %w", err)
 	}
@@ -391,7 +449,19 @@ func (s *Scanner) run(ctx context.Context) {
 	defer utilruntime.HandleCrash()
 	defer s.queue.ShutDown()
 
-	gcsClient, err := storage.NewClient(ctx)
+	cloudConfig, err := buildCloudConfig(s.config.CloudConfigPath)
+	if err != nil {
+		klog.Errorf("Failed to build cloudconfig: %v", err)
+		return
+	}
+
+	tokenSource, err := generateTokenSource(ctx, cloudConfig)
+	if err != nil {
+		klog.Errorf("Failed to generate token source: %v", err)
+		return
+	}
+
+	gcsClient, err := storage.NewClient(ctx, option.WithTokenSource(tokenSource))
 	if err != nil {
 		klog.Errorf("Failed to create GCS client: %v", err)
 		return
@@ -403,7 +473,7 @@ func (s *Scanner) run(ctx context.Context) {
 		}
 	}()
 
-	metricClient, err := monitoring.NewMetricClient(ctx)
+	metricClient, err := monitoring.NewMetricClient(ctx, option.WithTokenSource(tokenSource))
 	if err != nil {
 		klog.Errorf("Failed to create metric client: %v", err)
 		return
@@ -415,14 +485,14 @@ func (s *Scanner) run(ctx context.Context) {
 		}
 	}()
 
-	computeService, err := compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope))
+	computeService, err := compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope), option.WithTokenSource(tokenSource))
 	if err != nil {
 		klog.Errorf("Failed to create compute service: %v", err)
 		return
 	}
 	s.computeService = computeService
 
-	storageControlClient, err := control.NewStorageControlClient(ctx)
+	storageControlClient, err := control.NewStorageControlClient(ctx, option.WithTokenSource(tokenSource))
 	if err != nil {
 		klog.Errorf("Failed to create storage control client: %v", err)
 		return
@@ -1007,7 +1077,7 @@ func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, sca
 	// Use the parent context for this, as it's a quick metadata call.
 	bucketAttrs, err := bucketAttrs(ctx, s.gcsClient, bucketI.name)
 	if err != nil {
-		return status.Errorf(codes.Internal, "failed to get bucket attributes for %q: %v", bucketI.name, err)
+		return fmt.Errorf("failed to get bucket attributes for %q: %w", bucketI.name, err)
 	}
 	bucketI.projectNumber = fmt.Sprint(bucketAttrs.ProjectNumber)
 
