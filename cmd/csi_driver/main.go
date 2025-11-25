@@ -47,6 +47,7 @@ var (
 	runController                  = flag.Bool("controller", false, "Run controller service.")
 	runNode                        = flag.Bool("node", false, "Run node service.")
 	kubeconfigPath                 = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	cloudConfigFilePath            = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	kubeAPIQPS                     = flag.Float64("kube-api-qps", 5, "QPS to use while communicating with the kubernetes apiserver. Defaults to 5.0.")
 	kubeAPIBurst                   = flag.Int("kube-api-burst", 10, "Burst to use while communicating with the kubernetes apiserver. Defaults to 10.")
 	identityPool                   = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
@@ -176,6 +177,7 @@ func main() {
 				KubeAPIBurst:                     *kubeAPIBurst,
 				ResyncPeriod:                     time.Duration(*informerResyncDurationSec) * time.Second,
 				KubeConfigPath:                   *kubeconfigPath,
+				CloudConfigPath:                  *cloudConfigFilePath,
 				RateLimiter:                      workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
 				LeaderElection:                   *leaderElection,
 				LeaderElectionNamespace:          *leaderElectionNamespace,
