@@ -2126,9 +2126,9 @@ func TestIsValidMountOption(t *testing.T) {
 		{"a:b:c - should be valid", "a:b:c", true},
 		{"a-b:c - should be valid", "a-b:c", true},
 		{"a:b-c - should be valid", "a:b-c", true},
+		{"a=b:c - should be valid", "a=b:c", true},
 
 		{"a=b=c - should be invalid due to multiple equals", "a=b=c", false},
-		{"a=b:c - should be invalid as '=' is with ':'", "a=b:c", false},
 		{"a=b=c=d - should be invalid due to multiple equals", "a=b=c=d", false},
 
 		{"=a - should be invalid because it starts with an equals", "=a", false},
@@ -2136,9 +2136,6 @@ func TestIsValidMountOption(t *testing.T) {
 
 		{":a - should be invalid because it starts with colon", ":a", false},
 		{"a: - should be invalid because it ends with colon", "a:", false},
-
-		{"a:b=c - should be invalid because colon is with equals", "a:b=c", false},
-		{"a:b:c=d - should be invalid because colon is with equals", "a:b:c=d", false},
 	}
 
 	for _, tc := range tests {
@@ -2237,7 +2234,7 @@ func TestMergeMountOptionsOnMissingKeys(t *testing.T) {
 		},
 		{
 			name:     "invalid dst opts - should return InvalidArgument error",
-			dstOpts:  []string{"valid=a", "bad:opt=x"}, // Invalid "bad:opt=x"
+			dstOpts:  []string{"valid=a", "bad=opt=x"}, // Invalid "bad:opt=x"
 			srcOpts:  []string{"valid2=b"},
 			wantOpts: nil,
 			wantErr:  true,
@@ -2262,7 +2259,7 @@ func TestMergeMountOptionsOnMissingKeys(t *testing.T) {
 		{
 			name:     "complex merge with invalid in src - should error",
 			dstOpts:  []string{"a=1", "b:c"},
-			srcOpts:  []string{"a=2", "b:d", "g=h", "b:c=x"}, // "b:c=x" is invalid
+			srcOpts:  []string{"a=2", "b:d", "g=h", "b=c=x"}, // "b=c=x" is invalid
 			wantOpts: nil,
 			wantErr:  true,
 		},

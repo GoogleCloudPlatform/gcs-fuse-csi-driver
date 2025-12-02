@@ -974,7 +974,6 @@ func ceilDiv64(a, b int64) int64 {
 //  2. It starts/ends with a colon (e.g., ":a", "a:").
 //  3. It starts/ends with an equal sign (e.g., "=a", "a=").
 //  4. It contains more than one equals sign (e.g., "a=b=c").
-//  5. It contains an equals sign and a colon  (e.g., "a:b=c", "a:b:c=d", "a=b:c", "a=b:c=d").
 func isValidMountOption(opt string) bool {
 	if opt == "" {
 		return false
@@ -988,16 +987,8 @@ func isValidMountOption(opt string) bool {
 		return false // Prohibited: Starts with "=" or ends with "="
 	}
 
-	equalsCount := strings.Count(opt, "=")
 	if strings.Count(opt, "=") > 1 {
 		return false // Prohibited: Multiple '=' signs
-	}
-
-	hasColon := strings.Contains(opt, ":")
-	hasEquals := equalsCount == 1
-
-	if hasColon && hasEquals {
-		return false // Prohibited: ':' can't appear in the same string as '='
 	}
 
 	// If none of the invalid conditions are met, the option is valid.
