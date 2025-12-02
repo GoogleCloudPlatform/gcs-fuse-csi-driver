@@ -26,6 +26,7 @@ import (
 	"syscall"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
@@ -223,15 +224,6 @@ func Handle(testParams *TestParameters) error {
 	if err = os.Setenv(TestWithSAVolumeInjectionEnvVar, strconv.FormatBool(supportSAVolInjection)); err != nil {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSAVolumeInjectionEnvVar, err)
 	}
-	supportSidecarBucketAccessCheckMinVersionSatisfied, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, sidecarBucketAccessCheckMinimumVersion)
-	if err != nil {
-		klog.Fatalf(`managed driver version for sidecar bucket access check support could not be determined: %v`, err)
-	}
-	supportSidecarBucketAccessCheck := !testParams.UseGKEManagedDriver || (testParams.UseGKEManagedDriver && supportSidecarBucketAccessCheckMinVersionSatisfied)
-
-	if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(supportSidecarBucketAccessCheck && testParams.EnableSidecarBucketAccessCheck)); err != nil {
-		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
-	}
 
 	supportsMachineTypeAutoConfig, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, supportsMachineTypeAutoConfigMinimumVersion)
 	if err != nil {
@@ -240,6 +232,13 @@ func Handle(testParams *TestParameters) error {
 
 	testParams.SupportMachineTypeAutoconfig = supportsMachineTypeAutoConfig
 
+	supportSidecarBucketAccessCheck, err := checkFeatureSupport(testParams.GkeClusterVersion, testParams.GkeNodeVersion, sidecarBucketAccessCheckMinimumVersion, testParams.UseGKEManagedDriver, "sidecar-bucket-access-check")
+	if err != nil {
+		klog.Fatalf("%v", err.Error())
+	}
+	if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(supportSidecarBucketAccessCheck && testParams.EnableSidecarBucketAccessCheck)); err != nil {
+		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
+	}
 	testSkipStr := generateTestSkip(testParams)
 	if !strings.Contains(testSkipStr, "istio") && (len(testFocusStr) == 0 || strings.Contains(testFocusStr, "istio")) {
 		installIstio(testParams.IstioVersion)
@@ -340,6 +339,16 @@ func generateTestSkip(testParams *TestParameters) string {
 	klog.Infof("Generated ginkgo skip string: %q", skipString)
 
 	return skipString
+}
+
+// checkFeatureSupport performs the minimum cluster version check for managed driver to ensure any feature related logic is not executed on older versions.
+// This function assumes the feature is enabled on all the unmanaged driver versions so the version restriction is only added for managed driver.
+func checkFeatureSupport(gkeClusterVersion, gkeNodeVersion string, minVersion *version.Version, useGKEManagedDriver bool, featureName string) (bool, error) {
+	minVersionSatisfied, err := ClusterAtLeastMinVersion(gkeClusterVersion, gkeNodeVersion, minVersion)
+	if err != nil {
+		return false, fmt.Errorf("managed driver version for %s support could not be determined: %w", featureName, err)
+	}
+	return !useGKEManagedDriver || (useGKEManagedDriver && minVersionSatisfied), nil
 }
 
 func installIstio(istioVersion string) {
