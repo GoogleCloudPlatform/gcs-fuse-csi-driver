@@ -1313,10 +1313,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 // This function returns a bucketInfo with the bucket name and the directory if
 // relevant, otherwise, it will return nil and any error.
 func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*bucketInfo, bool, error) {
-	if pv == nil {
-		return nil, false, nil
-	}
-	if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csiDriverName || pv.Spec.CSI.VolumeHandle == "" {
+	if sc == nil || pv == nil || pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csiDriverName || pv.Spec.CSI.VolumeHandle == "" {
 		return nil, false, nil
 	}
 

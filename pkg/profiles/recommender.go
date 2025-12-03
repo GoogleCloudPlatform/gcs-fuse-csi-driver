@@ -179,37 +179,43 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	pv, err := params.Clientset.GetPV(volumeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "pv %q not found: %v", volumeName, err)
+			// Skip the profiles feature for ephemeral volumes.
+			klog.Warningf("pv %q not found: %v, disabling profiles feature for this volume", volumeName, err)
+			return nil, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get pv %q: %v", volumeName, err)
-	}
-
-	// Get the PV details from the PV object's annotations.
-	pvDetails, err := buildPVDetails(pv)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
 	}
 
 	// Get the StorageClassName from the PV object.
 	scName := pv.Spec.StorageClassName
 	if scName == "" {
-		// Since the feature is opt-in, the user should specify a StorageClassName.
-		return nil, status.Errorf(codes.InvalidArgument, "pv %q has empty StorageClassName", pv.Name)
+		klog.Warningf("pv %q has empty StorageClassName, disabling profiles feature for this volume", pv.Name)
+		return nil, nil
 	}
 
 	// Get the StorageClass object from the StorageClassName.
 	sc, err := params.Clientset.GetSC(scName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "sc %q not found: %v", scName, err)
+			klog.Warningf("sc %q not found: %v, disabling profiles feature for this volume", scName, err)
+			return nil, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get StorageClass %q: %v", scName, err)
 	}
+
+	// At this point, we are sure that the user is attempting to use the volume with
+	// the profiles feature, so we start returning errors.
 
 	// Get the scDetails from the StorageClass object.
 	scDetails, err := buildSCDetails(sc, params.VolumeAttributeKeys)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
+	}
+
+	// Get the PV details from the PV object's annotations.
+	pvDetails, err := buildPVDetails(pv)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
 	}
 
 	// Get the Node object using the Node name.
