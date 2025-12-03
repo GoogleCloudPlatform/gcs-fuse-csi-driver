@@ -423,6 +423,12 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantIsPendingScan: false,
 		},
 		{
+			name:              "Irrelevant - SC is nil",
+			pv:                createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
+			wantRelevant:      false,
+			wantIsPendingScan: false,
+		},
+		{
 			name: "Error - Invalid Workload Type",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
@@ -503,12 +509,18 @@ func TestCheckPVRelevance(t *testing.T) {
 			if tc.pv != nil {
 				objs = append(objs, tc.pv)
 			}
-			for _, sc := range tc.scs {
-				objs = append(objs, sc)
+			if tc.scs != nil {
+				for _, sc := range tc.scs {
+					objs = append(objs, sc)
+				}
 			}
 			f := newTestFixture(t, objs...)
 			f.mockTimeImpl.currentTime = now
-			bucketI, isPendingScan, err := f.scanner.checkPVRelevance(tc.pv, tc.scs[0])
+			var sc *storagev1.StorageClass
+			if len(tc.scs) > 0 {
+				sc = tc.scs[0]
+			}
+			bucketI, isPendingScan, err := f.scanner.checkPVRelevance(tc.pv, sc)
 
 			if tc.wantErr {
 				if err == nil {
@@ -619,6 +631,13 @@ func TestSyncPV(t *testing.T) {
 			expectScanCall: false,
 		},
 		{
+			name:           "SC Not Found",
+			key:            pvName,
+			initialObjects: []runtime.Object{},
+			wantErr:        false,
+			expectScanCall: false,
+		},
+		{
 			name:           "PV Not Relevant",
 			key:            "irrelevant-pv",
 			initialObjects: []runtime.Object{pvIrrelevantSC, irrelevantSC},
@@ -700,6 +719,7 @@ func TestSyncPod(t *testing.T) {
 	scValid := createStorageClass(testSCName, validSCParams)
 	scNotRelevant := createStorageClass("sc-not-relevant", nil)
 	pvcBoundRelevant := createPVC(testPVCName, testNamespace, testPVName, testSCName)
+	pvcEmptySC := createPVC(testPVCName, testNamespace, testPVName, "")
 	pvcBoundNotRelevant := createPVC("pvc-not-relevant", testNamespace, "pv-not-relevant", "sc-not-relevant")
 	pvcUnbound := createPVC("pvc-unbound", testNamespace, "", testSCName)
 
@@ -774,6 +794,12 @@ func TestSyncPod(t *testing.T) {
 			name:             "PVC found, but PV not found",
 			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant}, podLabels, true),
 			initialObjects:   []runtime.Object{pvcBoundRelevant},
+			expectRequeueErr: true,
+		},
+		{
+			name:             "PVC / PV found, but SC not found",
+			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant}, podLabels, true),
+			initialObjects:   []runtime.Object{pvcEmptySC},
 			expectRequeueErr: true,
 		},
 		{
