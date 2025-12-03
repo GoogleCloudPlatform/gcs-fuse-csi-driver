@@ -25,9 +25,9 @@ PROJECT_ID=$(gcloud config get project)
 PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
 
 # 1. Create a custom role in the bucket project for bucket-specific permissions
-gcloud iam roles create gke.gcsfuse.profileTuner \
+gcloud iam roles create gke.gcsfuse.profileUser \
   --project=${GCS_PROJECT} \
-  --title="GCSFuse CSI Profile Tuner" \
+  --title="GCSFuse CSI Profile User" \
   --description="Allows scanning GCS buckets for objects and retrieving bucket metadata and the creation of Anywhere Caches." \
   --permissions="storage.objects.list,\
 storage.buckets.get,\
@@ -39,7 +39,7 @@ storage.anywhereCaches.list"
 gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
   --project=${GCS_PROJECT} \
   --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa" \
-  --role="projects/${GCS_PROJECT}/roles/gke.gcsfuse.profileTuner"
+  --role="projects/${GCS_PROJECT}/roles/gke.gcsfuse.profileUser"
 
 # 3. Grant the Monitoring Viewer role to the GCSFuse CSI controller in the bucket project.
 # This grants read access to monitoring data, including GCS metrics.
