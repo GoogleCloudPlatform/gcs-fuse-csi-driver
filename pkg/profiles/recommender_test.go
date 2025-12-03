@@ -325,13 +325,24 @@ func TestBuildProfileConfig(t *testing.T) {
 			wantErr:    true,
 		},
 		{
-			name:       "TestBuildProfileConfig - Should fail if SC name empty",
+			name:       "TestBuildProfileConfig - Should return nil profile if SC missing",
 			pvConfig:   NewPVConfigBuilder().WithSCName("").Build(),
 			scConfig:   NewSCConfigBuilder().Build(),
 			nodeConfig: NewNodeConfigBuilder().Build(),
 			podConfig:  NewPodConfigBuilder().Build(),
 			targetPath: testTargetPath,
-			wantErr:    true,
+			wantConfig: nil,
+			wantErr:    false,
+		},
+		{
+			name:       "TestBuildProfileConfig - Should return nil profile if PV missing",
+			pvConfig:   clientset.FakePVConfig{},
+			scConfig:   NewSCConfigBuilder().Build(),
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().Build(),
+			targetPath: testTargetPath,
+			wantConfig: nil,
+			wantErr:    false,
 		},
 	}
 
