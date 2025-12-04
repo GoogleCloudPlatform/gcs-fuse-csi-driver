@@ -19,19 +19,39 @@ export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
 export GCSFUSE_TAG ?= master
 export BUILD_ARM ?= false
-export WI_NODE_LABEL_CHECK ?= true
-# assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
-export PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
-export CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
-export CLUSTER_NAME ?= $(shell kubectl config current-context | cut -d '_' -f 4)
+export SELF_MANAGED_K8S ?= false
+
+# Self-Managed / OSS K8s Logic. These match the defaults in cloudbuild-install.yaml for self-managed k8s.
+ifeq ($(SELF_MANAGED_K8S), true)
+    export WI_NODE_LABEL_CHECK = false
+    # Note: Assumes kubeconfig is in default location or KUBECONFIG env var is set
+    CA_BUNDLE ?= $(shell kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+    # Stop the build immediately if CA_BUNDLE comes back empty.
+    ifeq ($(CA_BUNDLE),)
+        $(error Error: CA_BUNDLE is empty. Run 'kubectl config view --minify' to ensure you have a valid current-context set.)
+    endif
+    # User MUST provide these for self-managed, so we initialize them as empty to force override or fail
+    IDENTITY_PROVIDER ?= 
+    IDENTITY_POOL ?= 
+else
+# GKE-Specific Logic (Default)
+    export WI_NODE_LABEL_CHECK ?= true
+    # assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
+    export PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
+    export CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
+    export CLUSTER_NAME ?= $(shell kubectl config current-context | cut -d '_' -f 4)
+    # Use jq to extract CA Bundle specifically for the current GKE context
+    CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
+    # Auto-discover Identity Provider from the cluster
+    IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
+    # Derive Identity Pool from Project ID
+    IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
+endif
+
+
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
-CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
-IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
-IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
-
-CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
 PROJECT_NUMBER ?= $(shell gcloud projects describe $(PROJECT) --format="value(projectNumber)")
 
 DRIVER_BINARY = gcs-fuse-csi-driver
@@ -233,7 +253,12 @@ generate-spec-yaml:
 		cd ./deploy/overlays/profiles; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=create --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION}; \
 		cd ./deploy/overlays/profiles; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=create --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER}; \
 	fi
+# Must be unindented. When Make sees indented text, it attempts to pass it to the shell (/bin/sh) to execute. The shell doesn't know what ifeq is, so it crashes.
+ifeq ($(SELF_MANAGED_K8S), true)
+	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
+else
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_POOL}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
+endif
 	echo "[{\"op\": \"replace\",\"path\": \"/webhooks/0/clientConfig/caBundle\",\"value\": \"${CA_BUNDLE}\"}]" > ./deploy/overlays/${OVERLAY}/caBundle_patch_MutatingWebhookConfiguration.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/1/value\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/template/spec/containers/0/env/2/value\",\"value\": \"${IDENTITY_POOL}\"}]" > ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
