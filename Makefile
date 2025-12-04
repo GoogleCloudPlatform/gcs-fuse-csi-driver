@@ -19,19 +19,38 @@ export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
 export GCSFUSE_TAG ?= master
 export BUILD_ARM ?= false
-export WI_NODE_LABEL_CHECK ?= true
-# assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
-export PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
-export CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
-export CLUSTER_NAME ?= $(shell kubectl config current-context | cut -d '_' -f 4)
+export SELF_MANAGED_K8S ?= false
+
+# GKE-Specific Logic (Default)
+ifeq ($(SELF_MANAGED_K8S), false)
+    export WI_NODE_LABEL_CHECK ?= true
+    # assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
+    export PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
+    export CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
+    export CLUSTER_NAME ?= $(shell kubectl config current-context | cut -d '_' -f 4)
+    # Use jq to extract CA Bundle specifically for the current GKE context
+    CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
+    # Auto-discover Identity Provider from the cluster
+    IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
+    # Derive Identity Pool from Project ID
+    IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
+else
+# Self-Managed / OSS K8s Logic. These match the defaults in cloudbuild-install.yaml for self-managed k8s.
+    export WI_NODE_LABEL_CHECK = false
+    # Note: Assumes kubeconfig is in default location or KUBECONFIG env var is set
+    # Still fails with MountVolume.SetUp failed for volume "gcsfuse-test" : rpc error: code = Internal desc = failed to generate disallowed flags map err:unable to get disallowed flags, sidecar image is empty
+    # I think because of CA BUNDLE? not sure though. 
+	CA_BUNDLE ?= $(shell kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+    # TODO, add error if these aren't set.
+    # User MUST provide these for self-managed, so we initialize them as empty to force override or fail
+    IDENTITY_PROVIDER ?= 
+    IDENTITY_POOL ?= 
+endif
+
+
 BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
-CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
-IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
-IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
-
-CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
 PROJECT_NUMBER ?= $(shell gcloud projects describe $(PROJECT) --format="value(projectNumber)")
 
 DRIVER_BINARY = gcs-fuse-csi-driver

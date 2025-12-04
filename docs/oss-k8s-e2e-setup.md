@@ -866,11 +866,70 @@ kubectl exec example --namespace $NAMESPACE -- gcloud auth print-access-token
 
 We recommend installing the driver from a fully released, fully qualified GCSFuse CSI Driver image. Alternatively, you can build and push a custom driver image by following the  [Cloud Build on NON Google Internal projects](development.md#cloud-build-on-non-google-internal-projects) guide.
 
-**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.20.4](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.4)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.20.4`.
+**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.21.5](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.21.5)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.21.5`.
 
-This guide demonstrates the preferred approach: installing from a publicly hosted, fully qualified image.
+This guide demonstrates the preferred approach: installing from a publicly hosted, fully qualified image. We provide two options for installing the driver: [Makefile](#installing-the-gcsfuse-csi-driver-with-makefile) and [Cloud Build](#installing-the-gcsfuse-csi-driver-with-cloud-build). Choose one of these methods to install the driver based on your infrastructure requirements.
 
-## Installing the GCSFuse CSI driver
+## Installing the GCSFuse CSI driver with Makefile
+
+1. **Clone the GCSFuse CSI Driver Repository**
+
+```bash
+gcloud compute ssh kub-m --zone=$ZONE --project=$PROJECT_ID
+sudo su -
+
+# Set the REGISTRY and STAGINGVERSION to the latest publicly hosted / fully qualified image.
+export REGISTRY="gcr.io/gke-release"
+export STAGINGVERSION=$(gcloud container images list-tags $REGISTRY/gcs-fuse-csi-driver --format="value(tags)" | tr ';' '\n' | grep '^v' | sort -V | tail -n 1)
+# Get tag from STAGINGVERSION
+export TAG=$(echo "$STAGINGVERSION" | cut -d'-' -f1)
+# The master VM already has `git` and `make` installed.
+# Clone the driver at this particular tag
+git clone --branch $TAG https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver.git
+cd gcs-fuse-csi-driver
+```
+
+2. **Install the driver**
+
+```bash
+# Export the Workload Identity values you created in the 'Configure Workload Identity section'
+export IDENTITY_POOL="wi-pool-amacaskill-k8s-cluster"
+export IDENTITY_PROVIDER="//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/wi-pool-amacaskill-k8s-cluster/providers/wi-p-amacaskill-k8s-cluster"
+
+# Run make install
+make install \
+  SELF_MANAGED_K8S=true \
+  IDENTITY_POOL=$IDENTITY_POOL \
+  IDENTITY_PROVIDER=$IDENTITY_PROVIDER
+```
+
+3. **Check the driver status**
+
+```bash 
+kubectl get CSIDriver,Deployment,DaemonSet,Pods -n gcs-fuse-csi-driver
+```
+
+should contain the driver application information, something like
+
+```text
+NAME                                                  ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS                    REQUIRESREPUBLISH   MODES                  AGE
+csidriver.storage.k8s.io/gcsfuse.csi.storage.gke.io   false            true             false             wi-pool-amacaskill-k8s-cluster   true                Persistent,Ephemeral   80s
+
+NAME                                          READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/gcs-fuse-csi-driver-webhook   1/1     1            1           80s
+
+NAME                             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+daemonset.apps/gcsfusecsi-node   3         3         3       3            3           kubernetes.io/os=linux   80s
+
+NAME                                               READY   STATUS    RESTARTS   AGE
+pod/gcs-fuse-csi-driver-webhook-7b74c9c479-m9xqw   1/1     Running   0          80s
+pod/gcsfusecsi-node-7ght5                          2/2     Running   0          80s
+pod/gcsfusecsi-node-8fzhp                          2/2     Running   0          80s
+pod/gcsfusecsi-node-nj9hm                          2/2     Running   0          80s
+```
+
+
+## Installing the GCSFuse CSI driver with Cloud Build
 
 This outlines the steps needed to [install the GCSFuse CSI driver on self-built k8s clusters](./installation.md#installing-with-cloud-build-on-self-built-k8s-clusters)
 
