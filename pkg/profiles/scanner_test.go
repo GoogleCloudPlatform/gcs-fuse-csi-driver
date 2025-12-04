@@ -363,6 +363,15 @@ func TestCheckPVRelevance(t *testing.T) {
 		putil.AnnotationTotalSize:  "200000",
 	}
 
+	projectNumber, err := strconv.ParseUint(testProjectNumber, 10, 64)
+	if err != nil {
+		t.Fatalf("strconv.ParseUint() error = %v", err)
+	}
+	attrs := &storage.BucketAttrs{
+		Name:          testBucketName,
+		ProjectNumber: projectNumber,
+	}
+
 	testCases := []struct {
 		name              string
 		pv                *v1.PersistentVolume
@@ -373,18 +382,21 @@ func TestCheckPVRelevance(t *testing.T) {
 		wantDir           string
 		wantIsOverride    bool
 		wantIsPendingScan bool
+		wantIsZonalBucket bool
+		fakeGetAttrs      fakebucketAttrsFunc
 	}{
 		{
-			name:              "Relevant PV",
+			name:              "Relevant PV - Should return relevant and pending scan",
 			pv:                createPV(testPVName, testSCName, testBucketName, csiDriverName, []string{onlyDirMountOptPrefix + ":" + testDirName}, nil, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
 			wantDir:           testDirName,
 			wantIsPendingScan: true,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant PV - Training",
+			name: "Relevant PV - Training - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeTrainingKey}),
@@ -392,9 +404,10 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
 			wantIsPendingScan: true,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant PV - Serving",
+			name: "Relevant PV - Serving - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeServingKey}),
@@ -402,9 +415,10 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
 			wantIsPendingScan: true,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant PV - Checkpointing",
+			name: "Relevant PV - Checkpointing - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
@@ -412,33 +426,37 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
 			wantIsPendingScan: true,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Irrelevant - Wrong Driver",
+			name: "Irrelevant - Wrong Driver - Should return irrelevant and not pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
 			},
 			wantRelevant:      false,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name:              "Irrelevant - SC is nil",
+			name:              "Irrelevant - SC is nil - Should return irrelevant and not pending scan",
 			pv:                createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			wantRelevant:      false,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Error - Invalid Workload Type",
+			name: "Error - Invalid Workload Type - Should return error",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
 				createStorageClass(testSCName, map[string]string{workloadTypeKey: "blah"}),
 			},
 			wantErr:           true,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant but no scan pending - Within TTL",
+			name: "Relevant but no scan pending - Within TTL - Should return relevant and not pending scan",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
 				putil.AnnotationLastUpdatedTime: lastUpdateTimeWithinTTL,
 			}, nil),
@@ -446,9 +464,10 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantBucket:        testBucketName,
 			wantRelevant:      true,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant scan is pending - Outside TTL",
+			name: "Relevant scan is pending - Outside TTL - Should return relevant and pending scan",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
 				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
 			}, nil),
@@ -456,6 +475,39 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
 			wantIsPendingScan: true,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
+		},
+		{
+			name: "Relevant scan is pending - Zonal bucket by locationType - Should return relevant, pending scan, and isZonalBucket field should be true",
+			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+			}, nil),
+			scs:               []*storagev1.StorageClass{validSC},
+			wantRelevant:      true,
+			wantBucket:        testBucketName,
+			wantIsPendingScan: true,
+			wantIsZonalBucket: true,
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: &storage.BucketAttrs{
+				Name:          testBucketName,
+				ProjectNumber: projectNumber,
+				LocationType:  "zone",
+			}},
+		},
+		{
+			name: "Relevant scan is pending - Zonal bucket by storageClass - Should return relevant, pending scan, and isZonalBucket field should be true",
+			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+			}, nil),
+			scs:               []*storagev1.StorageClass{validSC},
+			wantRelevant:      true,
+			wantBucket:        testBucketName,
+			wantIsPendingScan: true,
+			wantIsZonalBucket: true,
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: &storage.BucketAttrs{
+				Name:          testBucketName,
+				ProjectNumber: projectNumber,
+				StorageClass:  "rapid",
+			}},
 		},
 		{
 			name:              "Relevant - Override mode - Should return relevant and override",
@@ -465,6 +517,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantBucket:        testBucketName,
 			wantIsOverride:    true,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
 			name: "Irrelevant - Override mode - Missing Annotations - Should return error",
@@ -476,6 +529,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      false,
 			wantErr:           true,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
 			name: "Irrelevant - Override mode - Invalid NumObjects - Should return error",
@@ -488,6 +542,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      false,
 			wantErr:           true,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
 			name: "Irrelevant - Override mode - Negative NumObjects - Should return error",
@@ -500,6 +555,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			wantRelevant:      false,
 			wantErr:           true,
 			wantIsPendingScan: false,
+			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 	}
 
@@ -520,7 +576,13 @@ func TestCheckPVRelevance(t *testing.T) {
 			if len(tc.scs) > 0 {
 				sc = tc.scs[0]
 			}
-			bucketI, isPendingScan, err := f.scanner.checkPVRelevance(tc.pv, sc)
+
+			bucketAttrs = tc.fakeGetAttrs.getBucketAttributes
+			bucketI, isPendingScan, err := f.scanner.checkPVRelevance(context.TODO(), tc.pv, sc)
+
+			t.Cleanup(func() {
+				bucketAttrs = origbucketAttrs
+			})
 
 			if tc.wantErr {
 				if err == nil {
@@ -547,6 +609,9 @@ func TestCheckPVRelevance(t *testing.T) {
 				if bucketI.isOverride != tc.wantIsOverride {
 					t.Errorf("checkPVRelevance(%v) isOverride = %v, want %v", tc.pv.Name, bucketI.isOverride, tc.wantIsOverride)
 				}
+				if bucketI.isZonalBucket != tc.wantIsZonalBucket {
+					t.Errorf("checkPVRelevance(%v) bucket = %t, want %t", tc.pv.Name, bucketI.isZonalBucket, tc.wantIsZonalBucket)
+				}
 			}
 			if isPendingScan != tc.wantIsPendingScan {
 				t.Errorf("checkPVRelevance(%v) isPendingScan = %v, want %v", tc.pv.Name, isPendingScan, tc.wantIsPendingScan)
@@ -571,6 +636,17 @@ func TestSyncPV(t *testing.T) {
 		putil.AnnotationTotalSize:  "2222",
 	}
 	pvOverride := createPV(pvName, scName, bucketName, csiDriverName, nil, overrideAnnotations, nil)
+
+	attrs := &storage.BucketAttrs{
+		Name:          testBucketName,
+		ProjectNumber: 111,
+	}
+	attrsFunc := fakebucketAttrsFunc{attrs: attrs}
+	bucketAttrs = attrsFunc.getBucketAttributes
+
+	t.Cleanup(func() {
+		bucketAttrs = origbucketAttrs
+	})
 
 	testCases := []struct {
 		name           string
@@ -738,6 +814,17 @@ func TestSyncPod(t *testing.T) {
 	pvcBoundOverride := createPVC("pvc-override", testNamespace, "pv-override", testSCName)
 	volOverride := v1.Volume{Name: "vol-override", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-override"}}}
 
+	attrs := &storage.BucketAttrs{
+		Name:          testBucketName,
+		ProjectNumber: 111,
+	}
+	attrsFunc := fakebucketAttrsFunc{attrs: attrs}
+	bucketAttrs = attrsFunc.getBucketAttributes
+
+	t.Cleanup(func() {
+		bucketAttrs = origbucketAttrs
+	})
+
 	testCases := []struct {
 		name              string
 		pod               *v1.Pod
@@ -895,6 +982,17 @@ func TestProcessNextWorkItem(t *testing.T) {
 	pvcForPod := createPVC(testPVCName, namespace, pvName, testSCName)
 	volForPod := v1.Volume{Name: "vol1", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: testPVCName}}}
 	podRelevant := createPod(podName, namespace, []v1.Volume{volForPod}, podLabels, true)
+
+	attrs := &storage.BucketAttrs{
+		Name:          testBucketName,
+		ProjectNumber: 111,
+	}
+	attrsFunc := fakebucketAttrsFunc{attrs: attrs}
+	bucketAttrs = attrsFunc.getBucketAttributes
+
+	t.Cleanup(func() {
+		bucketAttrs = origbucketAttrs
+	})
 
 	testCases := []struct {
 		name                 string
@@ -1319,21 +1417,11 @@ func TestDefaultScanBucket(t *testing.T) {
 	testPV := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
 	datafluxConfig := &DatafluxConfig{Parallelism: 1, BatchSize: 10}
 
-	projectNumber, err := strconv.ParseUint(testProjectNumber, 10, 64)
-	if err != nil {
-		t.Fatalf("strconv.ParseUint() error = %v", err)
-	}
-	attrs := &storage.BucketAttrs{
-		Name:          testBucketName,
-		ProjectNumber: projectNumber,
-	}
-
 	tests := []struct {
 		name string
 		// Input to defaultScanBucket
 		inputBucketI *bucketInfo
 		// Mock setup
-		fakeGetAttrs fakebucketAttrsFunc
 		fakeMetrics  fakeScanFunc
 		fakeDataflux fakeScanFunc
 		// Expectations
@@ -1345,14 +1433,13 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:         "onlyDir - Dataflux success",
 			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: attrs},
 			fakeDataflux: fakeScanFunc{
 				numObjects:     200,
 				totalSizeBytes: 2000,
 			},
 			wantBucketI: &bucketInfo{
 				name: testBucketName, dir: testDirName, onlyDirSpecified: true,
-				numObjects: 200, totalSizeBytes: 2000, projectNumber: testProjectNumber,
+				numObjects: 200, totalSizeBytes: 2000,
 			},
 			expectMetricsCall:  false,
 			expectDatafluxCall: true,
@@ -1360,7 +1447,6 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:               "onlyDir - Dataflux error",
 			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
-			fakeGetAttrs:       fakebucketAttrsFunc{attrs: attrs},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  false,
@@ -1369,13 +1455,12 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:         "no onlyDir - Metrics success",
 			inputBucketI: &bucketInfo{name: testBucketName},
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: attrs},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
 				totalSizeBytes: 1000,
 			},
 			wantBucketI: &bucketInfo{
-				name: testBucketName, numObjects: 100, totalSizeBytes: 1000, projectNumber: testProjectNumber,
+				name: testBucketName, numObjects: 100, totalSizeBytes: 1000,
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: false,
@@ -1383,7 +1468,6 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:         "no onlyDir - Metrics error, Dataflux success (Fallback)",
 			inputBucketI: &bucketInfo{name: testBucketName},
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: attrs},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
 				totalSizeBytes: 1000,
@@ -1394,7 +1478,7 @@ func TestDefaultScanBucket(t *testing.T) {
 				totalSizeBytes: 2000,
 			},
 			wantBucketI: &bucketInfo{
-				name: testBucketName, numObjects: 200, totalSizeBytes: 2000, projectNumber: testProjectNumber,
+				name: testBucketName, numObjects: 200, totalSizeBytes: 2000,
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: true,
@@ -1402,20 +1486,11 @@ func TestDefaultScanBucket(t *testing.T) {
 		{
 			name:               "no onlyDir - Metrics error, Dataflux error (Fallback Fails)",
 			inputBucketI:       &bucketInfo{name: testBucketName},
-			fakeGetAttrs:       fakebucketAttrsFunc{attrs: attrs},
 			fakeMetrics:        fakeScanFunc{err: errors.New("metrics failed")},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  true,
 			expectDatafluxCall: true,
-		},
-		{
-			name:               "Bucket Attrs error",
-			inputBucketI:       &bucketInfo{name: testBucketName},
-			fakeGetAttrs:       fakebucketAttrsFunc{err: errors.New("attrs failed")},
-			wantErr:            true,
-			expectMetricsCall:  false,
-			expectDatafluxCall: false,
 		},
 	}
 
@@ -1425,12 +1500,10 @@ func TestDefaultScanBucket(t *testing.T) {
 			f.scanner.datafluxConfig = datafluxConfig
 
 			// Setup fakes
-			bucketAttrs = tc.fakeGetAttrs.getBucketAttributes
 			scanBucketWithMetrics = tc.fakeMetrics.scanBucketWithMetrics
 			scanBucketWithDataflux = tc.fakeDataflux.scanBucketWithDataflux
 
 			t.Cleanup(func() {
-				bucketAttrs = origbucketAttrs
 				scanBucketWithMetrics = origScanBucketWithMetrics
 				scanBucketWithDataflux = origScanBucketWithDataflux
 			})
