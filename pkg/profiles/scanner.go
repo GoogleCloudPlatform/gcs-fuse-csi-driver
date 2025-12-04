@@ -89,14 +89,14 @@ const (
 	leaseName                                   = "gke-gcsfuse-scanner-leader"
 
 	// Event reasons
-	reasonScanOperationStartError                   = "ScanOperationStartError"
-	reasonScanOperationStartSucceeded               = "ScanOperationStartSucceeded"
-	reasonScanOperationFailed                       = "ScanOperationFailed"
-	reasonScanOperationWarning                      = "ScanOperationWarning"
-	reasonScanOperationSucceeded                    = "ScanOperationSucceeded"
-	reasonScanOperationTimedOut                     = "ScanOperationTimedOut"
-	reasonScanOperationAnywhereCacheCreateError     = "ScanOperationAnywhereCacheCreateError"
-	reasonScanOperationAnywhereCacheCreateSucceeded = "ScanOperationAnywhereCacheCreateSucceeded"
+	reasonScanOperationStartError      = "ScanOperationStartError"
+	reasonScanOperationStartSucceeded  = "ScanOperationStartSucceeded"
+	reasonScanOperationFailed          = "ScanOperationFailed"
+	reasonScanOperationWarning         = "ScanOperationWarning"
+	reasonScanOperationSucceeded       = "ScanOperationSucceeded"
+	reasonScanOperationTimedOut        = "ScanOperationTimedOut"
+	reasonAnywhereCacheCreateError     = "AnywhereCacheCreateError"
+	reasonAnywhereCacheCreateSucceeded = "AnywhereCacheCreateSucceeded"
 
 	// Bucket scan status values
 	scanCompleted = "completed"
@@ -120,6 +120,10 @@ const (
 	// Anywhere Cache constants
 	admitOnFirstMiss  = "admit-on-first-miss"
 	admitOnSecondMiss = "admit-on-second-miss"
+
+	// Zonal bucket constants
+	bucketLocationTypeZoneKey  = "zone"
+	bucketStorageClassRapidKey = "RAPID"
 )
 
 var (
@@ -198,6 +202,7 @@ type bucketInfo struct {
 	numObjects       int64
 	totalSizeBytes   int64
 	isOverride       bool
+	isZonalBucket    bool
 }
 
 // Scanner is the main controller structure.
@@ -744,7 +749,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			return status.Errorf(codes.Internal, "failed to get StorageClass for PV %q: %v", key, err)
 		}
 
-		bucketI, isScanPending, err := s.checkPVRelevance(pv, sc)
+		bucketI, isScanPending, err := s.checkPVRelevance(ctx, pv, sc)
 		if err != nil {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
@@ -875,7 +880,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	}
 	// Skip PVs that are not relevant, e.g. PVs that don't use the gcsfuse profiles feature or
 	// that have been scanned too recently.
-	bucketI, isScanPending, err := s.checkPVRelevance(pv, sc)
+	bucketI, isScanPending, err := s.checkPVRelevance(ctx, pv, sc)
 	if err != nil {
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Relevance check failed: %v", err)
 		return fmt.Errorf("relevance check failed for PV %q: %w", pv.Name, err)
@@ -947,21 +952,22 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	shouldEnableAnywhereCache, err = strconv.ParseBool(enableAnywhereCache)
 	if err != nil {
 		klog.Errorf("Failed to enable Anywhere Cache requests for PV %q: %v", pv.Spec.StorageClassName, err)
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, "Failed to enable Anywhere Cache for PV %q: %v", pv.Spec.StorageClassName, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Failed to enable Anywhere Cache for PV %q: %v", pv.Spec.StorageClassName, err)
 		return status.Errorf(codes.InvalidArgument, "failed to parse enableAnywhereCache for PV %q: %v", pv.Spec.StorageClassName, err)
 	}
 
-	if !shouldEnableAnywhereCache {
+	// Skip Anywhere Cache creation if it's disabled, or if the bucket is zonal, as it's not supported.
+	if !shouldEnableAnywhereCache || bucketI.isZonalBucket {
 		return nil
 	}
 
 	err = s.createAnywhereCache(ctx, pv)
 	if err != nil {
 		klog.Errorf("Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationAnywhereCacheCreateError, "Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
 		return fmt.Errorf("failed to create Anywhere Cache request for PV %q: %w", pv.Name, err)
 	}
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationAnywhereCacheCreateSucceeded, "Submitted anywhere cache requests for for bucket: %s", bucketI.name)
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheCreateSucceeded, "Submitted anywhere cache requests for for bucket: %s", bucketI.name)
 	return nil
 }
 
@@ -1073,14 +1079,6 @@ func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketNa
 //
 // Optionally, GCS Dataflux client scanning on the entire bucket can be forced by specifying `only-dir=/`
 func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
-	// Get bucket attributes to determine project number.
-	// Use the parent context for this, as it's a quick metadata call.
-	bucketAttrs, err := bucketAttrs(ctx, s.gcsClient, bucketI.name)
-	if err != nil {
-		return fmt.Errorf("failed to get bucket attributes for %q: %w", bucketI.name, err)
-	}
-	bucketI.projectNumber = fmt.Sprint(bucketAttrs.ProjectNumber)
-
 	if bucketI.onlyDirSpecified {
 		klog.Infof("'only-dir' is set for bucket %q, dir %q. Scanning with Dataflux.", bucketI.name, bucketI.dir)
 		dfErr := scanBucketWithDataflux(ctx, s.gcsClient, bucketI, scanTimeout, s.datafluxConfig)
@@ -1312,7 +1310,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 // The PV is pending a scan if the current time - last scan time >= scan TTL or it hasn't been scanned yet, and the status is not "override"..
 // This function returns a bucketInfo with the bucket name and the directory if
 // relevant, otherwise, it will return nil and any error.
-func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*bucketInfo, bool, error) {
+func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*bucketInfo, bool, error) {
 	if sc == nil || pv == nil || pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csiDriverName || pv.Spec.CSI.VolumeHandle == "" {
 		return nil, false, nil
 	}
@@ -1344,10 +1342,17 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 		}
 	}
 
-	bucketI := &bucketInfo{
+	bucketAttrs, err := bucketAttrs(ctx, s.gcsClient, bucketName)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get bucket attributes for %q: %w", bucketName, err)
+	}
+
+	bucketI := bucketInfo{
 		name:             bucketName,
 		dir:              dir,
 		onlyDirSpecified: onlyDirSpecified,
+		projectNumber:    fmt.Sprint(bucketAttrs.ProjectNumber),
+		isZonalBucket:    strings.EqualFold(bucketAttrs.LocationType, bucketLocationTypeZoneKey) || strings.EqualFold(bucketAttrs.StorageClass, bucketStorageClassRapidKey),
 	}
 
 	// Handle the override annotation, if set.
@@ -1357,18 +1362,14 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to validate arguments for PV %q with override mode: %v", pv.Name, err)
 		}
-		overrideInfo := &bucketInfo{
-			numObjects:     numObjects,
-			totalSizeBytes: totalSizeBytes,
-		}
 
-		klog.Infof("PV %q: Override mode detected. Bypassing scan.", pv.Name)
 		// The PV is considered relevant but this directs syncPV and syncPod to the bypass logic.
-		overrideInfo.name = bucketI.name
-		overrideInfo.dir = bucketI.dir
-		overrideInfo.onlyDirSpecified = bucketI.onlyDirSpecified
-		overrideInfo.isOverride = true
-		return overrideInfo, false, nil
+		klog.Infof("PV %q: Override mode detected. Bypassing scan.", pv.Name)
+		overrideI := bucketI
+		overrideI.numObjects = numObjects
+		overrideI.totalSizeBytes = totalSizeBytes
+		overrideI.isOverride = true
+		return &overrideI, false, nil
 	}
 	lastScanTime, found, err := s.calculateLastScanTime(pv)
 	if err != nil {
@@ -1385,10 +1386,10 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 
 		if elapsed < *currentScanTTL {
 			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan, which is less than TTL %q", pv.Name, elapsed.Round(time.Second), currentScanTTL)
-			return bucketI, false, nil
+			return &bucketI, false, nil
 		}
 		klog.V(6).Infof("PV %q: Proceeding with scan, %q elapsed since last scan, TTL is %q", pv.Name, elapsed.Round(time.Second), currentScanTTL)
-		return bucketI, true, nil
+		return &bucketI, true, nil
 	}
 
 	// If the PV is relevant but doesn't yet have a last scan time, it hasn't been scanned yet.
@@ -1404,7 +1405,7 @@ func (s *Scanner) checkPVRelevance(pv *v1.PersistentVolume, sc *storagev1.Storag
 	}
 
 	klog.V(6).Infof("PV %q: No last scan time found in memory or annotations. Proceeding with scan", pv.Name)
-	return bucketI, true, nil
+	return &bucketI, true, nil
 }
 
 // calculateLastScanTime returns the last successful scan of a PV. If it doesn't exist in
