@@ -18,6 +18,7 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -75,6 +76,7 @@ type TestParameters struct {
 	GcsfuseClientProtocol          string
 	EnableZB                       bool
 	EnableSidecarBucketAccessCheck bool
+	EnableGcsFuseProfiles          bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
@@ -87,6 +89,9 @@ const (
 	ClusterNameEnvVar                      = "CLUSTER_NAME"
 	ClusterLocationEnvVar                  = "CLUSTER_LOCATION"
 	ProjectEnvVar                          = "PROJECT"
+	ProjectNumberEnvVar                    = "PROJECT_NUMBER"
+	TestEnvEnvVar                          = "TEST_ENV"
+	IsOSSEnvVar                            = "IS_OSS"
 )
 
 func Handle(testParams *TestParameters) error {
@@ -167,6 +172,8 @@ func Handle(testParams *TestParameters) error {
 
 	// Build and push the driver if the test does not use the pre-installed managed CSI driver. Defer the driver image deletion.
 	if !testParams.UseGKEManagedDriver {
+		os.Setenv(IsOSSEnvVar, "true")
+
 		if testParams.BuildGcsFuseCsiDriver {
 			klog.Infof("Building GCS FUSE CSI Driver")
 			if err := buildAndPushImage(testParams.PkgDir, testParams.ImageRegistry, testParams.BuildGcsFuseFromSource, testParams.BuildArm); err != nil {
@@ -245,6 +252,36 @@ func Handle(testParams *TestParameters) error {
 		installIstio(testParams.IstioVersion)
 	}
 
+	// Setting project number and adding compute binding for the driver service account for Storage Profiles.
+	if testParams.EnableGcsFuseProfiles {
+		// Project id is not already set when using managed driver flow.
+		if testParams.ProjectID == "" {
+			output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+			if err != nil {
+				klog.Errorf("Failed while prepping env for profiles tests: %v", fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err))
+			}
+			testParams.ProjectID = strings.TrimSpace(string(output))
+		}
+
+		projectNumber, err := setEnvProjectNumberUsingID(testParams.ProjectID)
+		if err != nil {
+			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
+		}
+		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
+		err = addComputeBindingForAC()
+		if err != nil {
+			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
+		}
+		err = ensureIAMRoleForProfilesTests(context.Background(), projectNumber, testParams.ProjectID)
+		if err != nil {
+			klog.Errorf("Failed while creating IAM role for profiles tests: %v", err)
+		} else {
+			klog.Infof("Successfully created IAM role for profiles tests")
+			defer deleteIAMRoleForProfilesTests(context.Background(), testParams.ProjectID, ProfilesUserRoleID)
+		}
+
+	}
+
 	//nolint:gosec
 	cmd := exec.Command("ginkgo", "run", "-v",
 		"--procs", testParams.GinkgoProcs,
@@ -261,6 +298,7 @@ func Handle(testParams *TestParameters) error {
 		"--test-bucket-location", testParams.GkeClusterRegion,
 		fmt.Sprintf("--enable-zb=%s", strconv.FormatBool(testParams.EnableZB)),
 		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
+		fmt.Sprintf("--enable-gcsfuse-profiles-test=%s", strconv.FormatBool(testParams.EnableGcsFuseProfiles)),
 		"--api-env", envAPIMap[testParams.APIEndpointOverride],
 	)
 
