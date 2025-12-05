@@ -246,7 +246,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Deploying a Kubernetes service account without access to the GCS bucket")
 		saName := "sa-without-access"
-		testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, saName, "")
+		testK8sSA := utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, saName, "")
 		testK8sSA.Create(ctx)
 		tPod.SetServiceAccount(saName)
 
@@ -324,7 +324,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Deploying a Kubernetes service account without access to the GCS bucket")
 		saName := "sa-without-access"
-		testK8sSA := specs.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, saName, "")
+		testK8sSA := utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, saName, "")
 		testK8sSA.Create(ctx)
 		tPod.SetServiceAccount(saName)
 
