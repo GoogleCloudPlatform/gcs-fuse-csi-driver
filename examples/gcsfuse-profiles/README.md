@@ -33,7 +33,9 @@ gcloud iam roles create gke.gcsfuse.profileUser \
 storage.buckets.get,\
 storage.anywhereCaches.create,\
 storage.anywhereCaches.get,\
-storage.anywhereCaches.list"
+storage.anywhereCaches.list,\
+storage.anywhereCaches.update\
+"
 
 # 2. Bind the custom role to the GCSFuse CSI controller on the specific bucket
 gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
