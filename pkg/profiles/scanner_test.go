@@ -1724,6 +1724,8 @@ func TestGetAnywhereCacheTtlFromPV(t *testing.T) {
 // mockStorageControlClient is our fake storage client for tests.
 type mockStorageControlClient struct {
 	CreateAnywhereCacheFunc func(context.Context, *controlpb.CreateAnywhereCacheRequest, ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error)
+	GetAnywhereCacheFunc    func(context.Context, *controlpb.GetAnywhereCacheRequest, ...gax.CallOption) (*controlpb.AnywhereCache, error)
+	UpdateAnywhereCacheFunc func(context.Context, *controlpb.UpdateAnywhereCacheRequest, ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error)
 }
 
 func (m mockStorageControlClient) CreateAnywhereCache(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
@@ -1732,6 +1734,22 @@ func (m mockStorageControlClient) CreateAnywhereCache(ctx context.Context, req *
 	}
 	// Default success response if no specific behavior is set
 	return &control.CreateAnywhereCacheOperation{}, nil
+}
+
+func (m mockStorageControlClient) GetAnywhereCache(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+	if m.GetAnywhereCacheFunc != nil {
+		return m.GetAnywhereCacheFunc(ctx, req, opts...)
+	}
+	// Default success response if no specific behavior is set
+	return &controlpb.AnywhereCache{}, nil
+}
+
+func (m mockStorageControlClient) UpdateAnywhereCache(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
+	if m.UpdateAnywhereCacheFunc != nil {
+		return m.UpdateAnywhereCacheFunc(ctx, req, opts...)
+	}
+	// Default success response if no specific behavior is set
+	return &control.UpdateAnywhereCacheOperation{}, nil
 }
 
 func (m mockStorageControlClient) Close() error {
@@ -1829,7 +1847,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
 				}
 			},
-			err: fmt.Errorf("errors occurred while creating anywhere caches: zone-a:[rpc error: code = Internal desc = failed]"),
+			err: fmt.Errorf("errors occurred while creating Anywhere Caches: zone-a:[failed to create Anywhere Cache: rpc error: code = Internal desc = failed]"),
 			storageControlClient: &mockStorageControlClient{
 				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
 					if req.AnywhereCache.Zone != "zone-a" {
@@ -1846,7 +1864,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
 				}
 			},
-			err: fmt.Errorf("errors occurred while creating anywhere caches: zone-a:[rpc error: code = Internal desc = failed retry]"),
+			err: fmt.Errorf("errors occurred while creating Anywhere Caches: zone-a:[failed to create Anywhere Cache: rpc error: code = Internal desc = failed retry]"),
 			storageControlClient: &mockStorageControlClient{
 				// This function signature now matches the interface exactly.
 				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
@@ -1874,6 +1892,90 @@ func TestCreateAnywhereCache(t *testing.T) {
 						return &control.CreateAnywhereCacheOperation{}, nil
 					}
 					return nil, status.Errorf(codes.AlreadyExists, "failed to build anywhere cache request: Already Exists")
+				},
+			},
+		},
+		{
+			name: "One zone fails - already exists with different TTL - should update",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			err: nil,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheTTL": "1h",
+								"admission_policy": "admin-on-first-miss",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: &mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					if req.AnywhereCache.Zone != "zone-a" {
+						return &control.CreateAnywhereCacheOperation{}, nil
+					}
+					return nil, status.Errorf(codes.AlreadyExists, "failed to build anywhere cache request: Already Exists")
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						Ttl:             durationpb.New(time.Duration(42)),
+						AdmissionPolicy: "admit-on-first-miss",
+					}, nil
+				},
+				UpdateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
+					return &control.UpdateAnywhereCacheOperation{}, nil
+				},
+			},
+		},
+		{
+			name: "One zone fails - already exists with different admission policy - should update",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			err: nil,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheTTL": "1h",
+								"admission_policy": "admin-on-first-miss",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: &mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					if req.AnywhereCache.Zone != "zone-a" {
+						return &control.CreateAnywhereCacheOperation{}, nil
+					}
+					return nil, status.Errorf(codes.AlreadyExists, "failed to build anywhere cache request: Already Exists")
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						Ttl:             durationpb.New(1 * time.Hour),
+						AdmissionPolicy: "admit-on-second-miss",
+					}, nil
+				},
+				UpdateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
+					return &control.UpdateAnywhereCacheOperation{}, nil
 				},
 			},
 		},

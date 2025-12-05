@@ -60,6 +60,7 @@ import (
 	"cloud.google.com/go/storage/dataflux"
 	"google.golang.org/genproto/googleapis/api/metric"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
@@ -118,8 +119,10 @@ const (
 	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
 
 	// Anywhere Cache constants
-	admitOnFirstMiss  = "admit-on-first-miss"
-	admitOnSecondMiss = "admit-on-second-miss"
+	admitOnFirstMiss                = "admit-on-first-miss"
+	admitOnSecondMiss               = "admit-on-second-miss"
+	anywhereCacheTTLKey             = "ttl"
+	anywhereCacheAdmissionPolicyKey = "admission_policy"
 
 	// Zonal bucket constants
 	bucketLocationTypeZoneKey  = "zone"
@@ -257,6 +260,8 @@ type Scanner struct {
 // This allows us to swap the real client with a mock one during tests.
 type storageControlClient interface {
 	CreateAnywhereCache(context.Context, *controlpb.CreateAnywhereCacheRequest, ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error)
+	GetAnywhereCache(context.Context, *controlpb.GetAnywhereCacheRequest, ...gax.CallOption) (*controlpb.AnywhereCache, error)
+	UpdateAnywhereCache(context.Context, *controlpb.UpdateAnywhereCacheRequest, ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error)
 	Close() error
 }
 
@@ -971,10 +976,14 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	return nil
 }
 
-// createAnywhereCache does prework and makes request to create anywherecache.
-// Prework: get zones, create clients, and sets up the request for anywhere cache.
-// Create request: sends a create anywhere cache for each zone of the cluster (api is idempotent).
-// If any retryable error occurs we requeue the pv to try again later.
+// createAnywhereCache ensures that a Google Cloud Storage Anywhere Cache is
+// configured for the bucket associated with the given PersistentVolume (pv) in
+// all zones within the cluster's region.
+// It extracts the desired TTL and admission policy from the PV's annotations.
+// For each zone, it attempts to create the Anywhere Cache. If the cache already
+// exists, it checks if the existing cache's TTL and admission policy match the
+// desired state. If they do not match, it updates the existing cache.
+// The function is idempotent and aggregates errors from all zonal operations.
 func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolume) error {
 	anywhereCacheTTL, err := getAnywhereCacheTTLFromPV(pv)
 	if err != nil {
@@ -993,31 +1002,61 @@ func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolu
 		return status.Errorf(codes.Internal, "storage control client should not be nil")
 	}
 
-	var errs []error
-	for _, zone := range zones {
-		req := &controlpb.CreateAnywhereCacheRequest{
-			// projects/{project}/buckets/{bucket} is the required format for the api
-			Parent: fmt.Sprintf(`projects/_/buckets/%s`, util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)),
-			AnywhereCache: &controlpb.AnywhereCache{
-				Ttl:             anywhereCacheTTL,
-				Zone:            zone,
-				AdmissionPolicy: anywhereCacheAdmissionPolicy,
-			},
+	createAnywhereCacheForZone := func(zone string) error {
+		var err error
+		bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
+		wantAC := &controlpb.AnywhereCache{
+			Name:            fmt.Sprintf("projects/_/buckets/%s/anywhereCaches/%s", bucketName, zone),
+			Ttl:             anywhereCacheTTL,
+			Zone:            zone,
+			AdmissionPolicy: anywhereCacheAdmissionPolicy,
+		}
+		if _, err = s.storageControlClient.CreateAnywhereCache(ctx, &controlpb.CreateAnywhereCacheRequest{
+			// projects/{project}/buckets/{bucket} is the required format for the CREATE API.
+			Parent:        fmt.Sprintf(`projects/_/buckets/%s`, bucketName),
+			AnywhereCache: wantAC,
+		}); err == nil {
+			return nil
 		}
 
-		_, err = s.storageControlClient.CreateAnywhereCache(ctx, req)
+		if status.Code(err) != codes.AlreadyExists {
+			return fmt.Errorf("failed to create Anywhere Cache: %w", err)
+		}
+
+		gotAC, err := s.storageControlClient.GetAnywhereCache(ctx, &controlpb.GetAnywhereCacheRequest{
+			Name: wantAC.Name,
+		})
 		if err != nil {
-			if status.Code(err) == codes.AlreadyExists {
-				// AC already exists for this bucket/zone no further action needed.
-				continue
-			}
+			return fmt.Errorf("failed to get Anywhere Cache: %w", err)
+		}
+
+		// AC already exists for this bucket/zone with the correct parameters. No further action needed.
+		if gotAC.AdmissionPolicy == wantAC.AdmissionPolicy && gotAC.Ttl == wantAC.Ttl {
+			return nil
+		}
+
+		// AC already exists but the requested fields are different. Update the AC.
+		klog.Infof("Anywhere Cache %s/%s already exists (ttl:%q, admission_policy:%q), but want (ttl:%q, admission_policy:%q), updating parameters", bucketName, zone, gotAC.Ttl, gotAC.AdmissionPolicy, wantAC.Ttl, wantAC.AdmissionPolicy)
+		if _, err = s.storageControlClient.UpdateAnywhereCache(ctx, &controlpb.UpdateAnywhereCacheRequest{
+			AnywhereCache: wantAC,
+			UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheTTLKey, anywhereCacheAdmissionPolicyKey}},
+		}); err != nil {
+			return fmt.Errorf("failed to update Anywhere Cache: %w", err)
+		}
+
+		return nil
+	}
+
+	var errs []error
+	for _, zone := range zones {
+		if err := createAnywhereCacheForZone(zone); err != nil {
 			errs = append(errs, fmt.Errorf("%s:[%w]", zone, err))
 		}
 	}
 	if len(errs) <= 0 {
 		return nil
 	}
-	return fmt.Errorf("errors occurred while creating anywhere caches: %w", errors.Join(errs...))
+	return fmt.Errorf("errors occurred while creating Anywhere Caches: %w", errors.Join(errs...))
 }
 
 // getAnywhereCacheTTLFromPV returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
