@@ -117,6 +117,8 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
 		testsuites.InitGcsFuseMountTestSuite,
 		testsuites.InitGcsFuseCSIOIDCTestSuite,
+		// TODO(FUECHR): Enable once profiles feature is moved to stable
+		// testsuites.InitGcsFuseCSIProfilesTestSuite,
 	}
 
 	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag)

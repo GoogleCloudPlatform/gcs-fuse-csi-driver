@@ -75,6 +75,7 @@ type TestParameters struct {
 	GcsfuseClientProtocol          string
 	EnableZB                       bool
 	EnableSidecarBucketAccessCheck bool
+	EnableGcsFuseProfiles          bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
@@ -87,6 +88,7 @@ const (
 	ClusterNameEnvVar                      = "CLUSTER_NAME"
 	ClusterLocationEnvVar                  = "CLUSTER_LOCATION"
 	ProjectEnvVar                          = "PROJECT"
+	ProjectNumberEnvVar                    = "PROJECT_NUMBER"
 )
 
 func Handle(testParams *TestParameters) error {
@@ -243,6 +245,30 @@ func Handle(testParams *TestParameters) error {
 	testSkipStr := generateTestSkip(testParams)
 	if !strings.Contains(testSkipStr, "istio") && (len(testFocusStr) == 0 || strings.Contains(testFocusStr, "istio")) {
 		installIstio(testParams.IstioVersion)
+	}
+
+	// when profiles tests are enabled, set up env vars and bindings, this means setting project number and adding compute binding for the driver service account.
+	// project id will be "" if using managed driver and not set in prow.
+	if testParams.EnableGcsFuseProfiles {
+		if testParams.ProjectID == "" {
+			output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+			if err != nil {
+				klog.Errorf("Failed while prepping env for profiles tests: %v", fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err))
+			}
+			testParams.ProjectID = strings.TrimSpace(string(output))
+		}
+
+		_, err := setEnvProjectNumberUsingID(testParams.ProjectID)
+		if err != nil {
+			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
+		}
+
+		cleanupACBinding, err := addComputeBindingForAC()
+		if err != nil {
+			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
+		} else {
+			defer cleanupACBinding()
+		}
 	}
 
 	//nolint:gosec
