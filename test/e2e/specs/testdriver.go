@@ -23,13 +23,17 @@ import (
 	"os"
 	"strings"
 
+	"local/test/e2e/utils"
+
+	"cloud.google.com/go/iam"
+	gostorage "cloud.google.com/go/storage"
 	"github.com/google/uuid"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"github.com/onsi/ginkgo/v2"
+	ginkgo "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -102,6 +106,13 @@ var (
 	_ storageframework.PreprovisionedPVTestDriver     = &GCSFuseCSITestDriver{}
 	_ storageframework.EphemeralTestDriver            = &GCSFuseCSITestDriver{}
 	_ storageframework.DynamicPVTestDriver            = &GCSFuseCSITestDriver{}
+
+	envRobots = map[string]string{
+		"prod":     "container-engine-robot",
+		"staging":  "container-engine-robot-staging",
+		"staging2": "container-engine-robot-stag2",
+		"test":     "container-engine-robot-test",
+	}
 )
 
 func (n *GCSFuseCSITestDriver) GetDriverInfo() *storageframework.DriverInfo {
@@ -115,14 +126,14 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.Framework) *storageframework.PerTestConfig {
-	testK8sSA := NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, "")
-	var testGcpSA *TestGCPServiceAccount
+	testK8sSA := utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, "")
+	var testGcpSA *utils.TestGCPServiceAccount
 	if !n.skipGcpSaTest {
-		testGcpSA = NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
+		testGcpSA = utils.NewTestGCPServiceAccount(prepareGcpSAName(f.Namespace.Name), n.meta.GetProjectID())
 		testGcpSA.Create(ctx)
 		testGcpSA.AddIAMPolicyBinding(ctx, f.Namespace)
 
-		testK8sSA = NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, testGcpSA.GetEmail())
+		testK8sSA = utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, testGcpSA.GetEmail())
 	}
 	testK8sSA.Create(ctx)
 
@@ -161,6 +172,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			bucketName = InvalidVolume
 		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix, EnableMetadataPrefetchPrefixForceNewBucketPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+		case ProfilesOverrideAllOverridablePrefix:
+			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
 		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
 			l := []string{}
@@ -245,6 +259,10 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			v.metadataPrefetch = true
 		case DisableAutoconfig:
 			mountOptions += ",disable-autoconfig"
+		case ProfilesOverrideAllOverridablePrefix:
+			dirPath := uuid.NewString()
+			n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
+			mountOptions += ",only-dir=" + dirPath
 		}
 
 		v.mountOptions = mountOptions
@@ -349,7 +367,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 	if !n.skipGcpSaTest {
 		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(config.Framework.Namespace.Name), n.meta.GetProjectID())
 	}
-	testGCPProjectIAMPolicyBinding := NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/storage.admin", "")
+	testGCPProjectIAMPolicyBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/storage.admin", "")
 	testGCPProjectIAMPolicyBinding.Create(ctx)
 
 	testSecret := NewTestSecret(config.Framework.ClientSet, config.Framework.Namespace, K8sSecretName, map[string]string{
@@ -553,6 +571,43 @@ func (n *GCSFuseCSITestDriver) DownloadGCSObject(ctx context.Context, bucketName
 	if err := storageService.DownloadGCSObject(ctx, bucketName, objectName, localPath); err != nil {
 		e2eframework.Logf("Failed to download test file %q to local path %q: %v", objectName, localPath, err)
 		return err
+	}
+
+	return nil
+}
+
+func (n *GCSFuseCSITestDriver) giveDriverAccessToBucketForProfiles(ctx context.Context, bucket_name string) error {
+	projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
+	if projectNumber == "" {
+		return fmt.Errorf("environment variable %q is not set", utils.ProjectNumberEnvVar)
+	}
+	storage_client, err := gostorage.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("Failed to create storage client: %v", err)
+	}
+	defer storage_client.Close()
+
+	bucket := storage_client.Bucket(bucket_name)
+	member := fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa", projectNumber, n.meta.GetProjectID())
+	if !(os.Getenv(utils.IsOSSEnvVar) == "true") {
+		testEnv := os.Getenv(utils.TestEnvEnvVar)
+		if testEnv == "" {
+			e2eframework.Logf("warning: TEST_ENV is not set, The container robot name used for iam during the 'profiles' test suite changes depending on the env.")
+			return fmt.Errorf("failed to get service account")
+		}
+		robotAccount := envRobots[testEnv]
+		member = fmt.Sprintf("serviceAccount:service-%d@%s.iam.gserviceaccount.com", projectNumber, robotAccount)
+	}
+	role := fmt.Sprintf("projects/%s/roles/gke.gcsfuse.profileUser", n.meta.GetProjectID())
+
+	policy, err := bucket.IAM().Policy(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get bucket %q IAM policy: %w", bucket_name, err)
+	}
+
+	policy.Add(member, iam.RoleName(role))
+	if err := bucket.IAM().SetPolicy(ctx, policy); err != nil {
+		return fmt.Errorf("failed to set bucket %q IAM policy: %w", bucket_name, err)
 	}
 
 	return nil
