@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -80,4 +81,14 @@ func setEnvProject(project string) error {
 	}
 
 	return os.Setenv(ProjectEnvVar, project)
+}
+
+func setEnvProjectNumberUsingID(projectID string) (string, error) {
+	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get project number for %s: %s, err: %w", projectID, out, err)
+	}
+	projectNumber := strings.TrimSpace(string(out))
+	return projectNumber, os.Setenv(ProjectNumberEnvVar, projectNumber)
 }
