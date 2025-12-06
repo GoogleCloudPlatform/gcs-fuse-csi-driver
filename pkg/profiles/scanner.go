@@ -90,14 +90,15 @@ const (
 	leaseName                                   = "gke-gcsfuse-scanner-leader"
 
 	// Event reasons
-	reasonScanOperationStartError      = "ScanOperationStartError"
-	reasonScanOperationStartSucceeded  = "ScanOperationStartSucceeded"
-	reasonScanOperationFailed          = "ScanOperationFailed"
-	reasonScanOperationWarning         = "ScanOperationWarning"
-	reasonScanOperationSucceeded       = "ScanOperationSucceeded"
-	reasonScanOperationTimedOut        = "ScanOperationTimedOut"
-	reasonAnywhereCacheCreateError     = "AnywhereCacheCreateError"
-	reasonAnywhereCacheCreateSucceeded = "AnywhereCacheCreateSucceeded"
+	reasonScanOperationStartError     = "ScanOperationStartError"
+	reasonScanOperationStartSucceeded = "ScanOperationStartSucceeded"
+	reasonScanOperationFailed         = "ScanOperationFailed"
+	reasonScanOperationWarning        = "ScanOperationWarning"
+	reasonScanOperationSucceeded      = "ScanOperationSucceeded"
+	reasonScanOperationTimedOut       = "ScanOperationTimedOut"
+	reasonAnywhereCacheSyncError      = "AnywhereCacheSyncError"
+	reasonAnywhereCacheSyncSucceeded  = "AnywhereCacheSyncSucceeded"
+	reasonAnywhereCacheSyncInfo       = "AnywhereCacheSyncInfo"
 
 	// Bucket scan status values
 	scanCompleted = "completed"
@@ -123,6 +124,8 @@ const (
 	admitOnSecondMiss               = "admit-on-second-miss"
 	anywhereCacheTTLKey             = "ttl"
 	anywhereCacheAdmissionPolicyKey = "admission_policy"
+	anywhereCacheRunning            = "running"
+	anywhereCacheCreating           = "creating"
 
 	// Zonal bucket constants
 	bucketLocationTypeZoneKey  = "zone"
@@ -139,8 +142,8 @@ var (
 	// To allow mocking time in tests
 	timeNow = time.Now
 
-	// Fake error to signal worker to re-queue the Pod without emitting an error log.
-	errRequeuePod = errors.New("requeuing pod")
+	// Fake error to signal worker to re-queue the object without emitting an error log.
+	errRequeueNeeded = errors.New("operation in progress, requeue needed")
 
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
@@ -254,6 +257,13 @@ type Scanner struct {
 	// Identity of this controller, generated at creation time and not persisted
 	// across restarts. Useful only for debugging, for seeing the source of events.
 	id string
+}
+
+// anywhereCacheSyncResult holds information relevant to the sync
+// result of an Anywhere Cache.
+type anywhereCacheSyncResult struct {
+	state string
+	err   error
 }
 
 // storageControlClient defines the interface that the real and mock clients satisfy.
@@ -626,8 +636,8 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 		itemKey = strings.TrimPrefix(key, podPrefix)
 		klog.V(6).Infof("Processing %q %q", syncType, itemKey)
 		err = s.syncPod(ctx, itemKey)
-		if errors.Is(err, errRequeuePod) {
-			// errRequeuePod is not a real error, so don't count it as a failure.
+		if errors.Is(err, errRequeueNeeded) {
+			// errRequeueNeeded is not a real error, so don't count it as a failure.
 			s.metricManager.RecordSyncPodMetric(nil)
 		} else {
 			s.metricManager.RecordSyncPodMetric(err)
@@ -637,7 +647,12 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 		itemKey = strings.TrimPrefix(key, pvPrefix)
 		klog.V(6).Infof("Processing %q %q", syncType, itemKey)
 		err = s.syncPV(ctx, itemKey)
-		s.metricManager.RecordSyncPVMetric(err)
+		if errors.Is(err, errRequeueNeeded) {
+			// errRequeueNeeded is not a real error, so don't count it as a failure.
+			s.metricManager.RecordSyncPVMetric(nil)
+		} else {
+			s.metricManager.RecordSyncPVMetric(err)
+		}
 
 		// PV specific tracking removal
 		if err == nil {
@@ -661,7 +676,7 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 	case err == nil:
 		s.queue.Forget(key)
 		klog.V(6).Infof("Successfully synced %q %q", syncType, itemKey)
-	case errors.Is(err, errRequeuePod):
+	case errors.Is(err, errRequeueNeeded):
 		// Specific requeue signal for Pods waiting on PV scans or PVC binds.
 		// This is not a "true" error, so it doesn't need to be logged as such.
 		klog.Infof("Requeuing %q %q: %v", syncType, itemKey, err)
@@ -688,7 +703,7 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 //  2. If none of the PVs require scanning, the Pod's scheduling gate is removed,
 //     allowing the Kubernetes scheduler to find a Node for the Pod.
 //
-// The function returns the error `errRequeuePod` if the Pod should be requeued
+// The function returns the error `errRequeueNeeded` if the Pod should be requeued
 // but the error doesn't need to be logged, for example: If the PVC is unbound
 // or the volumes are not scanned yet.
 func (s *Scanner) syncPod(ctx context.Context, key string) error {
@@ -773,12 +788,12 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 
 	if anyPVRelevant {
 		klog.Infof("Pod %q uses one or more relevant PVs, will recheck Pod later to ensure scans complete", key)
-		return fmt.Errorf("%w: waiting for PV scans to complete for Pod %q", errRequeuePod, key)
+		return fmt.Errorf("%w: waiting for PV scans to complete for Pod %q", errRequeueNeeded, key)
 	}
 
 	if needsRequeue {
 		klog.Infof("Pod %q has unbound or missing PVCs, will recheck Pod later", key)
-		return fmt.Errorf("%w: waiting for PVCs to be ready for Pod %q", errRequeuePod, key)
+		return fmt.Errorf("%w: waiting for PVCs to be ready for Pod %q", errRequeueNeeded, key)
 	}
 
 	// If no PVs are relevant (including the override case) and no other reason to requeue, remove the scheduling gate
@@ -957,106 +972,185 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	shouldEnableAnywhereCache, err = strconv.ParseBool(enableAnywhereCache)
 	if err != nil {
 		klog.Errorf("Failed to enable Anywhere Cache requests for PV %q: %v", pv.Spec.StorageClassName, err)
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Failed to enable Anywhere Cache for PV %q: %v", pv.Spec.StorageClassName, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Failed to enable Anywhere Cache for PV %q: %v", pv.Spec.StorageClassName, err)
 		return status.Errorf(codes.InvalidArgument, "failed to parse enableAnywhereCache for PV %q: %v", pv.Spec.StorageClassName, err)
 	}
 
-	// Skip Anywhere Cache creation if it's disabled, or if the bucket is zonal, as it's not supported.
+	// Skip Anywhere Cache sync if it's disabled, or if the bucket is zonal, as it's not supported.
 	if !shouldEnableAnywhereCache || bucketI.isZonalBucket {
 		return nil
 	}
 
-	err = s.createAnywhereCache(ctx, pv)
+	syncResults, err := s.syncAnywhereCache(ctx, pv)
 	if err != nil {
-		klog.Errorf("Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheCreateError, "Failed to create Anywhere Cache requests for PV %q: %v", pv.Name, err)
-		return fmt.Errorf("failed to create Anywhere Cache request for PV %q: %w", pv.Name, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Spec.StorageClassName, err)
+		return err
 	}
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheCreateSucceeded, "Submitted anywhere cache requests for for bucket: %s", bucketI.name)
+
+	var failures, pendingOperations error
+	successes := make(map[string]string)
+	for zone, result := range syncResults {
+		if result.err != nil {
+			if errors.Is(result.err, errRequeueNeeded) {
+				pendingOperations = errors.Join(pendingOperations, fmt.Errorf("%s:[%w]", zone, result.err))
+			} else {
+				failures = errors.Join(failures, fmt.Errorf("%s:[%w]", zone, result.err))
+			}
+		} else {
+			successes[zone] = result.state
+		}
+	}
+
+	if failures != nil {
+		// Return failures first, as they are the highest priority.
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Spec.StorageClassName, failures)
+		return failures
+	}
+
+	if pendingOperations != nil {
+		// Return pending opeations to that require retries.
+		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncInfo, "Anywhere Cache sync in progress for PV %q: %v", pv.Spec.StorageClassName, pendingOperations)
+		return pendingOperations
+	}
+
+	// If we reach this point, there are no failures or pending operations, so we log success.
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncSucceeded, "Anywhere Cache sync succeeded for PV %q: %+v", pv.Spec.StorageClassName, successes)
 	return nil
 }
 
-// createAnywhereCache ensures that a Google Cloud Storage Anywhere Cache is
+// isCacheConfigSynced checks if the existing Anywhere Cache configuration (gotAC)
+// matches the desired configuration (wantAC). It compares the admission policy
+// and TTL (both seconds and nanoseconds).
+// Returns true if the configurations are synced, false otherwise.
+func (s *Scanner) isCacheConfigSynced(gotAC, wantAC *controlpb.AnywhereCache) bool {
+	policyMatch := strings.EqualFold(gotAC.GetAdmissionPolicy(), wantAC.GetAdmissionPolicy())
+	ttlMatch := gotAC.GetTtl().GetSeconds() == wantAC.GetTtl().GetSeconds() &&
+		gotAC.GetTtl().GetNanos() == wantAC.GetTtl().GetNanos()
+	return policyMatch && ttlMatch
+}
+
+// syncAnywhereCacheForZone synchronizes the state of the Anywhere Cache for a single zone.
+// It retrieves the current cache state. If the cache does not exist, it creates it.
+// If it exists, it checks if the state is RUNNING and if the configuration matches the desired state.
+// If the configuration differs, it updates the cache.
+// Returns errRequeueNeeded if an asynchronous operation (create/update) was started.
+func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName string, wantAC *controlpb.AnywhereCache) *anywhereCacheSyncResult {
+	gotAC, err := s.storageControlClient.GetAnywhereCache(ctx, &controlpb.GetAnywhereCacheRequest{Name: wantAC.GetName()})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return &anywhereCacheSyncResult{
+				err: s.createAnywhereCache(ctx, bucketName, wantAC),
+			}
+		}
+		return &anywhereCacheSyncResult{
+			err: fmt.Errorf("failed to get cache: %w", err),
+		}
+	}
+
+	klog.Infof("Found cache %s/%s in state %q", bucketName, wantAC.GetZone(), gotAC.GetState())
+	process := func() error {
+		switch strings.ToLower(gotAC.GetState()) {
+		case anywhereCacheCreating:
+			// Retry until the cache reaches a more stable state.
+			return fmt.Errorf("%w: cache creation in progress", errRequeueNeeded)
+		case anywhereCacheRunning:
+			if gotAC.GetPendingUpdate() {
+				return fmt.Errorf("%w: pending update operation", errRequeueNeeded)
+			}
+
+			if s.isCacheConfigSynced(gotAC, wantAC) {
+				return nil
+			}
+
+			return s.updateAnywhereCache(ctx, bucketName, gotAC, wantAC)
+		default:
+			// These states (PAUSED, DISABLED) were likely set by user manually.
+			// We should treat them as final states. Avoid retrying, since a paused
+			// cache can potentially stay paused forever and waste API calls.
+			return nil
+		}
+	}
+	return &anywhereCacheSyncResult{
+		state: gotAC.GetState(),
+		err:   process(),
+	}
+}
+
+// createAnywhereCache sends a request to create a new Anywhere Cache instance.
+// It returns errRequeueNeeded to indicate that the creation process has been initiated
+// and the caller should check back later.
+func (s *Scanner) createAnywhereCache(ctx context.Context, bucketName string, wantAC *controlpb.AnywhereCache) error {
+	klog.Infof("Anywhere Cache not found for bucket %q in zone %q, creating.", bucketName, wantAC.GetZone())
+	_, err := s.storageControlClient.CreateAnywhereCache(ctx, &controlpb.CreateAnywhereCacheRequest{
+		Parent:        fmt.Sprintf(`projects/_/buckets/%s`, bucketName),
+		AnywhereCache: wantAC,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cache: %w", err)
+	}
+	return fmt.Errorf("%w: cache creation initiated", errRequeueNeeded)
+}
+
+// updateAnywhereCache sends a request to update an existing Anywhere Cache instance
+// to match the desired configuration (wantAC).
+// It checks for pending updates before issuing a new update request.
+// Returns errRequeueNeeded to indicate that the update process has been initiated.
+func (s *Scanner) updateAnywhereCache(ctx context.Context, bucketName string, gotAC, wantAC *controlpb.AnywhereCache) error {
+	klog.Infof("Cache %s/%s exists (ttl:%v, admission_policy:%q), but want (ttl:%v, admission_policy:%q), updating.",
+		bucketName, wantAC.GetZone(), gotAC.GetTtl(), gotAC.GetAdmissionPolicy(), wantAC.GetTtl(), wantAC.GetAdmissionPolicy())
+
+	_, err := s.storageControlClient.UpdateAnywhereCache(ctx, &controlpb.UpdateAnywhereCacheRequest{
+		AnywhereCache: wantAC,
+		UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheTTLKey, anywhereCacheAdmissionPolicyKey}},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update cache: %w", err)
+	}
+	return fmt.Errorf("%w: cache update initiated", errRequeueNeeded)
+}
+
+// syncAnywhereCache ensures that a Google Cloud Storage Anywhere Cache is
 // configured for the bucket associated with the given PersistentVolume (pv) in
 // all zones within the cluster's region.
 // It extracts the desired TTL and admission policy from the PV's annotations.
-// For each zone, it attempts to create the Anywhere Cache. If the cache already
-// exists, it checks if the existing cache's TTL and admission policy match the
-// desired state. If they do not match, it updates the existing cache.
+// For each zone, it calls syncAnywhereCacheForZone to create or update the cache as needed.
 // The function is idempotent and aggregates errors from all zonal operations.
-func (s *Scanner) createAnywhereCache(ctx context.Context, pv *v1.PersistentVolume) error {
+// It returns an error if any zone failed to sync (and isn't just pending),
+// or errRequeueNeeded if any zone has operations in progress.
+func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume) (map[string]*anywhereCacheSyncResult, error) {
 	anywhereCacheTTL, err := getAnywhereCacheTTLFromPV(pv)
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: %v", pv.Name, err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: %v", pv.Name, err)
 	}
 	anywhereCacheAdmissionPolicy, err := getAnywhereCacheAdmissionPolicyFromPV(pv)
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
 	}
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
-		return fmt.Errorf("failed to get zones for region: %w", err)
+		return nil, fmt.Errorf("failed to get zones for location %q: %w", s.config.ClusterLocation, err)
+	}
+	if len(zones) == 0 {
+		return nil, fmt.Errorf("got empty zones for location %q: %w", s.config.ClusterLocation, err)
 	}
 	if s.storageControlClient == nil {
-		return status.Errorf(codes.Internal, "storage control client should not be nil")
+		return nil, status.Errorf(codes.Internal, "storage control client should not be nil")
 	}
 
-	createAnywhereCacheForZone := func(zone string) error {
-		var err error
-		bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
+	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
+	results := make(map[string]*anywhereCacheSyncResult)
+	for _, zone := range zones {
 		wantAC := &controlpb.AnywhereCache{
 			Name:            fmt.Sprintf("projects/_/buckets/%s/anywhereCaches/%s", bucketName, zone),
 			Ttl:             anywhereCacheTTL,
 			Zone:            zone,
 			AdmissionPolicy: anywhereCacheAdmissionPolicy,
 		}
-		if _, err = s.storageControlClient.CreateAnywhereCache(ctx, &controlpb.CreateAnywhereCacheRequest{
-			// projects/{project}/buckets/{bucket} is the required format for the CREATE API.
-			Parent:        fmt.Sprintf(`projects/_/buckets/%s`, bucketName),
-			AnywhereCache: wantAC,
-		}); err == nil {
-			return nil
-		}
-
-		if status.Code(err) != codes.AlreadyExists {
-			return fmt.Errorf("failed to create Anywhere Cache: %w", err)
-		}
-
-		gotAC, err := s.storageControlClient.GetAnywhereCache(ctx, &controlpb.GetAnywhereCacheRequest{
-			Name: wantAC.Name,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to get Anywhere Cache: %w", err)
-		}
-
-		// AC already exists for this bucket/zone with the correct parameters. No further action needed.
-		if gotAC.AdmissionPolicy == wantAC.AdmissionPolicy && gotAC.Ttl == wantAC.Ttl {
-			return nil
-		}
-
-		// AC already exists but the requested fields are different. Update the AC.
-		klog.Infof("Anywhere Cache %s/%s already exists (ttl:%q, admission_policy:%q), but want (ttl:%q, admission_policy:%q), updating parameters", bucketName, zone, gotAC.Ttl, gotAC.AdmissionPolicy, wantAC.Ttl, wantAC.AdmissionPolicy)
-		if _, err = s.storageControlClient.UpdateAnywhereCache(ctx, &controlpb.UpdateAnywhereCacheRequest{
-			AnywhereCache: wantAC,
-			UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheTTLKey, anywhereCacheAdmissionPolicyKey}},
-		}); err != nil {
-			return fmt.Errorf("failed to update Anywhere Cache: %w", err)
-		}
-
-		return nil
+		results[zone] = s.syncAnywhereCacheForZone(ctx, bucketName, wantAC)
 	}
 
-	var errs []error
-	for _, zone := range zones {
-		if err := createAnywhereCacheForZone(zone); err != nil {
-			errs = append(errs, fmt.Errorf("%s:[%w]", zone, err))
-		}
-	}
-	if len(errs) <= 0 {
-		return nil
-	}
-	return fmt.Errorf("errors occurred while creating Anywhere Caches: %w", errors.Join(errs...))
+	return results, nil
 }
 
 // getAnywhereCacheTTLFromPV returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
