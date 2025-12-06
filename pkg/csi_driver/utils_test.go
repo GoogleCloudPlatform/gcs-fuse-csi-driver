@@ -838,7 +838,7 @@ func TestGenerateDisallowedFlagsMap(t *testing.T) {
 		},
 		{
 			name:                   "supported sidecar version for profiles and file cache medium, enable-gcsfuse-profiles-internal=false - should disable profile mount option only",
-			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.21.0-gke.0@sha256:abcd",
 			expectedMap:            map[string]bool{GCSFuseProfileFlag: true},
 			expectErr:              nil,
 			enableProfilesInternal: false,
@@ -846,7 +846,7 @@ func TestGenerateDisallowedFlagsMap(t *testing.T) {
 		},
 		{
 			name:                   "supported sidecar version for profiles and file cache medium, enable-gcsfuse-profiles=false - should disable file cache medium option only",
-			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.2@sha256:abcd",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.21.0-gke.2@sha256:abcd",
 			expectedMap:            map[string]bool{util.FileCacheMediumConst: true},
 			expectErr:              nil,
 			enableProfilesInternal: true,
@@ -854,7 +854,7 @@ func TestGenerateDisallowedFlagsMap(t *testing.T) {
 		},
 		{
 			name:                   "supported sidecar version for both profiles mount option and file cache medium - should enable both flags",
-			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0@sha256:abcd",
+			image:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.21.0-gke.0@sha256:abcd",
 			expectedMap:            map[string]bool{},
 			enableProfilesInternal: true,
 			enableProfiles:         true,
