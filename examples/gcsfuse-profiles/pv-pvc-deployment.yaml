@@ -36,10 +36,9 @@ spec:
       # Optional: The timeout for the bucket scan operation before giving up and delivering
       # partial results. The default is 2m.
       # bucketScanTimeout: 2m 
-      # Optional: The TTL for the the bucket scan operation. New PV / Pod creation events won't
-      # trigger the scanner until at least this amount of time has passed since the previous
-      # scan. The default is 168h (7 days).
-      # bucketScanTTL: 168h
+      # Optional: The resync period for the the bucket scan operation. The bucket will be re-scanned after this
+      # amount of time from the last successful scan. The default is 168h (7 days). 
+      # bucketScanResyncPeriod: 168h
       # Optional: The longest time that a chunk of data will remain in the anywhere cache from the last read. The default is "1h". 
       # anywhereCacheTTL: "1h"
       # Optional: Policy for whether the anywhere cache ingests data on the first miss or on the second miss. The default is "admit-on-first-miss", the only other valid value is "admit-on-second-miss".
