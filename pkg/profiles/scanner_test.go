@@ -240,24 +240,23 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 
 	// Create the Scanner instance with fake/mock components.
 	s := &Scanner{
-		kubeClient:         kubeClient,
-		pvLister:           pvInformer.Lister(),
-		pvcLister:          pvcInformer.Lister(),
-		scLister:           scInformer.Lister(),
-		podLister:          podInformer.Lister(),
-		pvSynced:           pvInformer.Informer().HasSynced,
-		pvcSynced:          pvcInformer.Informer().HasSynced,
-		scSynced:           scInformer.Informer().HasSynced,
-		podSynced:          podInformer.Informer().HasSynced,
-		factory:            factory,
-		podFactory:         podFactory,
-		queue:              workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-		eventRecorder:      recorder,
-		trackedPVs:         make(map[string]struct{}),
-		lastSuccessfulScan: make(map[string]time.Time),
-		datafluxConfig:     &DatafluxConfig{}, // Use default or test-specific config
-		scanBucketImpl:     fsb.Scan,          // Inject the fake scan function
-		metricManager:      metrics.NewFakePrometheusMetricsManager(),
+		kubeClient:     kubeClient,
+		pvLister:       pvInformer.Lister(),
+		pvcLister:      pvcInformer.Lister(),
+		scLister:       scInformer.Lister(),
+		podLister:      podInformer.Lister(),
+		pvSynced:       pvInformer.Informer().HasSynced,
+		pvcSynced:      pvcInformer.Informer().HasSynced,
+		scSynced:       scInformer.Informer().HasSynced,
+		podSynced:      podInformer.Informer().HasSynced,
+		factory:        factory,
+		podFactory:     podFactory,
+		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		eventRecorder:  recorder,
+		trackedPVs:     make(map[string]syncInfo),
+		datafluxConfig: &DatafluxConfig{}, // Use default or test-specific config
+		scanBucketImpl: fsb.Scan,          // Inject the fake scan function
+		metricManager:  metrics.NewFakePrometheusMetricsManager(),
 	}
 
 	factory.Start(stopCh)
@@ -353,9 +352,9 @@ func createPod(name, namespace string, volumes []v1.Volume, labels map[string]st
 
 func TestCheckPVRelevance(t *testing.T) {
 	now := time.Date(2025, time.August, 27, 0, 0, 0, 0, time.UTC)
-	ttl := defaultScanTTLDuration
-	lastUpdateTimeWithinTTL := now.Add(-ttl / 2).Format(time.RFC3339)
-	lastUpdateTimeOutsideTTL := now.Add(-ttl * 2).Format(time.RFC3339)
+	resyncPeriod := defaultScanResyncPeriodDuration
+	lastUpdateTimeWithinResyncPeriod := now.Add(-resyncPeriod / 2).Format(time.RFC3339)
+	lastUpdateTimeOutsideResyncPeriod := now.Add(-resyncPeriod * 2).Format(time.RFC3339)
 
 	validOverrideAnnotations := map[string]string{
 		putil.AnnotationStatus:     putil.ScanOverride,
@@ -456,9 +455,9 @@ func TestCheckPVRelevance(t *testing.T) {
 			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant but no scan pending - Within TTL - Should return relevant and not pending scan",
+			name: "Relevant but no scan pending - Within resync period - Should return relevant and not pending scan",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeWithinTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeWithinResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantBucket:        testBucketName,
@@ -467,9 +466,9 @@ func TestCheckPVRelevance(t *testing.T) {
 			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant scan is pending - Outside TTL - Should return relevant and pending scan",
+			name: "Relevant scan is pending - Outside resync period - Should return relevant and pending scan",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
@@ -480,7 +479,7 @@ func TestCheckPVRelevance(t *testing.T) {
 		{
 			name: "Relevant scan is pending - Zonal bucket by locationType - Should return relevant, pending scan, and isZonalBucket field should be true",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
@@ -496,7 +495,7 @@ func TestCheckPVRelevance(t *testing.T) {
 		{
 			name: "Relevant scan is pending - Zonal bucket by storageClass - Should return relevant, pending scan, and isZonalBucket field should be true",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
@@ -832,7 +831,6 @@ func TestSyncPod(t *testing.T) {
 		expectRequeueErr  bool
 		wantErr           bool
 		expectGateRemoved bool
-		expectPVEnqueued  string
 	}{
 		{
 			name:              "Pod with no volumes, gate removed",
@@ -845,7 +843,6 @@ func TestSyncPod(t *testing.T) {
 			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant}, podLabels, true),
 			initialObjects:   []runtime.Object{pvRelevant, scValid, pvcBoundRelevant},
 			expectRequeueErr: true,
-			expectPVEnqueued: testPVName,
 		},
 		{
 			name:              "Pod with irrelevant PV, gate removed",
@@ -854,11 +851,10 @@ func TestSyncPod(t *testing.T) {
 			expectGateRemoved: true,
 		},
 		{
-			name:             "Pod with mixed PVs (relevant and not), PV enqueued, Pod requeued",
+			name:             "Pod with mixed PVs (relevant and not), Pod requeued",
 			pod:              createPod(testPodName, testNamespace, []v1.Volume{volNotRelevant, volRelevant}, podLabels, true),
 			initialObjects:   []runtime.Object{pvRelevant, scValid, pvcBoundRelevant, pvNotRelevant, scNotRelevant, pvcBoundNotRelevant},
 			expectRequeueErr: true,
-			expectPVEnqueued: testPVName,
 		},
 		{
 			name:             "Pod with unbound PVC, Pod requeued",
@@ -894,7 +890,6 @@ func TestSyncPod(t *testing.T) {
 			pod:               createPod(testPodName, testNamespace, []v1.Volume{volOverride}, podLabels, true),
 			initialObjects:    []runtime.Object{pvOverride, scValid, pvcBoundOverride},
 			expectGateRemoved: true,
-			expectPVEnqueued:  "", // Override PV should not be enqueued for scan
 		},
 	}
 
@@ -908,7 +903,12 @@ func TestSyncPod(t *testing.T) {
 			f := newTestFixture(t, allObjects...)
 
 			key, _ := cache.MetaNamespaceKeyFunc(tc.pod)
-			err := f.scanner.syncPod(context.Background(), key)
+			ctx := context.Background()
+			err := f.scanner.syncPV(ctx, pvOverride.Name)
+			if err != nil {
+				t.Errorf("syncPV(%q) returned error: %v", key, err)
+			}
+			err = f.scanner.syncPod(ctx, key)
 
 			hasErr := err != nil
 			if hasErr != (tc.wantErr || tc.expectRequeueErr) {
@@ -920,27 +920,6 @@ func TestSyncPod(t *testing.T) {
 				if isRequeueErr != tc.expectRequeueErr {
 					t.Errorf("syncPod(%q) error type: got requeue %v, want requeue %v (err: %v)", key, isRequeueErr, tc.expectRequeueErr, err)
 				}
-			}
-
-			// Check PV Enqueue status
-			pvKey := pvPrefix + tc.expectPVEnqueued
-			found := false
-			queueLen := f.scanner.queue.Len()
-			for i := 0; i < queueLen; i++ {
-				item, shutDown := f.scanner.queue.Get()
-				if shutDown {
-					break
-				}
-				if item == pvKey {
-					found = true
-				}
-				f.scanner.queue.Done(item)
-			}
-			if tc.expectPVEnqueued != "" && !found {
-				t.Errorf("Expected PV %q to be enqueued, but not found in queue", tc.expectPVEnqueued)
-			}
-			if tc.expectPVEnqueued == "" && found {
-				t.Errorf("Expected no PV to be enqueued, but found %q", pvKey)
 			}
 
 			if tc.expectGateRemoved {
@@ -1139,10 +1118,6 @@ func TestAddPV(t *testing.T) {
 	if f.scanner.queue.Len() != 1 {
 		t.Errorf("Queue length: got %d, want 1", f.scanner.queue.Len())
 	}
-	key, _ := cache.MetaNamespaceKeyFunc(pvRelevant)
-	if _, exists := f.scanner.trackedPVs[key]; !exists {
-		t.Errorf("PV %q not tracked after add", key)
-	}
 
 	// Adding the same PV again should not change the queue length (it's a set).
 	f.scanner.addPV(pvRelevant)
@@ -1160,16 +1135,12 @@ func TestDeletePV(t *testing.T) {
 
 	f := newTestFixture(t)
 	f.scanner.queue.Add(queueKey)
-	f.scanner.trackedPVs[pvName] = struct{}{}
-	f.scanner.lastSuccessfulScan[pvName] = time.Now()
+	f.scanner.trackedPVs[pvName] = syncInfo{}
 
 	f.scanner.deletePV(pv)
 
 	// PV should no longer be in the tracked set.
 	if _, exists := f.scanner.trackedPVs[pvName]; exists {
-		t.Errorf("PV %q still tracked after deletePV() call", pvName)
-	}
-	if _, exists := f.scanner.lastSuccessfulScan[pvName]; exists {
 		t.Errorf("PV %q still in lastSuccessfulScan map after deletePV() call", pvName)
 	}
 
@@ -1215,7 +1186,7 @@ func TestDeletePod(t *testing.T) {
 // TestGetScanTimeout tests the getDurationAttribute function.
 func TestGetDurationAttribute(t *testing.T) {
 	customScanTimeoutDuration := time.Duration(42 * time.Minute)
-	customScanTTLDuration := time.Duration(5 * time.Minute)
+	customScanResyncPeriodDuration := time.Duration(5 * time.Minute)
 	testCases := []struct {
 		name            string
 		attributeKey    string
@@ -1232,10 +1203,10 @@ func TestGetDurationAttribute(t *testing.T) {
 			wantErr:         false,
 		},
 		{
-			name:            "No bucket scan TTL attribute - Use default",
-			attributeKey:    volumeAttributeScanTTLKey,
-			defaultDuration: defaultScanTTLDuration,
-			wantTimeout:     &defaultScanTTLDuration,
+			name:            "No bucket scan resync period attribute - Use default",
+			attributeKey:    volumeAttributeScanResyncPeriodKey,
+			defaultDuration: defaultScanResyncPeriodDuration,
+			wantTimeout:     &defaultScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
@@ -1247,11 +1218,11 @@ func TestGetDurationAttribute(t *testing.T) {
 			wantErr:         false,
 		},
 		{
-			name:            "Valid bucket scan TTL attribute - Override",
-			attributes:      map[string]string{volumeAttributeScanTTLKey: "5m"},
-			defaultDuration: defaultScanTTLDuration,
-			attributeKey:    volumeAttributeScanTTLKey,
-			wantTimeout:     &customScanTTLDuration,
+			name:            "Valid bucket scan resync period attribute - Override",
+			attributes:      map[string]string{volumeAttributeScanResyncPeriodKey: "5m"},
+			defaultDuration: defaultScanResyncPeriodDuration,
+			attributeKey:    volumeAttributeScanResyncPeriodKey,
+			wantTimeout:     &customScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
@@ -1295,6 +1266,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
 	f := newTestFixture(t, pv)
 	now := time.Date(2025, 9, 1, 10, 0, 0, 0, time.UTC)
+	future := now.Add(defaultScanResyncPeriodDuration)
 	f.mockTimeImpl.currentTime = now
 
 	bucketI := &bucketInfo{
@@ -1336,8 +1308,8 @@ func TestUpdatePVScanResult(t *testing.T) {
 	}
 
 	// Verify in-memory map is updated
-	if lastScan, ok := f.scanner.lastSuccessfulScan[testPVName]; !ok || !lastScan.Equal(now) {
-		t.Errorf("lastSuccessfulScan map not updated correctly: got %v, want %v", lastScan, now)
+	if syncInfo, ok := f.scanner.trackedPVs[testPVName]; !ok || !syncInfo.lastSuccessfulScan.Equal(now) || !syncInfo.nextScan.Equal(future) {
+		t.Errorf("lastSuccessfulScan map not updated correctly: got last successful scan: %v, next scan: %v, want last successful scan: %v, next scan: %v", syncInfo.lastSuccessfulScan, syncInfo.nextScan, now, future)
 	}
 }
 
