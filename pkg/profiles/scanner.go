@@ -83,7 +83,7 @@ const (
 	scannerComponentName                        = "gke-gcsfuse-scanner"
 	csiDriverName                               = "gcsfuse.csi.storage.gke.io"
 	volumeAttributeScanTimeoutKey               = "bucketScanTimeout"
-	volumeAttributeScanTTLKey                   = "bucketScanTTL"
+	volumeAttributeScanResyncPeriodKey          = "bucketScanResyncPeriod"
 	volumeAttributeAnywhereCacheAdmissionPolicy = "anywhereCacheAdmissionPolicy"
 	volumeAttributeEnableAnywhereCache          = "enableAnywhereCache"
 	volumeAttributeAnywhereCacheTTL             = "anywhereCacheTTL"
@@ -136,8 +136,8 @@ var (
 	// defaultScanTimeoutDuration is the default timeout for a single bucket scan.
 	defaultScanTimeoutDuration = 2 * time.Minute
 
-	// defaultScanTTLDuration is the default TTL for skipping bucket scans.
-	defaultScanTTLDuration = 168 * time.Hour // 7 days
+	// defaultScanResyncPeriodDuration is the default resync period for bucket scans.
+	defaultScanResyncPeriodDuration = 168 * time.Hour // 7 days
 
 	// To allow mocking time in tests
 	timeNow = time.Now
@@ -154,6 +154,10 @@ var (
 
 	// Used for testing
 	utilGetZonesForClusterLocation = util.GetZonesForALocation
+
+	// The amount of time to wait before checking if there are any
+	// PVs that should be scanned.
+	trackedPVsPeriodicInterval = 15 * time.Second
 )
 
 // stringPtr returns a pointer to the passed string.
@@ -211,6 +215,12 @@ type bucketInfo struct {
 	isZonalBucket    bool
 }
 
+// syncInfo holds information relevant to the PV resync.
+type syncInfo struct {
+	lastSuccessfulScan time.Time
+	nextScan           time.Time
+}
+
 // Scanner is the main controller structure.
 type Scanner struct {
 	kubeClient           kubernetes.Interface
@@ -238,21 +248,14 @@ type Scanner struct {
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
 	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
 
-	// pvMutex protects trackedPVs.
+	// pvMutex protects pvMutex.
 	pvMutex sync.RWMutex
-	// Set of PV names being tracked/processed. This is
-	// used to avoid reprocessing if multiple user Pods
-	// trigger a PV addition to the queue.
-	trackedPVs map[string]struct{}
-
-	// scanMutex protects lastSuccessfulScan.
-	scanMutex sync.RWMutex
 	// Map to track the last successful scan time for each PV in this instance.
 	// This is required because there exists a non-zero time window where a PV
 	// patch may not be reflected in the informer's cache after syncPV processes
 	// and removes the key from trackedPVs, potentially resulting in multiple
 	// scans not seeing the PV's annotationLastUpdatedTime.
-	lastSuccessfulScan map[string]time.Time
+	trackedPVs map[string]syncInfo
 
 	// Identity of this controller, generated at creation time and not persisted
 	// across restarts. Useful only for debugging, for seeing the source of events.
@@ -422,35 +425,34 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	mux := http.NewServeMux()
 
 	scanner := &Scanner{
-		kubeClient:         kubeClient,
-		factory:            factory,
-		podFactory:         podFactory,
-		pvLister:           pvInformer.Lister(),
-		pvcLister:          pvcInformer.Lister(),
-		scLister:           scInformer.Lister(),
-		podLister:          podInformer.Lister(),
-		pvSynced:           pvInformer.Informer().HasSynced,
-		pvcSynced:          pvcInformer.Informer().HasSynced,
-		scSynced:           scInformer.Informer().HasSynced,
-		podSynced:          podInformer.Informer().HasSynced,
-		queue:              workqueue.NewTypedRateLimitingQueue(rateLimiter),
-		trackedPVs:         make(map[string]struct{}),
-		lastSuccessfulScan: make(map[string]time.Time),
-		eventRecorder:      eventRecorder,
-		datafluxConfig:     config.DatafluxConfig,
-		scanBucketImpl:     defaultScanBucket,
-		config:             config,
-		id:                 id,
-		metricManager:      metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
-		mux:                mux,
+		kubeClient:     kubeClient,
+		factory:        factory,
+		podFactory:     podFactory,
+		pvLister:       pvInformer.Lister(),
+		pvcLister:      pvcInformer.Lister(),
+		scLister:       scInformer.Lister(),
+		podLister:      podInformer.Lister(),
+		pvSynced:       pvInformer.Informer().HasSynced,
+		pvcSynced:      pvcInformer.Informer().HasSynced,
+		scSynced:       scInformer.Informer().HasSynced,
+		podSynced:      podInformer.Informer().HasSynced,
+		queue:          workqueue.NewTypedRateLimitingQueue(rateLimiter),
+		trackedPVs:     make(map[string]syncInfo),
+		eventRecorder:  eventRecorder,
+		datafluxConfig: config.DatafluxConfig,
+		scanBucketImpl: defaultScanBucket,
+		config:         config,
+		id:             id,
+		metricManager:  metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
+		mux:            mux,
 	}
 
 	klog.Info("Setting up event handlers for PersistentVolumes")
 	pvInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    scanner.addPV,
 		DeleteFunc: scanner.deletePV,
-		// UpdateFunc is not required because subsequent Pod creation events
-		// will trigger the scanner.
+		// UpdateFunc is not required because the scan will be re-triggered
+		// after success with a time delay.
 	})
 
 	klog.Info("Setting up event handlers for Pods")
@@ -540,9 +542,30 @@ func (s *Scanner) run(ctx context.Context) {
 	klog.Info("Starting worker")
 	go wait.Until(func() { s.runWorker(ctx) }, time.Second, ctx.Done())
 
+	klog.Infof("Starting periodic enqueuer for tracked PVs with interval %s", trackedPVsPeriodicInterval)
+	go s.runPeriodicEnqueuer(ctx, trackedPVsPeriodicInterval)
+
 	klog.Info("Scanner started")
 	<-stopCh
 	klog.Info("Scanner shutting down")
+}
+
+// runPeriodicEnqueuer runs a loop that ticks at the given interval
+// and calls enqueueTrackedPVs. It respects context cancellation.
+func (s *Scanner) runPeriodicEnqueuer(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			klog.Info("Stopping periodic enqueuer for tracked PVs")
+			return
+		case <-ticker.C:
+			klog.V(6).Info("Periodic enqueuer tick, checking tracked PVs")
+			s.enqueueTrackedPVs()
+		}
+	}
 }
 
 // runWithLeaderElection wraps the run function with leader election logic.
@@ -653,16 +676,6 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 		} else {
 			s.metricManager.RecordSyncPVMetric(err)
 		}
-
-		// PV specific tracking removal
-		if err == nil {
-			s.pvMutex.Lock()
-			if _, exists := s.trackedPVs[itemKey]; exists {
-				klog.V(6).Infof("PV %q finished processing, removing from tracking", itemKey)
-				delete(s.trackedPVs, itemKey)
-			}
-			s.pvMutex.Unlock()
-		}
 	default:
 		klog.Errorf("Unknown key prefix for %q", key)
 		s.queue.Forget(key)
@@ -697,7 +710,7 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 
 // syncPod is the core reconciliation function for a Pod. It checks if any of the
 // Pod's PVs require scanning and removes the Pod's scheduling gate:
-//  1. If any PV requires scanning, both the PVs and the Pod are enqueued to be
+//  1. If any PV requires scanning, the Pod is requeued to be
 //     handled later. This eventually results in the PV being scanned by syncPV,
 //     and the Pod's scheduling gate being removed by syncPod (step #2).
 //  2. If none of the PVs require scanning, the Pod's scheduling gate is removed,
@@ -725,7 +738,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 
 	klog.Infof("Syncing Pod: %q/%q", pod.Namespace, pod.Name)
 
-	var anyPVRelevant bool
+	unscannedPVs := []string{}
 	var needsRequeue bool
 
 	for _, vol := range pod.Spec.Volumes {
@@ -769,26 +782,27 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			return status.Errorf(codes.Internal, "failed to get StorageClass for PV %q: %v", key, err)
 		}
 
-		bucketI, isScanPending, err := s.checkPVRelevance(ctx, pv, sc)
+		bucketI, _, err := s.checkPVRelevance(ctx, pv, sc)
 		if err != nil {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
-
-		// If bucketI is nil, PV is not relevant or TTL is not expired.
-		// If bucketI.isOverride is true, PV is relevant but scanning is bypassed.
-		// In either of these two cases, we DO NOT enqueue the PV for scanning,
-		// and we proceed to check the next volume.
-		pvRelevant := bucketI != nil
-		if pvRelevant && !bucketI.isOverride && isScanPending {
-			klog.Infof("Pod %q uses relevant PV %q (PVC %q/%q) requiring a scan", key, pvName, namespace, pvcName)
-			anyPVRelevant = true
-			s.enqueuePVIfNotTracked(pv) // Enqueue the PV for scanning if not already tracked
+		if bucketI != nil {
+			_, ok, err := s.calculateLastScanTime(pv)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to calculate last scan time for PV %q: %v", pvName, err)
+			}
+			if !ok {
+				// The PV is relevant, but hasn't been scanned (no last scan timestamp).
+				// The "override" case is included here, since controller stamps the PV
+				// with the timestamp until the manual annotations have been validated.
+				unscannedPVs = append(unscannedPVs, pvName)
+			}
 		}
 	}
 
-	if anyPVRelevant {
-		klog.Infof("Pod %q uses one or more relevant PVs, will recheck Pod later to ensure scans complete", key)
-		return fmt.Errorf("%w: waiting for PV scans to complete for Pod %q", errRequeueNeeded, key)
+	if len(unscannedPVs) > 0 {
+		klog.Infof("Pod %q uses one or more unscanned and relevant PVs: %+v, will recheck Pod later to ensure scans complete", key, unscannedPVs)
+		return fmt.Errorf("%w: waiting for PV scans to complete for Pod %q, unscanned PVs: %+v", errRequeueNeeded, key, unscannedPVs)
 	}
 
 	if needsRequeue {
@@ -796,7 +810,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		return fmt.Errorf("%w: waiting for PVCs to be ready for Pod %q", errRequeueNeeded, key)
 	}
 
-	// If no PVs are relevant (including the override case) and no other reason to requeue, remove the scheduling gate
+	// If all relevant PVs have been scanned and no other reason to requeue, remove the scheduling gate
 	if err := s.removeSchedulingGate(ctx, pod); err != nil {
 		return status.Errorf(codes.Internal, "failed to remove scheduling gate from Pod %s/%s: %v", pod.Namespace, pod.Name, err)
 	}
@@ -870,7 +884,7 @@ func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVo
 
 	// The status annotation is already "override", but we patch it here along with
 	// the timestamp to mark the operation as complete and update the in-memory map.
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes: %t", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes)
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes)
 	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, profilesutil.ScanOverride); patchErr != nil {
 		return patchErr
 	}
@@ -946,24 +960,23 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 				if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanTimeout); patchErr != nil {
 					return fmt.Errorf("failed to patch PV %q after timeout, err: %w", pv.Name, patchErr)
 				}
-				// Remove since we still consider this a successful scan.
-				return nil
+			} else {
+				// For any other error, re-queue.
+				klog.Errorf("Error scanning bucket for PV %q: %v", pv.Name, err)
+				s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationFailed, "Bucket scan failed for bucket %q, directory %q: %v", bucketI.name, bucketI.dir, err)
+				return fmt.Errorf("error scanning bucket for PV %q: %w", pv.Name, err)
 			}
-			// For any other error, re-queue.
-			klog.Errorf("Error scanning bucket for PV %q: %v", pv.Name, err)
-			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationFailed, "Bucket scan failed for bucket %q, directory %q: %v", bucketI.name, bucketI.dir, err)
-			return fmt.Errorf("error scanning bucket for PV %q: %w", pv.Name, err)
-		}
-
-		// The scan has been successful and complete results have been used.
-		duration := timeNow().Sub(syncStartTime)
-		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Bucket scan completed successfully for bucket %q, directory %q (%v): %d objects, %d bytes", bucketI.name, bucketI.dir, duration.Round(time.Second), bucketI.numObjects, bucketI.totalSizeBytes)
-		if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanCompleted); patchErr != nil {
-			return fmt.Errorf("failed to patch PV %q results, err: %w", pv.Name, patchErr)
+		} else {
+			// The scan has been successful and complete results have been used.
+			duration := timeNow().Sub(syncStartTime)
+			if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanCompleted); patchErr != nil {
+				return fmt.Errorf("failed to patch PV %q results, err: %w", pv.Name, patchErr)
+			}
+			s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Bucket scan completed successfully for bucket %q, directory %q (%v): %d objects, %d bytes", bucketI.name, bucketI.dir, duration.Round(time.Second), bucketI.numObjects, bucketI.totalSizeBytes)
 		}
 	}
 
-	// Check if the pv uses a anywhere cache enabled storage class.
+	// Check if the PV uses an Anywhere Cache enabled StorageClass.
 	shouldEnableAnywhereCache := false
 	enableAnywhereCache, ok := sc.Parameters[volumeAttributeEnableAnywhereCache]
 	if !ok {
@@ -1410,28 +1423,36 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 // updatePVScanResult updates the PV annotations with the results of a bucket scan.
 // It sets the status, number of objects, total size, and last updated time.
 // It also updates the in-memory lastSuccessfulScan map.
-func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolume, bucketI *bucketInfo, status string) error {
+func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolume, bucketI *bucketInfo, scanStatus string) error {
 	currentTime := timeNow()
 	annotationsToUpdate := map[string]*string{
-		profilesutil.AnnotationStatus:          stringPtr(status),
+		profilesutil.AnnotationStatus:          stringPtr(scanStatus),
 		profilesutil.AnnotationNumObjects:      int64Ptr(bucketI.numObjects),
 		profilesutil.AnnotationTotalSize:       int64Ptr(bucketI.totalSizeBytes),
 		profilesutil.AnnotationLastUpdatedTime: stringPtr(currentTime.UTC().Format(time.RFC3339)),
 	}
-	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, status)
+	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, scanStatus)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
 	if err != nil {
-		klog.Errorf("Failed to update annotations on PV %q with status %q: %v", pv.Name, status, err)
+		klog.Errorf("Failed to update annotations on PV %q with status %q: %v", pv.Name, scanStatus, err)
 		return err
 	}
-	klog.Infof("Successfully updated annotations on PV %q with status %q", pv.Name, status)
+	klog.Infof("Successfully updated annotations on PV %q with status %q", pv.Name, scanStatus)
+
+	resyncPeriod, err := s.getDurationAttribute(pv, volumeAttributeScanResyncPeriodKey, defaultScanResyncPeriodDuration)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
+	}
 
 	// Update in-memory map only on terminal state updates.
-	if status == scanCompleted || status == scanTimeout || status == profilesutil.ScanOverride {
-		s.scanMutex.Lock()
-		s.lastSuccessfulScan[pv.Name] = currentTime
-		s.scanMutex.Unlock()
-		klog.V(6).Infof("Updated lastSuccessfulScan map for PV %q to %q", pv.Name, currentTime)
+	if scanStatus == scanCompleted || scanStatus == scanTimeout || scanStatus == profilesutil.ScanOverride {
+		s.pvMutex.Lock()
+		s.trackedPVs[pv.Name] = syncInfo{
+			lastSuccessfulScan: currentTime,
+			nextScan:           currentTime.Add(*resyncPeriod),
+		}
+		s.pvMutex.Unlock()
+		klog.V(6).Infof("Updated lastSuccessfulScan map for PV %q to %q, next scan: %q", pv.Name, currentTime, currentTime.Add(*resyncPeriod))
 	}
 	return nil
 }
@@ -1512,16 +1533,16 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	if found {
 		elapsed := timeNow().Sub(lastScanTime)
 
-		currentScanTTL, err := s.getDurationAttribute(pv, volumeAttributeScanTTLKey, defaultScanTTLDuration)
+		resyncPeriod, err := s.getDurationAttribute(pv, volumeAttributeScanResyncPeriodKey, defaultScanResyncPeriodDuration)
 		if err != nil {
-			return nil, false, status.Errorf(codes.InvalidArgument, "bucket scan TTL configuration error: %v", err)
+			return nil, false, status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
 		}
 
-		if elapsed < *currentScanTTL {
-			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan, which is less than TTL %q", pv.Name, elapsed.Round(time.Second), currentScanTTL)
+		if elapsed < *resyncPeriod {
+			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan, which is less than resync period %q", pv.Name, elapsed.Round(time.Second), resyncPeriod)
 			return &bucketI, false, nil
 		}
-		klog.V(6).Infof("PV %q: Proceeding with scan, %q elapsed since last scan, TTL is %q", pv.Name, elapsed.Round(time.Second), currentScanTTL)
+		klog.V(6).Infof("PV %q: Proceeding with scan, %q elapsed since last scan, resync period is %q", pv.Name, elapsed.Round(time.Second), resyncPeriod)
 		return &bucketI, true, nil
 	}
 
@@ -1546,12 +1567,12 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 // returns a boolean to indicate if the value was found, otherwise, it returns an error.
 func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, bool, error) {
 	// Check if the last scan time appears in memory first.
-	s.scanMutex.RLock()
-	lastScanTimeFromMemory, ok := s.lastSuccessfulScan[pv.Name]
-	s.scanMutex.RUnlock()
+	s.pvMutex.RLock()
+	syncInfo, ok := s.trackedPVs[pv.Name]
+	s.pvMutex.RUnlock()
 	if ok {
-		klog.V(6).Infof("PV %q: Found last scan time in memory: %q", pv.Name, lastScanTimeFromMemory)
-		return lastScanTimeFromMemory, true, nil
+		klog.V(6).Infof("PV %q: Found last scan time in memory: %v, next scan: %v", pv.Name, syncInfo.lastSuccessfulScan, syncInfo.nextScan)
+		return syncInfo.lastSuccessfulScan, true, nil
 	}
 
 	// Check if the last scan time appears in the PV annotations.
@@ -1592,20 +1613,6 @@ func (s *Scanner) enqueuePV(pv *v1.PersistentVolume) {
 	s.queue.Add(pvPrefix + key)
 }
 
-// enqueuePVIfNotTracked enqueues a PersistentVolume if it's not already tracked.
-func (s *Scanner) enqueuePVIfNotTracked(pv *v1.PersistentVolume) {
-	s.pvMutex.Lock()
-	defer s.pvMutex.Unlock()
-
-	if _, isTracked := s.trackedPVs[pv.Name]; !isTracked {
-		s.trackedPVs[pv.Name] = struct{}{}
-		klog.V(6).Infof("PV %q: Not tracked, enqueuing for scan", pv.Name)
-		s.enqueuePV(pv)
-	} else {
-		klog.V(6).Infof("PV %q: Already tracked, skipping enqueue", pv.Name)
-	}
-}
-
 // addPV is the add event handler for PersistentVolumes.
 func (s *Scanner) addPV(obj any) {
 	pv, ok := obj.(*v1.PersistentVolume)
@@ -1614,7 +1621,7 @@ func (s *Scanner) addPV(obj any) {
 		return
 	}
 	klog.V(6).Infof("AddFunc PV: PV ADDED: %q", pv.Name)
-	s.enqueuePVIfNotTracked(pv)
+	s.enqueuePV(pv)
 }
 
 // deletePV is the event handler for PersistentVolume Delete events.
@@ -1645,13 +1652,22 @@ func (s *Scanner) deletePV(obj any) {
 		delete(s.trackedPVs, key)
 		s.pvMutex.Unlock()
 
-		s.scanMutex.Lock()
-		delete(s.lastSuccessfulScan, key)
-		s.scanMutex.Unlock()
 		klog.V(6).Infof("Removed PV %q from lastSuccessfulScan map", key)
-
 		s.queue.Forget(pvPrefix + key)
 	}
+}
+
+// enqueueTrackedPVs periodically adds all currently tracked PVs to the queue.
+func (s *Scanner) enqueueTrackedPVs() {
+	s.pvMutex.RLock()
+	for pvName, info := range s.trackedPVs {
+		klog.V(6).Infof("Periodic scan: PV %q, next scan: %v, now: %v", pvName, info.nextScan, time.Now())
+		if !info.nextScan.After(time.Now()) {
+			klog.V(4).Infof("Periodic scan: Enqueuing tracked PV %q", pvName)
+			s.queue.Add(pvPrefix + pvName)
+		}
+	}
+	s.pvMutex.RUnlock()
 }
 
 // addPod is the add event handler for Pods.
