@@ -618,10 +618,10 @@ func removeDisallowedMountOptions(fuseMountOptions []string, disallowedFlags map
 }
 
 // generateDisallowedFlagsMap generates a list of flags that should or shouldn't be passed to sidecar based on sidcar image version
-func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) (map[string]bool, error) {
+func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) map[string]bool {
 	disallowedFlags := map[string]bool{}
 	if gcsFuseSidecarImage == "" {
-		return disallowedFlags, fmt.Errorf("unable to get disallowed flags, sidecar image is empty")
+		return disallowedFlags
 	}
 
 	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)
@@ -634,7 +634,7 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 		disallowedFlags[util.FileCacheMediumConst] = true
 	}
 
-	return disallowedFlags, nil
+	return disallowedFlags
 }
 
 func transformKeysToSet(inputMap map[string]string) map[string]struct{} {
