@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -133,6 +134,9 @@ const (
 	// Zonal bucket constants
 	bucketLocationTypeZoneKey  = "zone"
 	bucketStorageClassRapidKey = "RAPID"
+
+	// AI suffix for zones
+	aiZoneToken = "ai"
 )
 
 var (
@@ -1129,6 +1133,7 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
 	}
+	anywhereCacheProvidedZones := getAnywhereCacheZonesFromPV(pv)
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
@@ -1139,6 +1144,33 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 	}
 	if s.storageControlClient == nil {
 		return nil, status.Errorf(codes.Internal, "storage control client should not be nil")
+	}
+
+	// If specific zones are requested, validate them.
+	if len(anywhereCacheProvidedZones) > 0 {
+		invalidZones := []string{}
+		for _, providedZone := range anywhereCacheProvidedZones {
+			if !slices.Contains(zones, providedZone) {
+				invalidZones = append(invalidZones, providedZone)
+			}
+		}
+		if len(invalidZones) > 0 {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid anywhere cache zones for PV %q: %v, valid zones are: %v", pv.Name, invalidZones, zones)
+		}
+		zones = anywhereCacheProvidedZones
+	} else { // User did not provide specific zones, use all available except ai zones.
+		isStandardZone := func(zone string) bool {
+			parts := strings.Split(zone, "-")
+			suffix := parts[len(parts)-1]
+			return !strings.HasPrefix(suffix, aiZoneToken)
+		}
+		filtered := []string{}
+		for _, zone := range zones {
+			if isStandardZone(zone) {
+				filtered = append(filtered, zone)
+			}
+		}
+		zones = filtered
 	}
 
 	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)

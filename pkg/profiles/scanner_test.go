@@ -1806,7 +1806,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			name: "AnyC not found - create it - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b"}, nil
+					return []string{"zone-a", "zone-b", "zone-aib"}, nil
 				}
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
