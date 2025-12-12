@@ -19,6 +19,7 @@ package driver
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -456,5 +457,157 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
 			t.Errorf("test %q failed:got error %q, expected error %q", test.name, err, test.expectErr)
 		}
+	}
+}
+
+type MockMetricsManager struct {
+	registeredCollectors []string
+}
+
+func (m *MockMetricsManager) InitializeHTTPHandler() {}
+
+func (m *MockMetricsManager) RegisterMetricsCollector(targetPath, _, _, _ string) {
+	m.registeredCollectors = append(m.registeredCollectors, targetPath)
+}
+
+func (m *MockMetricsManager) UnregisterMetricsCollector(_ string) {}
+
+func TestNodePublishVolume_MaxMountsLimit(t *testing.T) {
+	t.Parallel()
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
+
+	// Setup mount target path
+	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
+	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
+		t.Fatalf("failed to setup tmp dir path: %v", err)
+	}
+	base, err := os.MkdirTemp(tmpDir, "node-publish-")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	testTargetPath := filepath.Join(base, "mount")
+	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+		t.Fatalf("failed to setup target path: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	// Create existing mounts for the same pod
+	existingMounts := []mount.MountPoint{}
+	for i := 0; i < 20; i++ {
+		path := fmt.Sprintf("/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/vol-%d/mount", i)
+		existingMounts = append(existingMounts, mount.MountPoint{
+			Device: "test-device",
+			Path:   path,
+			Type:   "fuse",
+		})
+	}
+
+	mounter := mount.NewFakeMounter(existingMounts)
+	fakeClientSet := &clientset.FakeClientset{}
+	fakeClientSet.CreatePod(clientset.FakePodConfig{})
+	// Set the UID on the fake pod
+	pod, _ := fakeClientSet.GetPod("test-ns", "test-pod")
+	pod.UID = "test-pod-id"
+
+	fakeClientSet.CreateNode(clientset.FakeNodeConfig{})
+
+	driver := initTestDriverWithCustomNodeServer(t, mounter, fakeClientSet, false)
+	mockMetricsManager := &MockMetricsManager{}
+	driver.config.MetricsManager = mockMetricsManager
+
+	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+		t.Fatalf("failed to create the fake bucket: %v", err)
+	}
+
+	ns := newNodeServer(driver, mounter)
+
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:         testVolumeID,
+		TargetPath:       testTargetPath,
+		VolumeCapability: testVolumeCapability,
+		VolumeContext: map[string]string{
+			"pod-namespace": "test-ns",
+			"pod-name":      "test-pod",
+		},
+	}
+
+	_, err = ns.NodePublishVolume(context.TODO(), req)
+	if err != nil {
+		t.Fatalf("NodePublishVolume failed: %v", err)
+	}
+
+	if len(mockMetricsManager.registeredCollectors) != 0 {
+		t.Errorf("Expected 0 registered collectors, got %d", len(mockMetricsManager.registeredCollectors))
+	}
+}
+
+func TestNodePublishVolume_UnderMaxMountsLimit(t *testing.T) {
+	t.Parallel()
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
+
+	// Setup mount target path
+	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id-2/volumes/kubernetes.io~csi/"
+	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
+		t.Fatalf("failed to setup tmp dir path: %v", err)
+	}
+	base, err := os.MkdirTemp(tmpDir, "node-publish-")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	testTargetPath := filepath.Join(base, "mount")
+	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+		t.Fatalf("failed to setup target path: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	// Create existing mounts for the same pod (less than limit)
+	existingMounts := []mount.MountPoint{}
+	for i := 0; i < 19; i++ {
+		path := fmt.Sprintf("/var/lib/kubelet/pods/test-pod-id-2/volumes/kubernetes.io~csi/vol-%d/mount", i)
+		existingMounts = append(existingMounts, mount.MountPoint{
+			Device: "test-device",
+			Path:   path,
+			Type:   "fuse",
+		})
+	}
+
+	mounter := mount.NewFakeMounter(existingMounts)
+	fakeClientSet := &clientset.FakeClientset{}
+	fakeClientSet.CreatePod(clientset.FakePodConfig{})
+	// Set the UID on the fake pod
+	pod, _ := fakeClientSet.GetPod("test-ns", "test-pod-2")
+	pod.UID = "test-pod-id-2"
+
+	fakeClientSet.CreateNode(clientset.FakeNodeConfig{})
+
+	driver := initTestDriverWithCustomNodeServer(t, mounter, fakeClientSet, false)
+	mockMetricsManager := &MockMetricsManager{}
+	driver.config.MetricsManager = mockMetricsManager
+
+	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+		t.Fatalf("failed to create the fake bucket: %v", err)
+	}
+
+	ns := newNodeServer(driver, mounter)
+
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:         testVolumeID,
+		TargetPath:       testTargetPath,
+		VolumeCapability: testVolumeCapability,
+		VolumeContext: map[string]string{
+			"pod-namespace": "test-ns",
+			"pod-name":      "test-pod-2",
+		},
+	}
+
+	_, err = ns.NodePublishVolume(context.TODO(), req)
+	if err != nil {
+		t.Fatalf("NodePublishVolume failed: %v", err)
+	}
+
+	if len(mockMetricsManager.registeredCollectors) != 1 {
+		t.Errorf("Expected 1 registered collector, got %d", len(mockMetricsManager.registeredCollectors))
 	}
 }
