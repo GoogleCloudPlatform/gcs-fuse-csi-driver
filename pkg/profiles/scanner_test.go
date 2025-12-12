@@ -1762,7 +1762,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			name: "AnyC not found - create it - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b"}, nil
+					return []string{"zone-a", "zone-b", "zone-aib"}, nil
 				}
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
@@ -1774,6 +1774,116 @@ func TestCreateAnywhereCache(t *testing.T) {
 				},
 			},
 			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-a,zone-b",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "user provided zones not in available zones - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantErr: true,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-e,zone-f",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "user provided zones with inalid form - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantErr: true,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-e zone-f",
+							},
+						},
+					},
+				},
+			},
 			storageControlClient: mockStorageControlClient{
 				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
 					return &control.CreateAnywhereCacheOperation{}, nil
