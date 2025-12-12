@@ -77,7 +77,7 @@ gcloud compute instances create kub-n-1 \
   --can-ip-forward \
   --create-disk=auto-delete=yes,boot=yes,device-name=kub-n-1,image=projects/rocky-linux-cloud/global/images/rocky-linux-9-v20250611,mode=rw,size=100,type=pd-balanced \
   --no-shielded-secure-boot \
-  --maintenance-policy=MIGRATE \ 
+  --maintenance-policy=MIGRATE \
   --shielded-vtpm \
   --shielded-integrity-monitoring \
   --tags=k8s-vpc \
@@ -109,7 +109,7 @@ gcloud compute instances create kub-n-2 \
 
 ## Configure Easy VM Access
 
-Define a function to set env variables on dev machine and within master VM. Copy and paste the following function directly on your dev machine.
+Define a function to set env variables on dev machine and within master VM. Copy and paste the following function directly on your dev machine. If this doesn't work, first ssh into the VM manually (e.g. `gcloud compute ssh kub-m --zone=$ZONE --project=$PROJECT_ID`), exit, then rerun the function.
 
 ```bash
 # ==============================================================================
@@ -151,7 +151,14 @@ set_and_sync_env PROJECT_NUMBER $PROJECT_NUMBER
 
 # Network Configuration
 
-## Create Firewall Rules
+This section outlines the necessary network configurations. Some steps are common for all installation methods, while others are specific to either [cloud build](#installing-the-gcsfuse-csi-driver-with-cloud-build) or [make install](#installing-the-gcsfuse-csi-driver-with-makefile).
+
+
+## Common Network setup
+
+These steps are required for both installation methods.
+
+### Create Firewall Rules
 
 This creates a permissive internal rule and a basic external rule that we will update later.
 
@@ -159,8 +166,14 @@ This creates a permissive internal rule and a basic external rule that we will u
 # Allow all traffic within the VPC 
 gcloud compute firewall-rules create k8s-vpc-allow-all --project=$PROJECT_ID --network=k8s-vpc --direction=INGRESS --priority=1000 --allow=all --source-ranges=10.170.0.0/16
 
-# Allow external SSH traffic
-gcloud compute --project=$PROJECT_ID firewall-rules create k8s-pub-rule --direction=INGRESS --priority=1000 --network=k8s-vpc --action=ALLOW --rules=tcp:22,tcp:80,tcp:443 --source-ranges=0.0.0.0/0
+# Allow external SSH and API Server traffic
+gcloud compute --project=$PROJECT_ID firewall-rules create k8s-pub-rule \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=k8s-vpc \
+    --action=ALLOW \
+    --rules=tcp:22,tcp:80,tcp:443,tcp:6443 \
+    --source-ranges=0.0.0.0/0
 
 # Allow VM to send traffic to the internet (this allows VM to download tools like kubeadm and others from internet)
 gcloud compute firewall-rules create k8s-vpc-allow-egress \
@@ -173,7 +186,7 @@ gcloud compute firewall-rules create k8s-vpc-allow-egress \
 ```
 
 
-## Create and Assign the Master's Public IP
+### Create and Assign the Master's Public IP
 
 This reserves a static IP and assigns it to your master VM (kub-m), which is required for Workload Identity verification.
 
@@ -204,11 +217,15 @@ set_and_sync_env MASTER_PUBLIC_IP $MASTER_PUBLIC_IP
 echo "Your Master's Public IP is now correctly assigned: $MASTER_PUBLIC_IP"
 ```
 
-## Create private pool for cloud build
+## Cloud build specific setup
+
+These steps are only required if you plan to [install the driver using Cloud Build](#installing-the-gcsfuse-csi-driver-with-cloud-build).
+
+### Create private pool for cloud build
 
 The following steps create a pool of Cloud Build workers that run inside your network, allowing them to connect to your cluster's private IP address. This process involves two major parts: setting up a private network connection and then creating the worker pool itself. These steps are documented in [cloud build driver install instructions](./installation.md#creating-a-private-pool), but duplicated here. 
 
-### Set up the Private Connection
+#### Set up the Private Connection
 
 1. **Enable the Service Networking API.** This is a one-time setup step that grants your project permission to create private connections to Google services, including Cloud Build.
 
@@ -242,7 +259,7 @@ gcloud services vpc-peerings connect \
 
 
 
-### Create the private pool
+#### Create the private pool
 
 This command builds the pool and connects it to your VPC via the peering you just created. We recommend creating the pool in the same region as your Kubernetes cluster to ensure low latency and avoid network data transfer costs. Replace WORKER_POOL_NAME with a name for your pool, REGION with the region of your K8s cluster, and VPC_NAME with the name of your VPC network. To have permissions to create the private pool, ask your administrator to grant you the Cloud Build WorkerPool Owner role (`roles/cloudbuild.workerPoolOwner`).
 
@@ -259,16 +276,11 @@ export WORKER_POOL=projects/$PROJECT_ID/locations/$REGION/workerPools/$WORKER_PO
 ```
 
 
-## Finalize Firewall Rules
+### Finalize Firewall Rules for Cloud build
 
 This updates your public rule to allow access to the Kubernetes API server and adds a new rule for the Cloud Build private pool.
 
 ```bash
-# Update your public firewall rule to include the K8s API server port
-gcloud compute firewall-rules update k8s-pub-rule \
-    --project=$PROJECT_ID \
-    --allow=tcp:22,tcp:6443
-
 # Get the reserved IP range for the Cloud Build private pool connection
 export RESERVED_RANGE=$(gcloud compute addresses describe reserved-range-k8s-vpc --global --project=$PROJECT_ID --format="value(address, prefixLength)" | awk '{print $1 "/" $2}')
 
@@ -610,7 +622,7 @@ First, create a workload identity pool that will trust your Kubernetes cluster.
 
 ```bash
 # Set WORKLOAD_IDENTITY_POOL to your own value.
-export WORKLOAD_IDENTITY_POOL=wi-pool-amacaskill-k8s-cluster
+set_and_sync_env WORKLOAD_IDENTITY_POOL wi-pool-amacaskill-k8s-cluster
 gcloud iam workload-identity-pools create $WORKLOAD_IDENTITY_POOL \
  --project=$PROJECT_ID \
  --location="global" \
@@ -652,7 +664,8 @@ Create a provider within the pool that trusts your Kubernetes cluster.
 
 ```bash
 # Set WORKLOAD_IDENTITY_POOL_PROVIDER to your own value.
-export WORKLOAD_IDENTITY_POOL_PROVIDER=wi-p-amacaskill-k8s-cluster
+set_and_sync_env WORKLOAD_IDENTITY_POOL_PROVIDER wi-p-amacaskill-k8s-cluster
+set_and_sync_env WORKLOAD_IDENTITY_PROVIDER //iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WORKLOAD_IDENTITY_POOL/providers/$WORKLOAD_IDENTITY_POOL_PROVIDER
 gcloud iam workload-identity-pools providers create-oidc $WORKLOAD_IDENTITY_POOL_PROVIDER \
    --location="global" \
    --workload-identity-pool="$WORKLOAD_IDENTITY_POOL" \
@@ -866,11 +879,76 @@ kubectl exec example --namespace $NAMESPACE -- gcloud auth print-access-token
 
 We recommend installing the driver from a fully released, fully qualified GCSFuse CSI Driver image. Alternatively, you can build and push a custom driver image by following the  [Cloud Build on NON Google Internal projects](development.md#cloud-build-on-non-google-internal-projects) guide.
 
-**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.20.4](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.20.4)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.20.4`.
+**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.21.8](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.21.8)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.21.8`.
 
-This guide demonstrates the preferred approach: installing from a publicly hosted, fully qualified image.
+This guide demonstrates the preferred approach: installing from a publicly hosted, fully qualified image. We provide two options for installing the driver: [Makefile](#installing-the-gcsfuse-csi-driver-with-makefile) and [Cloud Build](#installing-the-gcsfuse-csi-driver-with-cloud-build). Choose one of these methods to install the driver based on your infrastructure requirements.
 
-## Installing the GCSFuse CSI driver
+## Installing the GCSFuse CSI driver with Makefile
+
+1. **Clone the GCSFuse CSI Driver Repository**
+
+```bash
+# Set the REGISTRY and STAGINGVERSION to the latest publicly hosted / fully qualified image.
+set_and_sync_env REGISTRY "gcr.io/gke-release"
+export STAGINGVERSION=$(gcloud container images list-tags $REGISTRY/gcs-fuse-csi-driver --format="value(tags)" | tr ';' '\n' | grep '^v' | sort -V | tail -n 1)
+set_and_sync_env STAGINGVERSION $STAGINGVERSION
+
+# Get tag from STAGINGVERSION
+export TAG=$(echo "$STAGINGVERSION" | cut -d'-' -f1)
+set_and_sync_env TAG $TAG
+
+gcloud compute ssh kub-m --zone=$ZONE --project=$PROJECT_ID
+sudo su -
+
+# The master VM already has `git` and `make` installed.
+# Clone the driver at this particular tag
+git clone --branch $TAG https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver.git
+cd gcs-fuse-csi-driver
+```
+
+2. **Install the driver**
+
+This installs the driver using the latest fully qualified GCSFuse CSI Driver image. If you would like to use a custom driver image, you would need to pass `REGISTRY=<your artifact registry>` and `STAGINGVERSION=<your image tag>` to be the same values you used, when you built and pushed your custom image to your artifact registry.
+
+```bash
+# Export the Workload Identity values you created in the 'Configure Workload Identity section'
+export WORKLOAD_IDENTITY_POOL="wi-pool-amacaskill-k8s-cluster"
+export WORKLOAD_IDENTITY_PROVIDER="//iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WORKLOAD_IDENTITY_POOL/providers/$WORKLOAD_IDENTITY_POOL_PROVIDER"
+# Run make install
+make install \
+  SELF_MANAGED_K8S=true \
+  IDENTITY_POOL=$WORKLOAD_IDENTITY_POOL \
+  IDENTITY_PROVIDER=$WORKLOAD_IDENTITY_PROVIDER \
+  STAGINGVERSION=$STAGINGVERSION
+```
+
+3. **Check the driver status**
+
+```bash 
+kubectl get CSIDriver,Deployment,DaemonSet,Pods -n gcs-fuse-csi-driver
+```
+
+should contain the driver application information, something like
+
+```text
+NAME                                                  ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS                    REQUIRESREPUBLISH   MODES                  AGE
+csidriver.storage.k8s.io/gcsfuse.csi.storage.gke.io   false            true             false             wi-pool-amacaskill-k8s-cluster   true                Persistent,Ephemeral   80s
+
+NAME                                          READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/gcs-fuse-csi-driver-webhook   1/1     1            1           80s
+
+NAME                             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+daemonset.apps/gcsfusecsi-node   3         3         3       3            3           kubernetes.io/os=linux   80s
+
+NAME                                               READY   STATUS    RESTARTS   AGE
+pod/gcs-fuse-csi-driver-webhook-7b74c9c479-m9xqw   1/1     Running   0          80s
+pod/gcsfusecsi-node-7ght5                          2/2     Running   0          80s
+pod/gcsfusecsi-node-8fzhp                          2/2     Running   0          80s
+pod/gcsfusecsi-node-nj9hm                          2/2     Running   0          80s
+```
+
+
+## Installing the GCSFuse CSI driver with Cloud Build
 
 This outlines the steps needed to [install the GCSFuse CSI driver on self-built k8s clusters](./installation.md#installing-with-cloud-build-on-self-built-k8s-clusters)
 
@@ -940,15 +1018,17 @@ pod/gcs-fuse-csi-driver-webhook-5f96ff9b65-hktbf   1/1     Running   0          
 pod/gcsfusecsi-node-8dxzd                          2/2     Running   0          4m22s
 pod/gcsfusecsi-node-hq92b                          2/2     Running   0          4m22s
 pod/gcsfusecsi-node-qw5fb                          2/2     Running   0          4m22s
-
-exit
-exit
 ```
 
 ## Deploy a pod 
 
 Deploy the pod below. Use any existing bucket, or follow instructions [here](https://cloud.google.com/storage/docs/creating-buckets) to create a new Cloud Storage bucket. For [Option 1: (Workload Identity Federation + skipCSIBucketAccessCheck)](#option-1-workload-identity-federation--skipcsibucketaccesscheck), you MUST specify `skipCSIBucketAccessCheck: true` in VolumeAttributes as shown below. For [Option 2: (Link KSA to IAM Service Account)](#option-2-link-ksa-to-iam-service-account) this is not required, and it will work with or without the `skipCSIBucketAccessCheck: true` VolumeAttribute.
  
+```
+vim test-gcsfuse-pod.yaml
+```
+
+Save the following into test-gcsfuse-pod.yaml
 
 ```yaml
 apiVersion: v1
@@ -985,6 +1065,9 @@ spec:
         mountOptions: "implicit-dirs"
         skipCSIBucketAccessCheck: "true" # Required for option 1, optional for option 2.
 ```
+
+Deploy the pod: `kubectl apply -f test-gcsfuse-pod.yaml`
+
 
 ## Deploy a pod with hostnetwork
 
