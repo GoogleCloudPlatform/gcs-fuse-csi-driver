@@ -43,6 +43,8 @@ spec:
       # anywhereCacheTTL: "1h"
       # Optional: Policy for whether the anywhere cache ingests data on the first miss or on the second miss. The default is "admit-on-first-miss", the only other valid value is "admit-on-second-miss".
       # anywhereCacheAdmissionPolicy: "admit-on-first-miss"
+      # Optional: If set, specifies the zones where anywhere caches are created. Otherwise, anywhere caches are created in all of the cluster's available zones. The default is unset.
+      # anywhereCacheZones: "us-central1-a,us-central1-b"
   mountOptions:
   - only-dir=/my-folder/
 ---
