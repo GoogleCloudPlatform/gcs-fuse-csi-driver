@@ -30,11 +30,15 @@ import (
 
 const (
 	// Annotation keys
-	AnnotationPrefix          = "gke-gcsfuse"
-	AnnotationStatus          = AnnotationPrefix + "/bucket-scan-status"
-	AnnotationNumObjects      = AnnotationPrefix + "/bucket-scan-num-objects"
-	AnnotationTotalSize       = AnnotationPrefix + "/bucket-scan-total-size-bytes"
-	AnnotationLastUpdatedTime = AnnotationPrefix + "/bucket-scan-last-updated-time"
+	AnnotationPrefix             = "gke-gcsfuse"
+	AnnotationStatus             = AnnotationPrefix + "/bucket-scan-status"
+	AnnotationNumObjects         = AnnotationPrefix + "/bucket-scan-num-objects"
+	AnnotationTotalSize          = AnnotationPrefix + "/bucket-scan-total-size-bytes"
+	AnnotationLastUpdatedTime    = AnnotationPrefix + "/bucket-scan-last-updated-time"
+	WorkloadTypeKey              = "workloadType"
+	WorkloadTypeServingKey       = "serving"
+	WorkloadTypeTrainingKey      = "training"
+	WorkloadTypeCheckpointingKey = "checkpointing"
 
 	ScanOverride = "override"
 )
@@ -122,4 +126,14 @@ func ParseOverrideStatus(pv *v1.PersistentVolume) (int64, int64, error) {
 		}
 	}
 	return numObjects, totalSizeBytes, nil
+}
+
+// validateWorkloadType checks if the workload type is valid.
+func ValidateWorkloadType(workloadType string) error {
+	switch workloadType {
+	case WorkloadTypeServingKey, WorkloadTypeTrainingKey, WorkloadTypeCheckpointingKey:
+	default:
+		return fmt.Errorf("invalid %q parameter %q", WorkloadTypeKey, workloadType)
+	}
+	return nil
 }
