@@ -31,6 +31,8 @@ import (
 
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/kubernetes"
@@ -52,7 +54,6 @@ const (
 	ephemeralStorageRequestAnnotation                = "gke-gcsfuse/ephemeral-storage-request"
 	metadataPrefetchMemoryLimitAnnotation            = "gke-gcsfuse/metadata-prefetch-memory-limit"
 	metadataPrefetchMemoryRequestAnnotation          = "gke-gcsfuse/metadata-prefetch-memory-request"
-	GcsfuseProfilesAnnotation                        = "gke-gcsfuse/profiles"
 	GCPWorkloadIdentityCredentialConfigMapAnnotation = "gke-gcsfuse/workload-identity-credential-configmap"
 )
 
@@ -190,11 +191,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	if si.Config.EnableGcsfuseProfiles {
 		klog.Infof("GCSFuse profiles feature flag is enabled")
 		// Handle gcsfuse profiles spec modifications if using gcsfuse profile enabled buckets
-		areProfilesEnabled, err := IsGCSFuseProfilesEnabled(pod)
+		profilesEnabled, err := si.IsGCSFuseProfilesEnabled(pod)
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
 		}
-		if areProfilesEnabled {
+		klog.Infof("Pod %q has at least one volume using gcsfuse profiles", pod.Name)
+		if profilesEnabled {
 			err = ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser)
 			if err != nil {
 				return admission.Errored(http.StatusBadRequest, err)
@@ -327,24 +329,71 @@ func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool) e
 		}
 	}
 	klog.Errorf("Could not find gcsfuse sidecar container in pod %s/%s to add gcsfuse profile file cache mounts.", pod.Namespace, pod.Name)
-	return fmt.Errorf("could not find gcsfuse sidecar container in pod %s/%s to add gcsfuse profile file cache mounts.", pod.Namespace, pod.Name)
+	return fmt.Errorf("could not find gcsfuse sidecar container in pod %s/%s to add gcsfuse profile file cache mounts", pod.Namespace, pod.Name)
 }
 
-// Checks if the pod has gcsfuse profiles annotation. returns true if the annotation is present and set to "true" (case insensitive), false otherwise
-func IsGCSFuseProfilesEnabled(pod *corev1.Pod) (bool, error) {
-	// Check if pod has gcsfuse profiles annotation set to true
-	if pod.Annotations == nil {
-		return false, nil
+// profileStorageClass returns the StorageClass from a volume if the volume is a PVC and if a storage class
+// is found that is using the GCSFuse profiles feature, otherwise, an error is returned.
+func (si *SidecarInjector) profileStorageClass(namespace string, volume corev1.Volume) (*storagev1.StorageClass, error) {
+	pvc := volume.PersistentVolumeClaim
+	if pvc == nil {
+		return nil, nil
 	}
-	value, ok := pod.Annotations[GcsfuseProfilesAnnotation]
-	if !ok {
-		return false, nil
-	}
-	valueAsBool, err := ParseBool(value)
+	pvcObj, err := si.GetPVC(namespace, pvc.ClaimName)
 	if err != nil {
-		return false, fmt.Errorf("the acceptable values for %q are 'True', 'true', 'false' or 'False'", GcsfuseProfilesAnnotation)
+		if apierrors.IsNotFound(err) {
+			klog.Warningf("failed to determine if the volume is using the profiles feature: pvc %q was not found", pvc.ClaimName)
+			return nil, nil
+		}
+		klog.Errorf("failed to get pvc %q: %v", pvc.ClaimName, err)
+		return nil, nil
 	}
-	return valueAsBool, nil
+	if pvcObj == nil {
+		klog.Warningf("failed to determine if the volume is using the profiles feature: pvc %q is nil", pvc.ClaimName)
+		return nil, nil
+	}
+	scNamePtr := pvcObj.Spec.StorageClassName
+	if scNamePtr == nil {
+		klog.Infof("storage class name is nil for pvc %q, assuming the profiles feature is not used", pvcObj.Name)
+		return nil, nil
+	}
+	scName := *scNamePtr
+	if scName == "" {
+		klog.Infof("storage class name is empty for pvc %q, assuming the profiles feature is not used", pvcObj.Name)
+		return nil, nil
+	}
+	sc, err := si.ScLister.Get(scName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.Warningf("failed to determine if the storage class is using the profiles feature: sc %q was not found", scName)
+			return nil, nil
+		}
+		klog.Errorf("failed to get storage class %q: %v", scName, err)
+		return nil, nil
+	}
+	workloadType, ok := sc.Parameters[putil.WorkloadTypeKey]
+	if !ok {
+		klog.Infof("workloadType parameter not found, assuming the volume is not using the profiles feature")
+		return nil, nil
+	}
+	if err := putil.ValidateWorkloadType(workloadType); err != nil {
+		return nil, err
+	}
+	return sc, nil
+}
+
+// Checks if any volume is using the gcsfuse profiles feature. Returns an error in the case of a failure.
+func (si *SidecarInjector) IsGCSFuseProfilesEnabled(pod *corev1.Pod) (bool, error) {
+	for _, volume := range pod.Spec.Volumes {
+		sc, err := si.profileStorageClass(pod.Namespace, volume)
+		if err != nil {
+			return false, err
+		}
+		if sc != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // volumeExists checks if a volume with a specific name already exists in the pod's volumes
