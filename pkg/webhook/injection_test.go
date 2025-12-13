@@ -1613,8 +1613,8 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 	}{
 		{
 			testName:    "fuse sidecar present, injection successful with sc",
-			pod:         getInputPodForMetadataPrefetchWitSCTest("1", "true", false),
-			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("1", true, "true", false),
+			pod:         getInputPodForMetadataPrefetchWitSCTest("1", false),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("1", true, false),
 			pv: &corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "my-pv1",
@@ -1634,14 +1634,15 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 					Name: "my-sc1",
 				},
 				Parameters: map[string]string{
+					"workloadType":                   "serving",
 					"gcsfuseMetadataPrefetchOnMount": "true",
 				},
 			},
 		},
 		{
 			testName:    "fuse sidecar present, no injection with no sc",
-			pod:         getInputPodForMetadataPrefetchWitSCTest("4", "true", false),
-			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("4", false, "true", false),
+			pod:         getInputPodForMetadataPrefetchWitSCTest("4", false),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("4", false, false),
 			pv: &corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "my-pv4",
@@ -1664,8 +1665,8 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 		},
 		{
 			testName:    "fuse sidecar present, no injection, one volume references prefetch and disables it",
-			pod:         getInputPodForMetadataPrefetchWitSCTest("2", "true", true),
-			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("2", false, "true", true),
+			pod:         getInputPodForMetadataPrefetchWitSCTest("2", true),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("2", false, true),
 			pv: &corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "my-pv2",
@@ -1691,8 +1692,8 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 		},
 		{
 			testName:    "fuse sidecar present, no injection, sc disables",
-			pod:         getInputPodForMetadataPrefetchWitSCTest("5", "true", false),
-			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("5", false, "true", false),
+			pod:         getInputPodForMetadataPrefetchWitSCTest("5", false),
+			expectedPod: getExpectedPodForMetadataPrefetchWithSCTest("5", false, false),
 			pv: &corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "my-pv5",
@@ -1725,6 +1726,7 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 			}
 			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
 			si.Config = &Config{EnableGcsfuseProfiles: true}
+			si.MetadataPrefetchConfig.EnableGcsfuseProfiles = true
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			fakeClient := fake.NewSimpleClientset()
@@ -1775,7 +1777,7 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 	}
 }
 
-func getInputPodForMetadataPrefetchWitSCTest(modifier string, enableProfiles string, includeVolumeThatMentionsPrefetch bool) *corev1.Pod {
+func getInputPodForMetadataPrefetchWitSCTest(modifier string, includeVolumeThatMentionsPrefetch bool) *corev1.Pod {
 	volumes := []corev1.Volume{
 		{
 			Name: "my-volume",
@@ -1797,11 +1799,6 @@ func getInputPodForMetadataPrefetchWitSCTest(modifier string, enableProfiles str
 		})
 	}
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				"gke-gcsfuse/profiles": enableProfiles,
-			},
-		},
 		Spec: corev1.PodSpec{
 			InitContainers: []corev1.Container{
 				{
@@ -1830,7 +1827,7 @@ func getInputPodForMetadataPrefetchWitSCTest(modifier string, enableProfiles str
 	}
 }
 
-func getExpectedPodForMetadataPrefetchWithSCTest(modifier string, enableMP bool, enableProfiles string, includeVolumeThatMentionsPrefetch bool) *corev1.Pod {
+func getExpectedPodForMetadataPrefetchWithSCTest(modifier string, enableMP bool, includeVolumeThatMentionsPrefetch bool) *corev1.Pod {
 	volumes := []corev1.Volume{
 		{
 			Name: "my-volume",
@@ -1887,11 +1884,6 @@ func getExpectedPodForMetadataPrefetchWithSCTest(modifier string, enableMP bool,
 		}, initContainerArray[1:]...)...)
 	}
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				"gke-gcsfuse/profiles": enableProfiles,
-			},
-		},
 		Spec: corev1.PodSpec{
 			InitContainers: initContainerArray,
 			Containers: []corev1.Container{
