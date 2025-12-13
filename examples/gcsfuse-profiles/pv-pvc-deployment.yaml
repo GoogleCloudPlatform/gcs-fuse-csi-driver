@@ -76,8 +76,6 @@ spec:
         app: my-app
       annotations:
         gke-gcsfuse/volumes: "true"
-        # Feature flag
-        gke-gcsfuse/profiles: "true"
     spec:
       serviceAccountName: my-ksa
       containers:

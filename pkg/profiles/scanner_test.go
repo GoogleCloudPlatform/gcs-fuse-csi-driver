@@ -45,6 +45,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
+	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
@@ -72,7 +73,7 @@ const (
 )
 
 var (
-	validSCParams = map[string]string{workloadTypeKey: workloadTypeServingKey}
+	validSCParams = map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeServingKey}
 	validSC       = createStorageClass(testSCName, validSCParams)
 	podLabels     = map[string]string{profileManagedLabelKey: profileManagedLabelValue}
 	scanResult    = &bucketInfo{
@@ -398,7 +399,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Training - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeTrainingKey}),
+				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeTrainingKey}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -409,7 +410,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Serving - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeServingKey}),
+				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeServingKey}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -420,7 +421,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Checkpointing - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeCheckpointingKey}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -431,7 +432,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Irrelevant - Wrong Driver - Should return irrelevant and not pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeCheckpointingKey}),
 			},
 			wantRelevant:      false,
 			wantIsPendingScan: false,
@@ -448,7 +449,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Error - Invalid Workload Type - Should return error",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: "blah"}),
+				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: "blah"}),
 			},
 			wantErr:           true,
 			wantIsPendingScan: false,
