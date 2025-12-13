@@ -36,10 +36,6 @@ import (
 
 const (
 	// StorageClass param keys.
-	workloadTypeKey                          = "workloadType"
-	workloadTypeServingKey                   = "serving"
-	workloadTypeTrainingKey                  = "training"
-	workloadTypeCheckpointingKey             = "checkpointing"
 	fuseFileCacheMediumPriorityKey           = "fuseFileCacheMediumPriority"
 	fuseMemoryAllocatableFactorKey           = "fuseMemoryAllocatableFactor"
 	fuseEphemeralStorageAllocatableFactorKey = "fuseEphemeralStorageAllocatableFactor"
@@ -790,11 +786,11 @@ func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}
 	}
 
 	// Validate the workloadType parameter for the profile.
-	workloadType, ok := sc.Parameters[workloadTypeKey]
+	workloadType, ok := sc.Parameters[profilesutil.WorkloadTypeKey]
 	if !ok {
 		return nil, fmt.Errorf("missing workloadType parameter in StorageClass %q", sc.Name)
 	}
-	if err := validateWorkloadType(workloadType); err != nil {
+	if err := profilesutil.ValidateWorkloadType(workloadType); err != nil {
 		return nil, fmt.Errorf("failed to validate workloadType parameter in StorageClass %q: %v", sc.Name, err)
 	}
 
@@ -848,16 +844,6 @@ func selectFromMapIfKeysMatch(target map[string]string, keys map[string]struct{}
 		}
 	}
 	return result
-}
-
-// validateWorkloadType checks if the workload type is valid.
-func validateWorkloadType(workloadType string) error {
-	switch workloadType {
-	case workloadTypeServingKey, workloadTypeTrainingKey, workloadTypeCheckpointingKey:
-	default:
-		return fmt.Errorf("invalid %q parameter %q", workloadTypeKey, workloadType)
-	}
-	return nil
 }
 
 // isGpuNodeByResource checks if the node has allocatable nvidia.com/gpu resources.

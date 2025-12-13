@@ -1473,15 +1473,15 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	if scParams == nil {
 		return nil, false, nil
 	}
-	workloadType, ok := scParams[workloadTypeKey]
+	workloadType, ok := scParams[profilesutil.WorkloadTypeKey]
 	if !ok {
-		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", workloadTypeKey, sc.Name, pv.Name)
+		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", profilesutil.WorkloadTypeKey, sc.Name, pv.Name)
 		return nil, false, nil
 	}
 
 	// ---- At this stage, there is clearly a customer intent to use the scanner feature, so we start logging warnings -----
 
-	if err := validateWorkloadType(workloadType); err != nil {
+	if err := profilesutil.ValidateWorkloadType(workloadType); err != nil {
 		return nil, false, status.Errorf(codes.InvalidArgument, "failed to validate workload type: %v", err)
 	}
 
