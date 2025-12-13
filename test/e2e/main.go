@@ -45,6 +45,7 @@ var (
 	gkeGcloudCommand               = flag.String("gke-gcloud-command", "gcloud", "(gke only) gcloud command used to create a cluster. Modify if you need to pass custom gcloud to create cluster.")
 	gkeGcloudArgs                  = flag.String("gke-gcloud-args", "", "(gke only) Additional arguments to custom gcloud command.")
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "enables bucket access check in sidecar")
+	enableGcsFuseProfiles          = flag.Bool("enable-gcsfuse-profiles", false, "enables gcsfuse profiles for e2e tests")
 
 	// Test infrastructure flags.
 	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -117,6 +118,7 @@ func main() {
 		GkeGcloudCommand:               *gkeGcloudCommand,
 		GkeGcloudArgs:                  *gkeGcloudArgs,
 		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
+		EnableGcsFuseProfiles:          *enableGcsFuseProfiles,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {
