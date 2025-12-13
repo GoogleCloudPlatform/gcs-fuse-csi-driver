@@ -288,6 +288,7 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if !testParams.SupportsNativeSidecar {
 		skipTests = append(skipTests, "init.container", "fast.termination")
+		skipTests = append(skipTests, "should.not.pass.profile")
 		skipTests = append(skipTests, "metadata.prefetch")
 	}
 
