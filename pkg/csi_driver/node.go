@@ -230,8 +230,19 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Register metrics collector.
 	// It is idempotent to register the same collector in node republish calls.
 	if s.driver.config.MetricsManager != nil && !disableMetricsCollection {
-		klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-		s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, bucketName)
+		// Check if the pod has too many mounts
+		count, err := s.getMountsCount(string(pod.UID), targetPath)
+		if err != nil {
+			klog.Errorf("failed to get mount count: %v", err)
+		} else if count >= 20 {
+			klog.Warningf("Pod %s has %d mounts, disabling metrics for volume %s", pod.UID, count, bucketName)
+			disableMetricsCollection = true
+		}
+
+		if !disableMetricsCollection {
+			klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, bucketName)
+		}
 	}
 
 	// Check if the sidecar container is still required,
@@ -441,4 +452,25 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 		}
 	}
 	return ""
+}
+
+func (s *nodeServer) getMountsCount(podUID string, currentTargetPath string) (int, error) {
+	mps, err := s.mounter.List()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, m := range mps {
+		if m.Path == currentTargetPath {
+			continue
+		}
+		pid, _, err := util.ParsePodIDVolumeFromTargetpath(m.Path)
+		if err != nil {
+			continue
+		}
+		if pid == podUID {
+			count++
+		}
+	}
+	return count, nil
 }
