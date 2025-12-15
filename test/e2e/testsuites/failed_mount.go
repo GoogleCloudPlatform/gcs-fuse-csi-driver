@@ -76,6 +76,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	if err != nil {
 		klog.Fatalf(`env variable "%s" could not be converted to boolean`, enableSidecarBucketAccessCheck)
 	}
+	// In 1.28 (non native sidecar), when the sidecar is injected as a main
+	// container, the gcsFuseSidecarContainerImage always returns "". This
+	// prevents features like machineType defaults and sidecar bucket access
+	// check from being enabled.
+	enableSidecarBucketAccessCheck = enableSidecarBucketAccessCheck && supportsNativeSidecar
 
 	saVolInjectEnvVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
 	supportSAVolInjection, err := strconv.ParseBool(saVolInjectEnvVar)
