@@ -31,12 +31,14 @@ To use specific features for the Cloud Storage FUSE CSI driver, you would need t
 | [Metadata prefetch](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-perf#metadata-prefetch) | 1.32.1-gke.1357001 or later.                                                                |
 | Streaming writes                                                                                       | 1.32.1-gke.1753001 or later, enabled by default on 1.33.2-gke.4655000 or later.             |
 | Configure kernel read ahead                                                                            | 1.32.2-gke.1297001 or later.                                                                |
-| Node restart support                                                                                   | 1.33.1-gke.1959000 or later.                                                                |
-| Support for mounting the same {{storage_name}} bucket to the same Pod using different PersistentVolumes   | 1.33.0-gke.1932000 or later.                                                                |
+| Node restart support                                                                                   | 1.33.1-gke.1959000 or later on nodes without [Graceful Node Shutdown enabled](https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/#graceful-node-shutdown)                                                                |
+| Support for mounting the same GCS bucket to the same Pod using different PersistentVolumes   | 1.33.0-gke.1932000 or later.                                                                |
 | [Host networking support](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-setup#access-for-pods-with-host-network) | 1.33.3-gke.1226000 or later, {{standard_mode}} clusters only.                                        |
 | [Buffered read](https://cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-perf#buffered-read)       | 1.34.0-gke.2011000 or later.                                                                |
 
-The new CSI driver version will be first available in GKE Rapid channel on its release date. For Regular and Stable channels, plan for a 4-week and 12-week wait respectively.
+Note: For node retsart support on clusters running earlier versions or node with [Graceful Node Shutdown enabled](https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/#graceful-node-shutdown), Pods are unable to recover and you need to redeploy. Graceful Node Shutdown is only default enabled for Preemptible, Spot VMs, Confidential VMs, GPUs VMs, TPU VMs, and Z3, C4, C3 Metal machine families.
+
+The new CSI driver version will be first available in GKE Rapid channel on its release date. For Regular and Stable channels, plan for a 4-week and 12-week wait respectively. 
 
 ## Releases
 
