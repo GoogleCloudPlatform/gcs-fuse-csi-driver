@@ -307,11 +307,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	disallowedFlags, err := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate disallowed flags map err:%v", err)
-	}
-
+	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	fuseMountOptions = removeDisallowedMountOptions(fuseMountOptions, disallowedFlags)
 	// Start to mount
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
