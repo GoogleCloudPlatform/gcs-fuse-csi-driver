@@ -45,7 +45,6 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
-	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
@@ -73,7 +72,7 @@ const (
 )
 
 var (
-	validSCParams = map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeServingKey}
+	validSCParams = map[string]string{}
 	validSC       = createStorageClass(testSCName, validSCParams)
 	podLabels     = map[string]string{profileManagedLabelKey: profileManagedLabelValue}
 	scanResult    = &bucketInfo{
@@ -283,7 +282,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 // createStorageClass is a helper function to create a StorageClass object.
 func createStorageClass(name string, params map[string]string) *storagev1.StorageClass {
 	return &storagev1.StorageClass{
-		ObjectMeta:  metav1.ObjectMeta{Name: name},
+		ObjectMeta:  metav1.ObjectMeta{Name: name, Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 		Provisioner: csiDriverName,
 		Parameters:  params,
 	}
@@ -399,7 +398,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Training - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeTrainingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -410,7 +409,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Serving - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeServingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -421,7 +420,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Checkpointing - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -432,7 +431,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Irrelevant - Wrong Driver - Should return irrelevant and not pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: profilesutil.WorkloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      false,
 			wantIsPendingScan: false,
@@ -442,16 +441,6 @@ func TestCheckPVRelevance(t *testing.T) {
 			name:              "Irrelevant - SC is nil - Should return irrelevant and not pending scan",
 			pv:                createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			wantRelevant:      false,
-			wantIsPendingScan: false,
-			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
-		},
-		{
-			name: "Error - Invalid Workload Type - Should return error",
-			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
-			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{profilesutil.WorkloadTypeKey: "blah"}),
-			},
-			wantErr:           true,
 			wantIsPendingScan: false,
 			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
@@ -628,6 +617,7 @@ func TestSyncPV(t *testing.T) {
 	basePV := createPV(pvName, scName, bucketName, csiDriverName, nil, nil, nil)
 	relevantSC := createStorageClass(scName, validSCParams)
 	irrelevantSC := createStorageClass("irrelevant-sc", map[string]string{"some": "param"})
+	irrelevantSC.Labels = nil
 	pvIrrelevantSC := createPV("irrelevant-pv", "irrelevant-sc", bucketName, csiDriverName, nil, nil, nil)
 
 	overrideAnnotations := map[string]string{
@@ -1198,45 +1188,45 @@ func TestGetDurationAttribute(t *testing.T) {
 	}{
 		{
 			name:            "No bucket scan timeout attribute - Use default",
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
 			wantTimeout:     &defaultScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "No bucket scan resync period attribute - Use default",
-			attributeKey:    volumeAttributeScanResyncPeriodKey,
+			attributeKey:    scanResyncPeriodKey,
 			defaultDuration: defaultScanResyncPeriodDuration,
 			wantTimeout:     &defaultScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan timeout attribute - Override",
-			attributes:      map[string]string{volumeAttributeScanTimeoutKey: "42m"},
+			attributes:      map[string]string{scanTimeoutKey: "42m"},
 			defaultDuration: defaultScanTimeoutDuration,
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributeKey:    scanTimeoutKey,
 			wantTimeout:     &customScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan resync period attribute - Override",
-			attributes:      map[string]string{volumeAttributeScanResyncPeriodKey: "5m"},
+			attributes:      map[string]string{scanResyncPeriodKey: "5m"},
 			defaultDuration: defaultScanResyncPeriodDuration,
-			attributeKey:    volumeAttributeScanResyncPeriodKey,
+			attributeKey:    scanResyncPeriodKey,
 			wantTimeout:     &customScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Invalid duration - Error",
-			attributes:      map[string]string{volumeAttributeScanTimeoutKey: "5min"},
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributes:      map[string]string{scanTimeoutKey: "5min"},
+			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
 			wantErr:         true,
 		},
 		{
 			name:            "Non-positive duration - Error",
-			attributes:      map[string]string{volumeAttributeScanTimeoutKey: "0s"},
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributes:      map[string]string{scanTimeoutKey: "0s"},
+			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
 			wantErr:         true,
 		},
@@ -1246,7 +1236,7 @@ func TestGetDurationAttribute(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, tc.attributes)
 			f := newTestFixture(t)
-			timeout, err := f.scanner.getDurationAttribute(pv, tc.attributeKey, tc.defaultDuration)
+			timeout, err := f.scanner.getDurationAttribute(pv, nil, tc.attributeKey, tc.defaultDuration)
 
 			if tc.wantErr {
 				if err == nil {
@@ -1277,7 +1267,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	status := scanCompleted
 
 	// Call the function to update annotations.
-	if err := f.scanner.updatePVScanResult(context.Background(), pv, bucketI, status); err != nil {
+	if err := f.scanner.updatePVScanResult(context.Background(), pv, nil, bucketI, status); err != nil {
 		t.Fatalf("updatePVScanResult() returned error: %v", err)
 	}
 
@@ -1588,7 +1578,7 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 	// Run tests
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			policy, err := getAnywhereCacheAdmissionPolicyFromPV(tc.pv)
+			policy, err := anywhereCacheAdmissionPolicyVal(tc.pv, nil)
 
 			if tc.expectError {
 				if err == nil {
@@ -1670,7 +1660,7 @@ func TestGetAnywhereCacheTtlFromPV(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			duration, err := getAnywhereCacheTTLFromPV(tc.pv)
+			duration, err := anywhereCacheTTLVal(tc.pv, nil)
 
 			if tc.expectError {
 				if err == nil {
@@ -1775,6 +1765,247 @@ func TestCreateAnywhereCache(t *testing.T) {
 				},
 			},
 			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-a,zone-b",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones wildcard - create all - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+				"zone-c": {
+					err: errRequeueNeeded,
+				},
+				"zone-d": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "*",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones empty string - create all - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+				"zone-c": {
+					err: errRequeueNeeded,
+				},
+				"zone-d": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "*",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones none - create none - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "none",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "user provided zones not in available zones - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantErr: true,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-e,zone-f",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "user provided zones with inalid form - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantErr: true,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-e zone-f",
+							},
+						},
+					},
+				},
+			},
 			storageControlClient: mockStorageControlClient{
 				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
 					return &control.CreateAnywhereCacheOperation{}, nil
@@ -2120,7 +2351,8 @@ func TestCreateAnywhereCache(t *testing.T) {
 
 			s := &Scanner{eventRecorder: fakeRecorder, config: &ScannerConfig{ClusterLocation: "us-central1", ProjectNumber: "123"}, storageControlClient: tc.storageControlClient}
 
-			gotResults, err := s.syncAnywhereCache(ctx, tc.pv)
+			anywhereCacheProvidedZones, _ := anywhereCacheZonesVal(tc.pv, nil)
+			gotResults, err := s.syncAnywhereCache(ctx, tc.pv, nil, anywhereCacheProvidedZones)
 
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("wantErr: %t, err: %v", tc.wantErr, err)
