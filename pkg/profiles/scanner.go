@@ -69,6 +69,7 @@ import (
 	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	compute "google.golang.org/api/compute/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -789,9 +790,9 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
 		if bucketI != nil {
-			_, ok, err := s.calculateLastScanTime(pv)
+			_, ok, err := s.calculateLastScanTime(pv, sc)
 			if err != nil {
-				return status.Errorf(codes.Internal, "failed to calculate last scan time for PV %q: %v", pvName, err)
+				return fmt.Errorf("failed to calculate last scan time for PV %q: %w", pvName, err)
 			}
 			if !ok {
 				// The PV is relevant, but hasn't been scanned (no last scan timestamp).
@@ -860,20 +861,20 @@ func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
 	return nil
 }
 
-func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, sc *storagev1.StorageClass, attributeKey string, defaultDuration time.Duration) (*time.Duration, error) {
+func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, sc *storagev1.StorageClass, attributeKey string, defaultDuration time.Duration) (time.Duration, error) {
 	if durationStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, attributeKey); ok {
 		parsedDuration, err := time.ParseDuration(durationStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
+			return time.Duration(0), fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
 		}
 		if parsedDuration <= 0 {
-			return nil, fmt.Errorf("non-positive duration for %q: %q", attributeKey, durationStr)
+			return time.Duration(0), fmt.Errorf("non-positive duration for %q: %q", attributeKey, durationStr)
 		}
 		klog.Infof("PV %q: Using %q key from VolumeAttributes: %q", pv.Name, attributeKey, parsedDuration)
-		return &parsedDuration, nil
+		return parsedDuration, nil
 	}
 	klog.V(6).Infof("PV %q: No %q key in PV or StorageClass. Using default %q", pv.Name, attributeKey, defaultDuration)
-	return &defaultDuration, nil
+	return defaultDuration, nil
 }
 
 // bypassScanForOverride handles a PV with the override mode set.
@@ -949,7 +950,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationStartSucceeded, "Started bucket scan for PV %q, bucket %q, directory %q, with timeout %s", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
 		klog.Infof("Bucket scan operation starting for PV %q, bucket %q, dir %q, timeout %q", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
 
-		err = s.scanBucket(ctx, bucketI, *currentScanTimeout, pv)
+		err = s.scanBucket(ctx, bucketI, currentScanTimeout, pv)
 
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -1437,26 +1438,30 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, scanStatus)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
 	if err != nil {
-		klog.Errorf("Failed to update annotations on PV %q with status %q: %v", pv.Name, scanStatus, err)
-		return err
+		return fmt.Errorf("failed to update annotations on PV %q with status %q: %w", pv.Name, scanStatus, err)
 	}
 	klog.Infof("Successfully updated annotations on PV %q with status %q", pv.Name, scanStatus)
+	if err := s.updateLastSuccessfulScanInMemory(pv, sc, currentTime); err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed to update lastSuccessfulScan in-memory map for PV %q: %v", pv.Name, err)
+	}
+	return nil
+}
 
+// updateLastSuccessfulScanInMemory updates the trackedPVs map for the given PersistentVolume.
+// It records the lastScanTime and calculates the next scan time based on the resync period
+// configured in the PV or StorageClass. This operation is thread-safe.
+func (s *Scanner) updateLastSuccessfulScanInMemory(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, lastScanTime time.Time) error {
 	resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodDuration)
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
+		return fmt.Errorf("bucket scan resync period configuration error: %v", err)
 	}
-
-	// Update in-memory map only on terminal state updates.
-	if scanStatus == scanCompleted || scanStatus == scanTimeout || scanStatus == profilesutil.ScanOverride {
-		s.pvMutex.Lock()
-		s.trackedPVs[pv.Name] = syncInfo{
-			lastSuccessfulScan: currentTime,
-			nextScan:           currentTime.Add(*resyncPeriod),
-		}
-		s.pvMutex.Unlock()
-		klog.V(6).Infof("Updated lastSuccessfulScan map for PV %q to %q, next scan: %q", pv.Name, currentTime, currentTime.Add(*resyncPeriod))
+	s.pvMutex.Lock()
+	s.trackedPVs[pv.Name] = syncInfo{
+		lastSuccessfulScan: lastScanTime,
+		nextScan:           lastScanTime.Add(resyncPeriod),
 	}
+	s.pvMutex.Unlock()
+	klog.V(6).Infof("Updated lastSuccessfulScan in-memory map for PV %q to %q, next scan: %q", pv.Name, lastScanTime, lastScanTime.Add(resyncPeriod))
 	return nil
 }
 
@@ -1523,20 +1528,21 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 		overrideI.isOverride = true
 		return &overrideI, false, nil
 	}
-	lastScanTime, found, err := s.calculateLastScanTime(pv)
+
+	lastScanTime, found, err := s.calculateLastScanTime(pv, sc)
 	if err != nil {
-		return nil, false, status.Errorf(codes.Internal, "failed to calculate last scan time: %v", err)
+		return nil, false, fmt.Errorf("failed to calculate last scan time: %w", err)
 	}
 
 	if found {
-		elapsed := timeNow().Sub(lastScanTime)
-
 		resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodDuration)
 		if err != nil {
 			return nil, false, status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
 		}
 
-		if elapsed < *resyncPeriod {
+		elapsed := timeNow().Sub(lastScanTime)
+
+		if elapsed < resyncPeriod {
 			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan, which is less than resync period %q", pv.Name, elapsed.Round(time.Second), resyncPeriod)
 			return &bucketI, false, nil
 		}
@@ -1563,26 +1569,31 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 // calculateLastScanTime returns the last successful scan of a PV. If it doesn't exist in
 // memory (e.g. first time scanning the PV), it checks the PV annotatins. The function
 // returns a boolean to indicate if the value was found, otherwise, it returns an error.
-func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, bool, error) {
+func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (time.Time, bool, error) {
 	// Check if the last scan time appears in memory first.
 	s.pvMutex.RLock()
-	syncInfo, ok := s.trackedPVs[pv.Name]
+	info, ok := s.trackedPVs[pv.Name]
 	s.pvMutex.RUnlock()
 	if ok {
-		klog.V(6).Infof("PV %q: Found last scan time in memory: %v, next scan: %v", pv.Name, syncInfo.lastSuccessfulScan, syncInfo.nextScan)
-		return syncInfo.lastSuccessfulScan, true, nil
+		klog.V(6).Infof("PV %q: Found last scan time in memory: %v, next scan: %v", pv.Name, info.lastSuccessfulScan, info.nextScan)
+		return info.lastSuccessfulScan, true, nil
 	}
 
-	// Check if the last scan time appears in the PV annotations.
+	// Check if the last scan time appears in the PV annotations. This
+	// can happen if the controller restarted and lost the in-memory state.
 	lastScanTimeFromAnnotation, ok := pv.Annotations[profilesutil.AnnotationLastUpdatedTime]
 	if !ok {
 		return time.Time{}, false, nil
 	}
 	parsedTime, err := time.Parse(time.RFC3339, lastScanTimeFromAnnotation)
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
+		return time.Time{}, false, status.Errorf(codes.Internal, "PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
 	}
 	klog.V(6).Infof("PV %q: Found last scan time in annotation: %q", pv.Name, lastScanTimeFromAnnotation)
+	if err := s.updateLastSuccessfulScanInMemory(pv, sc, parsedTime); err != nil {
+		return time.Time{}, false, status.Errorf(codes.InvalidArgument, "failed to update lastSuccessfulScan in-memory map for PV %q: %v", pv.Name, err)
+
+	}
 	return parsedTime, true, nil
 }
 
