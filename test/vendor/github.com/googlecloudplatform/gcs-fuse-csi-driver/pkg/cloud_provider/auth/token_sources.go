@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
@@ -32,10 +33,20 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	sts "google.golang.org/api/sts/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/klog/v2"
+)
+
+const (
+	// Max QPS to allow through to the token URL.
+	tokenURLQPS = .05 // back off to once every 20 seconds when failing
+	// Maximum burst of requests to token URL before limiting.
+	tokenURLBurst = 3
 )
 
 // GCPTokenSource generates a GCP IAM SA token with a Kubernetes Service Account token.
@@ -216,4 +227,59 @@ func (ts *GCPTokenSource) fetchGCPSAToken(ctx context.Context, identityBindingTo
 	}
 
 	return token, nil
+}
+
+// AltTokenSource is the structure holding the data for the functionality needed to generates tokens.
+type AltTokenSource struct {
+	oauthClient *http.Client
+	tokenURL    string
+	tokenBody   string
+	throttle    flowcontrol.RateLimiter
+}
+
+// Token returns a token which may be used for authentication.
+func (a *AltTokenSource) Token() (*oauth2.Token, error) {
+	a.throttle.Accept()
+
+	return a.token()
+}
+
+func (a *AltTokenSource) token() (*oauth2.Token, error) {
+	req, err := http.NewRequest("POST", a.tokenURL, strings.NewReader(a.tokenBody))
+	if err != nil {
+		return nil, err
+	}
+	res, err := a.oauthClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if err := googleapi.CheckResponse(res); err != nil {
+		return nil, err
+	}
+	var tok struct {
+		AccessToken string    `json:"accessToken"`
+		ExpireTime  time.Time `json:"expireTime"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&tok); err != nil {
+		return nil, err
+	}
+
+	return &oauth2.Token{
+		AccessToken: tok.AccessToken,
+		Expiry:      tok.ExpireTime,
+	}, nil
+}
+
+// NewAltTokenSource constructs a new alternate token source for generating tokens.
+func NewAltTokenSource(ctx context.Context, tokenURL, tokenBody string) oauth2.TokenSource {
+	client := oauth2.NewClient(ctx, google.ComputeTokenSource(""))
+	a := &AltTokenSource{
+		oauthClient: client,
+		tokenURL:    tokenURL,
+		tokenBody:   tokenBody,
+		throttle:    flowcontrol.NewTokenBucketRateLimiter(tokenURLQPS, tokenURLBurst),
+	}
+
+	return oauth2.ReuseTokenSource(nil, a)
 }

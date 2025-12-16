@@ -103,7 +103,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
 
 	// Recommend VolumeAttributes if the gcsfuse profiles feature is enabled.
-	profilesEnabled := strings.ToLower(pod.Annotations[webhook.GcsfuseProfilesAnnotation]) == util.TrueStr && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
+	profilesEnabled := s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
 	var profile *profiles.ProfileConfig
 	if profilesEnabled {
 		klog.V(4).Infof("NodePublishVolume gcsfuse profiles feature is enabled for pod %s/%s", pod.Namespace, pod.Name)
@@ -119,8 +119,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if err != nil {
 			return nil, fmt.Errorf("failed to build profile config: %w", err)
 		}
-		// Merge profile VolumeAttributes into the VolumeContext, respecting pre-existing keys.
-		vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
+		if profile != nil {
+			// Merge profile VolumeAttributes into the VolumeContext, respecting pre-existing keys.
+			vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
+		}
 	}
 
 	// Validate arguments
@@ -296,7 +298,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
 
-	if profilesEnabled {
+	if profilesEnabled && profile != nil {
 		// Merge the recommended mount options with user's mount options if the profiles feature
 		// is enabled. This operation respects the user's mount options if they are duplicated.
 		fuseMountOptions, err = profile.MergeRecommendedMountOptionsOnMissingKeys(fuseMountOptions)
@@ -305,11 +307,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	disallowedFlags, err := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate disallowed flags map err:%v", err)
-	}
-
+	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	fuseMountOptions = removeDisallowedMountOptions(fuseMountOptions, disallowedFlags)
 	// Start to mount
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {

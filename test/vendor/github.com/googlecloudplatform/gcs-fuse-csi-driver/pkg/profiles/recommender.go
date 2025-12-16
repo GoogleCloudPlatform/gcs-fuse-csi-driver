@@ -36,10 +36,6 @@ import (
 
 const (
 	// StorageClass param keys.
-	workloadTypeKey                          = "workloadType"
-	workloadTypeServingKey                   = "serving"
-	workloadTypeTrainingKey                  = "training"
-	workloadTypeCheckpointingKey             = "checkpointing"
 	fuseFileCacheMediumPriorityKey           = "fuseFileCacheMediumPriority"
 	fuseMemoryAllocatableFactorKey           = "fuseMemoryAllocatableFactor"
 	fuseEphemeralStorageAllocatableFactorKey = "fuseEphemeralStorageAllocatableFactor"
@@ -179,37 +175,43 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	pv, err := params.Clientset.GetPV(volumeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "pv %q not found: %v", volumeName, err)
+			// Skip the profiles feature for ephemeral volumes.
+			klog.Warningf("pv %q not found: %v, disabling profiles feature for this volume", volumeName, err)
+			return nil, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get pv %q: %v", volumeName, err)
-	}
-
-	// Get the PV details from the PV object's annotations.
-	pvDetails, err := buildPVDetails(pv)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
 	}
 
 	// Get the StorageClassName from the PV object.
 	scName := pv.Spec.StorageClassName
 	if scName == "" {
-		// Since the feature is opt-in, the user should specify a StorageClassName.
-		return nil, status.Errorf(codes.InvalidArgument, "pv %q has empty StorageClassName", pv.Name)
+		klog.Warningf("pv %q has empty StorageClassName, disabling profiles feature for this volume", pv.Name)
+		return nil, nil
 	}
 
 	// Get the StorageClass object from the StorageClassName.
 	sc, err := params.Clientset.GetSC(scName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "sc %q not found: %v", scName, err)
+			klog.Warningf("sc %q not found: %v, disabling profiles feature for this volume", scName, err)
+			return nil, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get StorageClass %q: %v", scName, err)
 	}
+
+	// At this point, we are sure that the user is attempting to use the volume with
+	// the profiles feature, so we start returning errors.
 
 	// Get the scDetails from the StorageClass object.
 	scDetails, err := buildSCDetails(sc, params.VolumeAttributeKeys)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
+	}
+
+	// Get the PV details from the PV object's annotations.
+	pvDetails, err := buildPVDetails(pv)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
 	}
 
 	// Get the Node object using the Node name.
@@ -784,11 +786,11 @@ func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}
 	}
 
 	// Validate the workloadType parameter for the profile.
-	workloadType, ok := sc.Parameters[workloadTypeKey]
+	workloadType, ok := sc.Parameters[profilesutil.WorkloadTypeKey]
 	if !ok {
 		return nil, fmt.Errorf("missing workloadType parameter in StorageClass %q", sc.Name)
 	}
-	if err := validateWorkloadType(workloadType); err != nil {
+	if err := profilesutil.ValidateWorkloadType(workloadType); err != nil {
 		return nil, fmt.Errorf("failed to validate workloadType parameter in StorageClass %q: %v", sc.Name, err)
 	}
 
@@ -842,16 +844,6 @@ func selectFromMapIfKeysMatch(target map[string]string, keys map[string]struct{}
 		}
 	}
 	return result
-}
-
-// validateWorkloadType checks if the workload type is valid.
-func validateWorkloadType(workloadType string) error {
-	switch workloadType {
-	case workloadTypeServingKey, workloadTypeTrainingKey, workloadTypeCheckpointingKey:
-	default:
-		return fmt.Errorf("invalid %q parameter %q", workloadTypeKey, workloadType)
-	}
-	return nil
 }
 
 // isGpuNodeByResource checks if the node has allocatable nvidia.com/gpu resources.
@@ -974,7 +966,6 @@ func ceilDiv64(a, b int64) int64 {
 //  2. It starts/ends with a colon (e.g., ":a", "a:").
 //  3. It starts/ends with an equal sign (e.g., "=a", "a=").
 //  4. It contains more than one equals sign (e.g., "a=b=c").
-//  5. It contains an equals sign and a colon  (e.g., "a:b=c", "a:b:c=d", "a=b:c", "a=b:c=d").
 func isValidMountOption(opt string) bool {
 	if opt == "" {
 		return false
@@ -988,16 +979,8 @@ func isValidMountOption(opt string) bool {
 		return false // Prohibited: Starts with "=" or ends with "="
 	}
 
-	equalsCount := strings.Count(opt, "=")
 	if strings.Count(opt, "=") > 1 {
 		return false // Prohibited: Multiple '=' signs
-	}
-
-	hasColon := strings.Contains(opt, ":")
-	hasEquals := equalsCount == 1
-
-	if hasColon && hasEquals {
-		return false // Prohibited: ':' can't appear in the same string as '='
 	}
 
 	// If none of the invalid conditions are met, the option is valid.

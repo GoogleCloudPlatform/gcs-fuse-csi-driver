@@ -29,6 +29,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -366,4 +368,89 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 			klog.Errorf("unknown metric type: %v", metricType)
 		}
 	}
+}
+
+type PrometheusMetricManager interface {
+	InitializeHTTPHandler()
+	RecordSyncPVMetric(err error)
+	RecordSyncPodMetric(err error)
+}
+
+type prometheusMetricManager struct {
+	mux             *http.ServeMux
+	metricsEndpoint string
+	syncPVCounter   *prometheus.CounterVec
+	syncPodCounter  *prometheus.CounterVec
+}
+
+// NewPrometheusMetricManager initializes and returns a prometheusMetricManager.
+// This manager is intended to encapsulate Prometheus metric definitions
+// and registrations used by this application. New metrics can be added here.
+// Note that this manager is orthogonal to the metrics collector above.
+// Use the metrics collector instead if your component is running on user nodes.
+func NewPrometheusMetricManager(metricsEndpoint string, mux *http.ServeMux) *prometheusMetricManager {
+	pmm := prometheusMetricManager{
+		metricsEndpoint: metricsEndpoint,
+		mux:             mux,
+	}
+
+	pmm.syncPVCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sync_pv_count",
+			Help: "Number of syncPV operations",
+		},
+		[]string{"status_code"},
+	)
+	prometheus.MustRegister(pmm.syncPVCounter)
+
+	pmm.syncPodCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sync_pod_count",
+			Help: "Number of syncPod operations",
+		},
+		[]string{"status_code"},
+	)
+	prometheus.MustRegister(pmm.syncPodCounter)
+
+	return &pmm
+}
+
+// InitializeHTTPHandler sets up a server and creates a handler for metrics.
+func (pmm *prometheusMetricManager) InitializeHTTPHandler() {
+	if pmm == nil || pmm.mux == nil {
+		return
+	}
+	pmm.mux.Handle(metricsPath, promhttp.Handler())
+	go func() {
+		klog.Infof("ServeMux listening on HTTP endpoint %v and metrics path: %v", pmm.metricsEndpoint, metricsPath)
+		err := http.ListenAndServe(pmm.metricsEndpoint, pmm.mux)
+		if err != nil {
+			klog.Fatalf("Failed to start HTTP server at specified endpoint and metrics path, err %v", err)
+		}
+	}()
+}
+
+func (pmm *prometheusMetricManager) RecordSyncPVMetric(err error) {
+	if pmm == nil {
+		return
+	}
+	pmm.syncPVCounter.WithLabelValues(GetErrorCode(err)).Inc()
+}
+
+func (pmm *prometheusMetricManager) RecordSyncPodMetric(err error) {
+	if pmm == nil {
+		return
+	}
+	pmm.syncPodCounter.WithLabelValues(GetErrorCode(err)).Inc()
+}
+
+func GetErrorCode(err error) string {
+	// A nil error means success.
+	if err == nil {
+		return codes.OK.String()
+	}
+
+	internalErr, _ := status.FromError(err)
+	code := internalErr.Code().String()
+	return code
 }
