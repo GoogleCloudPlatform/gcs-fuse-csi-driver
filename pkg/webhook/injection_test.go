@@ -1632,9 +1632,11 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 			sc: &storagev1.StorageClass{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "my-sc1",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile": "true",
+					},
 				},
 				Parameters: map[string]string{
-					"workloadType":                   "serving",
 					"gcsfuseMetadataPrefetchOnMount": "true",
 				},
 			},
