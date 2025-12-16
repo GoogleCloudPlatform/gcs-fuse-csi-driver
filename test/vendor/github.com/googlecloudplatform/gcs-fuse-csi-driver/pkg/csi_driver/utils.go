@@ -45,6 +45,10 @@ const (
 	DeleteVolumeCSIFullMethod      = "/csi.v1.Controller/DeleteVolume"
 	NodePublishVolumeCSIFullMethod = "/csi.v1.Node/NodePublishVolume"
 
+	// Do NOT add new VolumeAttributes without exporting them from the GKE
+	// kubestore sawmill logs. See example in cl/833527120.
+
+	// START of GCS Fuse Volume Attributes
 	VolumeContextKeyMountOptions               = "mountOptions"
 	VolumeContextKeyFileCacheCapacity          = "fileCacheCapacity"
 	VolumeContextKeyFileCacheForRangeRead      = "fileCacheForRangeRead"
@@ -58,9 +62,10 @@ const (
 	VolumeContextKeyDisableMetrics             = "disableMetrics"
 	VolumeContextKeyIdentityPool               = "identityPool"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
-
+	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
+	// END of GCS Fuse Volume Attributes
 
 	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
 	//nolint:gosec
@@ -74,7 +79,7 @@ const (
 	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
-	GCSFuseFileCacheMediumMinVersion       = "v1.99.0-gke.0"
+	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 )
@@ -613,10 +618,10 @@ func removeDisallowedMountOptions(fuseMountOptions []string, disallowedFlags map
 }
 
 // generateDisallowedFlagsMap generates a list of flags that should or shouldn't be passed to sidecar based on sidcar image version
-func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) (map[string]bool, error) {
+func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) map[string]bool {
 	disallowedFlags := map[string]bool{}
 	if gcsFuseSidecarImage == "" {
-		return disallowedFlags, fmt.Errorf("unable to get disallowed flags, sidecar image is empty")
+		return disallowedFlags
 	}
 
 	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)
@@ -629,7 +634,7 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 		disallowedFlags[util.FileCacheMediumConst] = true
 	}
 
-	return disallowedFlags, nil
+	return disallowedFlags
 }
 
 func transformKeysToSet(inputMap map[string]string) map[string]struct{} {
