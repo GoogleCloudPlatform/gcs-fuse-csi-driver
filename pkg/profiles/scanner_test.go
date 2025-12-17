@@ -639,27 +639,59 @@ func TestSyncPV(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name           string
-		key            string
-		initialObjects []runtime.Object
-		bucketI        *bucketInfo // Mocked result for non-override scans
-		scanErr        error
-		patchErr       error
-		wantErr        bool
-		expectAnnotate bool
-		expectedStatus string
-		expectScanCall bool
-		expectedAnnots map[string]string // Specific annotations to check for override
+		name            string
+		key             string
+		initialObjects  []runtime.Object
+		bucketI         *bucketInfo // Mocked result for non-override scans
+		scanErr         error
+		patchErr        error
+		wantErr         bool
+		expectScanCall  bool
+		expectedAnnots  map[string]string
+		expectResync    bool
+		controllerCrash bool
 	}{
 		{
-			name:           "Successful Sync",
+			name:           "Successful Sync - Should patch PV annotations",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			wantErr:        false,
-			expectAnnotate: true,
-			expectedStatus: scanCompleted,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
+			},
 			expectScanCall: true,
+		},
+		{
+			name:           "Successful Re-sync - Should patch PV annotations twice",
+			key:            pvName,
+			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
+			bucketI:        scanResult,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
+			},
+			wantErr:        false,
+			expectScanCall: true,
+			expectResync:   true,
+		},
+		{
+			name:           "Successful Re-sync - Controller Crash - Should patch PV annotations twice",
+			key:            pvName,
+			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
+			bucketI:        scanResult,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
+			},
+			wantErr:         false,
+			expectScanCall:  true,
+			expectResync:    true,
+			controllerCrash: true,
 		},
 		{
 			name:           "Scan Error",
@@ -676,8 +708,11 @@ func TestSyncPV(t *testing.T) {
 			bucketI:        scanResult,
 			scanErr:        context.DeadlineExceeded,
 			wantErr:        false,
-			expectAnnotate: true,
-			expectedStatus: scanTimeout,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "0",
+				putil.AnnotationTotalSize:  "0",
+				putil.AnnotationStatus:     "timeout",
+			},
 			expectScanCall: true,
 		},
 		{
@@ -708,7 +743,6 @@ func TestSyncPV(t *testing.T) {
 			key:            "irrelevant-pv",
 			initialObjects: []runtime.Object{pvIrrelevantSC, irrelevantSC},
 			wantErr:        false,
-			expectAnnotate: false,
 			expectScanCall: false,
 		},
 		{
@@ -716,12 +750,11 @@ func TestSyncPV(t *testing.T) {
 			key:            pvName,
 			initialObjects: []runtime.Object{pvOverride.DeepCopy(), relevantSC},
 			wantErr:        false,
-			expectAnnotate: true,
-			expectedStatus: putil.ScanOverride,
 			expectScanCall: false, // Scan should be bypassed
 			expectedAnnots: map[string]string{
 				putil.AnnotationNumObjects: "111",
 				putil.AnnotationTotalSize:  "2222",
+				putil.AnnotationStatus:     "override",
 			},
 		},
 	}
@@ -740,7 +773,8 @@ func TestSyncPV(t *testing.T) {
 				})
 			}
 
-			err := f.scanner.syncPV(context.Background(), tc.key)
+			ctx := context.Background()
+			err := f.scanner.syncPV(ctx, tc.key)
 
 			if tc.wantErr != (err != nil) {
 				t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
@@ -750,27 +784,46 @@ func TestSyncPV(t *testing.T) {
 				t.Errorf("syncPV(%q) scanBucketImpl call status: got %v, want %v", tc.key, f.scanBucketFn.wasCalled, tc.expectScanCall)
 			}
 
-			if tc.expectAnnotate {
-				updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), tc.key, metav1.GetOptions{})
-				if err != nil {
-					t.Fatalf("Failed to get PV: %v", err)
-				}
-				if updatedPV.Annotations == nil {
-					t.Errorf("Expected annotations to be set")
-				}
-				if status := updatedPV.Annotations[putil.AnnotationStatus]; status != tc.expectedStatus {
-					t.Errorf("Annotation %q: got %v, want %v", putil.AnnotationStatus, status, tc.expectedStatus)
-				}
-				if _, exists := updatedPV.Annotations[putil.AnnotationLastUpdatedTime]; !exists {
-					t.Errorf("Annotation %q not found", putil.AnnotationLastUpdatedTime)
-				}
+			if tc.expectedAnnots == nil {
+				return
+			}
 
-				if tc.expectedAnnots != nil {
-					for key, want := range tc.expectedAnnots {
-						if got := updatedPV.Annotations[key]; got != want {
-							t.Errorf("Annotation %q: got %v, want %v", key, got, want)
-						}
-					}
+			updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), tc.key, metav1.GetOptions{})
+			if err != nil {
+				t.Errorf("Failed to get PV: %v", err)
+			}
+
+			lastScanTime, ok := updatedPV.Annotations[putil.AnnotationLastUpdatedTime]
+			if !ok {
+				t.Errorf("Annotation %q not found in PV", putil.AnnotationLastUpdatedTime)
+			}
+
+			for key, want := range tc.expectedAnnots {
+				if got := updatedPV.Annotations[key]; got != want {
+					t.Errorf("Annotation %q: got %v, want %v", key, got, want)
+				}
+			}
+
+			if tc.expectResync {
+				if tc.controllerCrash {
+					// Simulate controller losing the in-memory state because of a crash.
+					f.scanner.trackedPVs = make(map[string]syncInfo)
+				}
+				f.mockTimeImpl.currentTime = f.mockTimeImpl.currentTime.Add(defaultScanResyncPeriodDuration * 2)
+				err := f.scanner.syncPV(context.Background(), tc.key)
+				if tc.wantErr != (err != nil) {
+					t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
+				}
+				updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(ctx, tc.key, metav1.GetOptions{})
+				if err != nil {
+					t.Errorf("Failed to get PV: %v", err)
+				}
+				newScanTime, ok := updatedPV.Annotations[putil.AnnotationLastUpdatedTime]
+				if !ok {
+					t.Errorf("Annotation %q not found in PV", putil.AnnotationLastUpdatedTime)
+				}
+				if newScanTime == lastScanTime {
+					t.Errorf("Expected a new scan, but the PV was only scanned once. Old timestamp: %s, new timestamp: %s", lastScanTime, newScanTime)
 				}
 			}
 		})
@@ -1183,21 +1236,21 @@ func TestGetDurationAttribute(t *testing.T) {
 		attributeKey    string
 		attributes      map[string]string
 		defaultDuration time.Duration
-		wantTimeout     *time.Duration
+		wantTimeout     time.Duration
 		wantErr         bool
 	}{
 		{
 			name:            "No bucket scan timeout attribute - Use default",
 			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
-			wantTimeout:     &defaultScanTimeoutDuration,
+			wantTimeout:     defaultScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "No bucket scan resync period attribute - Use default",
 			attributeKey:    scanResyncPeriodKey,
 			defaultDuration: defaultScanResyncPeriodDuration,
-			wantTimeout:     &defaultScanResyncPeriodDuration,
+			wantTimeout:     defaultScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
@@ -1205,7 +1258,7 @@ func TestGetDurationAttribute(t *testing.T) {
 			attributes:      map[string]string{scanTimeoutKey: "42m"},
 			defaultDuration: defaultScanTimeoutDuration,
 			attributeKey:    scanTimeoutKey,
-			wantTimeout:     &customScanTimeoutDuration,
+			wantTimeout:     customScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
@@ -1213,7 +1266,7 @@ func TestGetDurationAttribute(t *testing.T) {
 			attributes:      map[string]string{scanResyncPeriodKey: "5m"},
 			defaultDuration: defaultScanResyncPeriodDuration,
 			attributeKey:    scanResyncPeriodKey,
-			wantTimeout:     &customScanResyncPeriodDuration,
+			wantTimeout:     customScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
@@ -1243,7 +1296,7 @@ func TestGetDurationAttribute(t *testing.T) {
 					t.Errorf("getDurationAttribute() error = %v, wantErr %v", err, tc.wantErr)
 				}
 			} else {
-				if *timeout != *tc.wantTimeout {
+				if timeout != tc.wantTimeout {
 					t.Errorf("getDurationAttribute() = %v, want %v", timeout, tc.wantTimeout)
 				}
 			}
