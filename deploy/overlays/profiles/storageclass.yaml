@@ -17,47 +17,57 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: gcsfusecsi-training
+  labels:
+    gke-gcsfuse/profile: "true"
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
   - profile:aiml-training
-  # - read_ahead_kb=1024  # Disabled for training
 parameters:
-  workloadType: "training"
   skipCSIBucketAccessCheck: "true"
   gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
   fuseMemoryAllocatableFactor: "0.7"
   fuseEphemeralStorageAllocatableFactor: "0.85"
+  bucketScanResyncPeriod: "168h"
+  bucketScanTimeout: "2m"
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: gcsfusecsi-serving
+  labels:
+    gke-gcsfuse/profile: "true"
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
   - profile:aiml-serving
   - read_ahead_kb=1024
 parameters:
-  workloadType: "serving"
-  enableAnywhereCache: "true"
+  anywhereCacheZones: "*"
+  anywhereCacheAdmissionPolicy: "admit-on-first-miss"
+  anywhereCacheTTL: "1h"
   skipCSIBucketAccessCheck: "true"
   gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
   fuseMemoryAllocatableFactor: "0.7"
   fuseEphemeralStorageAllocatableFactor: "0.85"
+  bucketScanResyncPeriod: "168h"
+  bucketScanTimeout: "2m"
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: gcsfusecsi-checkpointing
+  labels:
+    gke-gcsfuse/profile: "true"
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
   - profile:aiml-checkpointing
   - read_ahead_kb=1024
 parameters:
-  workloadType: "checkpointing"
   skipCSIBucketAccessCheck: "true"
   gcsfuseMetadataPrefetchOnMount: "true"
   fuseFileCacheMediumPriority: "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
   fuseMemoryAllocatableFactor: "0.7"
   fuseEphemeralStorageAllocatableFactor: "0.85"
+  bucketScanResyncPeriod: "168h"
+  bucketScanTimeout: "2m"

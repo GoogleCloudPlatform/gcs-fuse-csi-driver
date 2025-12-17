@@ -103,7 +103,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	gcsFuseSidecarImage := gcsFuseSidecarContainerImage(pod)
 
 	// Recommend VolumeAttributes if the gcsfuse profiles feature is enabled.
-	profilesEnabled := strings.ToLower(pod.Annotations[webhook.GcsfuseProfilesAnnotation]) == util.TrueStr && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
+	profilesEnabled := s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
 	var profile *profiles.ProfileConfig
 	if profilesEnabled {
 		klog.V(4).Infof("NodePublishVolume gcsfuse profiles feature is enabled for pod %s/%s", pod.Namespace, pod.Name)

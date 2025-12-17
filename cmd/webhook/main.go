@@ -89,6 +89,7 @@ func main() {
 	klog.Infof("Webhook should enable gcsfuse profiles: %t", fuseSideCarConfig.EnableGcsfuseProfiles)
 
 	metadataPrefetchSideCarConfig := wh.LoadConfig(*metadataSidecarImage, *imagePullPolicy, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit)
+	metadataPrefetchSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
 
 	// Load config for manager, informers, listers
 	kubeConfig := config.GetConfigOrDie()

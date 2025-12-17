@@ -34,8 +34,10 @@ import (
 
 var (
 	testSCConfig = clientset.FakeSCConfig{
+		Labels: map[string]string{
+			"gke-gcsfuse/profile": "true",
+		},
 		Parameters: map[string]string{
-			"workloadType":                          "training",
 			"fuseFileCacheMediumPriority":           "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd",
 			"fuseMemoryAllocatableFactor":           "0.7",
 			"fuseEphemeralStorageAllocatableFactor": "0.85",
@@ -159,6 +161,10 @@ func NewSCConfigBuilder() *SCConfigBuilder {
 		cfg.Parameters[k] = v
 	}
 	cfg.MountOptions = append([]string(nil), testSCConfig.MountOptions...)
+	cfg.Labels = make(map[string]string)
+	for k, v := range testSCConfig.Labels {
+		cfg.Labels[k] = v
+	}
 	return &SCConfigBuilder{config: cfg}
 }
 
@@ -604,13 +610,14 @@ func TestBuildSCDetails(t *testing.T) {
 	tests := []struct {
 		name    string
 		sc      *storagev1.StorageClass
+		pv      *corev1.PersistentVolume
 		want    *scDetails
 		wantErr bool
 	}{
 		{
 			name: "TestBuildSCDetails - Valid StorageClass",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "test-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "test-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   defaultParams,
 				MountOptions: defaultMountOptions,
 			},
@@ -644,32 +651,14 @@ func TestBuildSCDetails(t *testing.T) {
 		{
 			name: "TestBuildSCDetails - Nil Parameters",
 			sc: &storagev1.StorageClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "nil-params-sc"},
-			},
-			wantErr: true,
-		},
-		{
-			name: "TestBuildSCDetails - Missing workloadType",
-			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "missing-workload-sc"},
-				Parameters:   NewSCConfigBuilder().WithoutParameter("workloadType").Build().Parameters,
-				MountOptions: defaultMountOptions,
-			},
-			wantErr: true,
-		},
-		{
-			name: "TestBuildSCDetails - Invalid workloadType",
-			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-workload-sc"},
-				Parameters:   NewSCConfigBuilder().WithParameter("workloadType", "invalid").Build().Parameters,
-				MountOptions: defaultMountOptions,
+				ObjectMeta: metav1.ObjectMeta{Name: "nil-params-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "TestBuildSCDetails - Missing fuseFileCacheMediumPriority",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "missing-priority-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-priority-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseFileCacheMediumPriority").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
@@ -678,7 +667,7 @@ func TestBuildSCDetails(t *testing.T) {
 		{
 			name: "TestBuildSCDetails - Invalid fuseFileCacheMediumPriority",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-priority-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-priority-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithParameter("fuseFileCacheMediumPriority", "gpu:ram,:bad").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
@@ -687,16 +676,68 @@ func TestBuildSCDetails(t *testing.T) {
 		{
 			name: "TestBuildSCDetails - Missing fuseMemoryAllocatableFactor",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "missing-mem-factor-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-mem-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseMemoryAllocatableFactor").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
 			wantErr: true,
 		},
 		{
+			name: "TestBuildSCDetails - PV override",
+			sc: &storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "missing-mem-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
+				Parameters: NewSCConfigBuilder().
+					WithoutParameter("fuseMemoryAllocatableFactor").
+					WithoutParameter("fuseEphemeralStorageAllocatableFactor").
+					WithoutParameter("fuseFileCacheMediumPriority").
+					Build().Parameters,
+				MountOptions: defaultMountOptions,
+			},
+			pv: &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: "csi.storage.gke.io",
+							VolumeAttributes: map[string]string{
+								"fuseMemoryAllocatableFactor":           "0.2",
+								"fuseEphemeralStorageAllocatableFactor": "0.3",
+								"fuseFileCacheMediumPriority":           "general_purpose:ram,gpu:ram,tpu:ram",
+							},
+						},
+					},
+				},
+			},
+			want: &scDetails{
+				fileCacheMediumPriority: map[string][]string{
+					"general_purpose": {"ram"},
+					"gpu":             {"ram"},
+					"tpu":             {"ram"},
+				},
+				fuseMemoryAllocatableFactor:           0.2,
+				fuseEphemeralStorageAllocatableFactor: 0.3,
+				volumeAttributes: map[string]string{
+					"mountOptions":                   "1",
+					"fileCacheCapacity":              "2",
+					"fileCacheForRangeRead":          "3",
+					"metadataStatCacheCapacity":      "4",
+					"metadataTypeCacheCapacity":      "5",
+					"metadataCacheTTLSeconds":        "6",
+					"gcsfuseLoggingSeverity":         "7",
+					"skipCSIBucketAccessCheck":       "8",
+					"hostNetworkPodKSA":              "9",
+					"identityProvider":               "10",
+					"disableMetrics":                 "11",
+					"identityPool":                   "12",
+					"enableCloudProfilerForSidecar":  "13",
+					"gcsfuseMetadataPrefetchOnMount": "14",
+				},
+				mountOptions: defaultMountOptions,
+			},
+		},
+		{
 			name: "TestBuildSCDetails - Invalid fuseMemoryAllocatableFactor",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-mem-factor-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-mem-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithParameter("fuseMemoryAllocatableFactor", "-0.1").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
@@ -705,7 +746,7 @@ func TestBuildSCDetails(t *testing.T) {
 		{
 			name: "TestBuildSCDetails - Missing fuseEphemeralStorageAllocatableFactor",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "missing-storage-factor-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "missing-storage-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseEphemeralStorageAllocatableFactor").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
@@ -714,7 +755,7 @@ func TestBuildSCDetails(t *testing.T) {
 		{
 			name: "TestBuildSCDetails - Invalid fuseEphemeralStorageAllocatableFactor",
 			sc: &storagev1.StorageClass{
-				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-storage-factor-sc"},
+				ObjectMeta:   metav1.ObjectMeta{Name: "invalid-storage-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithParameter("fuseEphemeralStorageAllocatableFactor", "abc").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
@@ -723,9 +764,8 @@ func TestBuildSCDetails(t *testing.T) {
 		{
 			name: "TestBuildSCDetails - Only keep relevant volume attributes",
 			sc: &storagev1.StorageClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "extra-params-sc"},
+				ObjectMeta: metav1.ObjectMeta{Name: "extra-params-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters: map[string]string{
-					"workloadType":                          "serving",
 					"fuseFileCacheMediumPriority":           "general_purpose:ram",
 					"fuseMemoryAllocatableFactor":           "0.1",
 					"fuseEphemeralStorageAllocatableFactor": "0.1",
@@ -750,7 +790,7 @@ func TestBuildSCDetails(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildSCDetails(tt.sc, csiDriverVolumeAttributeKeys)
+			got, err := buildSCDetails(tt.pv, tt.sc, csiDriverVolumeAttributeKeys)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("buildSCDetails() error = %v, wantErr %v", err, tt.wantErr)
 			}

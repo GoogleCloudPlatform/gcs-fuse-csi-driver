@@ -72,7 +72,7 @@ const (
 )
 
 var (
-	validSCParams = map[string]string{workloadTypeKey: workloadTypeServingKey}
+	validSCParams = map[string]string{}
 	validSC       = createStorageClass(testSCName, validSCParams)
 	podLabels     = map[string]string{profileManagedLabelKey: profileManagedLabelValue}
 	scanResult    = &bucketInfo{
@@ -240,24 +240,23 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 
 	// Create the Scanner instance with fake/mock components.
 	s := &Scanner{
-		kubeClient:         kubeClient,
-		pvLister:           pvInformer.Lister(),
-		pvcLister:          pvcInformer.Lister(),
-		scLister:           scInformer.Lister(),
-		podLister:          podInformer.Lister(),
-		pvSynced:           pvInformer.Informer().HasSynced,
-		pvcSynced:          pvcInformer.Informer().HasSynced,
-		scSynced:           scInformer.Informer().HasSynced,
-		podSynced:          podInformer.Informer().HasSynced,
-		factory:            factory,
-		podFactory:         podFactory,
-		queue:              workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-		eventRecorder:      recorder,
-		trackedPVs:         make(map[string]struct{}),
-		lastSuccessfulScan: make(map[string]time.Time),
-		datafluxConfig:     &DatafluxConfig{}, // Use default or test-specific config
-		scanBucketImpl:     fsb.Scan,          // Inject the fake scan function
-		metricManager:      metrics.NewFakePrometheusMetricsManager(),
+		kubeClient:     kubeClient,
+		pvLister:       pvInformer.Lister(),
+		pvcLister:      pvcInformer.Lister(),
+		scLister:       scInformer.Lister(),
+		podLister:      podInformer.Lister(),
+		pvSynced:       pvInformer.Informer().HasSynced,
+		pvcSynced:      pvcInformer.Informer().HasSynced,
+		scSynced:       scInformer.Informer().HasSynced,
+		podSynced:      podInformer.Informer().HasSynced,
+		factory:        factory,
+		podFactory:     podFactory,
+		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		eventRecorder:  recorder,
+		trackedPVs:     make(map[string]syncInfo),
+		datafluxConfig: &DatafluxConfig{}, // Use default or test-specific config
+		scanBucketImpl: fsb.Scan,          // Inject the fake scan function
+		metricManager:  metrics.NewFakePrometheusMetricsManager(),
 	}
 
 	factory.Start(stopCh)
@@ -283,7 +282,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 // createStorageClass is a helper function to create a StorageClass object.
 func createStorageClass(name string, params map[string]string) *storagev1.StorageClass {
 	return &storagev1.StorageClass{
-		ObjectMeta:  metav1.ObjectMeta{Name: name},
+		ObjectMeta:  metav1.ObjectMeta{Name: name, Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 		Provisioner: csiDriverName,
 		Parameters:  params,
 	}
@@ -353,9 +352,9 @@ func createPod(name, namespace string, volumes []v1.Volume, labels map[string]st
 
 func TestCheckPVRelevance(t *testing.T) {
 	now := time.Date(2025, time.August, 27, 0, 0, 0, 0, time.UTC)
-	ttl := defaultScanTTLDuration
-	lastUpdateTimeWithinTTL := now.Add(-ttl / 2).Format(time.RFC3339)
-	lastUpdateTimeOutsideTTL := now.Add(-ttl * 2).Format(time.RFC3339)
+	resyncPeriod := defaultScanResyncPeriodDuration
+	lastUpdateTimeWithinResyncPeriod := now.Add(-resyncPeriod / 2).Format(time.RFC3339)
+	lastUpdateTimeOutsideResyncPeriod := now.Add(-resyncPeriod * 2).Format(time.RFC3339)
 
 	validOverrideAnnotations := map[string]string{
 		putil.AnnotationStatus:     putil.ScanOverride,
@@ -399,7 +398,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Training - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeTrainingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -410,7 +409,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Serving - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeServingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -421,7 +420,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Relevant PV - Checkpointing - Should return relevant and pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      true,
 			wantBucket:        testBucketName,
@@ -432,7 +431,7 @@ func TestCheckPVRelevance(t *testing.T) {
 			name: "Irrelevant - Wrong Driver - Should return irrelevant and not pending scan",
 			pv:   createPV(testPVName, testSCName, testBucketName, "blah", nil, nil, nil),
 			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: workloadTypeCheckpointingKey}),
+				createStorageClass(testSCName, map[string]string{}),
 			},
 			wantRelevant:      false,
 			wantIsPendingScan: false,
@@ -446,19 +445,9 @@ func TestCheckPVRelevance(t *testing.T) {
 			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Error - Invalid Workload Type - Should return error",
-			pv:   createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
-			scs: []*storagev1.StorageClass{
-				createStorageClass(testSCName, map[string]string{workloadTypeKey: "blah"}),
-			},
-			wantErr:           true,
-			wantIsPendingScan: false,
-			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
-		},
-		{
-			name: "Relevant but no scan pending - Within TTL - Should return relevant and not pending scan",
+			name: "Relevant but no scan pending - Within resync period - Should return relevant and not pending scan",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeWithinTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeWithinResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantBucket:        testBucketName,
@@ -467,9 +456,9 @@ func TestCheckPVRelevance(t *testing.T) {
 			fakeGetAttrs:      fakebucketAttrsFunc{attrs: attrs},
 		},
 		{
-			name: "Relevant scan is pending - Outside TTL - Should return relevant and pending scan",
+			name: "Relevant scan is pending - Outside resync period - Should return relevant and pending scan",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
@@ -480,7 +469,7 @@ func TestCheckPVRelevance(t *testing.T) {
 		{
 			name: "Relevant scan is pending - Zonal bucket by locationType - Should return relevant, pending scan, and isZonalBucket field should be true",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
@@ -496,7 +485,7 @@ func TestCheckPVRelevance(t *testing.T) {
 		{
 			name: "Relevant scan is pending - Zonal bucket by storageClass - Should return relevant, pending scan, and isZonalBucket field should be true",
 			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideTTL,
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
 			}, nil),
 			scs:               []*storagev1.StorageClass{validSC},
 			wantRelevant:      true,
@@ -628,6 +617,7 @@ func TestSyncPV(t *testing.T) {
 	basePV := createPV(pvName, scName, bucketName, csiDriverName, nil, nil, nil)
 	relevantSC := createStorageClass(scName, validSCParams)
 	irrelevantSC := createStorageClass("irrelevant-sc", map[string]string{"some": "param"})
+	irrelevantSC.Labels = nil
 	pvIrrelevantSC := createPV("irrelevant-pv", "irrelevant-sc", bucketName, csiDriverName, nil, nil, nil)
 
 	overrideAnnotations := map[string]string{
@@ -649,27 +639,59 @@ func TestSyncPV(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name           string
-		key            string
-		initialObjects []runtime.Object
-		bucketI        *bucketInfo // Mocked result for non-override scans
-		scanErr        error
-		patchErr       error
-		wantErr        bool
-		expectAnnotate bool
-		expectedStatus string
-		expectScanCall bool
-		expectedAnnots map[string]string // Specific annotations to check for override
+		name            string
+		key             string
+		initialObjects  []runtime.Object
+		bucketI         *bucketInfo // Mocked result for non-override scans
+		scanErr         error
+		patchErr        error
+		wantErr         bool
+		expectScanCall  bool
+		expectedAnnots  map[string]string
+		expectResync    bool
+		controllerCrash bool
 	}{
 		{
-			name:           "Successful Sync",
+			name:           "Successful Sync - Should patch PV annotations",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			wantErr:        false,
-			expectAnnotate: true,
-			expectedStatus: scanCompleted,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
+			},
 			expectScanCall: true,
+		},
+		{
+			name:           "Successful Re-sync - Should patch PV annotations twice",
+			key:            pvName,
+			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
+			bucketI:        scanResult,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
+			},
+			wantErr:        false,
+			expectScanCall: true,
+			expectResync:   true,
+		},
+		{
+			name:           "Successful Re-sync - Controller Crash - Should patch PV annotations twice",
+			key:            pvName,
+			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
+			bucketI:        scanResult,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
+			},
+			wantErr:         false,
+			expectScanCall:  true,
+			expectResync:    true,
+			controllerCrash: true,
 		},
 		{
 			name:           "Scan Error",
@@ -686,8 +708,11 @@ func TestSyncPV(t *testing.T) {
 			bucketI:        scanResult,
 			scanErr:        context.DeadlineExceeded,
 			wantErr:        false,
-			expectAnnotate: true,
-			expectedStatus: scanTimeout,
+			expectedAnnots: map[string]string{
+				putil.AnnotationNumObjects: "0",
+				putil.AnnotationTotalSize:  "0",
+				putil.AnnotationStatus:     "timeout",
+			},
 			expectScanCall: true,
 		},
 		{
@@ -718,7 +743,6 @@ func TestSyncPV(t *testing.T) {
 			key:            "irrelevant-pv",
 			initialObjects: []runtime.Object{pvIrrelevantSC, irrelevantSC},
 			wantErr:        false,
-			expectAnnotate: false,
 			expectScanCall: false,
 		},
 		{
@@ -726,12 +750,11 @@ func TestSyncPV(t *testing.T) {
 			key:            pvName,
 			initialObjects: []runtime.Object{pvOverride.DeepCopy(), relevantSC},
 			wantErr:        false,
-			expectAnnotate: true,
-			expectedStatus: putil.ScanOverride,
 			expectScanCall: false, // Scan should be bypassed
 			expectedAnnots: map[string]string{
 				putil.AnnotationNumObjects: "111",
 				putil.AnnotationTotalSize:  "2222",
+				putil.AnnotationStatus:     "override",
 			},
 		},
 	}
@@ -750,7 +773,8 @@ func TestSyncPV(t *testing.T) {
 				})
 			}
 
-			err := f.scanner.syncPV(context.Background(), tc.key)
+			ctx := context.Background()
+			err := f.scanner.syncPV(ctx, tc.key)
 
 			if tc.wantErr != (err != nil) {
 				t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
@@ -760,27 +784,46 @@ func TestSyncPV(t *testing.T) {
 				t.Errorf("syncPV(%q) scanBucketImpl call status: got %v, want %v", tc.key, f.scanBucketFn.wasCalled, tc.expectScanCall)
 			}
 
-			if tc.expectAnnotate {
-				updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), tc.key, metav1.GetOptions{})
-				if err != nil {
-					t.Fatalf("Failed to get PV: %v", err)
-				}
-				if updatedPV.Annotations == nil {
-					t.Errorf("Expected annotations to be set")
-				}
-				if status := updatedPV.Annotations[putil.AnnotationStatus]; status != tc.expectedStatus {
-					t.Errorf("Annotation %q: got %v, want %v", putil.AnnotationStatus, status, tc.expectedStatus)
-				}
-				if _, exists := updatedPV.Annotations[putil.AnnotationLastUpdatedTime]; !exists {
-					t.Errorf("Annotation %q not found", putil.AnnotationLastUpdatedTime)
-				}
+			if tc.expectedAnnots == nil {
+				return
+			}
 
-				if tc.expectedAnnots != nil {
-					for key, want := range tc.expectedAnnots {
-						if got := updatedPV.Annotations[key]; got != want {
-							t.Errorf("Annotation %q: got %v, want %v", key, got, want)
-						}
-					}
+			updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), tc.key, metav1.GetOptions{})
+			if err != nil {
+				t.Errorf("Failed to get PV: %v", err)
+			}
+
+			lastScanTime, ok := updatedPV.Annotations[putil.AnnotationLastUpdatedTime]
+			if !ok {
+				t.Errorf("Annotation %q not found in PV", putil.AnnotationLastUpdatedTime)
+			}
+
+			for key, want := range tc.expectedAnnots {
+				if got := updatedPV.Annotations[key]; got != want {
+					t.Errorf("Annotation %q: got %v, want %v", key, got, want)
+				}
+			}
+
+			if tc.expectResync {
+				if tc.controllerCrash {
+					// Simulate controller losing the in-memory state because of a crash.
+					f.scanner.trackedPVs = make(map[string]syncInfo)
+				}
+				f.mockTimeImpl.currentTime = f.mockTimeImpl.currentTime.Add(defaultScanResyncPeriodDuration * 2)
+				err := f.scanner.syncPV(context.Background(), tc.key)
+				if tc.wantErr != (err != nil) {
+					t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
+				}
+				updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(ctx, tc.key, metav1.GetOptions{})
+				if err != nil {
+					t.Errorf("Failed to get PV: %v", err)
+				}
+				newScanTime, ok := updatedPV.Annotations[putil.AnnotationLastUpdatedTime]
+				if !ok {
+					t.Errorf("Annotation %q not found in PV", putil.AnnotationLastUpdatedTime)
+				}
+				if newScanTime == lastScanTime {
+					t.Errorf("Expected a new scan, but the PV was only scanned once. Old timestamp: %s, new timestamp: %s", lastScanTime, newScanTime)
 				}
 			}
 		})
@@ -832,7 +875,6 @@ func TestSyncPod(t *testing.T) {
 		expectRequeueErr  bool
 		wantErr           bool
 		expectGateRemoved bool
-		expectPVEnqueued  string
 	}{
 		{
 			name:              "Pod with no volumes, gate removed",
@@ -845,7 +887,6 @@ func TestSyncPod(t *testing.T) {
 			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant}, podLabels, true),
 			initialObjects:   []runtime.Object{pvRelevant, scValid, pvcBoundRelevant},
 			expectRequeueErr: true,
-			expectPVEnqueued: testPVName,
 		},
 		{
 			name:              "Pod with irrelevant PV, gate removed",
@@ -854,11 +895,10 @@ func TestSyncPod(t *testing.T) {
 			expectGateRemoved: true,
 		},
 		{
-			name:             "Pod with mixed PVs (relevant and not), PV enqueued, Pod requeued",
+			name:             "Pod with mixed PVs (relevant and not), Pod requeued",
 			pod:              createPod(testPodName, testNamespace, []v1.Volume{volNotRelevant, volRelevant}, podLabels, true),
 			initialObjects:   []runtime.Object{pvRelevant, scValid, pvcBoundRelevant, pvNotRelevant, scNotRelevant, pvcBoundNotRelevant},
 			expectRequeueErr: true,
-			expectPVEnqueued: testPVName,
 		},
 		{
 			name:             "Pod with unbound PVC, Pod requeued",
@@ -894,7 +934,6 @@ func TestSyncPod(t *testing.T) {
 			pod:               createPod(testPodName, testNamespace, []v1.Volume{volOverride}, podLabels, true),
 			initialObjects:    []runtime.Object{pvOverride, scValid, pvcBoundOverride},
 			expectGateRemoved: true,
-			expectPVEnqueued:  "", // Override PV should not be enqueued for scan
 		},
 	}
 
@@ -908,7 +947,12 @@ func TestSyncPod(t *testing.T) {
 			f := newTestFixture(t, allObjects...)
 
 			key, _ := cache.MetaNamespaceKeyFunc(tc.pod)
-			err := f.scanner.syncPod(context.Background(), key)
+			ctx := context.Background()
+			err := f.scanner.syncPV(ctx, pvOverride.Name)
+			if err != nil {
+				t.Errorf("syncPV(%q) returned error: %v", key, err)
+			}
+			err = f.scanner.syncPod(ctx, key)
 
 			hasErr := err != nil
 			if hasErr != (tc.wantErr || tc.expectRequeueErr) {
@@ -916,31 +960,10 @@ func TestSyncPod(t *testing.T) {
 			}
 
 			if err != nil {
-				isRequeueErr := errors.Is(err, errRequeuePod)
+				isRequeueErr := errors.Is(err, errRequeueNeeded)
 				if isRequeueErr != tc.expectRequeueErr {
 					t.Errorf("syncPod(%q) error type: got requeue %v, want requeue %v (err: %v)", key, isRequeueErr, tc.expectRequeueErr, err)
 				}
-			}
-
-			// Check PV Enqueue status
-			pvKey := pvPrefix + tc.expectPVEnqueued
-			found := false
-			queueLen := f.scanner.queue.Len()
-			for i := 0; i < queueLen; i++ {
-				item, shutDown := f.scanner.queue.Get()
-				if shutDown {
-					break
-				}
-				if item == pvKey {
-					found = true
-				}
-				f.scanner.queue.Done(item)
-			}
-			if tc.expectPVEnqueued != "" && !found {
-				t.Errorf("Expected PV %q to be enqueued, but not found in queue", tc.expectPVEnqueued)
-			}
-			if tc.expectPVEnqueued == "" && found {
-				t.Errorf("Expected no PV to be enqueued, but found %q", pvKey)
 			}
 
 			if tc.expectGateRemoved {
@@ -1139,10 +1162,6 @@ func TestAddPV(t *testing.T) {
 	if f.scanner.queue.Len() != 1 {
 		t.Errorf("Queue length: got %d, want 1", f.scanner.queue.Len())
 	}
-	key, _ := cache.MetaNamespaceKeyFunc(pvRelevant)
-	if _, exists := f.scanner.trackedPVs[key]; !exists {
-		t.Errorf("PV %q not tracked after add", key)
-	}
 
 	// Adding the same PV again should not change the queue length (it's a set).
 	f.scanner.addPV(pvRelevant)
@@ -1160,16 +1179,12 @@ func TestDeletePV(t *testing.T) {
 
 	f := newTestFixture(t)
 	f.scanner.queue.Add(queueKey)
-	f.scanner.trackedPVs[pvName] = struct{}{}
-	f.scanner.lastSuccessfulScan[pvName] = time.Now()
+	f.scanner.trackedPVs[pvName] = syncInfo{}
 
 	f.scanner.deletePV(pv)
 
 	// PV should no longer be in the tracked set.
 	if _, exists := f.scanner.trackedPVs[pvName]; exists {
-		t.Errorf("PV %q still tracked after deletePV() call", pvName)
-	}
-	if _, exists := f.scanner.lastSuccessfulScan[pvName]; exists {
 		t.Errorf("PV %q still in lastSuccessfulScan map after deletePV() call", pvName)
 	}
 
@@ -1215,56 +1230,56 @@ func TestDeletePod(t *testing.T) {
 // TestGetScanTimeout tests the getDurationAttribute function.
 func TestGetDurationAttribute(t *testing.T) {
 	customScanTimeoutDuration := time.Duration(42 * time.Minute)
-	customScanTTLDuration := time.Duration(5 * time.Minute)
+	customScanResyncPeriodDuration := time.Duration(5 * time.Minute)
 	testCases := []struct {
 		name            string
 		attributeKey    string
 		attributes      map[string]string
 		defaultDuration time.Duration
-		wantTimeout     *time.Duration
+		wantTimeout     time.Duration
 		wantErr         bool
 	}{
 		{
 			name:            "No bucket scan timeout attribute - Use default",
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
-			wantTimeout:     &defaultScanTimeoutDuration,
+			wantTimeout:     defaultScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
-			name:            "No bucket scan TTL attribute - Use default",
-			attributeKey:    volumeAttributeScanTTLKey,
-			defaultDuration: defaultScanTTLDuration,
-			wantTimeout:     &defaultScanTTLDuration,
+			name:            "No bucket scan resync period attribute - Use default",
+			attributeKey:    scanResyncPeriodKey,
+			defaultDuration: defaultScanResyncPeriodDuration,
+			wantTimeout:     defaultScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan timeout attribute - Override",
-			attributes:      map[string]string{volumeAttributeScanTimeoutKey: "42m"},
+			attributes:      map[string]string{scanTimeoutKey: "42m"},
 			defaultDuration: defaultScanTimeoutDuration,
-			attributeKey:    volumeAttributeScanTimeoutKey,
-			wantTimeout:     &customScanTimeoutDuration,
+			attributeKey:    scanTimeoutKey,
+			wantTimeout:     customScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
-			name:            "Valid bucket scan TTL attribute - Override",
-			attributes:      map[string]string{volumeAttributeScanTTLKey: "5m"},
-			defaultDuration: defaultScanTTLDuration,
-			attributeKey:    volumeAttributeScanTTLKey,
-			wantTimeout:     &customScanTTLDuration,
+			name:            "Valid bucket scan resync period attribute - Override",
+			attributes:      map[string]string{scanResyncPeriodKey: "5m"},
+			defaultDuration: defaultScanResyncPeriodDuration,
+			attributeKey:    scanResyncPeriodKey,
+			wantTimeout:     customScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Invalid duration - Error",
-			attributes:      map[string]string{volumeAttributeScanTimeoutKey: "5min"},
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributes:      map[string]string{scanTimeoutKey: "5min"},
+			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
 			wantErr:         true,
 		},
 		{
 			name:            "Non-positive duration - Error",
-			attributes:      map[string]string{volumeAttributeScanTimeoutKey: "0s"},
-			attributeKey:    volumeAttributeScanTimeoutKey,
+			attributes:      map[string]string{scanTimeoutKey: "0s"},
+			attributeKey:    scanTimeoutKey,
 			defaultDuration: defaultScanTimeoutDuration,
 			wantErr:         true,
 		},
@@ -1274,14 +1289,14 @@ func TestGetDurationAttribute(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, tc.attributes)
 			f := newTestFixture(t)
-			timeout, err := f.scanner.getDurationAttribute(pv, tc.attributeKey, tc.defaultDuration)
+			timeout, err := f.scanner.getDurationAttribute(pv, nil, tc.attributeKey, tc.defaultDuration)
 
 			if tc.wantErr {
 				if err == nil {
 					t.Errorf("getDurationAttribute() error = %v, wantErr %v", err, tc.wantErr)
 				}
 			} else {
-				if *timeout != *tc.wantTimeout {
+				if timeout != tc.wantTimeout {
 					t.Errorf("getDurationAttribute() = %v, want %v", timeout, tc.wantTimeout)
 				}
 			}
@@ -1295,6 +1310,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
 	f := newTestFixture(t, pv)
 	now := time.Date(2025, 9, 1, 10, 0, 0, 0, time.UTC)
+	future := now.Add(defaultScanResyncPeriodDuration)
 	f.mockTimeImpl.currentTime = now
 
 	bucketI := &bucketInfo{
@@ -1304,7 +1320,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	status := scanCompleted
 
 	// Call the function to update annotations.
-	if err := f.scanner.updatePVScanResult(context.Background(), pv, bucketI, status); err != nil {
+	if err := f.scanner.updatePVScanResult(context.Background(), pv, nil, bucketI, status); err != nil {
 		t.Fatalf("updatePVScanResult() returned error: %v", err)
 	}
 
@@ -1336,8 +1352,8 @@ func TestUpdatePVScanResult(t *testing.T) {
 	}
 
 	// Verify in-memory map is updated
-	if lastScan, ok := f.scanner.lastSuccessfulScan[testPVName]; !ok || !lastScan.Equal(now) {
-		t.Errorf("lastSuccessfulScan map not updated correctly: got %v, want %v", lastScan, now)
+	if syncInfo, ok := f.scanner.trackedPVs[testPVName]; !ok || !syncInfo.lastSuccessfulScan.Equal(now) || !syncInfo.nextScan.Equal(future) {
+		t.Errorf("lastSuccessfulScan map not updated correctly: got last successful scan: %v, next scan: %v, want last successful scan: %v, next scan: %v", syncInfo.lastSuccessfulScan, syncInfo.nextScan, now, future)
 	}
 }
 
@@ -1615,7 +1631,7 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 	// Run tests
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			policy, err := getAnywhereCacheAdmissionPolicyFromPV(tc.pv)
+			policy, err := anywhereCacheAdmissionPolicyVal(tc.pv, nil)
 
 			if tc.expectError {
 				if err == nil {
@@ -1697,7 +1713,7 @@ func TestGetAnywhereCacheTtlFromPV(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			duration, err := getAnywhereCacheTTLFromPV(tc.pv)
+			duration, err := anywhereCacheTTLVal(tc.pv, nil)
 
 			if tc.expectError {
 				if err == nil {
@@ -1781,19 +1797,409 @@ func TestCreateAnywhereCache(t *testing.T) {
 	testCases := []struct {
 		name                 string
 		setupMocks           func()
-		err                  error
+		wantResults          map[string]*anywhereCacheSyncResult
+		wantErr              bool
 		pv                   *v1.PersistentVolume
 		storageControlClient storageControlClient
 	}{
 		{
-			name: "Happy Path - All zones succeed",
+			name: "AnyC not found - create it - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b"}, nil
 				}
 			},
-			err:                  nil,
-			storageControlClient: mockStorageControlClient{},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-a,zone-b",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones wildcard - create all - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+				"zone-c": {
+					err: errRequeueNeeded,
+				},
+				"zone-d": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "*",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones empty string - create all - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: errRequeueNeeded,
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+				"zone-c": {
+					err: errRequeueNeeded,
+				},
+				"zone-d": {
+					err: errRequeueNeeded,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "*",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC not found - user provided zones none - create none - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "none",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "user provided zones not in available zones - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantErr: true,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-e,zone-f",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "user provided zones with inalid form - create it - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
+				}
+			},
+			wantErr: true,
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					// Add annotations needed by the real buildCreateAnywhereCacheRequest
+					Annotations: map[string]string{"gcs.csi.storage.gke.io/bucket-name": "my-bucket"},
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheZones": "zone-e zone-f",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: mockStorageControlClient{
+				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+					return &control.CreateAnywhereCacheOperation{}, nil
+				},
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
+				},
+			},
+		},
+		{
+			name: "AnyC found - state creating - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "creating",
+					err:   errRequeueNeeded,
+				},
+				"zone-b": {
+					state: "creating",
+					err:   errRequeueNeeded,
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						State: "creating",
+					}, nil
+				},
+			},
+		},
+		{
+			name: "AnyC found - state PAUSED - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "paused",
+					err:   nil,
+				},
+				"zone-b": {
+					state: "paused",
+					err:   nil,
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						State: "paused",
+					}, nil
+				},
+			},
+		},
+		{
+			name: "AnyC found - state disabled - return nil error",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "disabled",
+					err:   nil,
+				},
+				"zone-b": {
+					state: "disabled",
+					err:   nil,
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						State: "disabled",
+					}, nil
+				},
+			},
+		},
+		{
+			name: "AnyC found - state running - update in progress - requeue needed",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "running",
+					err:   errRequeueNeeded,
+				},
+				"zone-b": {
+					state: "running",
+					err:   errRequeueNeeded,
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						State:         "running",
+						PendingUpdate: true,
+					}, nil
+				},
+			},
+		},
+		{
+			name: "AnyC found - state running - no update in progress - same params - success",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "running",
+					err:   nil,
+				},
+				"zone-b": {
+					state: "running",
+					err:   nil,
+				},
+			},
+			wantErr: false,
+			storageControlClient: mockStorageControlClient{
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						State:           "running",
+						Ttl:             durationpb.New(1 * time.Hour),
+						AdmissionPolicy: "admit-on-first-miss",
+					}, nil
+				},
+			},
 		},
 		{
 			name: "Failure - GetZonesForClusterRegion fails",
@@ -1802,7 +2208,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return nil, fmt.Errorf("mock region error")
 				}
 			},
-			err: fmt.Errorf("failed to get zones for region: mock region error"),
+			wantErr: true,
 		},
 		{
 			name: "Failure - NoStorageControlClient fails",
@@ -1811,7 +2217,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return []string{"zone-a"}, nil
 				}
 			},
-			err: status.Errorf(codes.Internal, "storage control client should not be nil"),
+			wantErr: true,
 		},
 		{
 			name: "Failure - Invalid TTL format",
@@ -1838,16 +2244,23 @@ func TestCreateAnywhereCache(t *testing.T) {
 				},
 			},
 			storageControlClient: &mockStorageControlClient{},
-			err:                  status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: time: invalid duration %q", "test-pv", "invalid-duration"),
+			wantErr:              true,
 		},
 		{
-			name: "One zone fails API Failure",
+			name: "One zone fails API Failure - Should return error",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
 				}
 			},
-			err: fmt.Errorf("errors occurred while creating Anywhere Caches: zone-a:[failed to create Anywhere Cache: rpc error: code = Internal desc = failed]"),
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					err: fmt.Errorf("failed"),
+				},
+				"zone-b": {
+					err: errRequeueNeeded,
+				},
+			},
 			storageControlClient: &mockStorageControlClient{
 				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
 					if req.AnywhereCache.Zone != "zone-a" {
@@ -1855,54 +2268,29 @@ func TestCreateAnywhereCache(t *testing.T) {
 					}
 					return nil, status.Errorf(codes.Internal, "failed")
 				},
-			},
-		},
-		{
-			name: "One zone fails API Failure, one ac zone already exists",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
-				}
-			},
-			err: fmt.Errorf("errors occurred while creating Anywhere Caches: zone-a:[failed to create Anywhere Cache: rpc error: code = Internal desc = failed retry]"),
-			storageControlClient: &mockStorageControlClient{
-				// This function signature now matches the interface exactly.
-				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
-					if req.AnywhereCache.Zone == "zone-a" {
-						return nil, status.Errorf(codes.Internal, "failed retry")
-					}
-					if req.AnywhereCache.Zone == "zone-b" {
-						return nil, status.Errorf(codes.AlreadyExists, "failed not retry")
-					}
-					return &control.CreateAnywhereCacheOperation{}, nil
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return nil, status.Errorf(codes.NotFound, "failed")
 				},
 			},
 		},
 		{
-			name: "One zone fails - already exists",
+			name: "One zone fails - already exists with different TTL - should update - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
 				}
 			},
-			err: nil,
-			storageControlClient: &mockStorageControlClient{
-				CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
-					if req.AnywhereCache.Zone != "zone-a" {
-						return &control.CreateAnywhereCacheOperation{}, nil
-					}
-					return nil, status.Errorf(codes.AlreadyExists, "failed to build anywhere cache request: Already Exists")
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "running",
+					err:   errRequeueNeeded,
+				},
+				"zone-b": {
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 			},
-		},
-		{
-			name: "One zone fails - already exists with different TTL - should update",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
-				}
-			},
-			err: nil,
+			wantErr: false,
 			pv: &v1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-pv",
@@ -1930,6 +2318,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return &controlpb.AnywhereCache{
 						Ttl:             durationpb.New(time.Duration(42)),
 						AdmissionPolicy: "admit-on-first-miss",
+						State:           "running",
 					}, nil
 				},
 				UpdateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
@@ -1938,13 +2327,23 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "One zone fails - already exists with different admission policy - should update",
+			name: "One zone fails - already exists with different admission policy - should update - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
 				}
 			},
-			err: nil,
+			wantErr: false,
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					state: "running",
+					err:   errRequeueNeeded,
+				},
+				"zone-b": {
+					state: "running",
+					err:   errRequeueNeeded,
+				},
+			},
 			pv: &v1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-pv",
@@ -1972,6 +2371,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					return &controlpb.AnywhereCache{
 						Ttl:             durationpb.New(1 * time.Hour),
 						AdmissionPolicy: "admit-on-second-miss",
+						State:           "running",
 					}, nil
 				},
 				UpdateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
@@ -1987,7 +2387,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 				}
 			},
 			storageControlClient: &mockStorageControlClient{},
-			err:                  nil,
+			wantErr:              true,
 		},
 	}
 
@@ -2004,18 +2404,23 @@ func TestCreateAnywhereCache(t *testing.T) {
 
 			s := &Scanner{eventRecorder: fakeRecorder, config: &ScannerConfig{ClusterLocation: "us-central1", ProjectNumber: "123"}, storageControlClient: tc.storageControlClient}
 
-			err := s.createAnywhereCache(ctx, tc.pv)
+			anywhereCacheProvidedZones, _ := anywhereCacheZonesVal(tc.pv, nil)
+			gotResults, err := s.syncAnywhereCache(ctx, tc.pv, nil, anywhereCacheProvidedZones)
 
-			if tc.err != nil {
-				if err == nil {
-					t.Errorf("Expected an error, but got nil")
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("wantErr: %t, err: %v", tc.wantErr, err)
+			}
+
+			for zone, wantResult := range tc.wantResults {
+				gotResult, ok := gotResults[zone]
+				if !ok {
+					t.Fatalf("zone %q not found in gotResults", zone)
 				}
-				if err != nil && err.Error() != tc.err.Error() {
-					t.Errorf("Expected error message '%s', but got '%s'", tc.err.Error(), err.Error())
+				if wantResult.state != gotResult.state {
+					t.Fatalf("zone %q want state: %q, got state: %q", zone, wantResult.state, gotResult.state)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error, but got: %v", err)
+				if errors.Is(wantResult.err, errRequeueNeeded) != errors.Is(gotResult.err, errRequeueNeeded) {
+					t.Fatalf("zone %q want requeueNeeded: %t, got requeueNeeded: %t", zone, errors.Is(wantResult.err, errRequeueNeeded), errors.Is(gotResult.err, errRequeueNeeded))
 				}
 			}
 		})

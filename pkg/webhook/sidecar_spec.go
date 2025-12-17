@@ -210,8 +210,6 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 		VolumeMounts: []corev1.VolumeMount{},
 	}
 
-	// metadataPrefetchValIsExplicitlyDefined is used to determine if we should check the sc for metadata prefetch enablement as fallback	metadataPrefetchValIsExplicitlyDefined := false
-	metadataPrefetchValIsExplicitlyDefined := false
 	for _, v := range pod.Spec.Volumes {
 		isGcsFuseCSIVolume, isDynamicMount, volumeAttributes, _, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
 		if err != nil {
@@ -220,45 +218,32 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 
 		if isDynamicMount {
 			klog.Warningf("dynamic mount set for %s, this is not supported for metadata prefetch. skipping volume", v.Name)
-
 			continue
 		}
 
-		if isGcsFuseCSIVolume {
-			// We disable metadata prefetch by default, so we skip injection of volume mount when not set.
-			if enableMetaPrefetchRaw, ok := volumeAttributes[gcsFuseMetadataPrefetchOnMountVolumeAttribute]; ok {
-				metadataPrefetchValIsExplicitlyDefined = true // Even if cx provides invalid value, if they mention metadata prefetch we should not override using sc
-				parseMetadataPrefetchStringAndAppendVolume(enableMetaPrefetchRaw, &container, v.Name)
-			}
-		}
-	}
-	if metadataPrefetchValIsExplicitlyDefined {
-		return container
-	}
-
-	profilesEnabledAnnotation, ok := pod.Annotations[GcsfuseProfilesAnnotation]
-	if !ok {
-		return container
-	}
-	profilesEnabledAnnotationAsBool, err := ParseBool(profilesEnabledAnnotation)
-	if err != nil {
-		klog.Warningf("Failed to determine %q value due to error: %v", GcsfuseProfilesAnnotation, err)
-		return container
-	}
-
-	if !profilesEnabledAnnotationAsBool || !si.Config.EnableGcsfuseProfiles {
-		return container
-	}
-
-	for _, v := range pod.Spec.Volumes {
-		pv := si.getPVIfVolumeValidForMetadataPrefetch(pod, v)
-		if pv == nil {
+		if !isGcsFuseCSIVolume {
 			continue
 		}
 
-		sc, err := si.GetVolumesStorageClass(pv)
-		if err != nil || sc == nil {
-			klog.Warningf("failed to get sc %q for volume %s while checking metadata prefetch status: %v", pv.Spec.StorageClassName, v.Name, err)
+		// We disable metadata prefetch by default, so we skip injection of volume mount when not set.
+		if enableMetaPrefetchRaw, ok := volumeAttributes[gcsFuseMetadataPrefetchOnMountVolumeAttribute]; ok {
+			parseMetadataPrefetchStringAndAppendVolume(enableMetaPrefetchRaw, &container, v.Name)
+			continue
+		}
+
+		// If using gcsfuse profiles, check the StorageClass as fallback.
+		if !c.EnableGcsfuseProfiles {
+			continue
+
+		}
+		sc, err := si.profileStorageClass(pod.Namespace, v)
+
+		if err != nil {
+			klog.Errorf("failed to get storage class for profiles feature for volume %q: %v", v.Name, err)
+			continue
+		}
+
+		if sc == nil {
 			continue
 		}
 
@@ -268,21 +253,6 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 	}
 
 	return container
-}
-
-func (si *SidecarInjector) getPVIfVolumeValidForMetadataPrefetch(pod *corev1.Pod, v corev1.Volume) *corev1.PersistentVolume {
-	isGcsFuseCSIVolume, _, _, pv, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
-	if err != nil {
-		klog.Warningf("failed to determine if %s is a GcsFuseCSI backed volume: %v", v.Name, err)
-	} else if !isGcsFuseCSIVolume {
-		return nil
-	} else if pv == nil {
-		klog.Warningf("failed to retrieve pv for volume: %s", v.Name)
-	} else if pv.Spec.StorageClassName == "" {
-		klog.Warningf("sc should not be empty for volume, skipping metadata prefetch injection: %s", v.Name)
-		return nil
-	}
-	return pv
 }
 
 func parseMetadataPrefetchStringAndAppendVolume(enableMetaPrefetchRaw string, container *corev1.Container, volumeName string) {

@@ -140,9 +140,10 @@ func (si *SidecarInjector) prepareConfig(prefix string, pod corev1.Pod) (*Config
 
 func getConfigFromAnnotation(defaultConfig Config, prefix string, annotations map[string]string) (*Config, error) {
 	config := &Config{
-		ShouldInjectSAVolume: defaultConfig.ShouldInjectSAVolume,
-		ContainerImage:       defaultConfig.ContainerImage,
-		ImagePullPolicy:      defaultConfig.ImagePullPolicy,
+		ShouldInjectSAVolume:  defaultConfig.ShouldInjectSAVolume,
+		ContainerImage:        defaultConfig.ContainerImage,
+		ImagePullPolicy:       defaultConfig.ImagePullPolicy,
+		EnableGcsfuseProfiles: defaultConfig.EnableGcsfuseProfiles,
 	}
 	extractedData := make(map[string]string)
 	for key, value := range annotations {

@@ -20,12 +20,13 @@ package util
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 )
 
 const (
@@ -35,6 +36,8 @@ const (
 	AnnotationNumObjects      = AnnotationPrefix + "/bucket-scan-num-objects"
 	AnnotationTotalSize       = AnnotationPrefix + "/bucket-scan-total-size-bytes"
 	AnnotationLastUpdatedTime = AnnotationPrefix + "/bucket-scan-last-updated-time"
+
+	LabelProfile = AnnotationPrefix + "/profile"
 
 	ScanOverride = "override"
 )
@@ -122,4 +125,32 @@ func ParseOverrideStatus(pv *v1.PersistentVolume) (int64, int64, error) {
 		}
 	}
 	return numObjects, totalSizeBytes, nil
+}
+
+// AttributeWithSCFallback gets the value of a PV VolumeAttribute, if set.
+// Otherwise, it checks the StorageClass's Parameters field as fallback.
+func AttributeWithSCFallback(pv *v1.PersistentVolume, sc *storagev1.StorageClass, key string) (string, bool) {
+	if pv != nil && pv.Spec.PersistentVolumeSource.CSI != nil && pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes != nil {
+		if val, ok := pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes[key]; ok {
+			return val, true
+		}
+	}
+	if sc != nil && sc.Parameters != nil {
+		if val, ok := sc.Parameters[key]; ok {
+			return val, ok
+		}
+	}
+	return "", false
+}
+
+// IsProfile returns true if the StorageClass has the identifying gke-gcsfuse/profile label set to true.
+// Returns fals otherwise.
+func IsProfile(sc *storagev1.StorageClass) bool {
+	if sc == nil || sc.Labels == nil {
+		return false
+	}
+	if val, ok := sc.Labels[LabelProfile]; ok && strings.Trim(strings.ToLower(val), " ") == "true" {
+		return true
+	}
+	return false
 }
