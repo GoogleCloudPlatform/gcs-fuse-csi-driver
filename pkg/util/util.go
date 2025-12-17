@@ -57,6 +57,7 @@ const (
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
+	GCSFuseNumaNodeArg                  = "gcs-fuse-numa-node"
 )
 
 var (

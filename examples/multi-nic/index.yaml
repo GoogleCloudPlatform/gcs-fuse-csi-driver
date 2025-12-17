@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: index
+  annotations:
+    gke-gcsfuse/volumes: "true"
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+  - image: debian
+    name: primary
+    args: ["sleep", "36000"]
+    volumeMounts:
+    - name: gcs
+      mountPath: /gcs
+  serviceAccountName: default
+  nodeSelector:
+    kubernetes.io/hostname: gke-a3-numa-1104ce4d-v9f4
+  volumes:
+  - name: gcs
+    csi:
+      driver: gcsfuse.csi.storage.gke.io
+      volumeAttributes:
+        bucketName: mattcary-gke-dev3-hns
+        multiNICIndex: "1"
