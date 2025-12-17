@@ -879,7 +879,7 @@ kubectl exec example --namespace $NAMESPACE -- gcloud auth print-access-token
 
 We recommend installing the driver from a fully released, fully qualified GCSFuse CSI Driver image. Alternatively, you can build and push a custom driver image by following the  [Cloud Build on NON Google Internal projects](development.md#cloud-build-on-non-google-internal-projects) guide.
 
-**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.21.8](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.21.8)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.21.8`.
+**The minimum supported GCSFuse CSI Driver version for the OSS K8s Support is [v1.21.9](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/releases/tag/v1.21.9)**. Whether you install from a custom-built image or a publicly hosted one, ensure the driver version is at least `v1.21.9`.
 
 This guide demonstrates the preferred approach: installing from a publicly hosted, fully qualified image. We provide two options for installing the driver: [Makefile](#installing-the-gcsfuse-csi-driver-with-makefile) and [Cloud Build](#installing-the-gcsfuse-csi-driver-with-cloud-build). Choose one of these methods to install the driver based on your infrastructure requirements.
 

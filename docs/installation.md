@@ -86,7 +86,7 @@ export STAGINGVERSION=$(gcloud container images list-tags gcr.io/gke-release/gcs
 export REGISTRY="gcr.io/gke-release"
 ```
 
-**Important**: Use the same version (e.g., `v1.21.8`) across all components, as version skew is not extensively tested. While these values are set by default, explicitly setting them ensures compatibility with the rest of this guide for both public and custom image installations.
+**Important**: Use the same version (e.g., `v1.21.9`) across all components, as version skew is not extensively tested. While these values are set by default, explicitly setting them ensures compatibility with the rest of this guide for both public and custom image installations.
 
 #### Install with a Custom Built Driver Image
 
