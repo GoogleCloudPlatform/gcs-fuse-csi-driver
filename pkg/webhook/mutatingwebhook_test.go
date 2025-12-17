@@ -985,7 +985,7 @@ func validInputPodWithPrefetchIncluded() *corev1.Pod {
 	pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
 		Name:            MetadataPrefetchSidecarName,
 		Image:           "my-private-image",
-		SecurityContext: GetSecurityContext(),
+		SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 	})
 
 	return pod

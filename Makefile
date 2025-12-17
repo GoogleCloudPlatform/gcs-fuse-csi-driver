@@ -13,6 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+BINDIR ?= $(shell pwd)/bin
+
+# The various gcloud and kubectl checks can be slow. Setting SKIP_VAR=true when
+# making only targets like driver, sidecar-mounter and webook will speed up your
+# life.
+ifneq ($(SKIP_VAR), true)
+
 export REGISTRY ?= gcr.io/gke-release
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
@@ -49,7 +56,6 @@ else
 endif
 
 
-BINDIR ?= $(shell pwd)/bin
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 PROJECT_NUMBER ?= $(shell gcloud projects describe $(PROJECT) --format="value(projectNumber)")
@@ -79,6 +85,8 @@ $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
 $(info SIDECAR_IMAGE is ${SIDECAR_IMAGE})
 $(info WEBHOOK_IMAGE is ${WEBHOOK_IMAGE})
+
+endif  # SKIP_VAR==true
 
 all: driver sidecar-mounter webhook metadata-prefetch
 
@@ -188,12 +196,21 @@ build-image-linux-amd64:
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_amd64 \
 		--platform=linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 \
 		--target validation-image .
 
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 \
 		--platform linux/amd64 .
+
+	docker buildx build \
+		--file ./cmd/sidecar_mounter/Dockerfile \
+		--tag validation_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 \
+    --target validation-image .
 
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/sidecar_mounter/Dockerfile \
@@ -212,18 +229,27 @@ build-image-linux-arm64:
 		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 \
 		--build-arg TARGETPLATFORM=linux/arm64 .
-	\
+
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag validation_linux_arm64 \
 		--platform=linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 \
 		--target validation-image .
-	\
+
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 .
-	\
+		--platform linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 .
+
+	docker buildx build \
+		--file ./cmd/sidecar_mounter/Dockerfile \
+		--tag validation_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 \
+    --target validation-image .
+
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/sidecar_mounter/Dockerfile \
 		--tag ${SIDECAR_IMAGE}:${STAGINGVERSION}_linux_arm64 \
@@ -270,6 +296,7 @@ endif
 	git restore ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/wi_node_label_check_patch.json
+
 verify:
 	hack/verify-all.sh
 

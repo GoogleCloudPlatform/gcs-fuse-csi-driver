@@ -29,6 +29,8 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 
@@ -56,6 +58,7 @@ type GCSDriverConfig struct {
 	StorageServiceManager          storage.ServiceManager
 	TokenManager                   auth.TokenManager
 	Mounter                        mount.Interface
+	NetworkManager                 NetworkManager
 	K8sClients                     clientset.Interface
 	MetricsManager                 metrics.Manager
 	DisableAutoconfig              bool
@@ -63,10 +66,14 @@ type GCSDriverConfig struct {
 	WINodeLabelCheck               bool
 	EnableCloudProfilerForSidecar  bool
 	FeatureOptions                 *GCSDriverFeatureOptions
+	AssumeGoodSidecarVersion       bool
 }
 
 type GCSDriver struct {
 	config *GCSDriverConfig
+
+	// Broadcast events for volumes.
+	recorder record.EventRecorder
 
 	// CSI RPC servers
 	ids csi.IdentityServer
@@ -79,7 +86,7 @@ type GCSDriver struct {
 	nscap []*csi.NodeServiceCapability
 }
 
-func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
+func NewGCSDriver(config *GCSDriverConfig, recorder record.EventRecorder) (*GCSDriver, error) {
 	if config.Name == "" {
 		return nil, errors.New("driver name missing")
 	}
@@ -91,8 +98,9 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	}
 
 	driver := &GCSDriver{
-		config: config,
-		vcap:   map[csi.VolumeCapability_AccessMode_Mode]*csi.VolumeCapability_AccessMode{},
+		config:   config,
+		recorder: recorder,
+		vcap:     map[csi.VolumeCapability_AccessMode_Mode]*csi.VolumeCapability_AccessMode{},
 	}
 
 	vcam := []csi.VolumeCapability_AccessMode_Mode{
@@ -128,6 +136,15 @@ func NewGCSDriver(config *GCSDriverConfig) (*GCSDriver, error) {
 	}
 
 	return driver, nil
+}
+
+// RecordEventf wraps EventRecorder.Eventf for the recorder in driver.
+func (driver *GCSDriver) RecordEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	if driver.recorder != nil {
+		driver.recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+	} else {
+		klog.Error("Event not recorded due to missing recorder (this is expected for tests)")
+	}
 }
 
 func (driver *GCSDriver) addVolumeCapabilityAccessModes(vc []csi.VolumeCapability_AccessMode_Mode) {

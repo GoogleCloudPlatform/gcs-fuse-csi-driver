@@ -36,6 +36,10 @@ import (
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -64,6 +68,7 @@ var (
 	wiNodeLabelCheck               = flag.Bool("wi-node-label-check", true, "Workload Identity node label check.")
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver.")
 	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
+	assumeGoodSidecarVersion       = flag.Bool("assume-good-sidecar-version", false, "Assume the sidecar version is compatible with all features in the running version of the driver.")
 
 	// GCSFuse profiles flags.
 	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
@@ -158,6 +163,13 @@ func main() {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
+	broadcaster := record.NewBroadcaster()
+	broadcaster.StartStructuredLogging(0)
+	broadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{
+		Interface: clientset.K8sClient().CoreV1().Events(""),
+	})
+	recorder := broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "gcs-fuse-csi-driver"})
+
 	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
 	if err != nil {
 		klog.Fatalf("Failed to set up metadata service: %v", err)
@@ -234,15 +246,17 @@ func main() {
 		StorageServiceManager:          ssm,
 		TokenManager:                   tm,
 		Mounter:                        mounter,
+		NetworkManager:                 driver.NewNetworkManager(),
 		K8sClients:                     clientset,
 		MetricsManager:                 mm,
 		DisableAutoconfig:              *disableAutoconfig,
 		WINodeLabelCheck:               *wiNodeLabelCheck,
 		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
 		FeatureOptions:                 featureOptions,
+		AssumeGoodSidecarVersion:       *assumeGoodSidecarVersion,
 	}
 
-	gcfsDriver, err := driver.NewGCSDriver(config)
+	gcfsDriver, err := driver.NewGCSDriver(config, recorder)
 	if err != nil {
 		klog.Fatalf("Failed to initialize Google Cloud Storage FUSE CSI Driver: %v", err)
 	}

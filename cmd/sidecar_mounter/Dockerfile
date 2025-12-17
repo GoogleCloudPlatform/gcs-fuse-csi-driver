@@ -23,13 +23,50 @@ WORKDIR /gcs-fuse-csi-driver
 ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make sidecar-mounter BINDIR=/bin
 
+FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.12 AS debian
+# Install necessary dependencies
+RUN clean-install bash numactl coreutils
+
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
-FROM gcr.io/distroless/base-debian12
+FROM gcr.io/distroless/base-debian12 AS distroless-base
 ARG TARGETPLATFORM
 
-# Copy the binaries
+# The distroless amd64 image has a target triplet of x86_64
+FROM distroless-base AS distroless-amd64
+ENV LIB_DIR_PREFIX=x86_64
+ENV LD_LINUX_FILE=/lib64/ld-linux-x86-64.so.2
+ENV LIB_DIR=/lib64/
+
+# The distroless arm64 image has a target triplet of aarch64
+FROM distroless-base AS distroless-arm64
+ENV LIB_DIR_PREFIX aarch64
+ENV LD_LINUX_FILE /lib/ld-linux-aarch64.so.1
+ENV LIB_DIR /lib/
+
+FROM distroless-$TARGETARCH AS output-image
+
+# Copy dependencies
+COPY --from=debian /usr/bin/numactl /usr/bin/numactl
+COPY --from=debian /usr/bin/true /usr/bin/true
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libnuma.so.1 /lib/${LIB_DIR_PREFIX}-linux-gnu/
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre2-8.so.0 /lib/${LIB_DIR_PREFIX}-linux-gnu/
+COPY --from=debian ${LD_LINUX_FILE} ${LIB_DIR}
+
+# Copy binaries
 COPY ./bin/${TARGETPLATFORM}/gcsfuse /gcsfuse
 COPY --from=sidecar-mounter-builder /bin/gcs-fuse-csi-driver-sidecar-mounter /gcs-fuse-csi-driver-sidecar-mounter
 
+# Validate dependencies
+FROM output-image AS validation-image
+COPY ./hack/check-deps.sh /
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libtinfo.so.6 /lib/${LIB_DIR_PREFIX}-linux-gnu/
+COPY --from=debian /bin/bash /bin/bash
+COPY --from=debian /bin/grep /bin/grep
+COPY --from=debian /usr/bin/ldd /usr/bin/ldd
+SHELL ["/bin/bash", "-c"]
+RUN /check-deps.sh /usr/bin/numactl /usr/bin/true
+
+# Release configuration
+FROM output-image
 ENTRYPOINT ["/gcs-fuse-csi-driver-sidecar-mounter"]

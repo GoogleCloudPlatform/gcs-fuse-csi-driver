@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -46,8 +47,9 @@ var testVolumeCapability = &csi.VolumeCapability{
 }
 
 type nodeServerTestEnv struct {
-	ns csi.NodeServer
-	fm *mount.FakeMounter
+	ns    csi.NodeServer
+	fm    *mount.FakeMounter
+	nwMgr *fakeNetworkManager
 }
 
 func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
@@ -60,8 +62,9 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	}
 
 	return &nodeServerTestEnv{
-		ns: newNodeServer(driver, mounter),
-		fm: mounter,
+		ns:    newNodeServer(driver, mounter),
+		fm:    mounter,
+		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
 	}
 }
 
@@ -75,15 +78,15 @@ func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.Fa
 	}
 
 	return &nodeServerTestEnv{
-		ns: newNodeServer(driver, mounter),
-		fm: mounter,
+		ns:    newNodeServer(driver, mounter),
+		fm:    mounter,
+		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
 	}
 }
 
-func TestNodePublishVolume(t *testing.T) {
-	t.Parallel()
+func setupMountTarget(t *testing.T) (string, func()) {
+	t.Helper()
 	defaultPerm := os.FileMode(0o750) + os.ModeDir
-
 	// Setup mount target path
 	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
 	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
@@ -97,7 +100,12 @@ func TestNodePublishVolume(t *testing.T) {
 	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
 		t.Fatalf("failed to setup target path: %v", err)
 	}
-	defer os.RemoveAll(base)
+	return testTargetPath, func() { defer os.RemoveAll(base) }
+}
+
+func TestNodePublishVolume(t *testing.T) {
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
 
 	cases := []struct {
 		name          string
@@ -177,38 +185,27 @@ func TestNodePublishVolume(t *testing.T) {
 	}
 
 	for _, test := range cases {
-		testEnv := initTestNodeServer(t)
-		if test.mounts != nil {
-			testEnv.fm.MountPoints = test.mounts
-		}
-		_, err := testEnv.ns.NodePublishVolume(context.TODO(), test.req)
-		if test.expectErr == nil && err != nil {
-			t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
-		}
-		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
-			t.Errorf("test %q failed:\ngot error %q,\nexpected error %q", test.name, err, test.expectErr)
-		}
-		validateMountPoint(t, test.name, testEnv.fm, test.expectedMount)
+		t.Run(test.name, func(t *testing.T) {
+			testEnv := initTestNodeServer(t)
+			if test.mounts != nil {
+				testEnv.fm.MountPoints = test.mounts
+			}
+			_, err := testEnv.ns.NodePublishVolume(context.TODO(), test.req)
+			if test.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if test.expectErr != nil && !errors.Is(err, test.expectErr) {
+				t.Errorf("got error %q, expected error %q", err, test.expectErr)
+			}
+			validateMountPoint(t, testEnv.fm, test.expectedMount)
+		})
 	}
 }
 
 func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 	t.Parallel()
-	defaultPerm := os.FileMode(0o750) + os.ModeDir
-	// Setup mount target path
-	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
-	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
-		t.Fatalf("failed to setup tmp dir path: %v", err)
-	}
-	base, err := os.MkdirTemp(tmpDir, "node-publish-")
-	if err != nil {
-		t.Fatalf("failed to setup testdir: %v", err)
-	}
-	testTargetPath := filepath.Join(base, "mount")
-	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
-		t.Fatalf("failed to setup target path: %v", err)
-	}
-	defer os.RemoveAll(base)
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
 
 	req := &csi.NodePublishVolumeRequest{
 		VolumeId:         testVolumeID,
@@ -251,7 +248,7 @@ func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 		fakeClientSet.CreatePod(clientset.FakePodConfig{HostNetworkEnabled: test.hostNetworkEnabledOnPod})
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, true)
 
-		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
+		_, err := testEnv.ns.NodePublishVolume(context.TODO(), req)
 		if test.expectErr == nil && err != nil {
 			t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
 		}
@@ -262,20 +259,145 @@ func TestNodePublishVolumeWIDisabledOnNode(t *testing.T) {
 
 }
 
+func TestNodePublishVolumeMultiNIC(t *testing.T) {
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		name              string
+		poisonedIP        string
+		rules             []Rule
+		routes            []Route
+		rtTables          string
+		req               *csi.NodePublishVolumeRequest
+		expectedNewRules  []Rule
+		expectedNewRoutes []Route
+		expectedOpts      []string
+	}{
+		{
+			name: "use nic 1",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeContext: map[string]string{
+					VolumeContextKeyMultiNICIndex: "1",
+				},
+			},
+			expectedNewRules:  []Rule{{Source: "10.144.0.8/32", Table: 50}},
+			expectedNewRoutes: []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 50}},
+			expectedOpts:      []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=10.144.0.8"},
+		},
+		{
+			name: "existing network",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeContext: map[string]string{
+					VolumeContextKeyMultiNICIndex: "1",
+				},
+			},
+			rtTables:     "45 gcsfusecsi_eth1",
+			rules:        []Rule{{Source: "10.144.0.8/32", Table: 45}},
+			routes:       []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 45}},
+			expectedOpts: []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=10.144.0.8"},
+		},
+		{
+			name: "partial network",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:   testVolumeID,
+				TargetPath: testTargetPath,
+				VolumeContext: map[string]string{
+					VolumeContextKeyMultiNICIndex: "1",
+				},
+			},
+			rules:             []Rule{{Source: "10.144.0.8/32", Table: 50}},
+			expectedNewRoutes: []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 50}},
+			expectedOpts:      []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=10.144.0.8"},
+		},
+		{
+			name: "invalid node",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeContext: map[string]string{
+					VolumeContextKeyMultiNICIndex: "3",
+				},
+			},
+			expectedOpts: []string{},
+		},
+		{
+			name:       "failed route",
+			poisonedIP: "10.128.0.6",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeContext: map[string]string{
+					VolumeContextKeyMultiNICIndex: "0",
+				},
+			},
+			expectedOpts: []string{},
+		},
+		{
+			name: "source address override",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeContext: map[string]string{
+					VolumeContextKeyMultiNICIndex: "1",
+					VolumeContextKeyMountOptions:  "experimental-local-socket-address=151.101.129.164",
+				},
+			},
+			expectedNewRules:  []Rule{{Source: "10.144.0.8/32", Table: 50}},
+			expectedNewRoutes: []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 50}},
+			expectedOpts:      []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=151.101.129.164"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fakeClientSet := &clientset.FakeClientset{}
+			fakeClientSet.CreateNode(clientset.FakeNodeConfig{})
+			fakeClientSet.CreatePod(clientset.FakePodConfig{})
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false /*wiNodeLabelCheck*/)
+			testEnv.nwMgr.poisonedIP = tc.poisonedIP
+			testEnv.nwMgr.devices = []LinkDevice{
+				{Name: "eth0", Driver: "gve", NumaNode: 0},
+				{Name: "eth1", Driver: "gve", NumaNode: 1},
+			}
+			testEnv.nwMgr.rules = append([]Rule{}, tc.rules...)
+			testEnv.nwMgr.routes = append([]Route{
+				{Device: "eth0", Gateway: "10.128.0.1", Source: "10.128.0.6", Table: 254},
+				{Device: "eth1", Gateway: "10.144.0.1", Source: "10.144.0.8", Table: 254},
+			}, tc.routes...)
+			testEnv.nwMgr.rtTables = tc.rtTables
+			expectedRules := append([]Rule{}, testEnv.nwMgr.rules...)
+			expectedRules = append(expectedRules, tc.expectedNewRules...)
+			expectedRoutes := append([]Route{}, testEnv.nwMgr.routes...)
+			expectedRoutes = append(expectedRoutes, tc.expectedNewRoutes...)
+
+			tc.req.VolumeId = testVolumeID
+			tc.req.TargetPath = testTargetPath
+			tc.req.VolumeCapability = &csi.VolumeCapability{
+				AccessType: &csi.VolumeCapability_Mount{
+					Mount: &csi.VolumeCapability_MountVolume{},
+				},
+				AccessMode: &csi.VolumeCapability_AccessMode{
+					Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+				},
+			}
+			_, err := testEnv.ns.NodePublishVolume(context.TODO(), tc.req)
+			if err != nil {
+				t.Errorf("Expected no error but got %v", err)
+			}
+			if !reflect.DeepEqual(testEnv.nwMgr.routes, expectedRoutes) {
+				t.Errorf("Bad routes, expected %+v, got %+v", expectedRoutes, testEnv.nwMgr.routes)
+			}
+			if !reflect.DeepEqual(testEnv.nwMgr.rules, expectedRules) {
+				t.Errorf("Bad rules, expected %+v, got %+v", expectedRules, testEnv.nwMgr.rules)
+			}
+			validateMountPoint(t, testEnv.fm, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOpts,
+			})
+		})
+	}
+}
+
 func TestNodeUnpublishVolume(t *testing.T) {
 	t.Parallel()
-	defaultPerm := os.FileMode(0o750) + os.ModeDir
-
-	// Setup mount target path
-	base, err := os.MkdirTemp("", "node-publish-")
-	if err != nil {
-		t.Fatalf("failed to setup testdir: %v", err)
-	}
-	defer os.RemoveAll(base)
-	testTargetPath := filepath.Join(base, "mount")
-	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
-		t.Fatalf("failed to setup target path: %v", err)
-	}
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
 
 	cases := []struct {
 		name          string
@@ -317,48 +439,50 @@ func TestNodeUnpublishVolume(t *testing.T) {
 	}
 
 	for _, test := range cases {
-		testEnv := initTestNodeServer(t)
-		if test.mounts != nil {
-			testEnv.fm.MountPoints = test.mounts
-		}
+		t.Run(test.name, func(t *testing.T) {
+			testEnv := initTestNodeServer(t)
+			if test.mounts != nil {
+				testEnv.fm.MountPoints = test.mounts
+			}
 
-		_, err = testEnv.ns.NodeUnpublishVolume(context.TODO(), test.req)
-		if test.expectErr == nil && err != nil {
-			t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
-		}
-		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
-			t.Errorf("test %q failed:\ngot error %q,\nexpected error %q", test.name, err, test.expectErr)
-		}
+			_, err := testEnv.ns.NodeUnpublishVolume(context.TODO(), test.req)
+			if test.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if test.expectErr != nil && !errors.Is(err, test.expectErr) {
+				t.Errorf("got error %q, expected error %q", err, test.expectErr)
+			}
 
-		validateMountPoint(t, test.name, testEnv.fm, test.expectedMount)
+			validateMountPoint(t, testEnv.fm, test.expectedMount)
+		})
 	}
 }
 
-func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mount.MountPoint) {
+func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint) {
 	t.Helper()
 	if e == nil {
 		if len(fm.MountPoints) != 0 {
-			t.Errorf("test %q failed: got mounts %+v, expected none", name, fm.MountPoints)
+			t.Errorf("got mounts %+v, expected none", fm.MountPoints)
 		}
 
 		return
 	}
 
 	if mLen := len(fm.MountPoints); mLen != 1 {
-		t.Errorf("test %q failed: got %v mounts(%+v), expected %v", name, mLen, fm.MountPoints, 1)
+		t.Errorf("got %v mounts(%+v), expected %v", mLen, fm.MountPoints, 1)
 
 		return
 	}
 
 	a := &fm.MountPoints[0]
 	if a.Device != e.Device {
-		t.Errorf("test %q failed: got device %q, expected %q", name, a.Device, e.Device)
+		t.Errorf("got device %q, expected %q", a.Device, e.Device)
 	}
 	if a.Path != e.Path {
-		t.Errorf("test %q failed: got path %q, expected %q", name, a.Path, e.Path)
+		t.Errorf("got path %q, expected %q", a.Path, e.Path)
 	}
 	if a.Type != e.Type {
-		t.Errorf("test %q failed: got type %q, expected %q", name, a.Type, e.Type)
+		t.Errorf("got type %q, expected %q", a.Type, e.Type)
 	}
 
 	less := func(a, b string) bool { return a > b }
@@ -398,21 +522,9 @@ func TestConcurrentMapWrites(t *testing.T) {
 
 func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 	t.Parallel()
-	defaultPerm := os.FileMode(0o750) + os.ModeDir
-	// Setup mount target path
-	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
-	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
-		t.Fatalf("failed to setup tmp dir path: %v", err)
-	}
-	base, err := os.MkdirTemp(tmpDir, "node-publish-")
-	if err != nil {
-		t.Fatalf("failed to setup testdir: %v", err)
-	}
-	testTargetPath := filepath.Join(base, "mount")
-	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
-		t.Fatalf("failed to setup target path: %v", err)
-	}
-	defer os.RemoveAll(base)
+
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
 
 	req := &csi.NodePublishVolumeRequest{
 		VolumeId:         testVolumeID,
@@ -449,7 +561,7 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 		fakeClientSet.CreatePod(clientset.FakePodConfig{HostNetworkEnabled: false})
 		testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, test.wiNodeLabelCheck)
 
-		_, err = testEnv.ns.NodePublishVolume(context.TODO(), req)
+		_, err := testEnv.ns.NodePublishVolume(context.TODO(), req)
 		if test.expectErr == nil && err != nil {
 			t.Errorf("test %q failed:got error %q, expected error nil", test.name, err)
 		}

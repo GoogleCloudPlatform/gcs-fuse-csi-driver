@@ -61,6 +61,7 @@ type TestParameters struct {
 	BuildArm               bool
 	DeployOverlayName      string
 	UseGKEManagedDriver    bool
+	SkipCSIDriverInstall   bool
 
 	GinkgoSkip          string
 	GinkgoFocus         string
@@ -172,10 +173,13 @@ func Handle(testParams *TestParameters) error {
 	}
 	// TODO(jaimebz): Extract server version using kubeapi if not present.
 
-	// Build and push the driver if the test does not use the pre-installed managed CSI driver. Defer the driver image deletion.
-	if !testParams.UseGKEManagedDriver {
-		os.Setenv(IsOSSEnvVar, "true")
+	if testParams.SkipCSIDriverInstall && testParams.UseGKEManagedDriver {
+		return fmt.Errorf("--skip-csi-driver-install used with --use-gke-managed-driver, this is invalid")
+	}
 
+	// Build and push the driver if the test does not use the pre-installed managed CSI driver. Defer the driver image deletion.
+	if !testParams.UseGKEManagedDriver && !testParams.SkipCSIDriverInstall {
+		os.Setenv(IsOSSEnvVar, "true")
 		if testParams.BuildGcsFuseCsiDriver {
 			klog.Infof("Building GCS FUSE CSI Driver")
 			if err := buildAndPushImage(testParams.PkgDir, testParams.ImageRegistry, testParams.BuildGcsFuseFromSource, testParams.BuildArm); err != nil {
@@ -357,6 +361,7 @@ func generateTestSkip(testParams *TestParameters) string {
 		}
 
 		supportsSkipBucketAccessCheck, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, skipBucketCheckMinimumVersion)
+		// Note that for local testing you want to use the dev deployment that sets --assume-good-sidecar-version, for these tests to pass.
 		if !supportsSkipBucketAccessCheck {
 			skipTests = append(skipTests, "csi-skip-bucket-access-check")
 		}
