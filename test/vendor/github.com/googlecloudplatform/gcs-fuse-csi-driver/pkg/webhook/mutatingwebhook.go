@@ -371,13 +371,9 @@ func (si *SidecarInjector) profileStorageClass(namespace string, volume corev1.V
 		klog.Errorf("failed to get storage class %q: %v", scName, err)
 		return nil, nil
 	}
-	workloadType, ok := sc.Parameters[putil.WorkloadTypeKey]
-	if !ok {
-		klog.Infof("workloadType parameter not found, assuming the volume is not using the profiles feature")
+	if !putil.IsProfile(sc) {
+		klog.Warningf("sc profile label not found, assuming the volume is not using the profiles feature")
 		return nil, nil
-	}
-	if err := putil.ValidateWorkloadType(workloadType); err != nil {
-		return nil, err
 	}
 	return sc, nil
 }
