@@ -45,6 +45,7 @@ type FakePVConfig struct {
 }
 
 type FakeSCConfig struct {
+	Labels       map[string]string
 	Parameters   map[string]string
 	MountOptions []string
 }
@@ -149,6 +150,7 @@ func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 
 	c.fakeSC.MountOptions = scConfig.MountOptions
 	c.fakeSC.Parameters = scConfig.Parameters
+	c.fakeSC.Labels = scConfig.Labels
 }
 
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
