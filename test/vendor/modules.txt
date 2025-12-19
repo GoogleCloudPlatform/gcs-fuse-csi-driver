@@ -34,6 +34,8 @@ cloud.google.com/go/compute/metadata
 # cloud.google.com/go/iam v1.5.2
 ## explicit; go 1.23.0
 cloud.google.com/go/iam
+cloud.google.com/go/iam/admin/apiv1
+cloud.google.com/go/iam/admin/apiv1/adminpb
 cloud.google.com/go/iam/apiv1/iampb
 cloud.google.com/go/iam/credentials/apiv1
 cloud.google.com/go/iam/credentials/apiv1/credentialspb
