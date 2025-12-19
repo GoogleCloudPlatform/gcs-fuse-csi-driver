@@ -175,7 +175,8 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 		}
 		return &storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: scObj.ObjectMeta.Name,
+				Name:   scObj.ObjectMeta.Name,
+				Labels: scObj.ObjectMeta.Labels, // Required by the gcsfuse profiles feature to know if the StorageClass is a profile.
 			},
 			MountOptions: scObj.MountOptions, // Required by the gcsfuse profiles feature to apply pre-bundled mount options.
 			Parameters:   scObj.Parameters,   // Required by the gcsfuse profiles feature to get profile configs.
