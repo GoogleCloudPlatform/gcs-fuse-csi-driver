@@ -70,6 +70,7 @@ import (
 	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	compute "google.golang.org/api/compute/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -81,15 +82,16 @@ import (
 )
 
 const (
-	scannerComponentName                        = "gke-gcsfuse-scanner"
-	csiDriverName                               = "gcsfuse.csi.storage.gke.io"
-	volumeAttributeScanTimeoutKey               = "bucketScanTimeout"
-	volumeAttributeScanResyncPeriodKey          = "bucketScanResyncPeriod"
-	volumeAttributeAnywhereCacheAdmissionPolicy = "anywhereCacheAdmissionPolicy"
-	volumeAttributeEnableAnywhereCache          = "enableAnywhereCache"
-	volumeAttributeAnywhereCacheTTL             = "anywhereCacheTTL"
-	volumeAttributeAnywhereCacheZones           = "anywhereCacheZones"
-	leaseName                                   = "gke-gcsfuse-scanner-leader"
+	scannerComponentName = "gke-gcsfuse-scanner"
+	csiDriverName        = "gcsfuse.csi.storage.gke.io"
+	leaseName            = "gke-gcsfuse-scanner-leader"
+
+	// PV Volume Attributes / SC Params used by the scanner
+	scanTimeoutKey                  = "bucketScanTimeout"
+	scanResyncPeriodKey             = "bucketScanResyncPeriod"
+	anywhereCacheAdmissionPolicyKey = "anywhereCacheAdmissionPolicy"
+	anywhereCacheTTLKey             = "anywhereCacheTTL"
+	anywhereCacheZonesKey           = "anywhereCacheZones"
 
 	// Event reasons
 	reasonScanOperationStartError     = "ScanOperationStartError"
@@ -122,12 +124,12 @@ const (
 	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
 
 	// Anywhere Cache constants
-	admitOnFirstMiss                = "admit-on-first-miss"
-	admitOnSecondMiss               = "admit-on-second-miss"
-	anywhereCacheTTLKey             = "ttl"
-	anywhereCacheAdmissionPolicyKey = "admission_policy"
-	anywhereCacheRunning            = "running"
-	anywhereCacheCreating           = "creating"
+	anywhereCacheAdmitOnFirstMiss  = "admit-on-first-miss"
+	anywhereCacheAdmitOnSecondMiss = "admit-on-second-miss"
+	anywhereCacheTTL               = "ttl"
+	anywhereCacheAdmissionPolicy   = "admission_policy"
+	anywhereCacheRunning           = "running"
+	anywhereCacheCreating          = "creating"
 
 	// Zonal bucket constants
 	bucketLocationTypeZoneKey  = "zone"
@@ -792,9 +794,9 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
 		if bucketI != nil {
-			_, ok, err := s.calculateLastScanTime(pv)
+			_, ok, err := s.calculateLastScanTime(pv, sc)
 			if err != nil {
-				return status.Errorf(codes.Internal, "failed to calculate last scan time for PV %q: %v", pvName, err)
+				return fmt.Errorf("failed to calculate last scan time for PV %q: %w", pvName, err)
 			}
 			if !ok {
 				// The PV is relevant, but hasn't been scanned (no last scan timestamp).
@@ -863,34 +865,32 @@ func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
 	return nil
 }
 
-func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, attributeKey string, defaultDuration time.Duration) (*time.Duration, error) {
-	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-		if durationStr, ok := pv.Spec.CSI.VolumeAttributes[attributeKey]; ok {
-			parsedDuration, err := time.ParseDuration(durationStr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
-			}
-			if parsedDuration <= 0 {
-				return nil, fmt.Errorf("non-positive duration for %q: %q", attributeKey, durationStr)
-			}
-			klog.Infof("PV %q: Using %q key from VolumeAttributes: %q", pv.Name, attributeKey, parsedDuration)
-			return &parsedDuration, nil
+func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, sc *storagev1.StorageClass, attributeKey string, defaultDuration time.Duration) (time.Duration, error) {
+	if durationStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, attributeKey); ok {
+		parsedDuration, err := time.ParseDuration(durationStr)
+		if err != nil {
+			return time.Duration(0), fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
 		}
+		if parsedDuration <= 0 {
+			return time.Duration(0), fmt.Errorf("non-positive duration for %q: %q", attributeKey, durationStr)
+		}
+		klog.Infof("PV %q: Using %q key from VolumeAttributes: %q", pv.Name, attributeKey, parsedDuration)
+		return parsedDuration, nil
 	}
-	klog.V(6).Infof("PV %q: No %q key in VolumeAttributes. Using default %q", pv.Name, attributeKey, defaultDuration)
-	return &defaultDuration, nil
+	klog.V(6).Infof("PV %q: No %q key in PV or StorageClass. Using default %q", pv.Name, attributeKey, defaultDuration)
+	return defaultDuration, nil
 }
 
 // bypassScanForOverride handles a PV with the override mode set.
 // No actual scan is performed. It uses the pre-validated bucketInfo to patch the PV
 // with the user-provided data and record a corresponding event.
-func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVolume, key string, bucketI *bucketInfo) error {
+func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVolume, sc *storagev1.StorageClass, key string, bucketI *bucketInfo) error {
 	klog.Infof("PV %q is set to 'override' mode. Bypassing bucket scan and applying user-provided annotations.", key)
 
 	// The status annotation is already "override", but we patch it here along with
 	// the timestamp to mark the operation as complete and update the in-memory map.
 	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Override mode detected for PV %q. Bypassing scan and using user-provided values: %d objects, %d bytes", pv.Name, bucketI.numObjects, bucketI.totalSizeBytes)
-	if patchErr := s.updatePVScanResult(ctx, pv, bucketI, profilesutil.ScanOverride); patchErr != nil {
+	if patchErr := s.updatePVScanResult(ctx, pv, sc, bucketI, profilesutil.ScanOverride); patchErr != nil {
 		return patchErr
 	}
 	return nil // Remove from queue since this is considered a complete and successful "scan" (bypass).
@@ -937,7 +937,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 
 	if bucketI.isOverride {
 		// Bypass the scanner if the override mode is set.
-		err = s.bypassScanForOverride(ctx, pv, key, bucketI)
+		err = s.bypassScanForOverride(ctx, pv, sc, key, bucketI)
 		if err != nil {
 			return err
 		}
@@ -945,7 +945,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 
 	if isScanPending {
 		// Get the bucket scan timeout limit. This may have been overriden by the customer.
-		currentScanTimeout, err := s.getDurationAttribute(pv, volumeAttributeScanTimeoutKey, defaultScanTimeoutDuration)
+		currentScanTimeout, err := s.getDurationAttribute(pv, sc, scanTimeoutKey, defaultScanTimeoutDuration)
 		if err != nil {
 			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Bucket scan timeout configuration error: %v", err)
 			return status.Errorf(codes.InvalidArgument, "bucket scan timeout configuration error: %v", err)
@@ -954,7 +954,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationStartSucceeded, "Started bucket scan for PV %q, bucket %q, directory %q, with timeout %s", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
 		klog.Infof("Bucket scan operation starting for PV %q, bucket %q, dir %q, timeout %q", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
 
-		err = s.scanBucket(ctx, bucketI, *currentScanTimeout, pv)
+		err = s.scanBucket(ctx, bucketI, currentScanTimeout, pv)
 
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -962,7 +962,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 				// We send a warning only to inform the customer about the timeout.
 				duration := timeNow().Sub(syncStartTime)
 				s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationTimedOut, "Bucket scan timed out after %s for bucket %q, directory %q (%v). Updating with partial results: %d objects, %d bytes", currentScanTimeout, bucketI.name, bucketI.dir, duration.Round(time.Second), bucketI.numObjects, bucketI.totalSizeBytes)
-				if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanTimeout); patchErr != nil {
+				if patchErr := s.updatePVScanResult(ctx, pv, sc, bucketI, scanTimeout); patchErr != nil {
 					return fmt.Errorf("failed to patch PV %q after timeout, err: %w", pv.Name, patchErr)
 				}
 			} else {
@@ -974,7 +974,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		} else {
 			// The scan has been successful and complete results have been used.
 			duration := timeNow().Sub(syncStartTime)
-			if patchErr := s.updatePVScanResult(ctx, pv, bucketI, scanCompleted); patchErr != nil {
+			if patchErr := s.updatePVScanResult(ctx, pv, sc, bucketI, scanCompleted); patchErr != nil {
 				return fmt.Errorf("failed to patch PV %q results, err: %w", pv.Name, patchErr)
 			}
 			s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationSucceeded, "Bucket scan completed successfully for bucket %q, directory %q (%v): %d objects, %d bytes", bucketI.name, bucketI.dir, duration.Round(time.Second), bucketI.numObjects, bucketI.totalSizeBytes)
@@ -982,23 +982,13 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	}
 
 	// Check if the PV uses an Anywhere Cache enabled StorageClass.
-	shouldEnableAnywhereCache := false
-	enableAnywhereCache, ok := sc.Parameters[volumeAttributeEnableAnywhereCache]
-	if !ok {
-		return nil
-	}
-	shouldEnableAnywhereCache, err = strconv.ParseBool(enableAnywhereCache)
-	if err != nil {
-		klog.Errorf("Failed to enable Anywhere Cache requests for PV %q: %v", pv.Spec.StorageClassName, err)
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Failed to enable Anywhere Cache for PV %q: %v", pv.Spec.StorageClassName, err)
-		return status.Errorf(codes.InvalidArgument, "failed to parse enableAnywhereCache for PV %q: %v", pv.Spec.StorageClassName, err)
-	}
+	anywhereCacheProvidedZones, shouldEnableAnywhereCache := anywhereCacheZonesVal(pv, sc)
 
 	// Skip Anywhere Cache sync if it's disabled, or if the bucket is zonal, as it's not supported.
 	if !shouldEnableAnywhereCache || bucketI.isZonalBucket {
 		return nil
 	}
-	syncResults, err := s.syncAnywhereCache(ctx, pv)
+	syncResults, err := s.syncAnywhereCache(ctx, pv, sc, anywhereCacheProvidedZones)
 	if err != nil {
 		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Spec.StorageClassName, err)
 		return err
@@ -1118,7 +1108,7 @@ func (s *Scanner) updateAnywhereCache(ctx context.Context, bucketName string, go
 
 	_, err := s.storageControlClient.UpdateAnywhereCache(ctx, &controlpb.UpdateAnywhereCacheRequest{
 		AnywhereCache: wantAC,
-		UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheTTLKey, anywhereCacheAdmissionPolicyKey}},
+		UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheTTL, anywhereCacheAdmissionPolicy}},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update cache: %w", err)
@@ -1134,16 +1124,15 @@ func (s *Scanner) updateAnywhereCache(ctx context.Context, bucketName string, go
 // The function is idempotent and aggregates errors from all zonal operations.
 // It returns an error if any zone failed to sync (and isn't just pending),
 // or errRequeueNeeded if any zone has operations in progress.
-func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume) (map[string]*anywhereCacheSyncResult, error) {
-	anywhereCacheTTL, err := getAnywhereCacheTTLFromPV(pv)
+func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume, sc *storagev1.StorageClass, anywhereCacheProvidedZones []string) (map[string]*anywhereCacheSyncResult, error) {
+	anywhereCacheTTL, err := anywhereCacheTTLVal(pv, sc)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: %v", pv.Name, err)
 	}
-	anywhereCacheAdmissionPolicy, err := getAnywhereCacheAdmissionPolicyFromPV(pv)
+	anywhereCacheAdmissionPolicy, err := anywhereCacheAdmissionPolicyVal(pv, sc)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
 	}
-	anywhereCacheProvidedZones := getAnywhereCacheZonesFromPV(pv)
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
@@ -1198,20 +1187,25 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 	return results, nil
 }
 
-func getAnywhereCacheZonesFromPV(pv *v1.PersistentVolume) []string {
-	zonesStr, ok := pv.Spec.CSI.VolumeAttributes[volumeAttributeAnywhereCacheZones]
+func anywhereCacheZonesVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) ([]string, bool) {
+	zonesStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheZonesKey)
 	zonesStr = strings.ReplaceAll(zonesStr, " ", "")
-	klog.Infof("Retrieved anywhere cache zones string from PV: %q", zonesStr)
-	if !ok || zonesStr == "" {
-		return []string{} // Empty slice means "all zones".
+	if !ok || strings.ToLower(zonesStr) == "none" {
+		// Disable Anywhere Cache if the key is not found or explicitly disabled.
+		return []string{}, false
 	}
-	return strings.Split(zonesStr, ",")
+	klog.Infof("Retrieved anywhere cache zones string: %q", zonesStr)
+	if zonesStr == "" || zonesStr == "*" {
+		// Enable Anywhere Cache on all cluster zones if the key is present but is empty or has the wildcard character.
+		return []string{}, true
+	}
+	// Enable Anywhere Cache on user specified zones.
+	return strings.Split(zonesStr, ","), true
 }
 
-// getAnywhereCacheTTLFromPV returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
-func getAnywhereCacheTTLFromPV(pv *v1.PersistentVolume) (*durationpb.Duration, error) {
-	// TODO(fuechr) Check StorageClass for ttl as fallback
-	ttl, ok := pv.Spec.CSI.VolumeAttributes[volumeAttributeAnywhereCacheTTL]
+// anywhereCacheTTLVal returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
+func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*durationpb.Duration, error) {
+	ttl, ok := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheTTLKey)
 
 	if !ok {
 		klog.Infof("no ttl volume attribute provided, defaulting the anywhere cache ttl to 1h for pv: %s", pv.Name)
@@ -1226,20 +1220,19 @@ func getAnywhereCacheTTLFromPV(pv *v1.PersistentVolume) (*durationpb.Duration, e
 	return durationpb.New(ttlAsDuration), nil
 }
 
-// getAnywhereCacheAdmissionPolicyFromPV returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
-func getAnywhereCacheAdmissionPolicyFromPV(pv *v1.PersistentVolume) (string, error) {
-	// TODO(fuechr) Check StorageClass for admission policy as fallback
-	admissionPolicy, ok := pv.Spec.CSI.VolumeAttributes[volumeAttributeAnywhereCacheAdmissionPolicy]
+// anywhereCacheAdmissionPolicyVal returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
+func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (string, error) {
+	admissionPolicy, ok := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey)
 	if !ok {
-		klog.Infof("no admission policy volume attribute provided, defaulting the anywhere cache admission policy to %q for pv: %s", admitOnFirstMiss, pv.Name)
-		return admitOnFirstMiss, nil
+		klog.Infof("no admission policy volume attribute provided, defaulting the anywhere cache admission policy to %q for pv: %s", anywhereCacheAdmitOnFirstMiss, pv.Name)
+		return anywhereCacheAdmitOnFirstMiss, nil
 	}
 
 	switch admissionPolicy {
-	case admitOnFirstMiss, admitOnSecondMiss:
+	case anywhereCacheAdmitOnFirstMiss, anywhereCacheAdmitOnSecondMiss:
 		return admissionPolicy, nil
 	default:
-		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, admitOnFirstMiss, admitOnSecondMiss)
+		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, anywhereCacheAdmitOnFirstMiss, anywhereCacheAdmitOnSecondMiss)
 	}
 }
 
@@ -1465,7 +1458,7 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 // updatePVScanResult updates the PV annotations with the results of a bucket scan.
 // It sets the status, number of objects, total size, and last updated time.
 // It also updates the in-memory lastSuccessfulScan map.
-func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolume, bucketI *bucketInfo, scanStatus string) error {
+func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolume, sc *storagev1.StorageClass, bucketI *bucketInfo, scanStatus string) error {
 	currentTime := timeNow()
 	annotationsToUpdate := map[string]*string{
 		profilesutil.AnnotationStatus:          stringPtr(scanStatus),
@@ -1476,34 +1469,38 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, scanStatus)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
 	if err != nil {
-		klog.Errorf("Failed to update annotations on PV %q with status %q: %v", pv.Name, scanStatus, err)
-		return err
+		return fmt.Errorf("failed to update annotations on PV %q with status %q: %w", pv.Name, scanStatus, err)
 	}
 	klog.Infof("Successfully updated annotations on PV %q with status %q", pv.Name, scanStatus)
+	if err := s.updateLastSuccessfulScanInMemory(pv, sc, currentTime); err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed to update lastSuccessfulScan in-memory map for PV %q: %v", pv.Name, err)
+	}
+	return nil
+}
 
-	resyncPeriod, err := s.getDurationAttribute(pv, volumeAttributeScanResyncPeriodKey, defaultScanResyncPeriodDuration)
+// updateLastSuccessfulScanInMemory updates the trackedPVs map for the given PersistentVolume.
+// It records the lastScanTime and calculates the next scan time based on the resync period
+// configured in the PV or StorageClass. This operation is thread-safe.
+func (s *Scanner) updateLastSuccessfulScanInMemory(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, lastScanTime time.Time) error {
+	resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodDuration)
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
+		return fmt.Errorf("bucket scan resync period configuration error: %v", err)
 	}
-
-	// Update in-memory map only on terminal state updates.
-	if scanStatus == scanCompleted || scanStatus == scanTimeout || scanStatus == profilesutil.ScanOverride {
-		s.pvMutex.Lock()
-		s.trackedPVs[pv.Name] = syncInfo{
-			lastSuccessfulScan: currentTime,
-			nextScan:           currentTime.Add(*resyncPeriod),
-		}
-		s.pvMutex.Unlock()
-		klog.V(6).Infof("Updated lastSuccessfulScan map for PV %q to %q, next scan: %q", pv.Name, currentTime, currentTime.Add(*resyncPeriod))
+	s.pvMutex.Lock()
+	s.trackedPVs[pv.Name] = syncInfo{
+		lastSuccessfulScan: lastScanTime,
+		nextScan:           lastScanTime.Add(resyncPeriod),
 	}
+	s.pvMutex.Unlock()
+	klog.V(6).Infof("Updated lastSuccessfulScan in-memory map for PV %q to %q, next scan: %q", pv.Name, lastScanTime, lastScanTime.Add(resyncPeriod))
 	return nil
 }
 
 // checkPVRelevance determines if a PersistentVolume is relevant for gcsfuse profiles and whether there is a scan pending.
 // returns (bucketInfo, isScanPending, error)
 // A PV is relevant if it uses the gcsfuse CSI driver and its StorageClass
-// has a workloadType parameter set to serving, training, or checkpointing.
-// The PV is pending a scan if the current time - last scan time >= scan TTL or it hasn't been scanned yet, and the status is not "override"..
+// has a profile label.
+// The PV is pending a scan if the current time - last scan time >= resync period or it hasn't been scanned yet, and the status is not "override"..
 // This function returns a bucketInfo with the bucket name and the directory if
 // relevant, otherwise, it will return nil and any error.
 func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*bucketInfo, bool, error) {
@@ -1515,17 +1512,12 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	if scParams == nil {
 		return nil, false, nil
 	}
-	workloadType, ok := scParams[profilesutil.WorkloadTypeKey]
-	if !ok {
-		klog.V(6).Infof("Workload type parameter key %q was not found in StorageClass %q for PV %q", profilesutil.WorkloadTypeKey, sc.Name, pv.Name)
+	if !profilesutil.IsProfile(sc) {
+		klog.Warningf("profile label was not found in StorageClass %q for PV %q", sc.Name, pv.Name)
 		return nil, false, nil
 	}
 
 	// ---- At this stage, there is clearly a customer intent to use the scanner feature, so we start logging warnings -----
-
-	if err := profilesutil.ValidateWorkloadType(workloadType); err != nil {
-		return nil, false, status.Errorf(codes.InvalidArgument, "failed to validate workload type: %v", err)
-	}
 
 	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
 	var dir string
@@ -1567,20 +1559,21 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 		overrideI.isOverride = true
 		return &overrideI, false, nil
 	}
-	lastScanTime, found, err := s.calculateLastScanTime(pv)
+
+	lastScanTime, found, err := s.calculateLastScanTime(pv, sc)
 	if err != nil {
-		return nil, false, status.Errorf(codes.Internal, "failed to calculate last scan time: %v", err)
+		return nil, false, fmt.Errorf("failed to calculate last scan time: %w", err)
 	}
 
 	if found {
-		elapsed := timeNow().Sub(lastScanTime)
-
-		resyncPeriod, err := s.getDurationAttribute(pv, volumeAttributeScanResyncPeriodKey, defaultScanResyncPeriodDuration)
+		resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodDuration)
 		if err != nil {
 			return nil, false, status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
 		}
 
-		if elapsed < *resyncPeriod {
+		elapsed := timeNow().Sub(lastScanTime)
+
+		if elapsed < resyncPeriod {
 			klog.Infof("PV %q: Skipping scan, only %q elapsed since last scan, which is less than resync period %q", pv.Name, elapsed.Round(time.Second), resyncPeriod)
 			return &bucketI, false, nil
 		}
@@ -1607,26 +1600,31 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 // calculateLastScanTime returns the last successful scan of a PV. If it doesn't exist in
 // memory (e.g. first time scanning the PV), it checks the PV annotatins. The function
 // returns a boolean to indicate if the value was found, otherwise, it returns an error.
-func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume) (time.Time, bool, error) {
+func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (time.Time, bool, error) {
 	// Check if the last scan time appears in memory first.
 	s.pvMutex.RLock()
-	syncInfo, ok := s.trackedPVs[pv.Name]
+	info, ok := s.trackedPVs[pv.Name]
 	s.pvMutex.RUnlock()
 	if ok {
-		klog.V(6).Infof("PV %q: Found last scan time in memory: %v, next scan: %v", pv.Name, syncInfo.lastSuccessfulScan, syncInfo.nextScan)
-		return syncInfo.lastSuccessfulScan, true, nil
+		klog.V(6).Infof("PV %q: Found last scan time in memory: %v, next scan: %v", pv.Name, info.lastSuccessfulScan, info.nextScan)
+		return info.lastSuccessfulScan, true, nil
 	}
 
-	// Check if the last scan time appears in the PV annotations.
+	// Check if the last scan time appears in the PV annotations. This
+	// can happen if the controller restarted and lost the in-memory state.
 	lastScanTimeFromAnnotation, ok := pv.Annotations[profilesutil.AnnotationLastUpdatedTime]
 	if !ok {
 		return time.Time{}, false, nil
 	}
 	parsedTime, err := time.Parse(time.RFC3339, lastScanTimeFromAnnotation)
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
+		return time.Time{}, false, status.Errorf(codes.Internal, "PV %q: Failed to parse annotation %q value %q: %v", pv.Name, profilesutil.AnnotationLastUpdatedTime, lastScanTimeFromAnnotation, err)
 	}
 	klog.V(6).Infof("PV %q: Found last scan time in annotation: %q", pv.Name, lastScanTimeFromAnnotation)
+	if err := s.updateLastSuccessfulScanInMemory(pv, sc, parsedTime); err != nil {
+		return time.Time{}, false, status.Errorf(codes.InvalidArgument, "failed to update lastSuccessfulScan in-memory map for PV %q: %v", pv.Name, err)
+
+	}
 	return parsedTime, true, nil
 }
 
