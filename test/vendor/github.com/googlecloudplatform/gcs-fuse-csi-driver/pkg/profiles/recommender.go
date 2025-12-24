@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	v1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
@@ -199,11 +200,16 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 		return nil, status.Errorf(codes.Internal, "failed to get StorageClass %q: %v", scName, err)
 	}
 
+	if !profilesutil.IsProfile(sc) {
+		klog.Warningf("sc %q found but missing the profile label: %v, disabling profiles feature for this volume", scName, err)
+		return nil, nil
+	}
+
 	// At this point, we are sure that the user is attempting to use the volume with
 	// the profiles feature, so we start returning errors.
 
 	// Get the scDetails from the StorageClass object.
-	scDetails, err := buildSCDetails(sc, params.VolumeAttributeKeys)
+	scDetails, err := buildSCDetails(pv, sc, params.VolumeAttributeKeys)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
 	}
@@ -592,8 +598,8 @@ func recommendMetadataCacheSize(config *ProfileConfig, required, memoryBudget in
 // parseFloatParameterNonNegative extracts a parameter by key from the params map,
 // parses it as a float64, and returns an error if the key is missing, the value
 // is not a valid float, or the value is negative.
-func parseFloatParameterNonNegative(params map[string]string, key string) (float64, error) {
-	stringVal, ok := params[key]
+func parseFloatParameterNonNegative(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, key string) (float64, error) {
+	stringVal, ok := profilesutil.AttributeWithSCFallback(pv, sc, key)
 	if !ok {
 		return 0, fmt.Errorf("missing %q", key)
 	}
@@ -775,27 +781,18 @@ func gcsFuseSidecarResourceRequirements(isInitContainer bool, pod *corev1.Pod) c
 
 // buildSCDetails extracts and validates parameters from a Kubernetes StorageClass
 // object to populate and return an scDetails struct. It checks for required
-// parameters like workloadType and fuseFileCacheMediumPriority, parses
+// parameters like fuseFileCacheMediumPriority, parses
 // numeric factors, and selects volume attributes based on the provided
 // volumeAttributeKeys. An error is returned if any mandatory parameters are
 // missing or invalid.
-func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}) (*scDetails, error) {
+func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}) (*scDetails, error) {
 	// Get the parameters from the StorageClass.
 	if sc.Parameters == nil {
 		return nil, fmt.Errorf("sc %q found but has nil Parameters map", sc.Name)
 	}
 
-	// Validate the workloadType parameter for the profile.
-	workloadType, ok := sc.Parameters[profilesutil.WorkloadTypeKey]
-	if !ok {
-		return nil, fmt.Errorf("missing workloadType parameter in StorageClass %q", sc.Name)
-	}
-	if err := profilesutil.ValidateWorkloadType(workloadType); err != nil {
-		return nil, fmt.Errorf("failed to validate workloadType parameter in StorageClass %q: %v", sc.Name, err)
-	}
-
-	// Get the file cache medium priority from the StorageClass parameters.
-	fileCacheMediumPriorityStr, ok := sc.Parameters[fuseFileCacheMediumPriorityKey]
+	// Get the file cache medium priority from the StorageClass parameters (or PV override).
+	fileCacheMediumPriorityStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey)
 	if !ok {
 		return nil, fmt.Errorf("missing fuseFileCacheMediumPriority in StorageClass %q", sc.Name)
 	}
@@ -804,14 +801,14 @@ func buildSCDetails(sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}
 		return nil, fmt.Errorf("failed to parse fuseFileCacheMediumPriority in StorageClass %q: %v", sc.Name, err)
 	}
 
-	// Get the fuse memory allocatable factor from the StorageClass parameters.
-	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(sc.Parameters, fuseMemoryAllocatableFactorKey)
+	// Get the fuse memory allocatable factor from the StorageClass parameters (or PV override).
+	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseMemoryAllocatableFactorKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse memory allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse ephemeral storage allocatable factor from the StorageClass parameters.
-	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(sc.Parameters, fuseEphemeralStorageAllocatableFactorKey)
+	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseEphemeralStorageAllocatableFactorKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse ephemeral storage allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
