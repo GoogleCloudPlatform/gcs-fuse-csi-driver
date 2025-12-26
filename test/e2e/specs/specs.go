@@ -20,14 +20,13 @@ package specs
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
-	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
-	iam "google.golang.org/api/iam/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -65,6 +64,7 @@ const (
 	EnableFileCacheForceNewBucketPrefix                        = "gcsfuse-csi-enable-file-cache-force-new-bucket"
 	EnableFileCacheForceNewBucketAndMetricsPrefix              = "gcsfuse-csi-enable-file-cache-force-new-bucket-and-metrics"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
+	ProfilesOverrideAllOverridablePrefix                       = "gcsfuse-csi-profiles-override-all-overridable"
 	EnableFileCacheAndMetricsPrefix                            = "gcsfuse-csi-enable-file-cache-and-metrics"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
 	EnableMetadataPrefetchPrefix                               = "gcsfuse-csi-enable-metadata-prefetch"
@@ -105,6 +105,13 @@ const (
 	backoffCap      = 2 * time.Minute
 	backoffSteps    = 8
 	backoffJitter   = 0.1
+
+	driverNamespaceOSS     = "gcs-fuse-csi-driver"
+	driverNamespaceManaged = "kube-system"
+	driverContainer        = "gcs-fuse-csi-driver"
+	driverDaemonsetLabel   = "k8s-app=gcs-fuse-csi-driver"
+
+	IsOSSEnvVar = "IS_OSS"
 )
 
 // Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
@@ -413,6 +420,26 @@ func (t *TestPod) SetupVolumeForHNS(name string) {
 func (t *TestPod) SetupVolume(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, mountOptions ...string) {
 	t.setupVolume(volumeResource, name, readOnly, mountOptions...)
 	t.setupVolumeMount(name, mountPath, readOnly, "", false)
+}
+
+// OverrideGCSFuseCache overrides the `gke-gcsfuse-cache` with dummy values, needed for certain workflows in profiles.
+func (t *TestPod) OverrideGCSFuseCache() {
+	sizeLimit := resource.MustParse("115Mi")
+	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, corev1.Volume{
+		Name: webhook.SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{
+				Medium:    "",
+				SizeLimit: &sizeLimit,
+			},
+		},
+	})
+	if t.pod.Spec.SecurityContext == nil {
+		t.pod.Spec.SecurityContext = &corev1.PodSecurityContext{FSGroup: ptr.To(int64(1000))}
+	} else {
+		*t.pod.Spec.SecurityContext.FSGroup = 1000
+	}
+
 }
 
 func (t *TestPod) SetupVolumeWithSubPath(volumeResource *storageframework.VolumeResource, name, mountPath string, readOnly bool, subPath string, reuseMount bool, mountOptions ...string) {
@@ -779,257 +806,6 @@ func (t *TestSecret) Cleanup(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-type TestKubernetesServiceAccount struct {
-	client         clientset.Interface
-	serviceAccount *corev1.ServiceAccount
-	namespace      *corev1.Namespace
-}
-
-func NewTestKubernetesServiceAccount(c clientset.Interface, ns *corev1.Namespace, name, gcpSAEmail string) *TestKubernetesServiceAccount {
-	sa := &TestKubernetesServiceAccount{
-		client:    c,
-		namespace: ns,
-		serviceAccount: &corev1.ServiceAccount{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
-			},
-		},
-	}
-	if gcpSAEmail != "" {
-		sa.serviceAccount.Annotations = map[string]string{
-			"iam.gke.io/gcp-service-account": gcpSAEmail,
-		}
-	}
-
-	return sa
-}
-
-func (t *TestKubernetesServiceAccount) Create(ctx context.Context) {
-	framework.Logf("Creating Kubernetes Service Account %s", t.serviceAccount.Name)
-	var err error
-	t.serviceAccount, err = t.client.CoreV1().ServiceAccounts(t.namespace.Name).Create(ctx, t.serviceAccount, metav1.CreateOptions{})
-	framework.ExpectNoError(err)
-}
-
-func (t *TestKubernetesServiceAccount) Cleanup(ctx context.Context) {
-	framework.Logf("Deleting Kubernetes Service Account %s", t.serviceAccount.Name)
-	err := t.client.CoreV1().ServiceAccounts(t.namespace.Name).Delete(ctx, t.serviceAccount.Name, metav1.DeleteOptions{})
-	framework.ExpectNoError(err)
-}
-
-type TestGCPServiceAccount struct {
-	serviceAccount *iam.ServiceAccount
-}
-
-func NewTestGCPServiceAccount(name, projectID string) *TestGCPServiceAccount {
-	return &TestGCPServiceAccount{
-		serviceAccount: &iam.ServiceAccount{
-			Name:      name,
-			ProjectId: projectID,
-		},
-	}
-}
-
-func (t *TestGCPServiceAccount) Create(ctx context.Context) {
-	framework.Logf("Creating GCP IAM Service Account %s", t.serviceAccount.Name)
-	iamService, err := iam.NewService(ctx)
-	framework.ExpectNoError(err)
-
-	request := &iam.CreateServiceAccountRequest{
-		AccountId: t.serviceAccount.Name,
-		ServiceAccount: &iam.ServiceAccount{
-			DisplayName: "Cloud Storage FUSE CSI Driver E2E Test SA",
-		},
-	}
-	t.serviceAccount, err = iamService.Projects.ServiceAccounts.Create("projects/"+t.serviceAccount.ProjectId, request).Do()
-	framework.ExpectNoError(err)
-
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(context.Context) (bool, error) {
-		if _, e := iamService.Projects.ServiceAccounts.Get(t.serviceAccount.Name).Do(); e != nil {
-			//nolint:nilerr
-			return false, nil
-		}
-
-		return true, nil
-	})
-	framework.ExpectNoError(err)
-}
-
-func (t *TestGCPServiceAccount) AddIAMPolicyBinding(ctx context.Context, ns *corev1.Namespace) {
-	framework.Logf("Binding the GCP IAM Service Account %s with Role roles/iam.workloadIdentityUser", t.serviceAccount.Name)
-	iamService, err := iam.NewService(ctx)
-	framework.ExpectNoError(err)
-
-	policy, err := iamService.Projects.ServiceAccounts.GetIamPolicy(t.serviceAccount.Name).Do()
-	framework.ExpectNoError(err)
-
-	policy.Bindings = append(policy.Bindings,
-		&iam.Binding{
-			Role: "roles/iam.workloadIdentityUser",
-			Members: []string{
-				fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", t.serviceAccount.ProjectId, ns.Name, K8sServiceAccountName),
-			},
-		})
-
-	iamPolicyRequest := &iam.SetIamPolicyRequest{Policy: policy}
-	_, err = iamService.Projects.ServiceAccounts.SetIamPolicy(t.serviceAccount.Name, iamPolicyRequest).Do()
-	framework.ExpectNoError(err)
-}
-
-func (t *TestGCPServiceAccount) GetEmail() string {
-	if t.serviceAccount != nil {
-		return t.serviceAccount.Email
-	}
-
-	return ""
-}
-
-func (t *TestGCPServiceAccount) Cleanup(ctx context.Context) {
-	framework.Logf("Deleting GCP IAM Service Account %s", t.serviceAccount.Name)
-	service, err := iam.NewService(ctx)
-	framework.ExpectNoError(err)
-	_, err = service.Projects.ServiceAccounts.Delete(t.serviceAccount.Name).Do()
-	framework.ExpectNoError(err)
-}
-
-type TestGCPProjectIAMPolicyBinding struct {
-	projectID string
-	member    string
-	role      string
-	condition string
-}
-
-func NewTestGCPProjectIAMPolicyBinding(projectID, member, role, condition string) *TestGCPProjectIAMPolicyBinding {
-	return &TestGCPProjectIAMPolicyBinding{
-		projectID: projectID,
-		member:    member,
-		role:      role,
-		condition: condition,
-	}
-}
-
-func (t *TestGCPProjectIAMPolicyBinding) Create(ctx context.Context) {
-	framework.Logf("Binding member %s with role %s, condition %q to project %s", t.member, t.role, t.condition, t.projectID)
-	crmService, err := cloudresourcemanager.NewService(ctx)
-	framework.ExpectNoError(err)
-
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
-		if addBinding(crmService, t.projectID, t.member, t.role) != nil {
-			//nolint:nilerr
-			return false, nil
-		}
-
-		return true, nil
-	})
-	framework.ExpectNoError(err)
-}
-
-func (t *TestGCPProjectIAMPolicyBinding) Cleanup(ctx context.Context) {
-	framework.Logf("Removing member %q from project %v", t.member, t.projectID)
-	crmService, err := cloudresourcemanager.NewService(ctx)
-	framework.ExpectNoError(err)
-
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
-		if removeMember(crmService, t.projectID, t.member, t.role) != nil {
-			//nolint:nilerr
-			return false, nil
-		}
-
-		return true, nil
-	})
-	framework.ExpectNoError(err)
-}
-
-// addBinding adds the member to the project's IAM policy.
-func addBinding(crmService *cloudresourcemanager.Service, projectID, member, role string) error {
-	policy, err := getPolicy(crmService, projectID)
-	if err != nil {
-		return err
-	}
-
-	// Find the policy binding for role. Only one binding can have the role.
-	var binding *cloudresourcemanager.Binding
-	for _, b := range policy.Bindings {
-		if b.Role == role {
-			binding = b
-
-			break
-		}
-	}
-
-	if binding != nil {
-		// If the binding exists, adds the member to the binding
-		binding.Members = append(binding.Members, member)
-	} else {
-		// If the binding does not exist, adds a new binding to the policy
-		binding = &cloudresourcemanager.Binding{
-			Role:    role,
-			Members: []string{member},
-		}
-		policy.Bindings = append(policy.Bindings, binding)
-	}
-
-	return setPolicy(crmService, projectID, policy)
-}
-
-// removeMember removes the member from the project's IAM policy.
-func removeMember(crmService *cloudresourcemanager.Service, projectID, member, role string) error {
-	policy, err := getPolicy(crmService, projectID)
-	if err != nil {
-		return err
-	}
-
-	// Find the policy binding for role. Only one binding can have the role.
-	var binding *cloudresourcemanager.Binding
-	var bindingIndex int
-	for i, b := range policy.Bindings {
-		if b.Role == role {
-			binding = b
-			bindingIndex = i
-
-			break
-		}
-	}
-
-	// Order doesn't matter for bindings or members, so to remove, move the last item
-	// into the removed spot and shrink the slice.
-	if len(binding.Members) == 1 {
-		// If the member is the only member in the binding, removes the binding
-		last := len(policy.Bindings) - 1
-		policy.Bindings[bindingIndex] = policy.Bindings[last]
-		policy.Bindings = policy.Bindings[:last]
-	} else {
-		// If there is more than one member in the binding, removes the member
-		var memberIndex int
-		for i, mm := range binding.Members {
-			if mm == member {
-				memberIndex = i
-			}
-		}
-		last := len(policy.Bindings[bindingIndex].Members) - 1
-		binding.Members[memberIndex] = binding.Members[last]
-		binding.Members = binding.Members[:last]
-	}
-
-	return setPolicy(crmService, projectID, policy)
-}
-
-// getPolicy gets the project's IAM policy.
-func getPolicy(crmService *cloudresourcemanager.Service, projectID string) (*cloudresourcemanager.Policy, error) {
-	request := new(cloudresourcemanager.GetIamPolicyRequest)
-
-	return crmService.Projects.GetIamPolicy(projectID, request).Do()
-}
-
-// setPolicy sets the project's IAM policy.
-func setPolicy(crmService *cloudresourcemanager.Service, projectID string, policy *cloudresourcemanager.Policy) error {
-	request := new(cloudresourcemanager.SetIamPolicyRequest)
-	request.Policy = policy
-	_, err := crmService.Projects.SetIamPolicy(projectID, request).Do()
-
-	return err
-}
-
 type TestDeployment struct {
 	client     clientset.Interface
 	deployment *appsv1.Deployment
@@ -1348,6 +1124,77 @@ func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
 func runKubectlOrDie(namespace string, args ...string) {
 	_, _, err := runKubectlWithFullOutputWithRetry(namespace, args...)
 	framework.ExpectNoError(err)
+}
+
+func (t *TestPod) VerifyMountOptionsArePassedWithConfigFormat(namespace string, mountOptions map[string]string) {
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+
+	for key, value := range mountOptions {
+		optionWithColon := fmt.Sprintf("%s:%s", key, value)
+
+		gomega.Expect(stdout).To(
+			gomega.ContainSubstring(optionWithColon),
+			"Should find mount option %q with ':' separator in stdout", key,
+		)
+	}
+}
+
+func (t *TestPod) VerifyDriverLogsDoNotContain(logNotExpected string) {
+	stdout, stderr, err := t.getDriverLogs()
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+	gomega.Expect(stdout).To(gomega.Not(gomega.ContainSubstring(logNotExpected)),
+		"Should not find flag string in stdout")
+}
+
+func (t *TestPod) getDriverLogs() (string, string, error) {
+	podNode := t.pod.Spec.NodeName
+	driverNamespace := driverNamespaceOSS
+	isOss := os.Getenv(IsOSSEnvVar)
+	if isOss != "true" {
+		driverNamespace = driverNamespaceManaged
+	}
+	// Get all node driver pods.
+	podsOut, _, err := runKubectlWithFullOutputWithRetry(driverNamespace,
+		"get", "pods",
+		"-l", driverDaemonsetLabel,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}:{.spec.nodeName}{\"\\n\"}{end}",
+	)
+
+	if err != nil {
+		return "", "", err
+	}
+
+	// Isolate driver pod on test pod node.
+	var targetPod string
+	for _, line := range strings.Split(podsOut, "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) != 2 {
+			continue
+		}
+		if parts[1] == podNode {
+			targetPod = parts[0]
+			break
+		}
+	}
+
+	if targetPod == "" {
+		return "", "", fmt.Errorf("no driver pod found on node %s", podNode)
+	}
+
+	// Get logs from the driver container
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(driverNamespaceOSS,
+		"logs", targetPod, "-c", driverContainer,
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get logs for pod %s: %v", targetPod, err)
+	}
+
+	return stdout, stderr, nil
 }
 
 func runKubectlWithFullOutputWithRetry(namespace string, args ...string) (string, string, error) {
