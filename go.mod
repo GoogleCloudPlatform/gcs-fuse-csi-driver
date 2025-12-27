@@ -17,6 +17,8 @@ require (
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.62.0
+	github.com/safchain/ethtool v0.7.0
+	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/mod v0.29.0
 	golang.org/x/net v0.47.0
 	golang.org/x/oauth2 v0.30.0
@@ -93,6 +95,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
 	github.com/stoewer/go-strcase v1.3.0 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect

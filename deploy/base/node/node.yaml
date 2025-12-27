@@ -32,6 +32,7 @@ spec:
       labels:
         k8s-app: gcs-fuse-csi-driver
     spec:
+      hostNetwork: true
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -85,6 +86,8 @@ spec:
               mountPath: /sockets
             - name: host-sysfs
               mountPath: /sys
+            - name: host-iproute
+              mountPath: /etc/iproute2
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -131,6 +134,10 @@ spec:
         - name: host-sysfs
           hostPath:
             path: /sys
+            type: Directory
+        - name: host-iproute
+          hostPath:
+            path: /etc/iproute2
             type: Directory
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should

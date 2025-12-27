@@ -64,6 +64,7 @@ type MountConfig struct {
 	TokenServerIdentityPool        string                `json:"-"`
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
 	FileCacheMedium                string                `json:"-"`
+	GcsFuseNumaNode                int                   `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -199,6 +200,7 @@ func (mc *MountConfig) prepareMountArgs() {
 
 	invalidArgs := []string{}
 
+	mc.GcsFuseNumaNode = -1
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
 
@@ -286,6 +288,15 @@ func (mc *MountConfig) prepareMountArgs() {
 		case util.FileCacheMediumConst:
 			mc.FileCacheMedium = value
 			continue
+
+		case util.GCSFuseNumaNodeArg:
+			idx, err := strconv.Atoi(value)
+			if err != nil {
+				invalidArgs = append(invalidArgs, arg)
+			} else {
+				mc.GcsFuseNumaNode = idx
+			}
+			continue
 		}
 
 		switch {
@@ -331,7 +342,8 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
 	}
 
-	mc.FlagMap, mc.ConfigFileFlagMap = flagMap, configFileFlagMap
+	mc.FlagMap = flagMap
+	mc.ConfigFileFlagMap = configFileFlagMap
 }
 
 func (mc *MountConfig) prepareConfigFile() error {

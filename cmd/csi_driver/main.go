@@ -234,6 +234,7 @@ func main() {
 		StorageServiceManager:          ssm,
 		TokenManager:                   tm,
 		Mounter:                        mounter,
+		NetworkManager:                 driver.NewNetworkManager(),
 		K8sClients:                     clientset,
 		MetricsManager:                 mm,
 		DisableAutoconfig:              *disableAutoconfig,
