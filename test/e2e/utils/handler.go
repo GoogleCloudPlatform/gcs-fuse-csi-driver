@@ -18,7 +18,6 @@ limitations under the License.
 package utils
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -263,7 +262,8 @@ func Handle(testParams *TestParameters) error {
 			testParams.ProjectID = strings.TrimSpace(string(output))
 		}
 
-		projectNumber, err := setEnvProjectNumberUsingID(testParams.ProjectID)
+		// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
+		_, err := setEnvProjectNumberUsingID(testParams.ProjectID)
 		if err != nil {
 			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
 		}
@@ -272,13 +272,14 @@ func Handle(testParams *TestParameters) error {
 		if err != nil {
 			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
 		}
-		err = ensureIAMRoleForProfilesTests(context.Background(), projectNumber, testParams.ProjectID)
-		if err != nil {
-			klog.Errorf("Failed while creating IAM role for profiles tests: %v", err)
-		} else {
-			klog.Infof("Successfully created IAM role for profiles tests")
-			defer deleteIAMRoleForProfilesTests(context.Background(), testParams.ProjectID, ProfilesUserRoleID)
-		}
+		// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
+		// err = ensureIAMRoleForProfilesTests(context.Background(), projectNumber, testParams.ProjectID)
+		// if err != nil {
+		// 	klog.Errorf("Failed while creating IAM role for profiles tests: %v", err)
+		// } else {
+		// 	klog.Infof("Successfully created IAM role for profiles tests")
+		// 	defer deleteIAMRoleForProfilesTests(context.Background(), testParams.ProjectID, ProfilesUserRoleID)
+		// }
 
 	}
 

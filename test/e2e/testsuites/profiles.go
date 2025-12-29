@@ -21,10 +21,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	ginkgo "github.com/onsi/ginkgo/v2"
@@ -66,6 +66,7 @@ const (
 	anywhereCacheZonesKey           = "anywhereCacheZones"
 	anywhereCacheAdmissionPolicyKey = "anywhereCacheAdmissionPolicy"
 	anywhereCacheTTLKey             = "anywhereCacheTTL"
+	bucketScanResyncPeriodKey       = "bucketScanResyncPeriod"
 
 	anywhereCacheBackoffDuration = 22 * time.Second
 	acBackoffFactor              = 1.2
@@ -73,18 +74,34 @@ const (
 	acBackoffSteps               = 30
 	acBackoffJitter              = 0.1
 
+	retryPolling = 5 * time.Second
+	retryTimeout = 5 * time.Minute
+
 	gcsFuseCsiRecommendationLog = "GCSFuseCSIRecommendation"
 
 	acCreating = "creating"
 	acReady    = "running"
 
 	vbm = storagev1.VolumeBindingWaitForFirstConsumer
+
+	servingProfile       = "gcsfusecsi-serving"
+	trainingProfile      = "gcsfusecsi-training"
+	checkpointingProfile = "gcsfusecsi-checkpointing"
+
+	controllerNS            = "gcs-fuse-csi-driver"
+	controllerLabelSelector = "app=gcs-fuse-csi-driver"
 )
 
 var (
-	availableProfiles = []string{"gcsfusecsi-serving", "gcsfusecsi-training", "gcsfusecsi-checkpointing"}
-	projectID         string
-	projectNumber     string
+	availableProfiles                 = []string{servingProfile, trainingProfile, checkpointingProfile}
+	projectID                         string
+	projectNumber                     string
+	controllerAnnotationValidationMap = map[string]string{
+		putil.AnnotationLastUpdatedTime: "anything",
+		putil.AnnotationStatus:          "completed",
+		putil.AnnotationNumObjects:      "487303991",
+		putil.AnnotationTotalSize:       "23877911763",
+	}
 )
 
 type gcsFuseCSIProfilesTestSuite struct {
@@ -131,14 +148,13 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	ctx := context.Background()
 
-	init := func(configPrefix ...string) {
-		projectID := os.Getenv(utils.ProjectEnvVar)
-		gomega.Expect(projectID).NotTo(gomega.BeEmpty())
-		projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
-		gomega.Expect(projectNumber).NotTo(gomega.BeEmpty())
-
-		err := utils.ValidateIAMRoleExists(ctx, projectID, utils.ProfilesUserRoleID)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "recieved err while validating profiles iam role: %v", err)
+	init := func(configPrefix ...string) *storageframework.PerTestConfig {
+		// Validate IAM Role exists. Currently disabled as the role is not created is not allowed in boskos projects.
+		// TODO(fuechr): Reenable once we have a way to create the role in boskos projects.
+		// projectID := os.Getenv(utils.ProjectEnvVar)
+		// gomega.Expect(projectID).NotTo(gomega.BeEmpty())
+		// err := utils.ValidateIAMRoleExists(ctx, projectID, utils.ProfilesUserRoleID)
+		// gomega.Expect(err).NotTo(gomega.HaveOccurred(), "recieved err while validating profiles iam role: %v", err)
 
 		l = local{}
 		l.config = driver.PrepareTest(ctx, f)
@@ -149,20 +165,23 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		testScenario := l.config.Prefix
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
-		// Three Volumes, one for each sc archetype (Checkpointing, Training, Serving).
-		for i, profile := range availableProfiles {
 
+		// e2e/storage/framework does not support annotation injection on persistent volumes.
+		// To follow current e2e workflow we will allow the framework to create the pv and pvcs without annotations,
+		// then delete them, modify the spec to include the annotations and redeploy.
+		// pvc is also deleted to set sc.
+		// TODO(fuechr): Once e2e/storage/framework supports annotation injection, we can remove modifyAndRedeployPVCPVs function and call CreateVolumeResource with needed annotations directly.
+		switch testScenario {
+		case specs.ProfilesControllerCrashTestPrefix:
 			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
-			// e2e/storage/framework does not support annotation injection on persistent volumes.
-			// To follow current e2e workflow we will allow the framework to create the pv and pvcs without annotations,
-			// then delete them, modify the spec to include the annotations and redeploy.
-			// pvc is also deleted to set sc.
-			// TODO(chrisThePattyEater): Once e2e/storage/framework supports annotation injection, we can remove modifyAndRedeployPVCPVs function and call CreateVolumeResource with needed annotations directly.
-			l.volumeResourceList[i] = modifyAndRedeployPVCPVs(ctx, f, testScenario, l.config, l.volumeResourceList[i], profile)
-			klog.Infof("Modifying PV and PVC for profile: %s, vr : %s", profile, l.volumeResourceList[i].Pv.Spec.CSI.VolumeHandle)
-
+			l.volumeResourceList[0] = modifyAndRedeployPVCPVs(ctx, f, testScenario, l.config, l.volumeResourceList[0], checkpointingProfile) // Setting to checkpointing to avoid the anywhere cache worklfow.
+		default:
+			for i, profile := range availableProfiles {
+				l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
+				l.volumeResourceList[i] = modifyAndRedeployPVCPVs(ctx, f, testScenario, l.config, l.volumeResourceList[i], profile)
+			}
 		}
-
+		return l.config
 	}
 	cleanup := func() {
 		var cleanUpErrs []error
@@ -174,34 +193,85 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	validatePVAnnotations := func(pvName string, expectedAnnotations map[string]string, ctx context.Context) {
-		klog.Infof("Validating PV %s has expected annotations: %v", pvName, expectedAnnotations)
+	getPV := func(pvName string, ctx context.Context) *v1.PersistentVolume {
 		cs := l.config.Framework.ClientSet
 		pv, err := cs.CoreV1().PersistentVolumes().Get(ctx, pvName, metav1.GetOptions{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get PV %s", pv.Name)
 		gomega.Expect(pv).NotTo(gomega.BeNil())
-		for key, expectedValue := range expectedAnnotations {
-			actualValue, exists := pv.Annotations[key]
-			gomega.Expect(exists).To(gomega.BeTrue(), fmt.Sprintf("annotation %s not found on PV %s", key, pv.Name))
-			if key == putil.AnnotationLastUpdatedTime {
-				// Validating that bucket scan timestamp exists.
-				continue
-			}
-			gomega.Expect(actualValue).To(gomega.Equal(expectedValue), fmt.Sprintf("annotation %s on PV %s: expected %s, got %s", key, pv.Name, expectedValue, actualValue))
-		}
+		return pv
 	}
 
-	ginkgo.It("should override profiles all overridable values", func() {
+	// validatePVAnnotationsAndReturnScan checks that the given PV has the expected annotations.
+	// It returns the scan timestamp found in the annotation last updated time.
+	// If the expected value for an annotation is "anything", the value is not validated, only existence is checked.
+	validatePVAnnotationsAndReturnScan := func(g gomega.Gomega, pvName string, expectedAnnotations map[string]string, ctx context.Context) string {
+		klog.Infof("Validating PV %s has expected annotations: %v", pvName, expectedAnnotations)
+		pv := getPV(pvName, ctx)
+		var scanTime string
+
+		for key, expectedValue := range expectedAnnotations {
+			actualValue, exists := pv.Annotations[key]
+			g.Expect(exists).To(gomega.BeTrue(), fmt.Sprintf("annotation %s not found on PV %s", key, pv.Name))
+			if key == putil.AnnotationLastUpdatedTime {
+				// Validating that bucket scan timestamp exists.
+				scanTime = actualValue
+			}
+			if expectedValue == "anything" {
+				continue
+			}
+			g.Expect(actualValue).To(gomega.Equal(expectedValue), fmt.Sprintf("annotation %s on PV %s: expected %s, got %s", key, pv.Name, expectedValue, actualValue))
+		}
+		return scanTime
+
+	}
+
+	ginkgo.It("should rescan pv after controller is killed", ginkgo.Serial, func(ctx context.Context) {
 		IsOSSEnvVar := os.Getenv(specs.IsOSSEnvVar)
 		if IsOSSEnvVar != "true" {
-			ginkgo.Skip("Skipping test: Test is not yet supported on managed")
+			ginkgo.Skip("Skipping profiles controller crash test for managed, killing the managed controller is not a supported operation")
 		}
 
+		testConfig := init(specs.ProfilesControllerCrashTestPrefix)
+		killController(ctx, testConfig)
+		defer cleanup()
+
+		var lastScanTime string
+		// Wait for controller to come back up and save the scan time for rescan validation.
+		gomega.Eventually(func(g gomega.Gomega) {
+			lastScanTime = validatePVAnnotationsAndReturnScan(g, l.volumeResourceList[0].Pv.Name, controllerAnnotationValidationMap, ctx)
+			gomega.Expect(lastScanTime).NotTo(gomega.BeEmpty())
+		}).WithTimeout(retryTimeout).WithPolling(retryPolling).Should(gomega.Succeed())
+
+		// Verify pod came up succesfully.
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		tPod.WaitForRunning(ctx)
+
+		// Kill the controller again and wait 5 min, expectation is the pv should be rescanned.
+		killController(ctx, testConfig)
+
+		ginkgo.By("Verifying PV was rescanned by checking updated timestamp")
+		var newScanTime string
+		gomega.Eventually(func(g gomega.Gomega) {
+			newScanTime = validatePVAnnotationsAndReturnScan(gomega.Default, l.volumeResourceList[0].Pv.Name, controllerAnnotationValidationMap, ctx)
+			g.Expect(newScanTime).NotTo(gomega.BeEmpty())
+			g.Expect(newScanTime).NotTo(gomega.Equal(lastScanTime))
+		}).WithTimeout(retryTimeout).WithPolling(retryPolling).Should(gomega.Succeed())
+
+		ginkgo.By("Successfully verified PV rescan after controller restart")
+
+	})
+
+	ginkgo.It("should override profiles all overridable values", ginkgo.Serial, func() {
 		init(specs.ProfilesOverrideAllOverridablePrefix)
 		defer cleanup()
 
 		for _, vr := range l.volumeResourceList {
-			validatePVAnnotations(vr.Pv.Name, map[string]string{
+			validatePVAnnotationsAndReturnScan(gomega.Default, vr.Pv.Name, map[string]string{
 				putil.AnnotationNumObjects:      "40",
 				putil.AnnotationTotalSize:       "50",
 				putil.AnnotationStatus:          putil.ScanOverride,
@@ -219,9 +289,6 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 
 			podsArray = append(podsArray, tPod)
 		}
-
-		ginkgo.By("Sleeping 2 minutes for the service account being propagated")
-		time.Sleep(time.Minute * 2)
 
 		ginkgo.By("Deploying the profiles pods")
 		for _, tPod := range podsArray {
@@ -258,11 +325,69 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 	})
 }
 
+func killController(ctx context.Context, config *storageframework.PerTestConfig) {
+	cs := config.Framework.ClientSet
+	pods, err := cs.CoreV1().Pods(controllerNS).List(ctx, metav1.ListOptions{
+		LabelSelector: controllerLabelSelector,
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(pods.Items).NotTo(gomega.BeEmpty())
+
+	var controllerPod v1.Pod
+	found := false
+
+	for _, pod := range pods.Items {
+		// The Deployment name is gcs-fuse-csi-controller,
+		// so the pod name will always start with this.
+		if strings.HasPrefix(pod.Name, "gcs-fuse-csi-controller") {
+			controllerPod = pod
+			found = true
+			break
+		}
+	}
+
+	gomega.Expect(found).NotTo(gomega.BeFalse())
+
+	ginkgo.By("Deleting the controller pod")
+	err = cs.CoreV1().Pods(controllerNS).Delete(
+		ctx,
+		controllerPod.Name,
+		metav1.DeleteOptions{},
+	)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	ginkgo.By("Waiting for a new controller pod to become Ready")
+	gomega.Eventually(func() bool {
+		pods, err := cs.CoreV1().Pods(controllerNS).List(ctx, metav1.ListOptions{
+			LabelSelector: controllerLabelSelector,
+		})
+		if err != nil || len(pods.Items) == 0 {
+			return false
+		}
+
+		for _, pod := range pods.Items {
+			if pod.Name == controllerPod.Name {
+				continue // old pod
+			}
+			if pod.Status.Phase != v1.PodRunning {
+				continue
+			}
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == v1.PodReady && cond.Status == v1.ConditionTrue {
+					return true
+				}
+			}
+		}
+		return false
+	}, 5*time.Minute, 5*time.Second).Should(gomega.BeTrue())
+}
+
 // e2e/storage/framework does not support injecting custom annotations or modifying
 // StorageClass on pre-provisioned PVs directly during creation. To work around this,
 // we let the framework create the resources, then delete them, modify the specs,
 // and recreate them with the desired profile-specific settings.
 func modifyAndRedeployPVCPVs(ctx context.Context, f *framework.Framework, testScenario string, config *storageframework.PerTestConfig, vr *storageframework.VolumeResource, profile string) *storageframework.VolumeResource {
+	klog.Infof("Modifying PV and PVC for profile: %s, vr : %s", profile, vr.Pv.Spec.CSI.VolumeHandle)
 	cs := config.Framework.ClientSet
 	cs.CoreV1().PersistentVolumeClaims(config.Framework.Namespace.Name).Delete(ctx, vr.Pvc.Name, metav1.DeleteOptions{})
 	cs.CoreV1().PersistentVolumes().Delete(ctx, vr.Pv.Name, metav1.DeleteOptions{})
@@ -360,19 +485,22 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 	if mo == nil {
 		mo = []string{}
 	}
+
 	switch testScenario {
-	case specs.ProfilesOverrideAllOverridablePrefix:
-		// Modify Annotations
+	case specs.ProfilesControllerCrashTestPrefix:
+		va[bucketScanResyncPeriodKey] = "5m"
+	default:
+		// Modify Annotations.
 		annotations[putil.AnnotationNumObjects] = "40"
 		annotations[putil.AnnotationTotalSize] = "50"
 		annotations[putil.AnnotationStatus] = putil.ScanOverride
 
-		// Modify Mount Options
+		// Modify Mount Options.
 		mo = append(mo, fmt.Sprintf("%s:%s", metadataStatCacheMaxSizeMiBMountOptionKey, "10"))
 		// Purposely omit one - mo = append(mo, fmt.Sprintf("%s:%s", metadataTypeCacheMaxSizeMiBMountOptionKey, "20"))
 		mo = append(mo, fmt.Sprintf("%s:%s", fileCacheSizeMiBMountOptionKey, "30"))
 
-		// Modify volume attributes
+		// Modify volume attributes.
 		va[anywhereCacheTTLKey] = "2h"
 		va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
 		if sc == "gcsfusecsi-serving" {
