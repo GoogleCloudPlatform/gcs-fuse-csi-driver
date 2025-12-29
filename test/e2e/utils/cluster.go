@@ -37,8 +37,7 @@ var (
 	metadataPrefetchMinimumVersion              = version.MustParseGeneric("1.32.0")
 	longMountOptionsMinimumVersion              = version.MustParseGeneric("1.32.0")
 	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")
-	//Re-enable the tests for 1.34 once the sidecar bucket access check feature is re-enabled on managed driver
-	sidecarBucketAccessCheckMinimumVersion = version.MustParseGeneric("1.99.0")
+	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.1")
 )
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
