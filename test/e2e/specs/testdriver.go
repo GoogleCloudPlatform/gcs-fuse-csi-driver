@@ -43,6 +43,10 @@ import (
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 )
 
+var shouldNotDeleteBuckets = map[string]bool{
+	"gcsfusecsi-profiles-controller-test-bucket": true,
+}
+
 type GCSFuseCSITestDriver struct {
 	driverInfo                  storageframework.DriverInfo
 	clientset                   clientset.Interface
@@ -100,6 +104,12 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 	}
 }
 
+const (
+	gcsfusecsiProfilesControllerCrashTestBucket       = "gcsfusecsi-profiles-controller-test-bucket"
+	gcsfusecsiProfilesControllerCrashTestBucketRegion = "us-central1"
+	gkeScalabilityImagesProjectID                     = "gke-scalability-images"
+)
+
 var (
 	_ storageframework.TestDriver                     = &GCSFuseCSITestDriver{}
 	_ storageframework.PreprovisionedVolumeTestDriver = &GCSFuseCSITestDriver{}
@@ -144,6 +154,10 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 
 	ginkgo.DeferCleanup(func() {
 		for _, v := range n.volumeStore {
+			if shouldNotDeleteBuckets[v.bucketName] {
+				e2eframework.Logf("Skipping bucket deletion for %s as it has been marked as should not delete", v.bucketName)
+				continue
+			}
 			if err := n.deleteBucket(ctx, v.bucketName); err != nil {
 				e2eframework.Logf("failed to delete bucket: %v", err)
 			}
@@ -175,6 +189,21 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case ProfilesOverrideAllOverridablePrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
+		case ProfilesControllerCrashTestPrefix:
+			bucketName = gcsfusecsiProfilesControllerCrashTestBucket
+			// IAM policy is handled by the testdriver.go create bucket flow,
+			// since this bucket is not created during the test we manually add IAM here.
+			serviceBucketobj := &storage.ServiceBucket{
+				Project:                        gkeScalabilityImagesProjectID,
+				Name:                           bucketName,
+				Location:                       gcsfusecsiProfilesControllerCrashTestBucketRegion,
+				EnableUniformBucketLevelAccess: true,
+				EnableHierarchicalNamespace:    n.EnableHierarchicalNamespace,
+				EnableZB:                       n.EnableZB,
+			}
+			n.SetIAMPolicy(ctx, serviceBucketobj, config.Framework.Namespace.Name, K8sServiceAccountName)
+			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
+
 		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
 			l := []string{}
@@ -598,7 +627,8 @@ func (n *GCSFuseCSITestDriver) giveDriverAccessToBucketForProfiles(ctx context.C
 		robotAccount := envRobots[testEnv]
 		member = fmt.Sprintf("serviceAccount:service-%d@%s.iam.gserviceaccount.com", projectNumber, robotAccount)
 	}
-	role := fmt.Sprintf("projects/%s/roles/gke.gcsfuse.profileUser", n.meta.GetProjectID())
+	// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
+	role := "roles/storage.admin" // fmt.Sprintf("projects/%s/roles/gke.gcsfuse.profileUser", n.meta.GetProjectID())
 
 	policy, err := bucket.IAM().Policy(ctx)
 	if err != nil {

@@ -357,6 +357,7 @@ func ExpectNoError(err error, msgAndArgs ...interface{}) {
 // 1. Role missing: Creates the role from scratch.
 // 2. Role exists: Updates the role to ensure permissions are current.
 // 3. Role soft-deleted: Undeletes the role and then updates its permissions.
+// TODO(fuechr): This logic does not work on boskos pool projects, need to circle back and find a way to create the role in those projects.
 func ensureIAMRoleForProfilesTests(ctx context.Context, projectNumber string, projectID string) error {
 	klog.Infof("Ensuring role for profiles: %s", ProfilesUserRoleID)
 	iamClient, err := iamadmin.NewIamClient(ctx)
