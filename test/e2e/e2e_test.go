@@ -47,6 +47,7 @@ var (
 	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
 	apiEnv         = flag.String("api-env", "prod", "cluster API env")
 	zbFlag         = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
+	profilesFlag   = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
 )
 
 var _ = func() bool {
@@ -100,24 +101,32 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = ginkgo.Describe("E2E Test Suite", func() {
-	GCSFuseCSITestSuites := []func() storageframework.TestSuite{
-		testsuites.InitGcsFuseCSIVolumesTestSuite,
-		testsuites.InitGcsFuseCSIFailedMountTestSuite,
-		testsuites.InitGcsFuseCSIWorkloadsTestSuite,
-		testsuites.InitGcsFuseCSIMultiVolumeTestSuite,
-		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
-		testsuites.InitGcsFuseCSIPerformanceTestSuite,
-		testsuites.InitGcsFuseCSISubPathTestSuite,
-		testsuites.InitGcsFuseCSIAutoTerminationTestSuite,
-		testsuites.InitGcsFuseCSIFileCacheTestSuite,
-		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
-		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
-		testsuites.InitGcsFuseCSIIstioTestSuite,
-		testsuites.InitGcsFuseCSIMetricsTestSuite,
-		testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
-		testsuites.InitGcsFuseMountTestSuite,
-		testsuites.InitGcsFuseCSIOIDCTestSuite,
-	}
+	GCSFuseCSITestSuites := func() []func() storageframework.TestSuite {
+		suites := []func() storageframework.TestSuite{
+			testsuites.InitGcsFuseCSIVolumesTestSuite,
+			testsuites.InitGcsFuseCSIFailedMountTestSuite,
+			testsuites.InitGcsFuseCSIWorkloadsTestSuite,
+			testsuites.InitGcsFuseCSIMultiVolumeTestSuite,
+			testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
+			testsuites.InitGcsFuseCSIPerformanceTestSuite,
+			testsuites.InitGcsFuseCSISubPathTestSuite,
+			testsuites.InitGcsFuseCSIAutoTerminationTestSuite,
+			testsuites.InitGcsFuseCSIFileCacheTestSuite,
+			testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
+			testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
+			testsuites.InitGcsFuseCSIIstioTestSuite,
+			testsuites.InitGcsFuseCSIMetricsTestSuite,
+			testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
+			testsuites.InitGcsFuseMountTestSuite,
+			testsuites.InitGcsFuseCSIOIDCTestSuite,
+		}
+
+		if *profilesFlag {
+			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
+		}
+
+		return suites
+	}()
 
 	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag)
 
