@@ -136,9 +136,9 @@ ifeq (${BUILD_ARM}, true)
 		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
 endif
 else
-	gsutil cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
+	gcloud storage cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
 ifeq (${BUILD_ARM}, true)
-	gsutil cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
+	gcloud storage cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
 endif
 endif
 	chmod +x ${BINDIR}/linux/amd64/gcsfuse
