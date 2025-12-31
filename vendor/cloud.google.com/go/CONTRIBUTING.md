@@ -201,7 +201,7 @@ $ gcloud alpha datastore indexes create --database=your-databaseID-1 --project=$
 # and with the Cloud Logging service account as owner, for the sink
 # integration tests in logging.
 $ gcloud storage buckets create gs://$GCLOUD_TESTS_GOLANG_PROJECT_ID
-$ gcloud storage buckets update --add-acl-grant=cloud-logs@google.com:O gs://$GCLOUD_TESTS_GOLANG_PROJECT_ID
+$ gcloud storage buckets update --add-acl-grant=entity=group-cloud-logs@google.com,role=OWNER gs://$GCLOUD_TESTS_GOLANG_PROJECT_ID
 
 # Creates a PubSub topic for integration tests of storage notifications.
 $ gcloud beta pubsub topics create go-storage-notification-test
