@@ -243,7 +243,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 			fmt.Sprintf("cat %s/%s", oidcMountPath, testFileName))
 		gomega.Expect(strings.TrimSpace(readOutput)).To(gomega.Equal(testContent))
 
-		ginkgo.By("Verifying file exists in bucket using gsutil")
+		ginkgo.By("Verifying file exists in bucket using gcloud storage")
 		verifyFileInBucket(bucketName, testFileName)
 
 		ginkgo.By("Cleaning up test file")
@@ -294,7 +294,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 			fmt.Sprintf("cat %s/%s/%s", oidcMountPath, testDirPath, testFileName))
 		gomega.Expect(strings.TrimSpace(readOutput)).To(gomega.Equal(testContent))
 
-		ginkgo.By("Verifying file exists in bucket using gsutil")
+		ginkgo.By("Verifying file exists in bucket using gcloud storage")
 		verifyFileInBucket(bucketName, fmt.Sprintf("%s/%s", testDirPath, testFileName))
 
 		ginkgo.By("Cleaning up test files and directory")
@@ -530,7 +530,7 @@ func revokeBucketAccess(bucketName, principal, role string) {
 }
 
 func verifyFileInBucket(bucketName, fileName string) {
-	cmd := exec.Command("gsutil", "ls", fmt.Sprintf("gs://%s/%s", bucketName, fileName))
+	cmd := exec.Command("gcloud", "storage", "ls", fmt.Sprintf("gs://%s/%s", bucketName, fileName))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		klog.Errorf("Failed to verify file in bucket: %v, output: %s", err, string(output))
