@@ -229,7 +229,7 @@ func (t *gcsFuseCSIPerformanceTestSuite) DefineTests(driver storageframework.Tes
 			bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
 
 			//nolint:gosec
-			if output, err := exec.Command("gsutil", "cp", fmt.Sprintf("gs://%v/fio-logs/output.json", bucketName), l.artifactsDir+"/output.json").CombinedOutput(); err != nil {
+			if output, err := exec.Command("gcloud", "storage", "cp", fmt.Sprintf("gs://%v/fio-logs/output.json", bucketName), l.artifactsDir+"/output.json").CombinedOutput(); err != nil {
 				framework.Failf("Failed to download the FIO metrics from GCS bucket %q: %v, output: %s", bucketName, err, output)
 			}
 		})
