@@ -270,6 +270,7 @@ endif
 	git restore ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/wi_node_label_check_patch.json
+
 verify:
 	hack/verify-all.sh
 

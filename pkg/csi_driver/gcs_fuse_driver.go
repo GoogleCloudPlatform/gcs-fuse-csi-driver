@@ -56,6 +56,7 @@ type GCSDriverConfig struct {
 	StorageServiceManager          storage.ServiceManager
 	TokenManager                   auth.TokenManager
 	Mounter                        mount.Interface
+	NetworkManager                 NetworkManager
 	K8sClients                     clientset.Interface
 	MetricsManager                 metrics.Manager
 	DisableAutoconfig              bool
