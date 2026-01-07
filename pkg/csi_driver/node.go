@@ -18,8 +18,10 @@ limitations under the License.
 package driver
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -313,9 +315,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
 	}
-
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
+	readKernelParametersAndApply(path.Join(emptyDirBasePath, "kernel-params.json"), bucketName)
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
-
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
@@ -441,4 +443,50 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 		}
 	}
 	return ""
+}
+
+func readKernelParametersAndApply(targetPath, volumeName string) {
+	// Check if the kernel-params file exists
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		// Log and do nothing as per doc
+		klog.V(4).Infof("No kernel-params file found at %s. Skipping.", targetPath)
+		return
+	}
+
+	// Read and Parse the file
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		klog.V(4).Infof("Failed to read kernel-params file: %v", err)
+		return
+	}
+
+	var request KernelParamsRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		klog.V(4).Infof("Failed to parse JSON: %v", err)
+		return
+	}
+
+	// 5. Apply settings (Dry Run)
+	klog.V(4).Infof("[Dry Run] New Request Detected! ID: %s, Timestamp: %s\n", request.RequestID, request.Timestamp)
+	for _, param := range request.Parameters {
+		applyParameter(param, volumeName)
+	}
+}
+
+// KernelParam represents an individual parameter setting from GCSFuse
+type KernelParam struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Scope string `json:"scope"` // "global" or "mount"
+}
+
+// KernelParamsRequest represents the JSON structure written by GCSFuse
+type KernelParamsRequest struct {
+	RequestID  string        `json:"request_id"`
+	Timestamp  time.Time     `json:"timestamp"`
+	Parameters []KernelParam `json:"parameters"`
+}
+
+func applyParameter(p KernelParam, volumeName string) {
+	klog.V(4).Infof("[Dry Run] APPLYING LOGIC: Scope [%s] | Param [%s] | Value [%s] (Volume: %s)", p.Scope, p.Name, p.Value, volumeName)
 }
