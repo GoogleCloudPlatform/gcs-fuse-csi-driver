@@ -106,7 +106,7 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 ifeq ($(GCSFUSE_TAG), master)
 	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
 else
-	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
+	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//' | tr '/' '-')-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | cut -c1-4))
 endif
 	docker buildx build \
 		--load \
