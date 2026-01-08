@@ -289,7 +289,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 
 		// TODO: Check if the socket listener timed out
-
+		emptyDirBasePath, _ := util.PrepareEmptyDir(targetPath, false)
+		readKernelParametersAndApply(path.Join(emptyDirBasePath, "kernel-params.json"), bucketName)
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", bucketName, targetPath)
 
 		return &csi.NodePublishVolumeResponse{}, nil
@@ -315,7 +316,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err = s.mounter.Mount(bucketName, targetPath, FuseMountType, fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
 	}
-	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
+	emptyDirBasePath, _ := util.PrepareEmptyDir(targetPath, false)
 	readKernelParametersAndApply(path.Join(emptyDirBasePath, "kernel-params.json"), bucketName)
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
 	return &csi.NodePublishVolumeResponse{}, nil
