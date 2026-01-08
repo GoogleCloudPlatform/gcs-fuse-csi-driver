@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -92,6 +93,8 @@ const (
 	TestEnvEnvVar                          = "TEST_ENV"
 	IsOSSEnvVar                            = "IS_OSS"
 )
+
+var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
 
 func Handle(testParams *TestParameters) error {
 	// Validating the test parameters.
@@ -317,7 +320,7 @@ func generateTestSkip(testParams *TestParameters) string {
 		skipTests = append(skipTests, testParams.GinkgoSkip)
 	}
 
-	if testParams.DeployOverlayName == "stable" || testParams.DeployOverlayName == "sidecar_bucket_access_check" {
+	if slices.Contains(skipDynamicPVTests, testParams.DeployOverlayName) {
 		skipTests = append(skipTests, "Dynamic.PV")
 	}
 
