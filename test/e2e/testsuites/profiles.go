@@ -519,14 +519,6 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 }
 
 func (t *gcsFuseCSIProfilesTestSuite) validateAC(vrList []*storageframework.VolumeResource, ctx context.Context) {
-	backoffSpec := wait.Backoff{
-		Duration: anywhereCacheBackoffDuration,
-		Factor:   acBackoffFactor,
-		Cap:      acBackoffCap,
-		Steps:    acBackoffSteps,
-		Jitter:   acBackoffJitter,
-	}
-
 	for _, vr := range vrList {
 		klog.Info("handling vr %+v", vr)
 		// AC is only enabled for serving profile.
@@ -534,7 +526,7 @@ func (t *gcsFuseCSIProfilesTestSuite) validateAC(vrList []*storageframework.Volu
 			continue
 		}
 		count := 0
-		err := wait.ExponentialBackoff(backoffSpec, func() (bool, error) {
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
 			framework.Logf("Attempt %d: Validating AnywhereCache for bucket %q", count, vr.Pv.Spec.CSI.VolumeHandle)
 			count++
 			req := &controlpb.ListAnywhereCachesRequest{
@@ -543,55 +535,48 @@ func (t *gcsFuseCSIProfilesTestSuite) validateAC(vrList []*storageframework.Volu
 			acIterator := t.storageControlClient.ListAnywhereCaches(ctx, req)
 			countNumberOfACs := 0
 			for {
-				// Get the next item
 				ac, err := acIterator.Next()
 
 				if err == iterator.Done {
-					gomega.Expect(countNumberOfACs).NotTo(gomega.BeZero())
-					return true, nil
+					g.Expect(countNumberOfACs).NotTo(gomega.BeZero(), "Expected exactly 1 AnywhereCache")
+					return
 				}
-				if err != nil {
-					framework.Logf("ListAnywhereCache API failed, retrying: %v", err)
-					return false, nil
-				}
-				if ac == nil {
-					framework.Logf("AnywhereCache is nil, retrying...")
-					return false, nil
-				}
+				g.Expect(err).To(gomega.Succeed(), "ListAnywhereCache API failed")
+				g.Expect(ac).NotTo(gomega.BeNil(), "AnywhereCache is nil")
+
 				countNumberOfACs++
-				if countNumberOfACs > 1 {
-					return false, fmt.Errorf("more than 1 AnywhereCache found for bucket %q", vr.Pv.Spec.CSI.VolumeHandle)
-				}
-				framework.Logf("ListAnywhereCache API Succedded: %v validating ttl...", ac)
+				// Fail if we find more than one.
+				g.Expect(countNumberOfACs).To(gomega.BeNumerically("<=", 1), "More than 1 AnywhereCache found")
+				framework.Logf("ListAnywhereCache API Succeeded: %v. Validating TTL...", ac)
 
+				// TTL Validation.
 				expectedTTLAsTimeDuration, err := time.ParseDuration(vr.Pv.Spec.CSI.VolumeAttributes[anywhereCacheTTLKey])
-				if err != nil {
-					return false, err
-				}
+				g.Expect(err).To(gomega.Succeed(), "Failed to parse expected TTL duration")
+				g.Expect(ac.Ttl.AsDuration()).To(gomega.Equal(expectedTTLAsTimeDuration), "AC TTL mismatch")
 
-				if ac.Ttl.AsDuration() != expectedTTLAsTimeDuration {
-					return false, fmt.Errorf("AC TTL not as expected, expected: %q, got: %q", expectedTTLAsTimeDuration, ac.Ttl.AsDuration())
-				}
-				framework.Logf("TTL CHECK Succedded: %v validationg policy...", ac)
+				// Admission Policy Validation.
 				expectedAPolicy := vr.Pv.Spec.CSI.VolumeAttributes[anywhereCacheAdmissionPolicyKey]
-				if expectedAPolicy != ac.AdmissionPolicy {
-					return false, fmt.Errorf("AC AdmissionPolicy not as expected, expected: %q, got: %q", expectedAPolicy, ac.AdmissionPolicy)
-				}
+				g.Expect(ac.AdmissionPolicy).To(gomega.Equal(expectedAPolicy), "AC AdmissionPolicy mismatch")
+
+				// State Validation.
 				state := ac.State
-				framework.Logf("AdmissionPolicy CHECK Succedded: %v validationg state, current state is %s...", ac, state)
+				framework.Logf("Policy check succeeded. State is %s...", state)
+
 				switch state {
 				case acCreating:
-					framework.Logf("AnywhereCache %q is still creating retrying...", ac.Name)
-					return false, nil
+					// Fail the expectation so Eventually retries.
+					g.Expect(fmt.Errorf("AnywhereCache in unexpected state %q", state)).To(gomega.Succeed())
 				case acReady:
-					framework.Logf("Success AnywhereCache %q is in running state", ac.Name)
+					framework.Logf("Success: AnywhereCache %q is in ready state", ac.Name)
+					// Continue the iterator to ensure no other ACs exist
 					continue
 				default:
-					return false, fmt.Errorf("AnywhereCache in unexpected state %q", state)
+					g.Expect(fmt.Errorf("AnywhereCache in unexpected state %q", state)).To(gomega.Succeed())
 				}
 			}
-		})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed waiting for AnywhereCache to be ready, err: %v", err)
+		}).WithTimeout(acBackoffCap). // Set a high ceiling, the 'Steps' will limit the actual time
+						WithPolling(anywhereCacheBackoffDuration).
+						Should(gomega.Succeed())
 	}
 }
 
