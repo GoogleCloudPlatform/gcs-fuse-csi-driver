@@ -990,7 +990,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	}
 	syncResults, err := s.syncAnywhereCache(ctx, pv, sc, anywhereCacheProvidedZones)
 	if err != nil {
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Spec.StorageClassName, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Name, err)
 		return err
 	}
 
