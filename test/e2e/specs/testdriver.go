@@ -203,6 +203,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			}
 			n.SetIAMPolicy(ctx, serviceBucketobj, config.Framework.Namespace.Name, K8sServiceAccountName)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
+			ginkgo.DeferCleanup(func() {
+				n.RemoveIAMPolicy(ctx, serviceBucketobj, config.Framework.Namespace.Name, K8sServiceAccountName)
+			})
 
 		case MultipleBucketsPrefix:
 			isMultipleBucketsPrefix = true
