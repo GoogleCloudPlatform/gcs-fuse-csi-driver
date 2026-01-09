@@ -271,10 +271,6 @@ func Handle(testParams *TestParameters) error {
 			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
 		}
 		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
-		err = addComputeBindingForAC()
-		if err != nil {
-			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
-		}
 		// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
 		// err = ensureIAMRoleForProfilesTests(context.Background(), projectNumber, testParams.ProjectID)
 		// if err != nil {

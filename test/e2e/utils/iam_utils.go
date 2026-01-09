@@ -318,7 +318,7 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 // addComputeBindingForAC binds the Workload Identity principal to the compute.viewer role on the target project, this is needed to perform ac requests.
 // projectID: The project receiving the binding (${GCS_PROJECT}), we are assuming its the same as the ID of the project hosting the identity pool.
 // identityProjectNumber: The number of the project hosting the identity pool (${PROJECT_NUMBER})
-func addComputeBindingForAC() error {
+func AddComputeBindingForAC() error {
 	projectID := os.Getenv(ProjectEnvVar)
 	if projectID == "" {
 		return fmt.Errorf("environment variable %s is not set", ProjectEnvVar)
@@ -329,7 +329,7 @@ func addComputeBindingForAC() error {
 	}
 
 	member := fmt.Sprintf(
-		"principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa",
+		"principalSet://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/namespace/gcs-fuse-csi-driver",
 		projectNumber,
 		projectID,
 	)

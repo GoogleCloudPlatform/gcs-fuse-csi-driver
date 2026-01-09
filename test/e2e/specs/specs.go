@@ -18,6 +18,7 @@ limitations under the License.
 package specs
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -310,6 +311,27 @@ func (t *TestPod) WaitForRunning(ctx context.Context) {
 
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err)
+}
+
+// VerifyLogsByPod scans the log string and returns the line
+// containing the given logToFind.
+func (t *TestPod) VerifyLogsByPod(logToFind string) (string, error) {
+	stdout, stderr, err := t.getDriverLogs()
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Identify the line based on the unique message part
+		if strings.Contains(line, logToFind) && strings.Contains(line, t.pod.Name) {
+			return strings.TrimSpace(line), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("scanning logs: %w", err)
+	}
+	return "", nil
 }
 
 func (t *TestPod) WaitForSuccess(ctx context.Context) {

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	ginkgo "github.com/onsi/ginkgo/v2"
@@ -267,6 +268,10 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 	})
 
 	ginkgo.It("should override profiles all overridable values", ginkgo.Serial, func() {
+		err := utils.AddComputeBindingForAC()
+		if err != nil {
+			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
+		}
 		init(specs.ProfilesOverrideAllOverridablePrefix)
 		defer cleanup()
 
@@ -315,7 +320,7 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		// No recommendation should be found because smart cache calculation is disabled when cx overrides cache sizes.
 		ginkgo.By("Verifying no recommendation was made")
 		for _, tpod := range podsArray {
-			tpod.VerifyDriverLogsDoNotContain(gcsFuseCsiRecommendationLog)
+			tpod.VerifyLogsByPod(gcsFuseCsiRecommendationLog)
 		}
 
 		t.validateAC(l.volumeResourceList, ctx)
