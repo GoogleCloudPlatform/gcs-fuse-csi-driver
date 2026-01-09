@@ -71,6 +71,10 @@ endif
 
 DOCKER_BUILDX_ARGS += --quiet
 
+confirm:
+	@echo -n "Are you sure you want to proceed? [y/N] " && read ans && [ $${ans:-N} = y ] || [ $${ans:-N} = Y ]
+	@echo "Action confirmed! Proceeding..."
+
 $(info PROJECT is ${PROJECT})
 $(info CLUSTER_LOCATION is ${CLUSTER_LOCATION})
 $(info CLUSTER_NAME is ${CLUSTER_NAME})
@@ -108,6 +112,7 @@ ifeq ($(GCSFUSE_TAG), master)
 else
 	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-$(shell echo ${GCSFUSE_TAG} | sed 's/^v//' | tr '/' '-')-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | cut -c1-7))
 	@echo "GCSFuse version: ${GCSFUSE_VERSION}"
+	$(MAKE) confirm
 endif
 	docker buildx build \
 		--load \
