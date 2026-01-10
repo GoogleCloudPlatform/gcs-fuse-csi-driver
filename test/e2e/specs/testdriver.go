@@ -43,10 +43,6 @@ import (
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 )
 
-var shouldNotDeleteBuckets = map[string]bool{
-	"gcsfusecsi-profiles-controller-test-bucket": true,
-}
-
 type GCSFuseCSITestDriver struct {
 	driverInfo                  storageframework.DriverInfo
 	clientset                   clientset.Interface
@@ -105,9 +101,9 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 }
 
 const (
-	gcsfusecsiProfilesControllerCrashTestBucket       = "gcsfusecsi-profiles-controller-test-bucket"
-	gcsfusecsiProfilesControllerCrashTestBucketRegion = "us-central1"
-	gkeScalabilityImagesProjectID                     = "gke-scalability-images"
+	gcsfuseCSIProfilesStaticBucket       = "gcsfuse-csi-profiles-test-bucket-20mil"
+	gcsfuseCSIProfilesStaticBucketRegion = "us-central1"
+	gkeScalabilityImagesProjectID        = "gke-scalability-images"
 )
 
 var (
@@ -117,11 +113,8 @@ var (
 	_ storageframework.EphemeralTestDriver            = &GCSFuseCSITestDriver{}
 	_ storageframework.DynamicPVTestDriver            = &GCSFuseCSITestDriver{}
 
-	envRobots = map[string]string{
-		"prod":     "container-engine-robot",
-		"staging":  "container-engine-robot-staging",
-		"staging2": "container-engine-robot-stag2",
-		"test":     "container-engine-robot-test",
+	shouldNotDeleteBuckets = map[string]bool{
+		gcsfuseCSIProfilesStaticBucket: true,
 	}
 )
 
@@ -189,14 +182,17 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case ProfilesOverrideAllOverridablePrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
-		case ProfilesControllerCrashTestPrefix:
-			bucketName = gcsfusecsiProfilesControllerCrashTestBucket
+
+			// ProfilesBucketMetricsPrefix tests requires a bucket that exists longer than 24hrs to have metrics available.
+			// For simplicity we reuse the same bucket as ProfilesControllerCrashTestPrefix which is long-lived.
+		case ProfilesControllerCrashTestPrefix, ProfilesBucketMetricsPrefix:
+			bucketName = gcsfuseCSIProfilesStaticBucket
 			// IAM policy is handled by the testdriver.go create bucket flow,
 			// since this bucket is not created during the test we manually add IAM here.
 			serviceBucketobj := &storage.ServiceBucket{
 				Project:                        gkeScalabilityImagesProjectID,
 				Name:                           bucketName,
-				Location:                       gcsfusecsiProfilesControllerCrashTestBucketRegion,
+				Location:                       gcsfuseCSIProfilesStaticBucketRegion,
 				EnableUniformBucketLevelAccess: true,
 				EnableHierarchicalNamespace:    n.EnableHierarchicalNamespace,
 				EnableZB:                       n.EnableZB,
@@ -294,6 +290,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case ProfilesOverrideAllOverridablePrefix:
 			dirPath := uuid.NewString()
 			n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
+			mountOptions += ",only-dir=" + dirPath
+		case ProfilesControllerCrashTestPrefix:
+			dirPath := "profiles-dir"
 			mountOptions += ",only-dir=" + dirPath
 		}
 
@@ -627,17 +626,16 @@ func (n *GCSFuseCSITestDriver) giveDriverAccessToBucketForProfiles(ctx context.C
 			e2eframework.Logf("warning: TEST_ENV is not set, The container robot name used for iam during the 'profiles' test suite changes depending on the env.")
 			return fmt.Errorf("failed to get service account")
 		}
-		robotAccount := envRobots[testEnv]
-		member = fmt.Sprintf("serviceAccount:service-%d@%s.iam.gserviceaccount.com", projectNumber, robotAccount)
+		robotAccount := utils.EnvRobots[testEnv]
+		member = fmt.Sprintf("serviceAccount:service-%s@%s.iam.gserviceaccount.com", projectNumber, robotAccount)
 	}
 	// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
-	role := "roles/storage.admin" // fmt.Sprintf("projects/%s/roles/gke.gcsfuse.profileUser", n.meta.GetProjectID())
+	role := "roles/storage.admin"
 
 	policy, err := bucket.IAM().Policy(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get bucket %q IAM policy: %w", bucket_name, err)
 	}
-
 	policy.Add(member, iam.RoleName(role))
 	if err := bucket.IAM().SetPolicy(ctx, policy); err != nil {
 		return fmt.Errorf("failed to set bucket %q IAM policy: %w", bucket_name, err)

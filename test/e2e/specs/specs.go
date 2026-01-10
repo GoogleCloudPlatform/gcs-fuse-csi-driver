@@ -66,6 +66,7 @@ const (
 	EnableFileCacheForceNewBucketAndMetricsPrefix              = "gcsfuse-csi-enable-file-cache-force-new-bucket-and-metrics"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
 	ProfilesOverrideAllOverridablePrefix                       = "gcsfuse-csi-profiles-override-all-overridable"
+	ProfilesBucketMetricsPrefix                                = "gcsfuse-csi-profiles-bucket-metrics"
 	ProfilesControllerCrashTestPrefix                          = "gcsfuse-csi-profiles-controller-crash-test"
 	EnableFileCacheAndMetricsPrefix                            = "gcsfuse-csi-enable-file-cache-and-metrics"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"
@@ -313,9 +314,9 @@ func (t *TestPod) WaitForRunning(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-// VerifyLogsByPod scans the log string and returns the line
+// FindLogsByNewLine scans the log string and returns the line
 // containing the given logToFind.
-func (t *TestPod) VerifyLogsByPod(logToFind string) (string, error) {
+func (t *TestPod) FindLogsByNewLine(logToFind string) (string, error) {
 	stdout, stderr, err := t.getDriverLogs()
 	framework.ExpectNoError(err,
 		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
@@ -1224,7 +1225,7 @@ func (t *TestPod) getDriverLogs() (string, string, error) {
 	}
 
 	// Get logs from the driver container
-	stdout, stderr, err := runKubectlWithFullOutputWithRetry(driverNamespaceOSS,
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(driverNamespace,
 		"logs", targetPod, "-c", driverContainer,
 	)
 	if err != nil {

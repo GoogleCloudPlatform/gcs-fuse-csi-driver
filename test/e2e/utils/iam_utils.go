@@ -24,8 +24,6 @@ import (
 	"time"
 
 	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 
@@ -53,8 +51,20 @@ const (
 	driverContainer      = "gcs-fuse-csi-driver"
 	driverDaemonsetLabel = "k8s-app=gcs-fuse-csi-driver"
 
-	K8sServiceAccountName = "gcsfuse-csi-sa"
-	ProfilesUserRoleID    = "gke.gcsfuse.profileUser"
+	K8sServiceAccountName                 = "gcsfuse-csi-sa"
+	GCSFuseCSIProfilesStaticBucketProject = "gke-scalability-images"
+)
+
+var (
+	ProjectContainingMonitoringRoles = []string{GCSFuseCSIProfilesStaticBucketProject}
+
+	// EnvRobots maps enviroments to the Kubernetes Service Agents.
+	EnvRobots = map[string]string{
+		"prod":     "container-engine-robot",
+		"staging":  "container-engine-robot-staging",
+		"staging2": "container-engine-robot-stag2",
+		"test":     "container-engine-robot-test",
+	}
 )
 
 type TestKubernetesServiceAccount struct {
@@ -318,7 +328,11 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 // addComputeBindingForAC binds the Workload Identity principal to the compute.viewer role on the target project, this is needed to perform ac requests.
 // projectID: The project receiving the binding (${GCS_PROJECT}), we are assuming its the same as the ID of the project hosting the identity pool.
 // identityProjectNumber: The number of the project hosting the identity pool (${PROJECT_NUMBER})
-func AddComputeBindingForAC() error {
+func AddComputeBindingForAC(ctx context.Context) error {
+	if os.Getenv(IsOSSEnvVar) != "true" {
+		// If not using OSS, no need to add the binding as the p4sa should have the access needed.
+		return nil
+	}
 	projectID := os.Getenv(ProjectEnvVar)
 	if projectID == "" {
 		return fmt.Errorf("environment variable %s is not set", ProjectEnvVar)
@@ -328,13 +342,77 @@ func AddComputeBindingForAC() error {
 		return fmt.Errorf("environment variable %s is not set", ProjectNumberEnvVar)
 	}
 
+	member, err := determineDriverSA(projectID, projectNumber)
+	if err != nil {
+		return fmt.Errorf("failed to determine driver service account: %v", err)
+	}
+	bindingHelper := NewTestGCPProjectIAMPolicyBinding(projectID, member, "roles/compute.viewer", "")
+	bindingHelper.Create(ctx)
+	return nil
+}
+
+// AddMonitoringBindingForBucketProject binds the Workload Identity principal to the monitoring.viewer role on the target project hosting an external bucket.
+// If the tests are running on the managed driver environment, it binds the p4sa instead.
+func AddMonitoringBindingForBucketProject(projIDForExternalBucket string, ctx context.Context) error {
+	projectID := os.Getenv(ProjectEnvVar)
+	if projectID == "" {
+		return fmt.Errorf("environment variable %s is not set", ProjectEnvVar)
+	}
+	projectNumber := os.Getenv(ProjectNumberEnvVar)
+	if projectNumber == "" {
+		return fmt.Errorf("environment variable %s is not set", ProjectNumberEnvVar)
+	}
+	member, err := determineDriverSA(projectID, projectNumber)
+	if err != nil {
+		return fmt.Errorf("failed to determine controller service account: %v", err)
+	}
+
+	bindingHelper := NewTestGCPProjectIAMPolicyBinding(projIDForExternalBucket, member, "roles/monitoring.viewer", "")
+	bindingHelper.Create(ctx)
+	return nil
+}
+
+func determineDriverSA(projectID string, projectNumber string) (string, error) {
 	member := fmt.Sprintf(
 		"principalSet://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/namespace/gcs-fuse-csi-driver",
 		projectNumber,
 		projectID,
 	)
-	bindingHelper := NewTestGCPProjectIAMPolicyBinding(projectID, member, "roles/compute.viewer", "")
-	bindingHelper.Create(context.Background())
+	if os.Getenv(IsOSSEnvVar) != "true" {
+		testEnv := os.Getenv(TestEnvEnvVar)
+		if testEnv == "" {
+			return member, fmt.Errorf("failed to read test environment variable")
+		}
+		// Retrieve the Kubernetes service account that maps to the current env.
+		robotAccount := EnvRobots[testEnv]
+		member = fmt.Sprintf("serviceAccount:service-%s@%s.iam.gserviceaccount.com", projectNumber, robotAccount)
+	}
+
+	return member, nil
+}
+
+// RemoveMonitoringBindingForAllProjects removes the monitoring.viewer role binding from all projects that might have it.
+// This includes the current project and the projects associated with buckets existing outside the scope of a single test run.
+// Should be used for managed tests cleanup only as the p4sa is project wide and ephemeral unlike the sa created during non managed runs.
+func RemoveMonitoringBindingForAllProjects(ctx context.Context) error {
+	projectID := os.Getenv(ProjectEnvVar)
+	if projectID == "" {
+		return fmt.Errorf("environment variable %s is not set", ProjectEnvVar)
+	}
+	projectNumber := os.Getenv(ProjectNumberEnvVar)
+	if projectNumber == "" {
+		return fmt.Errorf("environment variable %s is not set", ProjectNumberEnvVar)
+	}
+
+	member, err := determineDriverSA(projectID, projectNumber)
+	if err != nil {
+		return fmt.Errorf("failed to determine driver service account: %v", err)
+	}
+
+	for _, proj := range ProjectContainingMonitoringRoles {
+		bindingHelper := NewTestGCPProjectIAMPolicyBinding(proj, member, "roles/monitoring.viewer", "")
+		bindingHelper.Cleanup(ctx)
+	}
 	return nil
 }
 
@@ -350,84 +428,6 @@ func ExpectNoError(err error, msgAndArgs ...interface{}) {
 		}
 		panic(fmt.Sprintf("%s: %v", msg, err))
 	}
-}
-
-// ensureIAMRoleForProfilesTests ensures the custom IAM role exists with the correct permissions.
-// It handles three states:
-// 1. Role missing: Creates the role from scratch.
-// 2. Role exists: Updates the role to ensure permissions are current.
-// 3. Role soft-deleted: Undeletes the role and then updates its permissions.
-// TODO(fuechr): This logic does not work on boskos pool projects, need to circle back and find a way to create the role in those projects.
-func ensureIAMRoleForProfilesTests(ctx context.Context, projectNumber string, projectID string) error {
-	klog.Infof("Ensuring role for profiles: %s", ProfilesUserRoleID)
-	iamClient, err := iamadmin.NewIamClient(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create IAM client: %v", err)
-	}
-	defer iamClient.Close()
-
-	rolePath := fmt.Sprintf("projects/%s/roles/%s", projectID, ProfilesUserRoleID)
-
-	roleConfig := &adminpb.Role{
-		Title:       "GCSFuse CSI Profile User",
-		Description: "Allows scanning GCS buckets for objects and retrieving bucket metadata and the creation of Anywhere Caches.",
-		IncludedPermissions: []string{
-			"storage.objects.list",
-			"storage.buckets.get",
-			"storage.anywhereCaches.create",
-			"storage.anywhereCaches.get",
-			"storage.anywhereCaches.list",
-			"storage.anywhereCaches.update",
-		},
-	}
-
-	// 1. Try to create the role
-	_, err = iamClient.CreateRole(ctx, &adminpb.CreateRoleRequest{
-		Parent: fmt.Sprintf("projects/%s", projectID),
-		RoleId: ProfilesUserRoleID,
-		Role:   roleConfig,
-	})
-
-	if err != nil {
-		st, ok := status.FromError(err)
-		if !ok {
-			return err
-		}
-
-		switch st.Code() {
-		case codes.AlreadyExists:
-			// Role already exists and is active; sync to latest permissions.
-			klog.Warningf("Role %s already exists, updating...", ProfilesUserRoleID)
-			_, err = iamClient.UpdateRole(ctx, &adminpb.UpdateRoleRequest{
-				Name: rolePath,
-				Role: roleConfig,
-			})
-			return nil
-
-		case codes.FailedPrecondition:
-			// Role is probably in a deleted state.
-			klog.Infof("Role %s is in a deleted state. Attempting undelete...", ProfilesUserRoleID)
-			_, err = iamClient.UndeleteRole(ctx, &adminpb.UndeleteRoleRequest{
-				Name: rolePath,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to undelete role: %v", err)
-			}
-
-			// Sync the permissions.
-			_, err = iamClient.UpdateRole(ctx, &adminpb.UpdateRoleRequest{
-				Name: rolePath,
-				Role: roleConfig,
-			})
-			return err
-
-		default:
-			return fmt.Errorf("unexpected error creating role: %v", err)
-		}
-	}
-
-	klog.Infof("Successfully created role: %s", ProfilesUserRoleID)
-	return nil
 }
 
 func ValidateIAMRoleExists(ctx context.Context, projectID string, roleID string) error {
@@ -473,4 +473,12 @@ func deleteIAMRoleForProfilesTests(ctx context.Context, projectID string, roleID
 	}
 
 	klog.Infof("Successfully deleted role: %s", deletedRole.Name)
+}
+
+func getDriverWIDPrincipal(projectID string, projectNumber string) string {
+	return fmt.Sprintf(
+		"principalSet://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/namespace/gcs-fuse-csi-driver",
+		projectNumber,
+		projectID,
+	)
 }
