@@ -62,12 +62,14 @@ const (
 	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache:stat-cache-max-size-mb"
 	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache:type-cache-max-size-mb"
 	fileCacheSizeMiBMountOptionKey            = "file-cache:max-size-mb"
+	profileMountOptionKey                     = "profile"
 	cacheDirKey                               = "cache-dir"
 
 	anywhereCacheZonesKey           = "anywhereCacheZones"
 	anywhereCacheAdmissionPolicyKey = "anywhereCacheAdmissionPolicy"
 	anywhereCacheTTLKey             = "anywhereCacheTTL"
 	bucketScanResyncPeriodKey       = "bucketScanResyncPeriod"
+	useBucketMetricsKey             = "useBucketMetrics"
 
 	anywhereCacheBackoffDuration = 22 * time.Second
 	acBackoffFactor              = 1.2
@@ -100,8 +102,8 @@ var (
 	controllerAnnotationValidationMap = map[string]string{
 		putil.AnnotationLastUpdatedTime: "anything",
 		putil.AnnotationStatus:          "completed",
-		putil.AnnotationNumObjects:      "487303991",
-		putil.AnnotationTotalSize:       "23877911763",
+		putil.AnnotationNumObjects:      "20852700",
+		putil.AnnotationTotalSize:       "1021782300",
 	}
 )
 
@@ -173,7 +175,7 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		// pvc is also deleted to set sc.
 		// TODO(fuechr): Once e2e/storage/framework supports annotation injection, we can remove modifyAndRedeployPVCPVs function and call CreateVolumeResource with needed annotations directly.
 		switch testScenario {
-		case specs.ProfilesControllerCrashTestPrefix:
+		case specs.ProfilesControllerCrashTestPrefix, specs.ProfilesBucketMetricsPrefix:
 			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
 			l.volumeResourceList[0] = modifyAndRedeployPVCPVs(ctx, f, testScenario, l.config, l.volumeResourceList[0], checkpointingProfile) // Setting to checkpointing to avoid the anywhere cache worklfow.
 		default:
@@ -268,7 +270,7 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 	})
 
 	ginkgo.It("should override profiles all overridable values", ginkgo.Serial, func() {
-		err := utils.AddComputeBindingForAC()
+		err := utils.AddComputeBindingForAC(ctx)
 		if err != nil {
 			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
 		}
@@ -314,19 +316,55 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 
 		ginkgo.By("Verify mo are passed correctly to all ss")
 		for i, tPod := range podsArray {
-			tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{metadataStatCacheMaxSizeMiBMountOptionKey: "10", fileCacheSizeMiBMountOptionKey: "30", cacheDirKey: fmt.Sprintf("/gcsfuse-cache/.volumes/%s", l.volumeResourceList[i].Pv.Name)})
+			sc := l.volumeResourceList[i].Pv.Spec.StorageClassName
+			profileMO := fmt.Sprintf("aiml-%s", strings.TrimPrefix(sc, "gcsfusecsi-"))
+			tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{profileMountOptionKey: profileMO, metadataStatCacheMaxSizeMiBMountOptionKey: "10", fileCacheSizeMiBMountOptionKey: "30", cacheDirKey: fmt.Sprintf("/gcsfuse-cache/.volumes/%s", l.volumeResourceList[i].Pv.Name)})
 		}
 
 		// No recommendation should be found because smart cache calculation is disabled when cx overrides cache sizes.
 		ginkgo.By("Verifying no recommendation was made")
 		for _, tpod := range podsArray {
-			tpod.VerifyLogsByPod(gcsFuseCsiRecommendationLog)
+			stdout, err := tpod.FindLogsByNewLine(gcsFuseCsiRecommendationLog)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "error while getting logs from pod")
+			gomega.Expect(stdout).To(gomega.BeEmpty(), "expected no recommendation logs, but found: %s", stdout)
 		}
 
 		t.validateAC(l.volumeResourceList, ctx)
 		klog.Infof("Successfully validated AnywhereCache creation for all profiles test")
 
 		t.disableAC(l.volumeResourceList, ctx)
+	})
+
+	ginkgo.It("should use bucket monitoring for bucket scan", ginkgo.Serial, func() {
+
+		init(specs.ProfilesBucketMetricsPrefix)
+		defer cleanup()
+		vr := l.volumeResourceList[0]
+		validatePVAnnotationsAndReturnScan(gomega.Default, vr.Pv.Name, controllerAnnotationValidationMap, ctx)
+
+		ginkgo.By("Configuring the profiles pods")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(vr, volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the profiles pods")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pods are running")
+		tPod.WaitForRunning(ctx)
+
+		// We omit the read and write test since this test uses the pre-existing bucket `gcsfuse-csi-profiles-test-bucket-20mil`.
+		// The read and write functionality would lead to flakes due to multiple prow jobs reading and writing to the same bucket.
+		// Additionally, the read and write functionality is already covered in other tests.
+
+		ginkgo.By("Verify mo are passed correctly to all ss")
+		profileMO := fmt.Sprintf("aiml-%s", strings.TrimPrefix(checkpointingProfile, "gcsfusecsi-"))
+		tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{profileMountOptionKey: profileMO})
+
+		ginkgo.By("Verifying a recommendation was made")
+		stdout, err := tPod.FindLogsByNewLine(gcsFuseCsiRecommendationLog)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "error while getting logs from pod")
+		gomega.Expect(stdout).NotTo(gomega.BeEmpty(), "expected recommendation logs, but none found")
 	})
 }
 
@@ -492,9 +530,7 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 	}
 
 	switch testScenario {
-	case specs.ProfilesControllerCrashTestPrefix:
-		va[bucketScanResyncPeriodKey] = "5m"
-	default:
+	case specs.ProfilesOverrideAllOverridablePrefix:
 		// Modify Annotations.
 		annotations[putil.AnnotationNumObjects] = "40"
 		annotations[putil.AnnotationTotalSize] = "50"
@@ -505,14 +541,19 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 		// Purposely omit one - mo = append(mo, fmt.Sprintf("%s:%s", metadataTypeCacheMaxSizeMiBMountOptionKey, "20"))
 		mo = append(mo, fmt.Sprintf("%s:%s", fileCacheSizeMiBMountOptionKey, "30"))
 
-		// Modify volume attributes.
-		va[anywhereCacheTTLKey] = "2h"
-		va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
 		if sc == "gcsfusecsi-serving" {
 			// We are hardcoding the zones for ac to be us-central1-c because one of the available zones is an ai
 			// specific zone which has limited quota, we should not make caches in this zone.
+			va[anywhereCacheTTLKey] = "2h"
+			va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
 			va[anywhereCacheZonesKey] = "us-central1-c"
 		}
+	case specs.ProfilesControllerCrashTestPrefix:
+		va[bucketScanResyncPeriodKey] = "5m"
+	case specs.ProfilesBucketMetricsPrefix:
+		va[useBucketMetricsKey] = "true"
+	default:
+		framework.Failf("Unknown test scenario: %s", testScenario)
 	}
 	pv.Spec.CSI.VolumeAttributes = va
 	pv.Annotations = annotations

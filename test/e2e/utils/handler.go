@@ -18,6 +18,7 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,6 +98,7 @@ const (
 var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
 
 func Handle(testParams *TestParameters) error {
+	ctx := context.Background()
 	// Validating the test parameters.
 
 	oldMask := syscall.Umask(0o000)
@@ -256,6 +258,7 @@ func Handle(testParams *TestParameters) error {
 
 	// Setting project number and adding compute binding for the driver service account for Storage Profiles.
 	if testParams.EnableGcsFuseProfiles {
+		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
 		// Project id is not already set when using managed driver flow.
 		if testParams.ProjectID == "" {
 			output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
@@ -270,16 +273,15 @@ func Handle(testParams *TestParameters) error {
 		if err != nil {
 			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
 		}
-		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
-		// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
-		// err = ensureIAMRoleForProfilesTests(context.Background(), projectNumber, testParams.ProjectID)
-		// if err != nil {
-		// 	klog.Errorf("Failed while creating IAM role for profiles tests: %v", err)
-		// } else {
-		// 	klog.Infof("Successfully created IAM role for profiles tests")
-		// 	defer deleteIAMRoleForProfilesTests(context.Background(), testParams.ProjectID, ProfilesUserRoleID)
-		// }
+		err = AddMonitoringBindingForBucketProject(GCSFuseCSIProfilesStaticBucketProject, ctx)
+		if err != nil {
+			klog.Errorf("Failed while prepping monitoring iam bindings for profiles tests: %v", err)
+		}
 
+		// Skipping removal of monitoring binding if using managed driver as the tests cleanup is performed per individual test namespace.
+		if testParams.UseGKEManagedDriver {
+			defer RemoveMonitoringBindingForAllProjects(ctx)
+		}
 	}
 
 	//nolint:gosec

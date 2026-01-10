@@ -28,4 +28,9 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --node=true
             - --identity-provider=$(IDENTITY_PROVIDER)
+            - --identity-pool=$(IDENTITY_POOL)
+            - --http-endpoint=:9920
+            - --max-metric-collectors=10
+            - --enable-sidecar-bucket-access-check=true
             - --enable-gcsfuse-profiles=true
+            - --enable-gcsfuse-profiles-internal=true
