@@ -1133,6 +1133,7 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
 	}
+	anywhereCacheProvidedZones := getAnywhereCacheZonesFromPV(pv)
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
