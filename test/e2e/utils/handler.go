@@ -232,7 +232,7 @@ func Handle(testParams *TestParameters) error {
 	if err = os.Setenv(TestWithSAVolumeInjectionEnvVar, strconv.FormatBool(supportSAVolInjection)); err != nil {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSAVolumeInjectionEnvVar, err)
 	}
-	supportSidecarBucketAccessCheckMinVersionSatisfied, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, sidecarBucketAccessCheckMinimumVersion)
+	supportSidecarBucketAccessCheckMinVersionSatisfied, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, "" /*CSI version depends on the master version only*/, sidecarBucketAccessCheckMinimumVersion)
 	if err != nil {
 		klog.Fatalf(`managed driver version for sidecar bucket access check support could not be determined: %v`, err)
 	}
