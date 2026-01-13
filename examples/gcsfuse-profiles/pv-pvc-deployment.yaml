@@ -34,7 +34,7 @@ spec:
     volumeHandle: test-bucket
     # Any parameters set in the StorageClass are overridable with volumeAttributes.
   mountOptions:
-  - only-dir=/my-folder/
+  - only-dir=my-folder
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

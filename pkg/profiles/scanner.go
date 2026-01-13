@@ -92,6 +92,7 @@ const (
 	anywhereCacheAdmissionPolicyKey = "anywhereCacheAdmissionPolicy"
 	anywhereCacheTTLKey             = "anywhereCacheTTL"
 	anywhereCacheZonesKey           = "anywhereCacheZones"
+	useBucketMetricsKey             = "useBucketMetrics"
 
 	// Event reasons
 	reasonScanOperationStartError     = "ScanOperationStartError"
@@ -212,14 +213,13 @@ type ScannerConfig struct {
 // bucketInfo holds the results of a bucket scan.
 // isOverride will be true if the PV is using the "override" status.
 type bucketInfo struct {
-	name             string
-	dir              string
-	projectNumber    string
-	onlyDirSpecified bool
-	numObjects       int64
-	totalSizeBytes   int64
-	isOverride       bool
-	isZonalBucket    bool
+	name           string
+	dir            string
+	projectNumber  string
+	numObjects     int64
+	totalSizeBytes int64
+	isOverride     bool
+	isZonalBucket  bool
 }
 
 // syncInfo holds information relevant to the PV resync.
@@ -253,7 +253,7 @@ type Scanner struct {
 	mux                  *http.ServeMux
 
 	// scanBucket is a function to scan the bucket, can be overridden in tests.
-	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error
+	scanBucketImpl func(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error
 
 	// pvMutex protects pvMutex.
 	pvMutex sync.RWMutex
@@ -931,7 +931,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		return nil
 	}
 
-	klog.Infof("PV %q is relevant, bucket: %q, dir: %q, onlyDirSpecified: %t", key, bucketI.name, bucketI.dir, bucketI.onlyDirSpecified)
+	klog.Infof("PV %q is relevant, bucket: %q, dir: %q", key, bucketI.name, bucketI.dir)
 
 	// ----- At this stage, the PV has been considered eligible for a scan. -----
 
@@ -954,7 +954,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonScanOperationStartSucceeded, "Started bucket scan for PV %q, bucket %q, directory %q, with timeout %s", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
 		klog.Infof("Bucket scan operation starting for PV %q, bucket %q, dir %q, timeout %q", pv.Name, bucketI.name, bucketI.dir, currentScanTimeout)
 
-		err = s.scanBucket(ctx, bucketI, currentScanTimeout, pv)
+		err = s.scanBucket(ctx, bucketI, currentScanTimeout, pv, sc)
 
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -1236,8 +1236,8 @@ func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.Stor
 	}
 }
 
-func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
-	return s.scanBucketImpl(s, ctx, bucketI, scanTimeout, pv)
+func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
+	return s.scanBucketImpl(s, ctx, bucketI, scanTimeout, pv, sc)
 }
 
 func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketName string) (*storage.BucketAttrs, error) {
@@ -1253,39 +1253,58 @@ func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketNa
 // This function respects the provided context and the scanTimeout.
 // It returns partial results if the timeout is reached (context.DeadlineExceeded).
 //
-// If the `only-dir` mount option is specified, the bucket will be scanned using the
-// GCS Dataflux client library for the specified directory. Otherwise, Google Cloud Metrics
-// will be used and fallback to the GCS Dataflux client library in the case of any errors or
-// unavailable metrics.
+// Behavior based on `only-dir` and `useBucketMetrics`:
+// 1. If a directory is specified:
+//   - The scan will ALWAYS use the GCS Dataflux client library for the specified directory.
+//   - The `useBucketMetrics` option is IGNORED, and a warning is logged if it was true,
+//     because bucket metrics cannot be scoped to a directory.
 //
-// Optionally, GCS Dataflux client scanning on the entire bucket can be forced by specifying `only-dir=/`
-func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
-	if bucketI.onlyDirSpecified {
-		klog.Infof("'only-dir' is set for bucket %q, dir %q. Scanning with Dataflux.", bucketI.name, bucketI.dir)
-		dfErr := scanBucketWithDataflux(ctx, s.gcsClient, bucketI, scanTimeout, s.datafluxConfig)
-		if dfErr != nil {
-			klog.Errorf("Dataflux scan failed for bucket %q, dir %q: %v", bucketI.name, bucketI.dir, dfErr)
-			// No fallback, as metrics are not applicable for a specific directory.
+// 2. If no directory is specified (bucketI.dir == ""):
+//   - If `useBucketMetrics` is true:
+//   - Attempts to use Google Cloud Metrics first.
+//   - If metrics fail or are unavailable, it falls back to scanning the ENTIRE bucket using the GCS Dataflux client library.
+//   - If `useBucketMetrics` is false:
+//   - Scans the ENTIRE bucket using the GCS Dataflux client library.
+func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
+	useBucketMetricsStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, useBucketMetricsKey)
+	useBucketMetrics := false
+	var err error
+	if ok {
+		useBucketMetrics, err = util.ParseBool(useBucketMetricsStr)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, "failed to parse bool %q for PV %q, err: %v", useBucketMetricsStr, pv.Name, err)
 		}
-		return dfErr
-	} else {
-		klog.Infof("onlyDirSpecified is false for bucket %q. Attempting scan with GCS Bucket Metrics first.", bucketI.name)
-		mErr := scanBucketWithMetrics(ctx, s.metricClient, bucketI)
-		if mErr == nil {
+	}
+
+	// Use Cloud Storage metrics if no directory is specified and bucket metrics are requested, since bucket metrics can't
+	// be scoped to a target directory.
+	directorySpecified := bucketI.dir != ""
+	if !directorySpecified && useBucketMetrics {
+		klog.Infof("PV %q: %q is true. Attempting scan with GCS Bucket Metrics first for bucket %q.", pv.Name, useBucketMetricsKey, bucketI.name)
+		err := scanBucketWithMetrics(ctx, s.metricClient, bucketI)
+		if err == nil {
 			klog.Infof("Successfully scanned bucket %q using GCS Bucket Metrics: %d objects, %d bytes", bucketI.name, bucketI.numObjects, bucketI.totalSizeBytes)
 			return nil
 		}
-
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationWarning, "Unable to scan bucket %q using GCS Bucket Metrics, falling back to Dataflux: %v", bucketI.name, mErr)
-		// Fallback to Dataflux for the whole bucket
-		dfErr := scanBucketWithDataflux(ctx, s.gcsClient, bucketI, scanTimeout, s.datafluxConfig)
-		if dfErr != nil {
-			klog.Errorf("Dataflux scan (fallback) failed for bucket %q: %v", bucketI.name, dfErr)
-			return dfErr
-		}
-		klog.Infof("Successfully scanned bucket %q using Dataflux fallback.", bucketI.name)
-		return nil
+		klog.Warningf("PV %q: Unable to scan bucket %q using GCS Bucket Metrics, falling back to Dataflux: %v", pv.Name, bucketI.name, err)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationWarning, "Unable to scan bucket %q using GCS Bucket Metrics, falling back to Dataflux: %v", bucketI.name, err)
 	}
+
+	// Log a warning if a target directory was specified and bucket metrics were requested. Fallback to Dataflux.
+	if directorySpecified && useBucketMetrics {
+		klog.Warningf("PV %q: %q is true, but a specific directory %q is also specified. Bucket metrics apply to the entire bucket and cannot be scoped. Ignoring %q and scanning only the directory %q with Dataflux.", pv.Name, useBucketMetricsKey, bucketI.dir, useBucketMetricsKey, bucketI.dir)
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationWarning, "Option %q is true, but a directory %q is specified. Metrics are for the whole bucket. Scanning only directory %q with Dataflux.", useBucketMetricsKey, bucketI.dir, bucketI.dir)
+	}
+
+	// Scan the bucket with Dataflux if bucket metrics were not requested, or bucket metrics were requested, but
+	// they failed or a target directory was specified.
+	err = scanBucketWithDataflux(ctx, s.gcsClient, bucketI, scanTimeout, s.datafluxConfig)
+	if err != nil {
+		klog.Errorf("Dataflux scan failed for bucket %q, dir %q: %v", bucketI.name, bucketI.dir, err)
+		return err
+	}
+	klog.Infof("Successfully scanned bucket %q, dir %q using Dataflux.", bucketI.name, bucketI.dir)
+	return nil
 }
 
 // defaultScanBucketWithMetrics fetches bucket size and object count from Cloud Monitoring.
@@ -1379,12 +1398,11 @@ func defaultScanBucketWithDataflux(ctx context.Context, gcsClient *storage.Clien
 	dfInput.Query.SetAttrSelection([]string{"Name", "Size"})
 
 	// Only scan for objects under this directory, if defined.
-	if bucketI.dir != "" && bucketI.dir != "/" {
+	if bucketI.dir != "" {
 		// Ensure that the directory name ends with "/" to avoid picking up
 		// files with prefixes of other directories, since GCS "nested"
 		// objects are just file names with "/" in the names.
-		// TODO(urielguzman): Add E2E test for this scenario.
-		dfInput.Query.Prefix = strings.Trim(bucketI.dir, "/") + "/"
+		dfInput.Query.Prefix = strings.TrimSuffix(bucketI.dir, "/") + "/"
 	}
 
 	klog.Infof("Dataflux ListerInput created: %+v", dfInput)
@@ -1521,11 +1539,9 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 
 	bucketName := util.ParseVolumeID(pv.Spec.CSI.VolumeHandle)
 	var dir string
-	var onlyDirSpecified bool
 	for _, mountOption := range pv.Spec.MountOptions {
 		if val, ok := onlyDirValue(mountOption); ok {
 			dir = val
-			onlyDirSpecified = true
 			break
 		}
 	}
@@ -1536,11 +1552,10 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	}
 
 	bucketI := bucketInfo{
-		name:             bucketName,
-		dir:              dir,
-		onlyDirSpecified: onlyDirSpecified,
-		projectNumber:    fmt.Sprint(bucketAttrs.ProjectNumber),
-		isZonalBucket:    strings.EqualFold(bucketAttrs.LocationType, bucketLocationTypeZoneKey) || strings.EqualFold(bucketAttrs.StorageClass, bucketStorageClassRapidKey),
+		name:          bucketName,
+		dir:           dir,
+		projectNumber: fmt.Sprint(bucketAttrs.ProjectNumber),
+		isZonalBucket: strings.EqualFold(bucketAttrs.LocationType, bucketLocationTypeZoneKey) || strings.EqualFold(bucketAttrs.StorageClass, bucketStorageClassRapidKey),
 	}
 
 	// Handle the override annotation, if set.
@@ -1630,13 +1645,13 @@ func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume, sc *storagev1.S
 
 // onlyDirValue parses a mount option string to extract the value of "only-dir".
 // It returns the directory value and true if the prefix is found, otherwise empty string and false.
-// The directory value is trimmed to exclude leading or trailing '/'.
+// The directory value is trimmed to exclude trailing '/'.
 func onlyDirValue(s string) (string, bool) {
 	prefix := "only-dir"
 	for _, delim := range []string{"=", ":"} {
 		if strings.HasPrefix(s, prefix+delim) {
 			val := strings.TrimPrefix(s, prefix+delim)
-			return strings.Trim(val, "/"), true
+			return strings.TrimSuffix(val, "/"), true
 		}
 	}
 	return "", false
