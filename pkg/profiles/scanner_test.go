@@ -141,7 +141,7 @@ type fakeScanBucketImplFunc struct {
 
 // Scan is the mock implementation of the scanBucketImpl function.
 // It checks for context cancellation (like timeouts) before returning the predefined info and error.
-func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
+func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
 	f.wasCalled = true
 	select {
 	case <-ctx.Done():
@@ -1395,14 +1395,14 @@ func TestGetOnlyDirValue(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "Valid mount option in key:val format with dir name surrounded by '/'",
-			input: onlyDirMountOptPrefix + ":/" + testDirName + "/",
+			name:  "Valid mount option in key:val format with dir name ends with '/'",
+			input: onlyDirMountOptPrefix + ":" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
 		{
-			name:  "Valid mount option in key=val format with dir name surrounded by '/'",
-			input: onlyDirMountOptPrefix + "=/" + testDirName + "/",
+			name:  "Valid mount option in key=val format with dir name ends by '/'",
+			input: onlyDirMountOptPrefix + "=" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
@@ -1431,6 +1431,9 @@ func TestGetOnlyDirValue(t *testing.T) {
 
 func TestDefaultScanBucket(t *testing.T) {
 	testPV := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
+	testPVRequestBucketMetrics := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, map[string]string{useBucketMetricsKey: "true"})
+	testSC := createStorageClass(testSCName, nil)
+	testSCRequestBucketMetrics := createStorageClass(testSCName, map[string]string{useBucketMetricsKey: "true"})
 	datafluxConfig := &DatafluxConfig{Parallelism: 1, BatchSize: 10}
 
 	tests := []struct {
@@ -1445,31 +1448,49 @@ func TestDefaultScanBucket(t *testing.T) {
 		wantErr            bool
 		expectMetricsCall  bool
 		expectDatafluxCall bool
+		useBucketMetrics   bool
+		scFallback         bool
 	}{
 		{
-			name:         "onlyDir - Dataflux success",
-			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
+			name:         "Directory specified - Dataflux success",
+			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName},
 			fakeDataflux: fakeScanFunc{
 				numObjects:     200,
 				totalSizeBytes: 2000,
 			},
 			wantBucketI: &bucketInfo{
-				name: testBucketName, dir: testDirName, onlyDirSpecified: true,
+				name: testBucketName, dir: testDirName,
 				numObjects: 200, totalSizeBytes: 2000,
 			},
 			expectMetricsCall:  false,
 			expectDatafluxCall: true,
 		},
 		{
-			name:               "onlyDir - Dataflux error",
-			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
+			name:               "Directory specified - Dataflux error",
+			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  false,
 			expectDatafluxCall: true,
 		},
 		{
-			name:         "no onlyDir - Metrics success",
+			name:         "Directory specified - useBucketMetrics true - Skip bucket metrics and use Dataflux",
+			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName},
+			fakeDataflux: fakeScanFunc{
+				numObjects:     200,
+				totalSizeBytes: 2000,
+			},
+			wantBucketI: &bucketInfo{
+				name: testBucketName, dir: testDirName,
+				numObjects: 200, totalSizeBytes: 2000,
+			},
+			wantErr:            false,
+			expectMetricsCall:  false,
+			expectDatafluxCall: true,
+			useBucketMetrics:   true,
+		},
+		{
+			name:         "No directory specified - useBucketMetrics true - Metrics success",
 			inputBucketI: &bucketInfo{name: testBucketName},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
@@ -1480,9 +1501,25 @@ func TestDefaultScanBucket(t *testing.T) {
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: false,
+			useBucketMetrics:   true,
 		},
 		{
-			name:         "no onlyDir - Metrics error, Dataflux success (Fallback)",
+			name:         "No directory specified - SC useBucketMetrics fallback - Metrics success",
+			inputBucketI: &bucketInfo{name: testBucketName},
+			fakeMetrics: fakeScanFunc{
+				numObjects:     100,
+				totalSizeBytes: 1000,
+			},
+			wantBucketI: &bucketInfo{
+				name: testBucketName, numObjects: 100, totalSizeBytes: 1000,
+			},
+			expectMetricsCall:  true,
+			expectDatafluxCall: false,
+			useBucketMetrics:   true,
+			scFallback:         true,
+		},
+		{
+			name:         "No directory specified - useBucketMetrics true - Metrics error, Dataflux success (Fallback)",
 			inputBucketI: &bucketInfo{name: testBucketName},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
@@ -1498,14 +1535,29 @@ func TestDefaultScanBucket(t *testing.T) {
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: true,
+			useBucketMetrics:   true,
 		},
 		{
-			name:               "no onlyDir - Metrics error, Dataflux error (Fallback Fails)",
+			name:               "No directory specified - useBucketMetrics true - Metrics error, Dataflux error (Fallback Fails)",
 			inputBucketI:       &bucketInfo{name: testBucketName},
 			fakeMetrics:        fakeScanFunc{err: errors.New("metrics failed")},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  true,
+			expectDatafluxCall: true,
+			useBucketMetrics:   true,
+		},
+		{
+			name: "No directory specified - useBucketMetrics false - Dataflux success",
+			fakeDataflux: fakeScanFunc{
+				numObjects:     200,
+				totalSizeBytes: 2000,
+			},
+			inputBucketI: &bucketInfo{name: testBucketName},
+			wantBucketI: &bucketInfo{
+				name: testBucketName, numObjects: 200, totalSizeBytes: 2000,
+			},
+			expectMetricsCall:  false,
 			expectDatafluxCall: true,
 		},
 	}
@@ -1526,14 +1578,24 @@ func TestDefaultScanBucket(t *testing.T) {
 
 			bucketICopy := *tc.inputBucketI
 			gotBucketI := &bucketICopy
-			err := defaultScanBucket(f.scanner, context.Background(), gotBucketI, time.Minute, testPV)
+			pv := testPV
+			sc := testSC
+			if tc.useBucketMetrics {
+				if tc.scFallback {
+					sc = testSCRequestBucketMetrics
+				} else {
+					pv = testPVRequestBucketMetrics
+				}
+			}
+
+			err := defaultScanBucket(f.scanner, context.Background(), gotBucketI, time.Minute, pv, sc)
 
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("defaultScanBucket() error = %v, wantErr %v", err, tc.wantErr)
 			}
 
 			if !tc.wantErr {
-				if diff := cmp.Diff(tc.wantBucketI, gotBucketI, cmp.AllowUnexported(bucketInfo{})); diff != "" {
+				if diff := cmp.Diff(*tc.wantBucketI, *gotBucketI, cmp.AllowUnexported(bucketInfo{})); diff != "" {
 					t.Errorf("defaultScanBucket() info diff (-want +got):\n%q", diff)
 				}
 			}
