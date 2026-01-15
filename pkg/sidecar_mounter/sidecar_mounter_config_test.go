@@ -19,6 +19,7 @@ package sidecarmounter
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -66,6 +67,8 @@ func TestPrepareMountArgs(t *testing.T) {
 		mc                    *MountConfig
 		expectedArgs          map[string]string
 		expectedConfigMapArgs map[string]string
+		expectNumaNode        bool
+		expectedNumaNode      int
 	}{
 		{
 			name: "should return valid args correctly",
@@ -361,6 +364,56 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:log-rotate:compress":          "true",
 			},
 		},
+		{
+			name: "should process multi nic configuration correctly",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"experimental-local-socket-address=128.0.0.1", "gcs-fuse-numa-node=2"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":                          GCSFuseAppName,
+				"temp-dir":                          "test-buffer-dir/temp-dir",
+				"config-file":                       "test-config-file",
+				"foreground":                        "",
+				"uid":                               "0",
+				"gid":                               "0",
+				"experimental-local-socket-address": "128.0.0.1",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
+			},
+			expectNumaNode:   true,
+			expectedNumaNode: 2,
+		},
+		{
+			name: "should ignore invalid numa node",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"experimental-local-socket-address=128.0.0.1", "gcs-fuse-numa-node=excitement"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":                          GCSFuseAppName,
+				"temp-dir":                          "test-buffer-dir/temp-dir",
+				"config-file":                       "test-config-file",
+				"foreground":                        "",
+				"uid":                               "0",
+				"gid":                               "0",
+				"experimental-local-socket-address": "128.0.0.1",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
+			},
+		},
 	}
 
 	testPrometheusPort := prometheusPort
@@ -382,13 +435,21 @@ func TestPrepareMountArgs(t *testing.T) {
 			if !reflect.DeepEqual(tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs) {
 				t.Errorf("Got config file args %v, but expected %v", tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs)
 			}
+
+			if tc.expectNumaNode {
+				if tc.mc.GcsFuseNumaNode != tc.expectedNumaNode {
+					t.Errorf("Got numa node %d, but expected %d", tc.mc.GcsFuseNumaNode, tc.expectedNumaNode)
+				}
+			} else {
+				if tc.mc.GcsFuseNumaNode != -1 {
+					t.Errorf("Got numa node %d, but expected none (-1)", tc.mc.GcsFuseNumaNode)
+				}
+			}
 		})
 	}
 }
 
 func TestPrepareConfigFile(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		name           string
 		mc             *MountConfig
@@ -565,34 +626,45 @@ func TestPrepareConfigFile(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Logf("test case: %s", tc.name)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Move the config file, if used, to a temp dir, so tests can run in parallel.
+			if tc.mc.ConfigFile != "" {
+				tmp, err := os.MkdirTemp("/tmp/", "prepare-config-file-")
+				if err != nil {
+					t.Fatalf("failed to setup tmp dir: %v", err)
+				}
+				defer os.RemoveAll(tmp)
+				tc.mc.ConfigFile = filepath.Join(tmp, tc.mc.ConfigFile)
+			}
 
-		err := tc.mc.prepareConfigFile()
+			err := tc.mc.prepareConfigFile()
 
-		if (err != nil) != tc.expectedErr {
-			t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
-		}
+			if (err != nil) != tc.expectedErr {
+				t.Errorf("Got error %v, but expected error %v", err, tc.expectedErr)
+			}
 
-		if tc.expectedErr {
-			continue
-		}
+			if tc.expectedErr {
+				return
+			}
 
-		data, err := os.ReadFile(tc.mc.ConfigFile)
-		if err != nil {
-			t.Errorf("failed to read generated config file %q", tc.mc.ConfigFile)
-		}
+			data, err := os.ReadFile(tc.mc.ConfigFile)
+			if err != nil {
+				t.Errorf("failed to read generated config file %q", tc.mc.ConfigFile)
+			}
 
-		var config map[string]interface{}
+			var config map[string]interface{}
 
-		err = yaml.Unmarshal(data, &config)
-		if err != nil {
-			t.Errorf("failed to parse generated config file %q", tc.mc.ConfigFile)
-		}
+			err = yaml.Unmarshal(data, &config)
+			if err != nil {
+				t.Errorf("failed to parse generated config file %q", tc.mc.ConfigFile)
+			}
 
-		if !reflect.DeepEqual(config, tc.expectedConfig) {
-			t.Errorf("Got config %v, but expected %v", config, tc.expectedConfig)
-		}
+			if !reflect.DeepEqual(config, tc.expectedConfig) {
+				t.Errorf("Got config %v, but expected %v", config, tc.expectedConfig)
+			}
 
-		os.Remove(tc.mc.ConfigFile)
+			os.Remove(tc.mc.ConfigFile)
+		})
 	}
 }

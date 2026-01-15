@@ -61,6 +61,7 @@ const (
 	VolumeContextKeyIdentityProvider           = "identityProvider"
 	VolumeContextKeyDisableMetrics             = "disableMetrics"
 	VolumeContextKeyIdentityPool               = "identityPool"
+	VolumeContextKeyMultiNICIndex              = "multiNICIndex"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
 	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
@@ -80,8 +81,10 @@ const (
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
+	MultiNICMinVersion                     = "v999.999.999-gke.999" // TODO: update this when a release is cut
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
+	LocalSocketAddressArg                  = "experimental-local-socket-address"
 )
 
 var (
@@ -95,6 +98,18 @@ var (
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
 	return &csi.VolumeCapability_AccessMode{Mode: mode}
+}
+
+// requestArgs holds digested request arguments, including fuse mount options. See parseRequestArguments.
+type requestArgs struct {
+	bucketName                    string
+	userSpecifiedIdentityProvider string
+	fuseMountOptions              []string
+	skipCSIBucketAccessCheck      bool
+	disableMetricsCollection      bool
+	optInHostnetworkKSA           bool
+	enableCloudProfilerForSidecar bool
+	multiNICIndex                 int
 }
 
 func NewControllerServiceCapability(c csi.ControllerServiceCapability_RPC_Type) *csi.ControllerServiceCapability {
@@ -163,6 +178,11 @@ func joinMountOptions(existingOptions []string, newOptions []string) []string {
 		"dir-mode":  "",
 	}
 
+	ignorableOptions := map[string]bool{
+		LocalSocketAddressArg: true,
+	}
+
+	ignoreOptionAlreadySeen := sets.NewString()
 	allMountOptions := sets.NewString()
 
 	process := func(mountOption string) {
@@ -174,6 +194,12 @@ func joinMountOptions(existingOptions []string, newOptions []string) []string {
 					overwritableOptions[optionPair[0]] = optionPair[1]
 
 					return
+				}
+				if _, found := ignoreOptionAlreadySeen[optionPair[0]]; found {
+					return
+				}
+				if _, found := ignorableOptions[optionPair[0]]; found {
+					ignoreOptionAlreadySeen.Insert(optionPair[0])
 				}
 			}
 
@@ -214,15 +240,11 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 }
 
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
-func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) ([]string, string, bool, bool, bool, bool, error) {
+func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) (requestArgs, error) {
 	if mountOptions, ok := volumeContext[VolumeContextKeyMountOptions]; ok {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, strings.Split(mountOptions, ","))
 	}
-	skipCSIBucketAccessCheck := false
-	optInHostnetworkKSA := false
-	disableMetricsCollection := false
-	userSpecifiedIdentityProvider := ""
-	enableCloudProfilerForSidecar := false
+	var args requestArgs
 	for volumeAttribute, mountOption := range volumeAttributesToMountOptionsMapping {
 		value, ok := volumeContext[volumeAttribute]
 		if !ok {
@@ -237,7 +259,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		case VolumeContextKeyFileCacheCapacity, VolumeContextKeyMetadataStatCacheCapacity, VolumeContextKeyMetadataTypeCacheCapacity:
 			quantity, err := resource.ParseQuantity(value)
 			if err != nil {
-				return nil, userSpecifiedIdentityProvider, skipCSIBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
+				return requestArgs{}, fmt.Errorf("volume attribute %v only accepts a valid Quantity value, got %q, error: %w", volumeAttribute, value, err)
 			}
 
 			megabytes := quantity.Value()
@@ -256,7 +278,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 		case VolumeContextKeyFileCacheForRangeRead, VolumeContextKeySkipCSIBucketAccessCheck, VolumeContextKeyDisableMetrics, VolumeContextKeyHostNetworkPodKSA, VolumeContextEnableCloudProfilerForSidecar:
 			if boolVal, err := strconv.ParseBool(value); err == nil {
 				if volumeAttribute == VolumeContextKeySkipCSIBucketAccessCheck {
-					skipCSIBucketAccessCheck = boolVal
+					args.skipCSIBucketAccessCheck = boolVal
 
 					// The skipCSIBucketAccessCheck volume attribute is only for CSI driver,
 					// and there is no translation to GCSFuse mount options.
@@ -264,20 +286,21 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 				}
 
 				if volumeAttribute == VolumeContextKeyHostNetworkPodKSA {
-					optInHostnetworkKSA = boolVal
+					args.optInHostnetworkKSA = boolVal
 					continue
 				}
 				if volumeAttribute == VolumeContextEnableCloudProfilerForSidecar {
-					enableCloudProfilerForSidecar = boolVal
+					args.enableCloudProfilerForSidecar = boolVal
 					continue
 				}
 				if volumeAttribute == VolumeContextKeyDisableMetrics {
-					disableMetricsCollection = boolVal
+					args.disableMetricsCollection = boolVal
+					// fallthrough to add this to fuseMountOptions too.
 				}
 
 				mountOptionWithValue = mountOption + strconv.FormatBool(boolVal)
 			} else {
-				return nil, userSpecifiedIdentityProvider, skipCSIBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
+				return requestArgs{}, fmt.Errorf("volume attribute %v only accepts a valid bool value, got %q", volumeAttribute, value)
 			}
 
 		// parse int volume attributes
@@ -289,27 +312,40 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 
 				mountOptionWithValue = mountOption + strconv.Itoa(intVal)
 			} else {
-				return nil, userSpecifiedIdentityProvider, skipCSIBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
+				return requestArgs{}, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", volumeAttribute, value)
 			}
 		case VolumeContextKeyIdentityProvider:
-			userSpecifiedIdentityProvider = value
+			args.userSpecifiedIdentityProvider = value
 		default:
 			mountOptionWithValue = mountOption + value
 		}
 
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{mountOptionWithValue})
 	}
+	args.fuseMountOptions = fuseMountOptions
 
-	return fuseMountOptions, userSpecifiedIdentityProvider, skipCSIBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, nil
+	args.multiNICIndex = -1
+	if idxString, found := volumeContext[VolumeContextKeyMultiNICIndex]; found {
+		if idx, err := strconv.Atoi(idxString); err == nil {
+			if idx < 0 {
+				idx = -1
+			}
+			args.multiNICIndex = idx
+		} else {
+			return requestArgs{}, fmt.Errorf("volume attribute %v only accepts a valid int value, got %q", VolumeContextKeyMultiNICIndex, idxString)
+		}
+	}
+
+	return args, nil
 }
 
 // parseRequestArguments parses arguments from given NodePublishVolumeRequest.
-func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]string) (string, string, []string, bool, bool, bool, bool, error) {
+func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]string) (requestArgs, error) {
 	bucketName := util.ParseVolumeID(req.GetVolumeId())
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
-			return "", "", nil, false, false, false, false, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+			return requestArgs{}, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
 		}
 	}
 	fuseMountOptions := []string{}
@@ -327,12 +363,9 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]stri
 		fuseMountOptions = joinMountOptions(fuseMountOptions, capMount.GetMountFlags())
 	}
 
-	fuseMountOptions, userSpecifiedIdentityProvider, skipCSIBucketAccessCheck, enableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, err := parseVolumeAttributes(fuseMountOptions, vc)
-	if err != nil {
-		return "", "", nil, false, false, false, false, err
-	}
-
-	return bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipCSIBucketAccessCheck, enableMetricsCollection, optInHostnetworkKSA, enableCloudProfilerForSidecar, nil
+	args, err := parseVolumeAttributes(fuseMountOptions, vc)
+	args.bucketName = bucketName
+	return args, err
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {
@@ -525,7 +558,16 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 	return nil, errors.New("the sidecar container was not found")
 }
 
-func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+func isManagedSidecarImage(imageName string) bool {
+	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
+}
+
+func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+	if d.config.AssumeGoodSidecarVersion {
+		klog.V(4).Infof("Assuming good sidecar version from flag")
+		return true
+	}
+
 	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
 	// since it's built off latest code in main
 	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
@@ -533,9 +575,7 @@ func isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSuppor
 		return true
 	}
 
-	isManagedSidecar := managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
-
-	if !isManagedSidecar {
+	if !isManagedSidecarImage(imageName) {
 		klog.Warningf("sidecarMinSupportedVersion check skipped since this %q is not a GKE managed image", imageName)
 		return false
 	}
@@ -624,12 +664,12 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 		return disallowedFlags
 	}
 
-	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)
+	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)
 	if !shouldPassProfilesFlag {
 		disallowedFlags[GCSFuseProfileFlag] = true
 	}
 
-	shouldPassFileCacheMediumFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled && isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseFileCacheMediumMinVersion)
+	shouldPassFileCacheMediumFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled && driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseFileCacheMediumMinVersion)
 	if !shouldPassFileCacheMediumFlag {
 		disallowedFlags[util.FileCacheMediumConst] = true
 	}

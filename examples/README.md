@@ -85,3 +85,65 @@ kubectl port-forward jupyter-notebook-server 8888:8888
 # clean up
 kubectl delete -f ./examples/jupyter/jupyter-notebook-server.yaml
 ```
+
+## Multi-NIC Example
+
+If running on a VM instance (k8s node) with multiple NICs, the `multiNICIndex`
+volume attribute can be used to attach a mount point to a particular NIC. If the
+instance NICs are aligned to NUMA nodes, then the index corresponds to the NUMA
+node, otherwise the index is that of gve and virtio_net devices given by `ip
+link`.
+
+To use multiple NICs, the pod must run in host network. If the
+`gke-gcsfuse/enable-numa-pinning=true` annotation is used, then the gcs fuse
+daemon will be pinned to the corresponding NUMA node.
+
+As an example, the following command on GKE creates an n2 instance with 2 NUMA
+nodes and two NICs. There is no actual NUMA alignment for the NICs, but this
+is an inexpensive way to test the behavior of machines like TPU v7x which do
+have NUMA aligned NICs.
+
+```bash
+gcloud container node-pools create ${NODE_POOL} \
+  --machine-type n2-standard-64 --num-nodes 1 \
+  --enable-gvnic \
+  --additional-node-network=network=additional,subnetwork=alt
+```
+
+It assumes you have created the network and subnetwork with commands like the
+following (the exact ranges used will depend on your specifics). The router
+commands are necessary to expose the network externally, so it can reach GCS
+endpoints. The parameters used are not critical and depend on your setup as
+well. The network and subnet names are only used for node pool creation and are
+not critcal for your pod configuration.
+
+```bash
+gcloud compute networks create additional
+gcloud compute networks subnests create alt \
+  --range=10.144.16.0/20 \
+  --network=additional \
+  --secondary-range=alt=10.144.32.0/20
+  --region=${CLUSTER_LOCATION}
+gcloud compute routers create additional \
+  --network=additional \
+  --region=${CLUSTER_LOCATION}
+gcloud compute routers nats create additional-nat \
+  --router=additional \
+  --region=${CLUSTER_LOCATION} \
+  --auto-allocate-nat-external-ips \
+  --nat-all-subnet-ip-ranges
+```
+
+Then deploy a pod which uses the second NIC from a node in your new node
+pool. Ensure that you have set up permissions to your GCS bucket as described
+elsewhere.
+
+```bash
+cat ./multi-nic/index.yaml | \
+  sed s/BUCKET/${BUCKET}/ | \
+  sed s/PROJECT/${PROJECT}/ | \
+  sed s/LOCATION/${CLUSTER_LOCATION}/ | \
+  sed s/CLUSTER/${CLUSTER}/ | \
+  sed s/NODE-POOL/${NODE_POOL}/ | \
+  kubectl apply -f -
+```

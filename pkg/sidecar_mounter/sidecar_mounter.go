@@ -122,9 +122,25 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
 	args = append(args, "/dev/fd/3")
 
-	klog.Infof("gcsfuse mounting with args %v...", args)
+	cmdName := m.mounterPath
+	if mc.GcsFuseNumaNode >= 0 && numactlAllowed(ctx, mc.GcsFuseNumaNode) {
+		// A nonnegative numa node has been calculated by the csi driver by looking at network
+		// interface numa information. So we are confident enough to pass it directly to numactl
+		// without further checking.
+		klog.Infof("binding gcsfuse to numa node %d", mc.GcsFuseNumaNode)
+		numactlArgs := []string{
+			fmt.Sprintf("--cpunodebind=%d", mc.GcsFuseNumaNode),
+			fmt.Sprintf("--membind=%d", mc.GcsFuseNumaNode),
+			m.mounterPath,
+		}
+		args = append(numactlArgs, args...)
+		cmdName = "numactl"
+	}
+
 	//nolint: gosec
-	cmd := exec.CommandContext(ctx, m.mounterPath, args...)
+	klog.Infof("gcsfuse mounting with %s %v...", cmdName, args)
+	cmd := exec.CommandContext(ctx, cmdName, args...)
+
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = io.MultiWriter(os.Stderr, mc.ErrWriter)
@@ -198,6 +214,17 @@ func (m *Mounter) fetchTokenSource(saNamespace, saName string, audience string) 
 		return nil, fmt.Errorf("failed to get k8s token from path %v", err)
 	}
 	return m.TokenManager.GetTokenSourceFromK8sServiceAccount(saNamespace, saName, k8stoken, audience, true), nil
+}
+
+func numactlAllowed(ctx context.Context, node int) bool {
+	cmd := exec.CommandContext(ctx, "numactl", fmt.Sprintf("--cpunodebind=%d", node), fmt.Sprintf("--membind=%d", node), "true")
+	err := cmd.Run()
+	if err != nil {
+		klog.Warningf("numactl is not allowed: %v", err)
+		return false
+	}
+	klog.Infof("numactl checks out")
+	return true
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.

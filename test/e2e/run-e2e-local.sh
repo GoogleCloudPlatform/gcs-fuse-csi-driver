@@ -26,10 +26,12 @@ readonly gke_release_channel=${GKE_RELEASE_CHANNEL:-rapid}
 readonly use_gke_autopilot=${E2E_TEST_USE_GKE_AUTOPILOT:-false}
 readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
 
-readonly use_gke_managed_driver="${E2E_TEST_USE_GKE_MANAGED_DRIVER:-true}"
+use_gke_managed_driver="${E2E_TEST_USE_GKE_MANAGED_DRIVER:-true}"
+readonly skip_csi_driver_install="${E2E_TEST_SKIP_CSI_DRIVER_INSTALL:-false}"
 readonly build_gcs_fuse_csi_driver="${E2E_TEST_BUILD_DRIVER:-false}"
 readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
-readonly overlay="${OVERLAY:-stable}"
+# Default to dev overlay so that --assume-good-sidecar-version is used.
+readonly overlay="${OVERLAY:-dev}"
 
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
 # TODO(amacaskill): Remove oidc from default skip when the test can be run without additional configuration.
@@ -41,6 +43,13 @@ readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 readonly enable_zb=${ENABLE_ZB:-false}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-false}
+
+if [ "${skip_csi_driver_install}" = true ]; then
+  use_gke_managed_driver=false
+  if [ x"${REGISTRY:-}" = x ]; then
+    REGISTRY=ignored
+  fi
+fi
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
@@ -67,6 +76,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --build-gcs-fuse-from-source=${build_gcsfuse_from_source} \
             --deploy-overlay-name=${overlay} \
             --use-gke-managed-driver=${use_gke_managed_driver} \
+            --skip-csi-driver-install=${skip_csi_driver_install} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-release-channel=${gke_release_channel} \
             --ginkgo-focus=${ginkgo_focus} \

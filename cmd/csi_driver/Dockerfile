@@ -62,14 +62,15 @@ COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libselinux.so.1 \
 
 # Build stage used for validation of the output-image
 FROM output-image AS validation-image
+COPY ./hack/check-deps.sh /
 COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libtinfo.so.6 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 COPY --from=debian /bin/bash /bin/bash
 COPY --from=debian /bin/grep /bin/grep
 COPY --from=debian /usr/bin/ldd /usr/bin/ldd
 SHELL ["/bin/bash", "-c"]
-RUN if ldd /bin/mount | grep "not found"; then echo "!!! Missing deps for mount command !!!" && exit 1; fi
-RUN if ldd /bin/umount | grep "not found"; then echo "!!! Missing deps for umount command !!!" && exit 1; fi
-RUN if ldd /bin/mountpoint | grep "not found"; then echo "!!! Missing deps for mountpoint command !!!" && exit 1; fi
+RUN /check-deps.sh /bin/mount
+RUN /check-deps.sh /bin/umount
+RUN /check-deps.sh /bin/mountpoint
 
 # Final build stage, create the real Docker image with ENTRYPOINT
 FROM output-image

@@ -40,11 +40,12 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		StorageServiceManager: storage.NewFakeServiceManager(),
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               fm,
+		NetworkManager:        &fakeNetworkManager{},
 		K8sClients:            clientset.NewFakeClientset(),
 		MetricsManager:        &metrics.FakeMetricsManager{},
 		FeatureOptions:        &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
 	}
-	driver, err := NewGCSDriver(config)
+	driver, err := NewGCSDriver(config, nil)
 	if err != nil {
 		t.Fatalf("failed to init driver: %v", err)
 	}
@@ -59,20 +60,22 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
-		Name:                  "test-driver",
-		NodeID:                "test-node",
-		Version:               "test-version",
-		RunController:         true,
-		RunNode:               true,
-		StorageServiceManager: storage.NewFakeServiceManager(),
-		TokenManager:          auth.NewFakeTokenManager(),
-		Mounter:               fm,
-		K8sClients:            clientSet,
-		MetricsManager:        &metrics.FakeMetricsManager{},
-		WINodeLabelCheck:      wiNodeLabelCheck,
-		FeatureOptions:        &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
+		Name:                     "test-driver",
+		NodeID:                   "test-node",
+		Version:                  "test-version",
+		RunController:            true,
+		RunNode:                  true,
+		StorageServiceManager:    storage.NewFakeServiceManager(),
+		TokenManager:             auth.NewFakeTokenManager(),
+		Mounter:                  fm,
+		NetworkManager:           &fakeNetworkManager{},
+		K8sClients:               clientSet,
+		MetricsManager:           &metrics.FakeMetricsManager{},
+		WINodeLabelCheck:         wiNodeLabelCheck,
+		FeatureOptions:           &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
+		AssumeGoodSidecarVersion: true,
 	}
-	driver, err := NewGCSDriver(config)
+	driver, err := NewGCSDriver(config, nil)
 	if err != nil {
 		t.Fatalf("failed to init driver: %v", err)
 	}

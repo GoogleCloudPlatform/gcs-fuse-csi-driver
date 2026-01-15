@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -527,14 +528,210 @@ func TestGetInjectIndex(t *testing.T) {
 	}
 }
 
-func TestInjectMetadataPrefetchSidecar(t *testing.T) {
-	t.Parallel()
+func TestInjectSidecarMounter(t *testing.T) {
+	extendSidecarContainer := func(custom corev1.Container) corev1.Container {
+		container := corev1.Container{
+			Name:          "gke-gcsfuse-sidecar",
+			Args:          []string{"--v=5"},
+			Env:           []v1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
+			Resources:     v1.ResourceRequirements{Limits: v1.ResourceList{}, Requests: v1.ResourceList{}},
+			RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways),
+			VolumeMounts: []v1.VolumeMount{
+				{Name: "gke-gcsfuse-tmp", MountPath: "/gcsfuse-tmp"},
+				{Name: "gke-gcsfuse-buffer", MountPath: "/gcsfuse-buffer"},
+				{Name: "gke-gcsfuse-cache", MountPath: "/gcsfuse-cache"},
+			},
+			SecurityContext: GetSecurityContext(&Config{}),
+		}
+		if custom.Image != "" {
+			container.Image = custom.Image
+		}
+		if custom.SecurityContext != nil {
+			if custom.SecurityContext.Capabilities != nil {
+				container.SecurityContext.Capabilities = custom.SecurityContext.Capabilities
+			}
+			if custom.SecurityContext.SeccompProfile != nil {
+				container.SecurityContext.SeccompProfile = custom.SecurityContext.SeccompProfile
+			}
+		}
+		return container
+	}
 
+	for _, tc := range []struct {
+		name        string
+		pod         *corev1.Pod
+		expectedPod *corev1.Pod
+	}{
+		{
+			name: "simple",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name: "workload-init",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{}),
+						{
+							Name: "workload-init",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "change image name",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:  "gke-gcsfuse-sidecar",
+							Image: "override",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Image: "override",
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "ignore overridden securityContext",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:  "gke-gcsfuse-sidecar",
+							Image: "override",
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Image: "override",
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "numa pinning",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"gke-gcsfuse/enable-numa-pinning": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"gke-gcsfuse/enable-numa-pinning": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							SecurityContext: &corev1.SecurityContext{
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{
+										corev1.Capability("ALL"),
+									},
+									Add: []corev1.Capability{
+										corev1.Capability("CAP_SYS_NICE"),
+									},
+								},
+								SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined},
+							},
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			si := SidecarInjector{
+				Config:                 &Config{},
+				MetadataPrefetchConfig: FakeConfig(),
+			}
+			err := si.injectSidecarContainer(GcsFuseSidecarName, tc.pod, true, nil /*credentialConfig*/)
+			if err != nil {
+				t.Errorf("Expected no error, but got %v", err)
+			}
+			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
+				t.Errorf(`expected: "%v", but got "%v". Diff: %s`, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))
+			}
+		})
+	}
+}
+
+func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 	limits, requests := prepareResourceList(getDefaultMetadataPrefetchConfig("fake-image"))
 	customLimits, customRequests := prepareResourceList(LoadConfig("fake-image", "Always", "250m", "250m", "20Mi", "20Mi", "5Gi", "5Gi"))
 
 	testCases := []struct {
 		testName      string
+		expectError   bool
 		pod           *corev1.Pod
 		config        Config
 		nativeSidecar *bool
@@ -814,7 +1011,8 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			},
 		},
 		{
-			testName: "fuse sidecar not present, privately hosted image",
+			testName:    "fuse sidecar not present, privately hosted image",
+			expectError: true,
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -943,7 +1141,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							Name:            MetadataPrefetchSidecarName,
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
+							SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 							Image:           FakePrefetchConfig().ContainerImage,
 							ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
 							Resources: corev1.ResourceRequirements{
@@ -1054,7 +1252,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							ImagePullPolicy: corev1.PullPolicy(FakeConfig().ImagePullPolicy),
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
+							SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 							Resources: corev1.ResourceRequirements{
 								Requests: customRequests,
 								Limits:   customLimits,
@@ -1170,7 +1368,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							ImagePullPolicy: corev1.PullPolicy(FakeConfig().ImagePullPolicy),
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
+							SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 							Resources: corev1.ResourceRequirements{
 								Requests: customRequests,
 								Limits:   customLimits,
@@ -1304,7 +1502,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
+							SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 							Resources: corev1.ResourceRequirements{
 								Requests: requests,
 								Limits:   limits,
@@ -1425,7 +1623,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 							Name:            MetadataPrefetchSidecarName,
 							Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 							RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: GetSecurityContext(),
+							SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 							Resources: corev1.ResourceRequirements{
 								Requests: requests,
 								Limits:   limits,
@@ -1469,7 +1667,8 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			},
 		},
 		{
-			testName: "fuse sidecar present & using privately hosted image, injection fail",
+			testName:    "fuse sidecar present & using privately hosted image, injection fail",
+			expectError: true,
 			pod: &corev1.Pod{
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{
@@ -1562,9 +1761,13 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 			}
 			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
 			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil /*credentialConfig*/)
-			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
+			if !tc.expectError && err != nil {
+				t.Errorf("Expected no error, but got %v", err)
+			} else if tc.expectError && err == nil {
+				t.Error("Expected error, but got none")
+			}
 			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
-				t.Errorf(`failed to run %s, expected: "%v", but got "%v". Diff: %s`, tc.testName, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))
+				t.Errorf(`expected: "%v", but got "%v". Diff: %s`, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))
 			}
 		})
 	}
@@ -1868,7 +2071,7 @@ func getExpectedPodForMetadataPrefetchWithSCTest(modifier string, enableMP bool,
 				Name:            MetadataPrefetchSidecarName,
 				Env:             []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 				RestartPolicy:   ptr.To(corev1.ContainerRestartPolicyAlways),
-				SecurityContext: GetSecurityContext(),
+				SecurityContext: GetSecurityContext(FakePrefetchConfig()),
 				Image:           FakePrefetchConfig().ContainerImage,
 				ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
 				Resources: corev1.ResourceRequirements{

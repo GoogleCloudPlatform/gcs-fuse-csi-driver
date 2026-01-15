@@ -59,3 +59,9 @@ patches:
     kind: DaemonSet
     name: gcsfusecsi-node
     version: v1
+- path: assume_good_sidecar_patch.json
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1

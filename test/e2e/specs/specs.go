@@ -350,24 +350,38 @@ func (t *TestPod) WaitForUnschedulable(ctx context.Context) {
 }
 
 func (t *TestPod) WaitForFailedMountError(ctx context.Context, msg string) {
-	err := e2eevents.WaitTimeoutForEvent(
-		ctx,
-		t.client,
-		t.namespace.Name,
-		fields.Set{"reason": events.FailedMountVolume}.AsSelector().String(),
-		msg,
-		pollTimeoutSlow)
+	// e2eevents.WaitTimeoutForEvent will error if the Events.List api call fails, eg a slow api server. So we wrap the wait.
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+		if eventErr := e2eevents.WaitTimeoutForEvent(
+			ctx,
+			t.client,
+			t.namespace.Name,
+			fields.Set{"reason": events.FailedMountVolume}.AsSelector().String(),
+			msg,
+			pollTimeoutSlow); eventErr != nil {
+			framework.Logf("Error fetching event, retrying: %v", eventErr)
+			return false, nil
+		}
+		return true, nil
+	})
 	framework.ExpectNoError(err)
 }
 
 func (t *TestPod) WaitForFailedContainerError(ctx context.Context, msg string) {
-	err := e2eevents.WaitTimeoutForEvent(
-		ctx,
-		t.client,
-		t.namespace.Name,
-		fields.Set{"reason": events.FailedToStartContainer}.AsSelector().String(),
-		msg,
-		pollTimeoutSlow)
+	// e2eevents.WaitTimeoutForEvent will error if the Events.List api call fails, eg a slow api server. So we wrap the wait.
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+		if eventErr := e2eevents.WaitTimeoutForEvent(
+			ctx,
+			t.client,
+			t.namespace.Name,
+			fields.Set{"reason": events.FailedToStartContainer}.AsSelector().String(),
+			msg,
+			pollTimeoutSlow); eventErr != nil {
+			framework.Logf("Error fetching event, retrying: %v", eventErr)
+			return false, nil
+		}
+		return true, nil
+	})
 	framework.ExpectNoError(err)
 }
 
