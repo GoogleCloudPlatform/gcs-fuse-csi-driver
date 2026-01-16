@@ -2025,6 +2025,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				podDetails: basePod,
 			},
 			wantOptions: []string{
+				"file-cache:max-size-mb:0",
 				"implicit-dirs",
 				"metadata-cache:stat-cache-max-size-mb:2",
 				"metadata-cache:type-cache-max-size-mb:1",
@@ -2047,8 +2048,53 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
+				"file-cache:max-size-mb:0",
 				"metadata-cache:stat-cache-max-size-mb:2",
 				"metadata-cache:type-cache-max-size-mb:1",
+			},
+		},
+		{
+			name: "Zero stat cache required - Should disable stat cache",
+			config: &ProfileConfig{
+				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           0,
+						ephemeralStorageBytes: 0,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"file-cache:max-size-mb:0",
+				"metadata-cache:stat-cache-max-size-mb:0",
+				"metadata-cache:type-cache-max-size-mb:0",
+			},
+		},
+		{
+			name: "Zero type cache required - Should disable type cache",
+			config: &ProfileConfig{
+				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat,
+						ephemeralStorageBytes: 0,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"file-cache:max-size-mb:0",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:0",
 			},
 		},
 		{
