@@ -293,6 +293,7 @@ type GCSFuseCSIRecommendationLog struct {
 		NodeType                             string `json:"nodeType"`
 		NodeAllocatableMemoryBytes           int64  `json:"nodeAllocatableMemoryBytes"`
 		NodeAllocatableEphemeralStorageBytes int64  `json:"nodeAllocatableEphemeralStorageBytes"`
+		NodeHasEphemeralStorageLSSD          bool   `json:"nodeHasEphemeralStorageLSSD"`
 		SidecarLimitMemoryBytes              int64  `json:"sidecarLimitMemoryBytes"`
 		SidecarLimitEphemeralStorageBytes    int64  `json:"sidecarLimitEphemeralStorageBytes"`
 		FuseBudgetMemoryBytes                int64  `json:"fuseBudgetMemoryBytes"`
@@ -354,6 +355,7 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	logEntry.InputSignals.NodeType = config.nodeDetails.nodeType
 	logEntry.InputSignals.NodeAllocatableMemoryBytes = config.nodeDetails.nodeAllocatables.memoryBytes
 	logEntry.InputSignals.NodeAllocatableEphemeralStorageBytes = config.nodeDetails.nodeAllocatables.ephemeralStorageBytes
+	logEntry.InputSignals.NodeHasEphemeralStorageLSSD = config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation
 
 	// Pod signals
 	logEntry.InputSignals.SidecarLimitMemoryBytes = config.podDetails.sidecarLimits.memoryBytes
@@ -416,21 +418,20 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 
 	cacheOptions := []string{}
 
-	// Map the recommended metadata stat cache size to equivalent mount option.
-	if recommendation.metadataStatCacheBytes > 0 {
-		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", metadataStatCacheMaxSizeMiBMountOptionKey, bytesToMiB(recommendation.metadataStatCacheBytes)))
+	// Map the recommended cache sizes and medium recommendations to mount options.
+	// The mount options must be passed, even if they are set to zero, in order to override
+	// GCSFuse's --profile flag.
+	for moKey, bytes := range map[string]int64{
+		metadataStatCacheMaxSizeMiBMountOptionKey: recommendation.metadataStatCacheBytes,
+		metadataTypeCacheMaxSizeMiBMountOptionKey: recommendation.metadataTypeCacheBytes,
+		fileCacheSizeMiBMountOptionKey:            recommendation.fileCacheBytes,
+	} {
+		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", moKey, bytesToMiB(bytes)))
 	}
 
-	// Map the recommended metadata type cache size to equivalent mount option.
-	if recommendation.metadataTypeCacheBytes > 0 {
-		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", metadataTypeCacheMaxSizeMiBMountOptionKey, bytesToMiB(recommendation.metadataTypeCacheBytes)))
-	}
-
-	// Map the recommended file cache size & medium to equivalent mount options.
+	// Only pass the file cache medium if file cache is enabled.
 	if recommendation.fileCacheBytes > 0 && recommendation.fileCacheMedium != "" {
-		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", fileCacheSizeMiBMountOptionKey, bytesToMiB(recommendation.fileCacheBytes)))
 		// Note: File cache medium *must* be delimeted with an "=" sign, since it's an internal CSI flag.
-		// TODO(urielguzman): Add a sidecar version check in the driver before passing this flag down to the sidecar mounter.
 		cacheOptions = append(cacheOptions, fmt.Sprintf("%s=%s", util.FileCacheMediumConst, recommendation.fileCacheMedium))
 	}
 
