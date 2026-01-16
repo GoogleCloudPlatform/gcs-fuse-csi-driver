@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -129,18 +130,20 @@ func ParseOverrideStatus(pv *v1.PersistentVolume) (int64, int64, error) {
 
 // AttributeWithSCFallback gets the value of a PV VolumeAttribute, if set.
 // Otherwise, it checks the StorageClass's Parameters field as fallback.
-func AttributeWithSCFallback(pv *v1.PersistentVolume, sc *storagev1.StorageClass, key string) (string, bool) {
+// If the value is still not found, it uses defaultVal as the return value.
+func AttributeWithSCFallback(pv *v1.PersistentVolume, sc *storagev1.StorageClass, key, defaultVal string) string {
 	if pv != nil && pv.Spec.PersistentVolumeSource.CSI != nil && pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes != nil {
 		if val, ok := pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes[key]; ok {
-			return val, true
+			return val
 		}
 	}
 	if sc != nil && sc.Parameters != nil {
 		if val, ok := sc.Parameters[key]; ok {
-			return val, ok
+			return val
 		}
 	}
-	return "", false
+	klog.Warningf("key %q not found in PV or StorageClass, using default value %q", key, defaultVal)
+	return defaultVal
 }
 
 // IsProfile returns true if the StorageClass has the identifying gke-gcsfuse/profile label set to true.
