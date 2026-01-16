@@ -41,6 +41,11 @@ const (
 	fuseMemoryAllocatableFactorKey           = "fuseMemoryAllocatableFactor"
 	fuseEphemeralStorageAllocatableFactorKey = "fuseEphemeralStorageAllocatableFactor"
 
+	// Default values for StorageClass param keys.
+	fuseFileCacheMediumPriorityDefaultVal           = "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
+	fuseMemoryAllocatableFactorDefaultVal           = "0.7"
+	fuseEphemeralStorageAllocatableFactorDefaultVal = "0.85"
+
 	// Node allocatable resource keys.
 	nvidiaGpuResourceName = corev1.ResourceName("nvidia.com/gpu")
 	googleTpuResourceName = corev1.ResourceName("google.com/tpu")
@@ -597,13 +602,11 @@ func recommendMetadataCacheSize(config *ProfileConfig, required, memoryBudget in
 }
 
 // parseFloatParameterNonNegative extracts a parameter by key from the params map,
-// parses it as a float64, and returns an error if the key is missing, the value
-// is not a valid float, or the value is negative.
-func parseFloatParameterNonNegative(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, key string) (float64, error) {
-	stringVal, ok := profilesutil.AttributeWithSCFallback(pv, sc, key)
-	if !ok {
-		return 0, fmt.Errorf("missing %q", key)
-	}
+// parses it as a float64, and returns an error if the value
+// is not a valid float, or the value is negative. If the value is not found, it defaults
+// to an internal value.
+func parseFloatParameterNonNegative(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, key, defaultVal string) (float64, error) {
+	stringVal := profilesutil.AttributeWithSCFallback(pv, sc, key, defaultVal)
 	floatVal, err := strconv.ParseFloat(stringVal, 64)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse %q: %w", key, err)
@@ -793,23 +796,20 @@ func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttr
 	}
 
 	// Get the file cache medium priority from the StorageClass parameters (or PV override).
-	fileCacheMediumPriorityStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey)
-	if !ok {
-		return nil, fmt.Errorf("missing fuseFileCacheMediumPriority in StorageClass %q", sc.Name)
-	}
+	fileCacheMediumPriorityStr := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey, fuseFileCacheMediumPriorityDefaultVal)
 	fileCacheMediumPriority, err := parseFileCacheMediumPriority(fileCacheMediumPriorityStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuseFileCacheMediumPriority in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse memory allocatable factor from the StorageClass parameters (or PV override).
-	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseMemoryAllocatableFactorKey)
+	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseMemoryAllocatableFactorKey, fuseMemoryAllocatableFactorDefaultVal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse memory allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse ephemeral storage allocatable factor from the StorageClass parameters.
-	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseEphemeralStorageAllocatableFactorKey)
+	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseEphemeralStorageAllocatableFactorKey, fuseEphemeralStorageAllocatableFactorDefaultVal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse ephemeral storage allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
