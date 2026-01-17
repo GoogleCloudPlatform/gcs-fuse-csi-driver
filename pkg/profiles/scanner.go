@@ -94,6 +94,14 @@ const (
 	anywhereCacheZonesKey           = "anywhereCacheZones"
 	useBucketMetricsKey             = "useBucketMetrics"
 
+	// Default values for PV / SC keys.
+	defaultScanTimeoutVal                  = "2m"
+	defaultScanResyncPeriodVal             = "168h" // 7 days
+	defaultUseBucketMetricsVal             = "false"
+	defaultAnywhereCacheZonesVal           = "none"
+	defaultAnywhereCacheAdmissionPolicyVal = "admit-on-first-miss"
+	defaultAnywhereCacheTTLVal             = "1h"
+
 	// Event reasons
 	reasonScanOperationStartError     = "ScanOperationStartError"
 	reasonScanOperationStartSucceeded = "ScanOperationStartSucceeded"
@@ -124,13 +132,13 @@ const (
 	objectCountMetric = "storage.googleapis.com/storage/object_count"
 	totalBytesMetric  = "storage.googleapis.com/storage/v2/total_bytes"
 
-	// Anywhere Cache constants
-	anywhereCacheAdmitOnFirstMiss  = "admit-on-first-miss"
-	anywhereCacheAdmitOnSecondMiss = "admit-on-second-miss"
-	anywhereCacheTTL               = "ttl"
-	anywhereCacheAdmissionPolicy   = "admission_policy"
-	anywhereCacheRunning           = "running"
-	anywhereCacheCreating          = "creating"
+	// Anywhere Cache API constants
+	anywhereCacheAPIAdmitOnFirstMiss  = "admit-on-first-miss"
+	anywhereCacheAPIAdmitOnSecondMiss = "admit-on-second-miss"
+	anywhereCacheAPITTL               = "ttl"
+	anywhereCacheAPIAdmissionPolicy   = "admission_policy"
+	anywhereCacheAPIRunning           = "running"
+	anywhereCacheAPICreating          = "creating"
 
 	// Zonal bucket constants
 	bucketLocationTypeZoneKey  = "zone"
@@ -141,12 +149,6 @@ const (
 )
 
 var (
-	// defaultScanTimeoutDuration is the default timeout for a single bucket scan.
-	defaultScanTimeoutDuration = 2 * time.Minute
-
-	// defaultScanResyncPeriodDuration is the default resync period for bucket scans.
-	defaultScanResyncPeriodDuration = 168 * time.Hour // 7 days
-
 	// To allow mocking time in tests
 	timeNow = time.Now
 
@@ -156,9 +158,6 @@ var (
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
 	scanBucketWithDataflux = defaultScanBucketWithDataflux
-
-	// anywhere cache vars
-	hourDuration = durationpb.New(time.Hour)
 
 	// Used for testing
 	utilGetZonesForClusterLocation = util.GetZonesForALocation
@@ -865,20 +864,16 @@ func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
 	return nil
 }
 
-func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, sc *storagev1.StorageClass, attributeKey string, defaultDuration time.Duration) (time.Duration, error) {
-	if durationStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, attributeKey); ok {
-		parsedDuration, err := time.ParseDuration(durationStr)
-		if err != nil {
-			return time.Duration(0), fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
-		}
-		if parsedDuration <= 0 {
-			return time.Duration(0), fmt.Errorf("non-positive duration for %q: %q", attributeKey, durationStr)
-		}
-		klog.Infof("PV %q: Using %q key from VolumeAttributes: %q", pv.Name, attributeKey, parsedDuration)
-		return parsedDuration, nil
+func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, sc *storagev1.StorageClass, attributeKey, defaultVal string) (time.Duration, error) {
+	durationStr := profilesutil.AttributeWithSCFallback(pv, sc, attributeKey, defaultVal)
+	parsedDuration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return time.Duration(0), fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
 	}
-	klog.V(6).Infof("PV %q: No %q key in PV or StorageClass. Using default %q", pv.Name, attributeKey, defaultDuration)
-	return defaultDuration, nil
+	if parsedDuration <= 0 {
+		return time.Duration(0), fmt.Errorf("non-positive duration for %q: %q", attributeKey, durationStr)
+	}
+	return parsedDuration, nil
 }
 
 // bypassScanForOverride handles a PV with the override mode set.
@@ -945,7 +940,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 
 	if isScanPending {
 		// Get the bucket scan timeout limit. This may have been overriden by the customer.
-		currentScanTimeout, err := s.getDurationAttribute(pv, sc, scanTimeoutKey, defaultScanTimeoutDuration)
+		currentScanTimeout, err := s.getDurationAttribute(pv, sc, scanTimeoutKey, defaultScanTimeoutVal)
 		if err != nil {
 			s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationStartError, "Bucket scan timeout configuration error: %v", err)
 			return status.Errorf(codes.InvalidArgument, "bucket scan timeout configuration error: %v", err)
@@ -1057,10 +1052,10 @@ func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName strin
 	klog.Infof("Found cache %s/%s in state %q", bucketName, wantAC.GetZone(), gotAC.GetState())
 	process := func() error {
 		switch strings.ToLower(gotAC.GetState()) {
-		case anywhereCacheCreating:
+		case anywhereCacheAPICreating:
 			// Retry until the cache reaches a more stable state.
 			return fmt.Errorf("%w: cache creation in progress", errRequeueNeeded)
-		case anywhereCacheRunning:
+		case anywhereCacheAPIRunning:
 			if gotAC.GetPendingUpdate() {
 				return fmt.Errorf("%w: pending update operation", errRequeueNeeded)
 			}
@@ -1108,7 +1103,7 @@ func (s *Scanner) updateAnywhereCache(ctx context.Context, bucketName string, go
 
 	_, err := s.storageControlClient.UpdateAnywhereCache(ctx, &controlpb.UpdateAnywhereCacheRequest{
 		AnywhereCache: wantAC,
-		UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheTTL, anywhereCacheAdmissionPolicy}},
+		UpdateMask:    &fieldmaskpb.FieldMask{Paths: []string{anywhereCacheAPITTL, anywhereCacheAPIAdmissionPolicy}},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update cache: %w", err)
@@ -1188,9 +1183,9 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 }
 
 func anywhereCacheZonesVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) ([]string, bool) {
-	zonesStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheZonesKey)
+	zonesStr := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheZonesKey, defaultAnywhereCacheZonesVal)
 	zonesStr = strings.ReplaceAll(zonesStr, " ", "")
-	if !ok || strings.ToLower(zonesStr) == "none" {
+	if strings.ToLower(zonesStr) == "none" {
 		// Disable Anywhere Cache if the key is not found or explicitly disabled.
 		return []string{}, false
 	}
@@ -1205,13 +1200,7 @@ func anywhereCacheZonesVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) 
 
 // anywhereCacheTTLVal returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
 func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*durationpb.Duration, error) {
-	ttl, ok := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheTTLKey)
-
-	if !ok {
-		klog.Infof("no ttl volume attribute provided, defaulting the anywhere cache ttl to 1h for pv: %s", pv.Name)
-		return hourDuration, nil
-	}
-
+	ttl := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheTTLKey, defaultAnywhereCacheTTLVal)
 	ttlAsDuration, err := time.ParseDuration(ttl)
 	if err != nil {
 		return nil, err
@@ -1222,17 +1211,12 @@ func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*
 
 // anywhereCacheAdmissionPolicyVal returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
 func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (string, error) {
-	admissionPolicy, ok := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey)
-	if !ok {
-		klog.Infof("no admission policy volume attribute provided, defaulting the anywhere cache admission policy to %q for pv: %s", anywhereCacheAdmitOnFirstMiss, pv.Name)
-		return anywhereCacheAdmitOnFirstMiss, nil
-	}
-
+	admissionPolicy := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
 	switch admissionPolicy {
-	case anywhereCacheAdmitOnFirstMiss, anywhereCacheAdmitOnSecondMiss:
+	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss:
 		return admissionPolicy, nil
 	default:
-		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, anywhereCacheAdmitOnFirstMiss, anywhereCacheAdmitOnSecondMiss)
+		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss)
 	}
 }
 
@@ -1266,14 +1250,12 @@ func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketNa
 //   - If `useBucketMetrics` is false:
 //   - Scans the ENTIRE bucket using the GCS Dataflux client library.
 func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
-	useBucketMetricsStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, useBucketMetricsKey)
+	useBucketMetricsStr := profilesutil.AttributeWithSCFallback(pv, sc, useBucketMetricsKey, defaultUseBucketMetricsVal)
 	useBucketMetrics := false
 	var err error
-	if ok {
-		useBucketMetrics, err = util.ParseBool(useBucketMetricsStr)
-		if err != nil {
-			return status.Errorf(codes.InvalidArgument, "failed to parse bool %q for PV %q, err: %v", useBucketMetricsStr, pv.Name, err)
-		}
+	useBucketMetrics, err = util.ParseBool(useBucketMetricsStr)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed to parse bool %q for PV %q, err: %v", useBucketMetricsStr, pv.Name, err)
 	}
 
 	// Use Cloud Storage metrics if no directory is specified and bucket metrics are requested, since bucket metrics can't
@@ -1500,7 +1482,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 // It records the lastScanTime and calculates the next scan time based on the resync period
 // configured in the PV or StorageClass. This operation is thread-safe.
 func (s *Scanner) updateLastSuccessfulScanInMemory(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, lastScanTime time.Time) error {
-	resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodDuration)
+	resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodVal)
 	if err != nil {
 		return fmt.Errorf("bucket scan resync period configuration error: %v", err)
 	}
@@ -1581,7 +1563,7 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	}
 
 	if found {
-		resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodDuration)
+		resyncPeriod, err := s.getDurationAttribute(pv, sc, scanResyncPeriodKey, defaultScanResyncPeriodVal)
 		if err != nil {
 			return nil, false, status.Errorf(codes.InvalidArgument, "bucket scan resync period configuration error: %v", err)
 		}

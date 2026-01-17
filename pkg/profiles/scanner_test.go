@@ -352,7 +352,10 @@ func createPod(name, namespace string, volumes []v1.Volume, labels map[string]st
 
 func TestCheckPVRelevance(t *testing.T) {
 	now := time.Date(2025, time.August, 27, 0, 0, 0, 0, time.UTC)
-	resyncPeriod := defaultScanResyncPeriodDuration
+	resyncPeriod, err := time.ParseDuration(defaultScanResyncPeriodVal)
+	if err != nil {
+		t.Fatalf("parse duration error: %v", err)
+	}
 	lastUpdateTimeWithinResyncPeriod := now.Add(-resyncPeriod / 2).Format(time.RFC3339)
 	lastUpdateTimeOutsideResyncPeriod := now.Add(-resyncPeriod * 2).Format(time.RFC3339)
 
@@ -809,8 +812,12 @@ func TestSyncPV(t *testing.T) {
 					// Simulate controller losing the in-memory state because of a crash.
 					f.scanner.trackedPVs = make(map[string]syncInfo)
 				}
-				f.mockTimeImpl.currentTime = f.mockTimeImpl.currentTime.Add(defaultScanResyncPeriodDuration * 2)
-				err := f.scanner.syncPV(context.Background(), tc.key)
+				scanResyncPeriod, err := time.ParseDuration(defaultScanResyncPeriodVal)
+				if err != nil {
+					t.Fatalf("parse duration error: %v", err)
+				}
+				f.mockTimeImpl.currentTime = f.mockTimeImpl.currentTime.Add(scanResyncPeriod * 2)
+				err = f.scanner.syncPV(context.Background(), tc.key)
 				if tc.wantErr != (err != nil) {
 					t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
 				}
@@ -1229,58 +1236,58 @@ func TestDeletePod(t *testing.T) {
 
 // TestGetScanTimeout tests the getDurationAttribute function.
 func TestGetDurationAttribute(t *testing.T) {
-	customScanTimeoutDuration := time.Duration(42 * time.Minute)
-	customScanResyncPeriodDuration := time.Duration(5 * time.Minute)
+	customScanTimeoutVal := "42m"
+	customScanResyncPeriodVal := "5m"
 	testCases := []struct {
 		name            string
 		attributeKey    string
 		attributes      map[string]string
-		defaultDuration time.Duration
-		wantTimeout     time.Duration
+		defaultDuration string
+		wantTimeout     string
 		wantErr         bool
 	}{
 		{
 			name:            "No bucket scan timeout attribute - Use default",
 			attributeKey:    scanTimeoutKey,
-			defaultDuration: defaultScanTimeoutDuration,
-			wantTimeout:     defaultScanTimeoutDuration,
+			defaultDuration: defaultScanTimeoutVal,
+			wantTimeout:     defaultScanTimeoutVal,
 			wantErr:         false,
 		},
 		{
 			name:            "No bucket scan resync period attribute - Use default",
 			attributeKey:    scanResyncPeriodKey,
-			defaultDuration: defaultScanResyncPeriodDuration,
-			wantTimeout:     defaultScanResyncPeriodDuration,
+			defaultDuration: defaultScanResyncPeriodVal,
+			wantTimeout:     defaultScanResyncPeriodVal,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan timeout attribute - Override",
 			attributes:      map[string]string{scanTimeoutKey: "42m"},
-			defaultDuration: defaultScanTimeoutDuration,
+			defaultDuration: defaultScanTimeoutVal,
 			attributeKey:    scanTimeoutKey,
-			wantTimeout:     customScanTimeoutDuration,
+			wantTimeout:     customScanTimeoutVal,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan resync period attribute - Override",
 			attributes:      map[string]string{scanResyncPeriodKey: "5m"},
-			defaultDuration: defaultScanResyncPeriodDuration,
+			defaultDuration: defaultScanResyncPeriodVal,
 			attributeKey:    scanResyncPeriodKey,
-			wantTimeout:     customScanResyncPeriodDuration,
+			wantTimeout:     customScanResyncPeriodVal,
 			wantErr:         false,
 		},
 		{
 			name:            "Invalid duration - Error",
 			attributes:      map[string]string{scanTimeoutKey: "5min"},
 			attributeKey:    scanTimeoutKey,
-			defaultDuration: defaultScanTimeoutDuration,
+			defaultDuration: defaultScanTimeoutVal,
 			wantErr:         true,
 		},
 		{
 			name:            "Non-positive duration - Error",
 			attributes:      map[string]string{scanTimeoutKey: "0s"},
 			attributeKey:    scanTimeoutKey,
-			defaultDuration: defaultScanTimeoutDuration,
+			defaultDuration: defaultScanTimeoutVal,
 			wantErr:         true,
 		},
 	}
@@ -1296,7 +1303,11 @@ func TestGetDurationAttribute(t *testing.T) {
 					t.Errorf("getDurationAttribute() error = %v, wantErr %v", err, tc.wantErr)
 				}
 			} else {
-				if timeout != tc.wantTimeout {
+				wantTimeout, err := time.ParseDuration(tc.wantTimeout)
+				if err != nil {
+					t.Fatalf("parse duration error: %v", err)
+				}
+				if timeout != wantTimeout {
 					t.Errorf("getDurationAttribute() = %v, want %v", timeout, tc.wantTimeout)
 				}
 			}
@@ -1310,7 +1321,11 @@ func TestUpdatePVScanResult(t *testing.T) {
 	pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
 	f := newTestFixture(t, pv)
 	now := time.Date(2025, 9, 1, 10, 0, 0, 0, time.UTC)
-	future := now.Add(defaultScanResyncPeriodDuration)
+	scanResyncPeriod, err := time.ParseDuration(defaultScanResyncPeriodVal)
+	if err != nil {
+		t.Fatalf("parse duration error: %v", err)
+	}
+	future := now.Add(scanResyncPeriod)
 	f.mockTimeImpl.currentTime = now
 
 	bucketI := &bucketInfo{
