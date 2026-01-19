@@ -323,7 +323,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err = s.mounter.Mount(args.bucketName, targetPath, FuseMountType, args.fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
 	}
-
+	go pollAndApplyKernelParameters(targetPath)
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", args.bucketName, targetPath)
 
 	return &csi.NodePublishVolumeResponse{}, nil
