@@ -77,6 +77,10 @@ endif
 
 DOCKER_BUILDX_ARGS += --quiet
 
+confirm:
+	@echo -n "Are you sure you want to proceed? [y/N] " && read ans && [ $${ans:-N} = y ] || [ $${ans:-N} = Y ]
+	@echo "Action confirmed! Proceeding..."
+
 $(info PROJECT is ${PROJECT})
 $(info CLUSTER_LOCATION is ${CLUSTER_LOCATION})
 $(info CLUSTER_NAME is ${CLUSTER_NAME})
@@ -113,8 +117,12 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/${GCSFUSE_TAG}/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
 ifeq ($(GCSFUSE_TAG), master)
 	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
+	@echo "GCSFuse version: ${GCSFUSE_VERSION}"
+	$(MAKE) confirm
 else
-	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
+	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-$(shell echo ${GCSFUSE_TAG} | sed 's/^v//' | tr '/' '-')-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | cut -c1-7))
+	@echo "GCSFuse version: ${GCSFUSE_VERSION}"
+	$(MAKE) confirm
 endif
 	docker buildx build \
 		--load \
@@ -149,6 +157,7 @@ ifeq (${BUILD_ARM}, true)
 	gsutil cp ${GCSFUSE_PATH}/linux/arm64/gcsfuse ${BINDIR}/linux/arm64/gcsfuse
 endif
 endif
+	sudo chown ${USER}:${USER} ${BINDIR}/linux/amd64/gcsfuse
 	chmod +x ${BINDIR}/linux/amd64/gcsfuse
 	chmod 0555 ${BINDIR}/linux/amd64/gcsfuse
 ifeq (${BUILD_ARM}, true)
