@@ -49,6 +49,7 @@ const (
 	PodNamespaceConst                   = "pod-namespace"
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	FileCacheMediumConst                = "file-cache-medium"
+	EnableKernelParamsFileFlag          = "enable-kernel-params-file-flag"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"

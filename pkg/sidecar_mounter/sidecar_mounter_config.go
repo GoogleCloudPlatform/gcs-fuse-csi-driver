@@ -79,6 +79,7 @@ type sidecarRetryConfig struct {
 var prometheusPort = 62990
 
 var disallowedFlags = map[string]bool{
+	"kernel-params-file":   true,
 	"temp-dir":             true,
 	"config-file":          true,
 	"foreground":           true,
@@ -193,9 +194,10 @@ func (mc *MountConfig) prepareMountArgs() {
 	prometheusPort++
 
 	configFileFlagMap := map[string]string{
-		"logging:file-path": "/dev/fd/1", // redirect the output to cmd stdout
-		"logging:format":    "json",
-		"cache-dir":         "", // by default the gcsfuse file cache is disabled on GKE
+		"logging:file-path":              "/dev/fd/1", // redirect the output to cmd stdout
+		"logging:format":                 "json",
+		"cache-dir":                      "", // by default the gcsfuse file cache is disabled on GKE
+		"file-system:kernel-params-file": "", // by default it's disabled unless the flag enable-kernel-params-file-flag is set to "true"
 	}
 
 	invalidArgs := []string{}
@@ -234,6 +236,10 @@ func (mc *MountConfig) prepareMountArgs() {
 			// enable the file cache feature by passing the cache directory.
 			if f == "file-cache:max-size-mb" && v != "0" {
 				configFileFlagMap["cache-dir"] = mc.CacheDir
+			}
+
+			if f == util.EnableKernelParamsFileFlag && v == util.TrueStr {
+				configFileFlagMap["file-system:kernel-params-file"] = filepath.Join(filepath.Dir(mc.ConfigFile), "kernel-params.json")
 			}
 
 			continue

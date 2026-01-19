@@ -82,8 +82,6 @@ const (
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsFileMinVersion      = "v999.999.999-gke.999" // TODO: update this when a release is cut
-	GCSFuseKernelParamsFileFlag            = "kernel-params-file"
-	GCSFuseKernelParamsFileName            = "kernel-params.json"
 	MultiNICMinVersion                     = "v999.999.999-gke.999" // TODO: update this when a release is cut
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
@@ -679,7 +677,7 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 
 	shouldPassKernelParamsFlag := driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsFileMinVersion)
 	if !shouldPassKernelParamsFlag && false {
-		disallowedFlags[GCSFuseKernelParamsFileFlag] = true
+		disallowedFlags[util.EnableKernelParamsFileFlag] = true
 	}
 
 	return disallowedFlags
