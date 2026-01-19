@@ -314,7 +314,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
 		}
 	}
-
+	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsFileMinVersion) {
+		emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get emptyDir path: %w", err)
+		}
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{GCSFuseKernelParamsFileFlag + "=" + emptyDirBasePath + "/" + GCSFuseKernelParamsFileName})
+	}
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
 	// Start to mount
