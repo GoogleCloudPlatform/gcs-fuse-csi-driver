@@ -154,9 +154,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		klog.Errorf("failed to check and delete stale /error file: %v", err)
 	}
 
-	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, "/kernel-params.json")
+	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.GCSFuseKernelParamsFileName)
 	if err != nil {
-		klog.Errorf("failed to check and delete stale /kernel-params.json file: %v", err)
+		klog.Errorf("failed to check and delete stale %s file: %v", util.GCSFuseKernelParamsFileName, err)
 	}
 
 	// Close the listener and fd after 1 hour timeout

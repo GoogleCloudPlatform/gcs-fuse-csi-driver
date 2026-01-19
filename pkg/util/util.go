@@ -50,6 +50,7 @@ const (
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	FileCacheMediumConst                = "file-cache-medium"
 	EnableKernelParamsFileFlag          = "enable-kernel-params-file-flag"
+	GCSFuseKernelParamsFileName         = "kernel-params.json"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"

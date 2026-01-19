@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,6 +58,7 @@ type MountConfig struct {
 	ConfigFileFlagMap              map[string]string     `json:"-"`
 	TokenServerIdentityProvider    string                `json:"-"`
 	HostNetworkKSAOptIn            bool                  `json:"-"`
+	EnableKernelParamsFileFlag     bool                  `json:"-"`
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
@@ -237,11 +239,6 @@ func (mc *MountConfig) prepareMountArgs() {
 			if f == "file-cache:max-size-mb" && v != "0" {
 				configFileFlagMap["cache-dir"] = mc.CacheDir
 			}
-
-			if f == util.EnableKernelParamsFileFlag && v == util.TrueStr {
-				configFileFlagMap["file-system:kernel-params-file"] = filepath.Join(filepath.Dir(mc.ConfigFile), "kernel-params.json")
-			}
-
 			continue
 		}
 
@@ -303,6 +300,10 @@ func (mc *MountConfig) prepareMountArgs() {
 				mc.GcsFuseNumaNode = idx
 			}
 			continue
+
+		case util.EnableKernelParamsFileFlag:
+			mc.EnableKernelParamsFileFlag = value == util.TrueStr
+			continue
 		}
 
 		switch {
@@ -347,7 +348,9 @@ func (mc *MountConfig) prepareMountArgs() {
 		mc.CacheDir = cacheDir
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
 	}
-
+	if mc.EnableKernelParamsFileFlag {
+		configFileFlagMap["file-system:kernel-params-file"] = path.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
+	}
 	mc.FlagMap = flagMap
 	mc.ConfigFileFlagMap = configFileFlagMap
 }
