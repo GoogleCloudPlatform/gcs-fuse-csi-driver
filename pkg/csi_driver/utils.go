@@ -678,7 +678,7 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 	}
 
 	shouldPassKernelParamsFlag := driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsFileMinVersion)
-	if !shouldPassKernelParamsFlag {
+	if !shouldPassKernelParamsFlag && false {
 		disallowedFlags[GCSFuseKernelParamsFileFlag] = true
 	}
 
