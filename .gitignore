@@ -50,3 +50,7 @@ _rundir/
 
 # Python cache
 __pycache__
+
+# Test script
+install_csi_driver.sh
+my-pod.yaml
