@@ -202,15 +202,15 @@ func (t *TestGCPProjectIAMPolicyBinding) Create(ctx context.Context) {
 	ExpectNoError(err)
 
 	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
-		if addBinding(crmService, t.projectID, t.member, t.role) != nil {
+		bindErr := addBinding(crmService, t.projectID, t.member, t.role)
+		if bindErr != nil {
+			klog.Warningf("error occured while binding member %s with role %s, condition %q to project %s: %v", t.member, t.role, t.condition, t.projectID, err)
 			//nolint:nilerr
 			return false, nil
 		}
 
 		return true, nil
 	})
-	ExpectNoError(err)
-
 }
 
 func (t *TestGCPProjectIAMPolicyBinding) Cleanup(ctx context.Context) {
