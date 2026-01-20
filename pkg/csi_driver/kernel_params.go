@@ -157,7 +157,7 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 		// Only apply parameters if the RequestID has changed to prevent
 		// redundant writes to sysfs.
 		if config.RequestID != lastKernelParamsRequestID {
-			klog.Info("Applying kernel parameters", "targetPath", targetPath, "kernel config", config)
+			klog.InfoS("Applying kernel parameters", "targetPath", targetPath, "kernel config", config)
 			for _, param := range config.Parameters {
 				path, err := pathForParam(param.Name, major, minor)
 				if err != nil {
@@ -165,9 +165,11 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 					continue
 				}
 
-				klog.Infof("Updating kernel param %q: to %q", param.Name, param.Value)
+				klog.Infof("Updating kernel param %q: to %q for path %q", param.Name, param.Value, path)
 				if err := writeValue(path, param.Value); err != nil {
 					klog.Warningf("Failed to write kernel param %q to %q: %v", param.Name, path, err)
+				} else {
+					klog.Infof("Successfully updated kernel param %q to %q", param.Name, path)
 				}
 			}
 			// Update state so we don't re-apply these settings in the next tick.
