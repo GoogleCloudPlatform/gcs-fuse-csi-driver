@@ -131,7 +131,7 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 
 	major, minor, err = getDeviceMajorMinor(targetPath)
 	if err != nil {
-		err = fmt.Errorf("Failed to get device major/minor for %q: %w", targetPath, err)
+		err = fmt.Errorf("Failed to get device major/minor: %w", err)
 		return
 	}
 
@@ -157,7 +157,7 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 		// Only apply parameters if the RequestID has changed to prevent
 		// redundant writes to sysfs.
 		if config.RequestID != lastKernelParamsRequestID {
-			klog.InfoS("Applying kernel parameters", "targetPath", targetPath, "kernel config", config)
+			klog.InfoS("Applying kernel parameters", "target path", targetPath, "kernel config", config)
 			for _, param := range config.Parameters {
 				path, err := pathForParam(param.Name, major, minor)
 				if err != nil {
@@ -165,11 +165,11 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 					continue
 				}
 
-				klog.Infof("Updating kernel param %q: to %q for path %q", param.Name, param.Value, path)
+				klog.Infof("Updating kernel param %q: to %q for target path %q", param.Name, param.Value, targetPath)
 				if err := writeValue(path, param.Value); err != nil {
-					klog.Warningf("Failed to write kernel param %q to %q: %v", param.Name, path, err)
+					klog.Warningf("Failed to write kernel param %q to file path %q for target path %q: %v", param.Name, path, targetPath, err)
 				} else {
-					klog.Infof("Successfully updated kernel param %q to %q", param.Name, path)
+					klog.Infof("Successfully updated kernel param %q to %q for target path %q", param.Name, param.Value, targetPath)
 				}
 			}
 			// Update state so we don't re-apply these settings in the next tick.
