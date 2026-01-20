@@ -18,6 +18,7 @@ package driver
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,55 +110,76 @@ func writeValue(path, value string) error {
 	return err
 }
 
-func pollAndApplyKernelParameters(targetPath string) {
-	// Poll for the kernel params file existence.
-	// We use a timeout to prevent infinite looping if the file is never created.
-	const timeout = 90 * time.Second
-	const pollInterval = 1 * time.Second
-	deadline := time.Now().Add(timeout)
-	var fileFound bool
-	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
+// monitorKernelParamsFile watches a specific configuration file and applies kernel
+// parameter changes (via sysfs) whenever the RequestID in the config file changes.
+func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterval time.Duration) {
+	klog.Infof("Starting GCSFuse kernel params monitor for target path %q", targetPath)
+	var err error
+	var kernelParamsFilePath, emptyDirBasePath, lastKernelParamsRequestID string
+	var major, minor uint32
+	var config *KernelParamsConfig
+
+	// Ensure we log the termination reason (context cancellation or actual error)
+	defer klog.Info("Stopping GCSFuse kernel params monitor for target path %q:  %v", targetPath, err)
+
+	emptyDirBasePath, err = util.PrepareEmptyDir(targetPath, false)
 	if err != nil {
-		klog.Warningf("Failed to get empty dir: %v", err)
+		err = fmt.Errorf("failed to get emptyDir path: %w", err)
 		return
 	}
-	kernelParamsFilePath := filepath.Join(emptyDirBasePath, util.GCSFuseKernelParamsFileName)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(kernelParamsFilePath); err == nil {
-			fileFound = true
-			break
+	kernelParamsFilePath = filepath.Join(emptyDirBasePath, util.GCSFuseKernelParamsFileName)
+
+	major, minor, err = getDeviceMajorMinor(targetPath)
+	if err != nil {
+		err = fmt.Errorf("Failed to get device major/minor for %q: %w", targetPath, err)
+		return
+	}
+
+	for {
+		// Check for file existence to avoid unnecessary parsing attempts.
+		if _, statErr := os.Stat(kernelParamsFilePath); statErr != nil {
+			// If file is missing, wait for the next interval or exit signal.
+			select {
+			case <-ctx.Done():
+				err = ctx.Err()
+				return
+			case <-time.After(pollInterval):
+				continue
+			}
 		}
-		time.Sleep(pollInterval)
-	}
 
-	if !fileFound {
-		klog.Warningf("Timed out waiting for kernel params file %q after %v", kernelParamsFilePath, timeout)
-		return
-	}
-
-	config, err := parseKernelParamsConfig(kernelParamsFilePath)
-	if err != nil {
-		klog.Warningf("Failed to parse kernel params config: %v", err)
-		return
-	}
-
-	major, minor, err := getDeviceMajorMinor(targetPath)
-	if err != nil {
-		klog.Warningf("Failed to get device major/minor for %q: %v", targetPath, err)
-		return
-	}
-
-	for _, param := range config.Parameters {
-		path, err := pathForParam(param.Name, major, minor)
+		config, err = parseKernelParamsConfig(kernelParamsFilePath)
 		if err != nil {
-			klog.Warningf("Skipping parameter %q: %v", param.Name, err)
-			continue
+			err = fmt.Errorf("failed to parse kernel params config: %w", err)
+			return
 		}
 
-		klog.Infof("Updating kernel param %q: to %q", param.Name, param.Value)
-		if err := writeValue(path, param.Value); err != nil {
-			klog.Warningf("Failed to write kernel param %q to %q: %v", param.Name, path, err)
+		// Only apply parameters if the RequestID has changed to prevent
+		// redundant writes to sysfs.
+		if config.RequestID != lastKernelParamsRequestID {
+			klog.Infof("Applying kernel parameters", "targetPath", targetPath, "kernel config", config)
+			for _, param := range config.Parameters {
+				path, err := pathForParam(param.Name, major, minor)
+				if err != nil {
+					klog.Warningf("Skipping parameter %q: %v", param.Name, err)
+					continue
+				}
+
+				klog.Infof("Updating kernel param %q: to %q", param.Name, param.Value)
+				if err := writeValue(path, param.Value); err != nil {
+					klog.Warningf("Failed to write kernel param %q to %q: %v", param.Name, path, err)
+				}
+			}
+			// Update state so we don't re-apply these settings in the next tick.
+			lastKernelParamsRequestID = config.RequestID
 		}
-		klog.Infof("Successfully updated kernel param %q: to %q", param.Name, param.Value)
+
+		// Throttle the loop to avoid high CPU usage.
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case <-time.After(pollInterval):
+		}
 	}
 }

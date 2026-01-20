@@ -70,6 +70,7 @@ type KernelParamsConfig struct {
 
 // parseKernelParamsConfig parses the Kernel Parameter Configuration written by GCSFuse at kernelParamsFilePath.
 // It returns error in case of contract mismatch or parsing error.
+// GCSFuse writes this file atomically so it's safe to read this file at any point.
 func parseKernelParamsConfig(kernelParamsFilePath string) (*KernelParamsConfig, error) {
 	data, err := os.ReadFile(kernelParamsFilePath)
 	if err != nil {
