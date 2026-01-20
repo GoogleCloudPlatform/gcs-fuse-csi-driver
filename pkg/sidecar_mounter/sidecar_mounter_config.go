@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,6 +58,7 @@ type MountConfig struct {
 	ConfigFileFlagMap              map[string]string     `json:"-"`
 	TokenServerIdentityProvider    string                `json:"-"`
 	HostNetworkKSAOptIn            bool                  `json:"-"`
+	EnableKernelParamsFileFlag     bool                  `json:"-"`
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
@@ -79,17 +81,19 @@ type sidecarRetryConfig struct {
 var prometheusPort = 62990
 
 var disallowedFlags = map[string]bool{
-	"temp-dir":             true,
-	"config-file":          true,
-	"foreground":           true,
-	"log-file":             true,
-	"log-format":           true,
-	"key-file":             true,
-	"token-url":            true,
-	"reuse-token-from-url": true,
-	"o":                    true,
-	"cache-dir":            true,
-	"prometheus-port":      true,
+	"temp-dir":                       true,
+	"config-file":                    true,
+	"foreground":                     true,
+	"log-file":                       true,
+	"log-format":                     true,
+	"key-file":                       true,
+	"token-url":                      true,
+	"reuse-token-from-url":           true,
+	"o":                              true,
+	"cache-dir":                      true,
+	"prometheus-port":                true,
+	"kernel-params-file":             true,
+	"file-system:kernel-params-file": true,
 }
 
 var boolFlags = map[string]bool{
@@ -297,6 +301,10 @@ func (mc *MountConfig) prepareMountArgs() {
 				mc.GcsFuseNumaNode = idx
 			}
 			continue
+
+		case util.EnableKernelParamsFileFlag:
+			mc.EnableKernelParamsFileFlag = value == util.TrueStr
+			continue
 		}
 
 		switch {
@@ -341,7 +349,9 @@ func (mc *MountConfig) prepareMountArgs() {
 		mc.CacheDir = cacheDir
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
 	}
-
+	if mc.EnableKernelParamsFileFlag {
+		configFileFlagMap["file-system:kernel-params-file"] = path.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
+	}
 	mc.FlagMap = flagMap
 	mc.ConfigFileFlagMap = configFileFlagMap
 }

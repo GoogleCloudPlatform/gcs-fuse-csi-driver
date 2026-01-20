@@ -56,6 +56,8 @@ var (
 		"reuse-token-from-url",
 		"o",
 		"cache-dir",
+		"kernel-params-file=some-file",
+		"file-system:kernel-params-file:some-file",
 	}
 )
 
@@ -412,6 +414,31 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:file-path": "/dev/fd/1",
 				"logging:format":    "json",
 				"cache-dir":         "",
+			},
+		},
+		{
+			name: "should return valid args when kernel params file is enabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				TempDir:    "test-temp-dir",
+				Options:    []string{util.EnableKernelParamsFileFlag + "=true"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":        GCSFuseAppName,
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":              "/dev/fd/1",
+				"logging:format":                 "json",
+				"cache-dir":                      "",
+				"file-system:kernel-params-file": "test-temp-dir/" + util.GCSFuseKernelParamsFileName,
 			},
 		},
 	}
