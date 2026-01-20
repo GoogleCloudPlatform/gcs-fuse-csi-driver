@@ -120,7 +120,7 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 	var config *KernelParamsConfig
 
 	// Ensure we log the termination reason (context cancellation or actual error)
-	defer klog.Info("Stopping GCSFuse kernel params monitor for target path %q:  %v", targetPath, err)
+	defer klog.Infof("Stopping GCSFuse kernel params monitor for target path %q:  %v", targetPath, err)
 
 	emptyDirBasePath, err = util.PrepareEmptyDir(targetPath, false)
 	if err != nil {
@@ -157,7 +157,7 @@ func monitorKernelParamsFile(ctx context.Context, targetPath string, pollInterva
 		// Only apply parameters if the RequestID has changed to prevent
 		// redundant writes to sysfs.
 		if config.RequestID != lastKernelParamsRequestID {
-			klog.Infof("Applying kernel parameters", "targetPath", targetPath, "kernel config", config)
+			klog.Info("Applying kernel parameters", "targetPath", targetPath, "kernel config", config)
 			for _, param := range config.Parameters {
 				path, err := pathForParam(param.Name, major, minor)
 				if err != nil {
