@@ -36,6 +36,8 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	klog.Info("*** CUSTOM BUILD: Metadata Prefetch - Manual Test Version ***")
+
 	// Create cancellable context to pass into exec.
 	ctx, cancel := context.WithCancel(context.Background())
 
