@@ -402,6 +402,8 @@ func prepareMountOptions(options []string) ([]string, []string, map[string]int64
 			optionSet.Delete(o)
 		}
 	}
-
+	// Log deprecated warning here and complete remove the use of read_ahead_kb.
+	// Suppy the read_ahead_kb flag to --max-read_ahead-kb?
+	// Use preferenc based approach or whatever is decided.
 	return csiMountOptions, optionSet.List(), sysfsBDI, nil
 }

@@ -146,9 +146,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	defer s.volumeLocks.Release(targetPath)
 
 	// Use target path as an volume identifier because it corresponds to Pods and volumes.
-	// Pods may belong to different namespaces and would need their own access check.
+	// Pods may belong to different namespaces and would need their own access check. Create volumeStateStore
+	// irrespective of bucket access check as kernel params file monitoring is also tracked using volumeState for non dynamic mounts.
 	vs, ok := s.volumeStateStore.Load(targetPath)
-	if !ok {
+	if !ok && args.bucketName != "_" {
 		s.volumeStateStore.Store(targetPath, &util.VolumeState{})
 		vs, _ = s.volumeStateStore.Load(targetPath)
 	}
@@ -292,14 +293,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 		// TODO: Check if the socket listener timed out
 
-		// Start GCSFuse Kernel Params monitoring. This invokes a single long lived go
+		// Start GCSFuse Kernel Params monitoring for non dynamic mounts. This invokes a single long lived go
 		// routine which is terminated from NodeUnpublishVolume operation.
-		vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
-			ctx, cancel := context.WithCancel(context.Background())
-			vs.GCSFuseKernelMonitorState.CancelFunc = cancel
-			// Fire kernel params monitoring go routine.
-			go monitorKernelParamsFile(ctx, targetPath, KernelParamsFilePollInterval)
-		})
+		if args.bucketName != "_" {
+			vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
+				ctx, cancel := context.WithCancel(context.Background())
+				vs.GCSFuseKernelMonitorState.CancelFunc = cancel
+				// Fire kernel params monitoring go routine.
+				go monitorKernelParamsFile(ctx, targetPath, KernelParamsFilePollInterval)
+			})
+		}
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
@@ -325,7 +328,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
 		}
 	}
-	if true || s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsFileMinVersion) {
+	// Enable the kernel params feature flag for non-dynamic mounts by default if sidecar version supports it.
+	if args.bucketName != "_" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsFileMinVersion) {
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableKernelParamsFileFlag + "=true"})
 	}
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
@@ -335,14 +339,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
 	}
 
-	// Start GCSFuse Kernel Params monitoring. This invokes a single long lived go
+	// Start GCSFuse Kernel Params monitoring for non dynamic mounts. This invokes a single long lived go
 	// routine which is terminated from NodeUnpublishVolume operation.
-	vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		vs.GCSFuseKernelMonitorState.CancelFunc = cancel
-		// Fire kernel params monitoring go routine.
-		go monitorKernelParamsFile(ctx, targetPath, KernelParamsFilePollInterval)
-	})
+	if args.bucketName != "_" {
+		vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			vs.GCSFuseKernelMonitorState.CancelFunc = cancel
+			// Fire kernel params monitoring go routine.
+			go monitorKernelParamsFile(ctx, targetPath, KernelParamsFilePollInterval)
+		})
+	}
 
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", args.bucketName, targetPath)
 
@@ -373,8 +379,8 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
 			vs.GCSFuseKernelMonitorState.CancelFunc()
 		}
+		s.volumeStateStore.Delete(targetPath)
 	}
-	s.volumeStateStore.Delete(targetPath)
 
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {

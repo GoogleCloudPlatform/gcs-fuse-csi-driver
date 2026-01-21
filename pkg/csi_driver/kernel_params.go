@@ -66,12 +66,6 @@ func pathForParam(name ParamName, major, minor uint32) (string, error) {
 	case CongestionWindowThreshold:
 		return fmt.Sprintf("/sys/fs/fuse/connections/%d/congestion_threshold", minor), nil
 
-	case MaxPagesLimit:
-		return "/sys/module/fuse/parameters/max_pages_limit", nil
-
-	case TransparentHugePages:
-		return "/sys/kernel/mm/transparent_hugepage/enabled", nil
-
 	default:
 		klog.Warningf("Unknown parameter name %q found in kernel parameters config. Skipping...", name)
 		return "", fmt.Errorf("unknown parameter name: %q", name)
