@@ -1400,9 +1400,9 @@ func TestPatchPVAnnotations(t *testing.T) {
 	}
 }
 
-// TestGetOnlyDirValue tests the getOnlyDirValue function.
+// TestOnlyDirValue tests the onlyDirValue function.
 // This function extracts the directory name from a mount option string.
-func TestGetOnlyDirValue(t *testing.T) {
+func TestOnlyDirValue(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -1410,14 +1410,26 @@ func TestGetOnlyDirValue(t *testing.T) {
 		ok    bool
 	}{
 		{
+			name:  "Valid mount option in key:val format with dir name",
+			input: fmt.Sprintf("x:y,%s:%s,a:b", onlyDirMountOptPrefix, testDirName),
+			want:  testDirName,
+			ok:    true,
+		},
+		{
+			name:  "Valid mount option in key=val format with dir name",
+			input: fmt.Sprintf("x=y,%s=%s,a=b", onlyDirMountOptPrefix, testDirName),
+			want:  testDirName,
+			ok:    true,
+		},
+		{
 			name:  "Valid mount option in key:val format with dir name ends with '/'",
-			input: onlyDirMountOptPrefix + ":" + testDirName + "/",
+			input: fmt.Sprintf("x:y,%s:%s/,a:b", onlyDirMountOptPrefix, testDirName),
 			want:  testDirName,
 			ok:    true,
 		},
 		{
 			name:  "Valid mount option in key=val format with dir name ends by '/'",
-			input: onlyDirMountOptPrefix + "=" + testDirName + "/",
+			input: fmt.Sprintf("x=y,%s=%s/,a=b", onlyDirMountOptPrefix, testDirName),
 			want:  testDirName,
 			ok:    true,
 		},

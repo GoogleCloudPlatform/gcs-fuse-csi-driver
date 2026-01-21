@@ -1630,10 +1630,16 @@ func (s *Scanner) calculateLastScanTime(pv *v1.PersistentVolume, sc *storagev1.S
 // The directory value is trimmed to exclude trailing '/'.
 func onlyDirValue(s string) (string, bool) {
 	prefix := "only-dir"
-	for _, delim := range []string{"=", ":"} {
-		if strings.HasPrefix(s, prefix+delim) {
-			val := strings.TrimPrefix(s, prefix+delim)
-			return strings.TrimSuffix(val, "/"), true
+	// Split the string by comma to handle multiple mount options
+	options := strings.Split(s, ",")
+
+	for _, opt := range options {
+		opt = strings.TrimSpace(opt)
+		for _, delim := range []string{"=", ":"} {
+			if strings.HasPrefix(opt, prefix+delim) {
+				val := strings.TrimPrefix(opt, prefix+delim)
+				return strings.TrimSuffix(val, "/"), true
+			}
 		}
 	}
 	return "", false
