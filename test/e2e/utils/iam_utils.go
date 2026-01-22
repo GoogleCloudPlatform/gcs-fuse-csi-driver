@@ -56,8 +56,6 @@ const (
 )
 
 var (
-	ProjectContainingMonitoringRoles = []string{GCSFuseCSIProfilesStaticBucketProject}
-
 	// EnvRobots maps enviroments to the Kubernetes Service Agents.
 	EnvRobots = map[string]string{
 		"prod":     "container-engine-robot",
@@ -351,27 +349,6 @@ func AddComputeBindingForAC(ctx context.Context) error {
 	return nil
 }
 
-// AddMonitoringBindingForBucketProject binds the Workload Identity principal to the monitoring.viewer role on the target project hosting an external bucket.
-// If the tests are running on the managed driver environment, it binds the p4sa instead.
-func AddMonitoringBindingForBucketProject(projIDForExternalBucket string, ctx context.Context) error {
-	projectID := os.Getenv(ProjectEnvVar)
-	if projectID == "" {
-		return fmt.Errorf("environment variable %s is not set", ProjectEnvVar)
-	}
-	projectNumber := os.Getenv(ProjectNumberEnvVar)
-	if projectNumber == "" {
-		return fmt.Errorf("environment variable %s is not set", ProjectNumberEnvVar)
-	}
-	member, err := determineDriverSA(projectID, projectNumber)
-	if err != nil {
-		return fmt.Errorf("failed to determine controller service account: %v", err)
-	}
-
-	bindingHelper := NewTestGCPProjectIAMPolicyBinding(projIDForExternalBucket, member, "roles/monitoring.viewer", "")
-	bindingHelper.Create(ctx)
-	return nil
-}
-
 func determineDriverSA(projectID string, projectNumber string) (string, error) {
 	member := fmt.Sprintf(
 		"principalSet://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/namespace/gcs-fuse-csi-driver",
@@ -389,31 +366,6 @@ func determineDriverSA(projectID string, projectNumber string) (string, error) {
 	}
 
 	return member, nil
-}
-
-// RemoveMonitoringBindingForAllProjects removes the monitoring.viewer role binding from all projects that might have it.
-// This includes the current project and the projects associated with buckets existing outside the scope of a single test run.
-// Should be used for managed tests cleanup only as the p4sa is project wide and ephemeral unlike the sa created during non managed runs.
-func RemoveMonitoringBindingForAllProjects(ctx context.Context) error {
-	projectID := os.Getenv(ProjectEnvVar)
-	if projectID == "" {
-		return fmt.Errorf("environment variable %s is not set", ProjectEnvVar)
-	}
-	projectNumber := os.Getenv(ProjectNumberEnvVar)
-	if projectNumber == "" {
-		return fmt.Errorf("environment variable %s is not set", ProjectNumberEnvVar)
-	}
-
-	member, err := determineDriverSA(projectID, projectNumber)
-	if err != nil {
-		return fmt.Errorf("failed to determine driver service account: %v", err)
-	}
-
-	for _, proj := range ProjectContainingMonitoringRoles {
-		bindingHelper := NewTestGCPProjectIAMPolicyBinding(proj, member, "roles/monitoring.viewer", "")
-		bindingHelper.Cleanup(ctx)
-	}
-	return nil
 }
 
 // ExpectNoError fails immediately if err != nil, this is being used instead of framework because we want

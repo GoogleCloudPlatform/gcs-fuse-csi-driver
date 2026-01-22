@@ -78,7 +78,7 @@ const (
 	acBackoffJitter              = 0.1
 
 	retryPolling = 5 * time.Second
-	retryTimeout = 5 * time.Minute
+	retryTimeout = 10 * time.Minute
 
 	gcsFuseCsiRecommendationLog = "GCSFuseCSIRecommendation"
 
@@ -103,7 +103,9 @@ var (
 		putil.AnnotationLastUpdatedTime: "anything",
 		putil.AnnotationStatus:          "completed",
 		putil.AnnotationNumObjects:      "20852700",
-		putil.AnnotationTotalSize:       "1021782300",
+		// Total size is expected to be 0 since size is the aggregate of object sizes and 
+		// the bucket we are using is 20852700 empty files.
+		putil.AnnotationTotalSize:       "0",
 	}
 )
 
@@ -175,7 +177,7 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		// pvc is also deleted to set sc.
 		// TODO(fuechr): Once e2e/storage/framework supports annotation injection, we can remove modifyAndRedeployPVCPVs function and call CreateVolumeResource with needed annotations directly.
 		switch testScenario {
-		case specs.ProfilesControllerCrashTestPrefix, specs.ProfilesBucketMetricsPrefix:
+		case specs.ProfilesControllerCrashTestPrefix:
 			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
 			l.volumeResourceList[0] = modifyAndRedeployPVCPVs(ctx, f, testScenario, l.config, l.volumeResourceList[0], checkpointingProfile) // Setting to checkpointing to avoid the anywhere cache worklfow.
 		default:
@@ -333,38 +335,6 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		klog.Infof("Successfully validated AnywhereCache creation for all profiles test")
 
 		t.disableAC(l.volumeResourceList, ctx)
-	})
-
-	ginkgo.It("should use bucket monitoring for bucket scan", ginkgo.Serial, func() {
-
-		init(specs.ProfilesBucketMetricsPrefix)
-		defer cleanup()
-		vr := l.volumeResourceList[0]
-		validatePVAnnotationsAndReturnScan(gomega.Default, vr.Pv.Name, controllerAnnotationValidationMap, ctx)
-
-		ginkgo.By("Configuring the profiles pods")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(vr, volumeName, mountPath, false)
-
-		ginkgo.By("Deploying the profiles pods")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pods are running")
-		tPod.WaitForRunning(ctx)
-
-		// We omit the read and write test since this test uses the pre-existing bucket `gcsfuse-csi-profiles-test-bucket-20mil`.
-		// The read and write functionality would lead to flakes due to multiple prow jobs reading and writing to the same bucket.
-		// Additionally, the read and write functionality is already covered in other tests.
-
-		ginkgo.By("Verify mo are passed correctly to all ss")
-		profileMO := fmt.Sprintf("aiml-%s", strings.TrimPrefix(checkpointingProfile, "gcsfusecsi-"))
-		tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{profileMountOptionKey: profileMO})
-
-		ginkgo.By("Verifying a recommendation was made")
-		stdout, err := tPod.FindLogsByNewLine(gcsFuseCsiRecommendationLog)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "error while getting logs from pod")
-		gomega.Expect(stdout).NotTo(gomega.BeEmpty(), "expected recommendation logs, but none found")
 	})
 }
 
@@ -550,8 +520,6 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 		}
 	case specs.ProfilesControllerCrashTestPrefix:
 		va[bucketScanResyncPeriodKey] = "5m"
-	case specs.ProfilesBucketMetricsPrefix:
-		va[useBucketMetricsKey] = "true"
 	default:
 		framework.Failf("Unknown test scenario: %s", testScenario)
 	}

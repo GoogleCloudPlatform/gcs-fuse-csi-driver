@@ -66,7 +66,6 @@ const (
 	EnableFileCacheForceNewBucketAndMetricsPrefix              = "gcsfuse-csi-enable-file-cache-force-new-bucket-and-metrics"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
 	ProfilesOverrideAllOverridablePrefix                       = "gcsfuse-csi-profiles-override-all-overridable"
-	ProfilesBucketMetricsPrefix                                = "gcsfuse-csi-profiles-bucket-metrics"
 	ProfilesControllerCrashTestPrefix                          = "gcsfuse-csi-profiles-controller-crash-test"
 	EnableFileCacheAndMetricsPrefix                            = "gcsfuse-csi-enable-file-cache-and-metrics"
 	EnableFileCacheWithLargeCapacityPrefix                     = "gcsfuse-csi-enable-file-cache-large-capacity"

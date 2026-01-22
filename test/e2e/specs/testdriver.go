@@ -182,10 +182,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case ProfilesOverrideAllOverridablePrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
-
-			// ProfilesBucketMetricsPrefix tests requires a bucket that exists longer than 24hrs to have metrics available.
-			// For simplicity we reuse the same bucket as ProfilesControllerCrashTestPrefix which is long-lived.
-		case ProfilesControllerCrashTestPrefix, ProfilesBucketMetricsPrefix:
+		case ProfilesControllerCrashTestPrefix:
 			bucketName = gcsfuseCSIProfilesStaticBucket
 			// IAM policy is handled by the testdriver.go create bucket flow,
 			// since this bucket is not created during the test we manually add IAM here.
@@ -290,9 +287,6 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case ProfilesOverrideAllOverridablePrefix:
 			dirPath := uuid.NewString()
 			n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
-			mountOptions += ",only-dir=" + dirPath
-		case ProfilesControllerCrashTestPrefix:
-			dirPath := "profiles-dir"
 			mountOptions += ",only-dir=" + dirPath
 		}
 
