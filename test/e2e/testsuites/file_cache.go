@@ -247,7 +247,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create files using gcloud storage
 		fileName := uuid.NewString()
 		// The file size 110 MB is larger than the 100 MB fileCacheCapacity
 		gcsfuseDriver.CreateTestFileWithSizeInBucket(ctx, fileName, bucketName, 110*1024*1024)
@@ -277,7 +277,7 @@ func (t *gcsFuseCSIFileCacheTestSuite) DefineTests(driver storageframework.TestD
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
-		// Create files using gsutil
+		// Create files using gcloud storage
 		fileName := uuid.NewString()
 		// The file size 2 GB is larger than the 1 GB PD
 		gcsfuseDriver.CreateTestFileWithSizeInBucket(ctx, fileName, bucketName, 2*1024*1024*1024)
