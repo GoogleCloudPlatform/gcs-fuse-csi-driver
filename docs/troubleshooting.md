@@ -237,6 +237,33 @@ Use the following considerations when troubleshooting file cache performance iss
 
   Increase the volume attribute `fileCacheCapacity` value to make sure it is larger than the total file size.
 
+
+## Mounting issues due to bucket access verification failure
+
+#### 1. GCS Fuse CSI volume fails mount due to error in fetching token from metadataserver
+Example of an error (not limited to)
+```
+textPayload="Error: mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: BucketHandle: storageLayout call failed: rpc error: code = Unauthenticated desc = transport: per-RPC creds failed due to error: Get \"http://169.169.254/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdevstorage.full_control\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
+```
+
+This can cause authentication errors with GCS Fuse
+```
+textPayload="Error: mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: BucketHandle: storageLayout call failed: rpc error: code = Unauthenticated desc = transport: per-RPC creds failed due to error: compute: Received 403 Unauthenticated"
+```
+
+#### 2. Pod is stuck in pending state after failing to access the bucket
+While mounting the GCS Fuse volume if the pod does not have access to the mentioned bucket it will result in an error and be stuck in pending state.
+Example error (not limited to)
+```
+Error while mounting gcsfuse: mountWithStorageHandle: fs.NewServer: create file system: SetUpBucket: BucketHandle: storageLayout call failed: rpc error: code = Unauthenticated desc = transport: per-RPC creds failed due to error: compute: Received 504
+```
+
+### Solution
+Ensure bucket access is verified before the the pod attempts to mount the volume. This can be achieved through following 
+1. Set `skipCSIBucketAccessCheck:false` through [volume attribute class](https://docs.cloud.google.com/kubernetes-engine/docs/reference/cloud-storage-fuse-csi-driver/volume-attr). This performs bucket access check before attempting to mount the volume, however, at high scale workloads might experience STS quota exhaustion issues due number of access verification calls. The below method is recommended for high scale workloads (it offers 50% reduction in STS quota consumption for GCS Fuse CSI driver)
+2. **[Recommended for high-scale workloads]** Workload identity cluster on GKE version 1.34.1-gke.3899001+ by default performs bucket access check in the sidecar before attempting to mount the volume. This is auto enabled and does not need any further configuration. To see any reduction in STS quota consumption, ensure `skipCSIBucketAccessCheck` is set to `true` in the [volume attribute class](https://docs.cloud.google.com/kubernetes-engine/docs/reference/cloud-storage-fuse-csi-driver/volume-attr). Please note this feature is currently only supported for managed driver. The feature is also enabled if you use a private sidecar with GKE provided public sidecar image from gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter.
+
+
 ## Performance issues
 
 This section aims to provide troubleshooting steps and tips to resolve Cloud Storage FUSE CSI driver performance issues.
@@ -455,4 +482,3 @@ csi:
   volumeAttributes:
     mountOptions: "log-severity=trace"
 ```
-
