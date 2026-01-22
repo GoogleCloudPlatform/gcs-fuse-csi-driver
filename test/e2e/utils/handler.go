@@ -18,7 +18,6 @@ limitations under the License.
 package utils
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -99,7 +98,6 @@ const (
 var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
 
 func Handle(testParams *TestParameters) error {
-	ctx := context.Background()
 	// Validating the test parameters.
 
 	oldMask := syscall.Umask(0o000)
@@ -277,15 +275,6 @@ func Handle(testParams *TestParameters) error {
 		if err != nil {
 			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
 		}
-		err = AddMonitoringBindingForBucketProject(GCSFuseCSIProfilesStaticBucketProject, ctx)
-		if err != nil {
-			klog.Errorf("Failed while prepping monitoring iam bindings for profiles tests: %v", err)
-		}
-
-		// Skipping removal of monitoring binding if using managed driver as the tests cleanup is performed per individual test namespace.
-		if testParams.UseGKEManagedDriver {
-			defer RemoveMonitoringBindingForAllProjects(ctx)
-		}
 	}
 
 	//nolint:gosec
@@ -328,6 +317,10 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if testParams.UseGKEAutopilot {
 		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration", "istio")
+	}
+
+	if testParams.EnableGcsFuseProfiles {
+		skipTests = append(skipTests, "should.not.pass.profile")
 	}
 
 	if !testParams.SupportsNativeSidecar {
