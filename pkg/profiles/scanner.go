@@ -110,6 +110,7 @@ const (
 	reasonScanOperationSucceeded      = "ScanOperationSucceeded"
 	reasonScanOperationTimedOut       = "ScanOperationTimedOut"
 	reasonAnywhereCacheSyncError      = "AnywhereCacheSyncError"
+	reasonAnywhereCacheSyncWarning    = "AnywhereCacheSyncWarning"
 	reasonAnywhereCacheSyncSucceeded  = "AnywhereCacheSyncSucceeded"
 	reasonAnywhereCacheSyncInfo       = "AnywhereCacheSyncInfo"
 
@@ -153,7 +154,7 @@ var (
 	timeNow = time.Now
 
 	// Fake error to signal worker to re-queue the object without emitting an error log.
-	errRequeueNeeded = errors.New("operation in progress, requeue needed")
+	errRequeueNeeded = errors.New("requeue needed")
 
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
@@ -989,34 +990,49 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		return err
 	}
 
-	var failures, pendingOperations error
+	// Map each error to a category for processing in the next step.
+	var retriableFailures, nonRetriableFailures, pendingOperations error
 	successes := make(map[string]string)
 	for zone, result := range syncResults {
 		if result.err != nil {
-			if errors.Is(result.err, errRequeueNeeded) {
+			switch {
+			case errors.Is(result.err, errRequeueNeeded):
 				pendingOperations = errors.Join(pendingOperations, fmt.Errorf("%s:[%w]", zone, result.err))
-			} else {
-				failures = errors.Join(failures, fmt.Errorf("%s:[%w]", zone, result.err))
+			case status.Code(result.err) == codes.InvalidArgument:
+				nonRetriableFailures = errors.Join(nonRetriableFailures, fmt.Errorf("%s:[%w]", zone, result.err))
+			default:
+				retriableFailures = errors.Join(retriableFailures, fmt.Errorf("%s:[%w]", zone, result.err))
 			}
 		} else {
 			successes[zone] = result.state
 		}
 	}
 
-	if failures != nil {
-		// Return failures first, as they are the highest priority.
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Spec.StorageClassName, failures)
-		return failures
+	// Handle each error category. Retriable failures (e.g. internal errors) have the highest precedence and will
+	// cause the PV to re-sync. Pending operations also cause the PV to re-sync, but the event is logged as informational.
+	// Non-retriable errors (e.g. invalid zone or invalid arguments) are not retried, since it won't help. No errors is
+	// considered a success.
+
+	if retriableFailures != nil {
+		// Return retriable failures first, as they are the highest priority.
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Name, retriableFailures)
+		return retriableFailures
 	}
 
 	if pendingOperations != nil {
-		// Return pending opeations to that require retries.
-		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncInfo, "Anywhere Cache sync in progress for PV %q: %v", pv.Spec.StorageClassName, pendingOperations)
+		// Return pending opeations that require retries.
+		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncInfo, "Anywhere Cache sync in progress for PV %q: %v", pv.Name, pendingOperations)
 		return pendingOperations
 	}
 
+	if nonRetriableFailures != nil {
+		// These failures may be because if invalid arguments (e.g. invalid zones or invalid parameters). Avoid retrying, since
+		// the state won't change.
+		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncWarning, "Anywhere Cache sync warning for PV %q: %v", pv.Name, nonRetriableFailures)
+	}
+
 	// If we reach this point, there are no failures or pending operations, so we log success.
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncSucceeded, "Anywhere Cache sync succeeded for PV %q: %+v", pv.Spec.StorageClassName, successes)
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncSucceeded, "Anywhere Cache sync succeeded for PV %q: %+v", pv.Name, successes)
 	return nil
 }
 
