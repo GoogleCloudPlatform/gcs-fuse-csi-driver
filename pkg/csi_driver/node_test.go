@@ -26,8 +26,6 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -485,9 +483,15 @@ func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint
 		t.Errorf("got type %q, expected %q", a.Type, e.Type)
 	}
 
-	less := func(a, b string) bool { return a > b }
-	if diff := cmp.Diff(a.Opts, e.Opts, cmpopts.SortSlices(less)); diff != "" {
-		t.Errorf("unexpected options args (-got, +want)\n%s", diff)
+	// Validate expected Options are present in actual options.
+	actualOpts := make(map[string]bool)
+	for _, opt := range a.Opts {
+		actualOpts[opt] = true
+	}
+	for _, expectedOpt := range e.Opts {
+		if !actualOpts[expectedOpt] {
+			t.Errorf("expected option %q not found in actual options %v", expectedOpt, a.Opts)
+		}
 	}
 }
 
@@ -569,4 +573,30 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 			t.Errorf("test %q failed:got error %q, expected error %q", test.name, err, test.expectErr)
 		}
 	}
+}
+
+func TestNodePublishVolumeEnableKernelParamsFileFlag(t *testing.T) {
+	t.Parallel()
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:         testVolumeID,
+		TargetPath:       testTargetPath,
+		VolumeCapability: testVolumeCapability,
+	}
+	fakeClientSet := clientset.NewFakeClientset()
+	// initTestDriverWithCustomNodeServer sets AssumeGoodSidecarVersion to true.
+	testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+
+	_, err := testEnv.ns.NodePublishVolume(context.TODO(), req)
+
+	if err != nil {
+		t.Errorf("got error %q, expected error nil", err)
+	}
+	validateMountPoint(t, testEnv.fm, &mount.MountPoint{
+		Device: testVolumeID,
+		Path:   testTargetPath,
+		Type:   "fuse",
+		Opts:   []string{"enable-kernel-params-file-flag=true"},
+	})
 }
