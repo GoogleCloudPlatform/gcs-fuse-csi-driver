@@ -314,8 +314,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
 		}
 	}
+
 	// Pass kernel params file flag to GCSFuse by default if sidecar version supports it.
 	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsFileMinVersion) {
+		// Note: enable-kernel-params-file-flag *must* be delimeted with an "=" sign, since it's an internal CSI flag.
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableKernelParamsFileFlag + "=true"})
 	}
 
