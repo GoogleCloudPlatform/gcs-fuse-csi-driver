@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -350,7 +349,7 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
 	}
 	if mc.EnableKernelParamsFileFlag {
-		configFileFlagMap["file-system:kernel-params-file"] = path.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
+		configFileFlagMap["file-system:kernel-params-file"] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
 	mc.FlagMap = flagMap
 	mc.ConfigFileFlagMap = configFileFlagMap
