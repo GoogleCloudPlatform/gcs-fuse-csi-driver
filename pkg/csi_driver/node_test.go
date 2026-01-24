@@ -483,7 +483,7 @@ func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint
 		t.Errorf("got type %q, expected %q", a.Type, e.Type)
 	}
 
-	// Validate expected Options are present in actual options.
+	// Validate expected options are present in actual options.
 	actualOpts := make(map[string]bool)
 	for _, opt := range a.Opts {
 		actualOpts[opt] = true
