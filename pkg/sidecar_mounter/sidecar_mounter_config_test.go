@@ -56,8 +56,7 @@ var (
 		"reuse-token-from-url",
 		"o",
 		"cache-dir",
-		"kernel-params-file=some-file",
-		"file-system:kernel-params-file:some-file",
+		"kernel-params-file",
 	}
 )
 
@@ -435,10 +434,10 @@ func TestPrepareMountArgs(t *testing.T) {
 				"gid":         "0",
 			},
 			expectedConfigMapArgs: map[string]string{
-				"logging:file-path":              "/dev/fd/1",
-				"logging:format":                 "json",
-				"cache-dir":                      "",
-				"file-system:kernel-params-file": filepath.Join("test-temp-dir", util.GCSFuseKernelParamsFileName),
+				"logging:file-path":        "/dev/fd/1",
+				"logging:format":           "json",
+				"cache-dir":                "",
+				KernelParamsFileConfigFlag: filepath.Join("test-temp-dir", util.GCSFuseKernelParamsFileName),
 			},
 		},
 	}
