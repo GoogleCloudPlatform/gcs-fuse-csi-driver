@@ -577,26 +577,68 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 
 func TestNodePublishVolumeEnableKernelParamsFileFlag(t *testing.T) {
 	t.Parallel()
+
 	testTargetPath, cleanup := setupMountTarget(t)
 	defer cleanup()
+
 	req := &csi.NodePublishVolumeRequest{
 		VolumeId:         testVolumeID,
 		TargetPath:       testTargetPath,
 		VolumeCapability: testVolumeCapability,
 	}
-	fakeClientSet := clientset.NewFakeClientset()
-	// initTestDriverWithCustomNodeServer sets AssumeGoodSidecarVersion to true.
-	testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+	fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
-	_, err := testEnv.ns.NodePublishVolume(context.TODO(), req)
-
-	if err != nil {
-		t.Errorf("got error %q, expected error nil", err)
+	testCases := []struct {
+		name                       string
+		enableKernelParamsFileFlag bool
+		assumeGoodSidecarVersion   bool
+		expectedOptions            []string
+	}{
+		{
+			name:                       "feature enabled, sidecar supported",
+			enableKernelParamsFileFlag: true,
+			assumeGoodSidecarVersion:   true,
+			expectedOptions:            []string{"enable-kernel-params-file-flag=true"},
+		},
+		{
+			name:                       "feature enabled, sidecar not supported",
+			enableKernelParamsFileFlag: true,
+			assumeGoodSidecarVersion:   false,
+		},
+		{
+			name:                       "feature disabled, sidecar supported",
+			enableKernelParamsFileFlag: false,
+			assumeGoodSidecarVersion:   true,
+		},
+		{
+			name:                       "feature disabled, sidecar not supported",
+			enableKernelParamsFileFlag: false,
+			assumeGoodSidecarVersion:   false,
+		},
 	}
-	validateMountPoint(t, testEnv.fm, &mount.MountPoint{
-		Device: testVolumeID,
-		Path:   testTargetPath,
-		Type:   "fuse",
-		Opts:   []string{"enable-kernel-params-file-flag=true"},
-	})
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := initTestDriver(t, fakeMounter)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+			driver.config.FeatureOptions.EnableGCSFuseKernelParams = tc.enableKernelParamsFileFlag
+			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns := newNodeServer(driver, fakeMounter)
+
+			_, err := ns.NodePublishVolume(context.TODO(), req)
+
+			if err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOptions,
+			})
+		})
+	}
 }

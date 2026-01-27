@@ -46,7 +46,8 @@ type FeatureGCSFuseProfiles struct {
 }
 
 type GCSDriverFeatureOptions struct {
-	FeatureGCSFuseProfiles *FeatureGCSFuseProfiles
+	EnableGCSFuseKernelParams bool
+	FeatureGCSFuseProfiles    *FeatureGCSFuseProfiles
 }
 
 type GCSDriverConfig struct {
