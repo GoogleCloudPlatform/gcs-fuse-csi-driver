@@ -416,14 +416,14 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "should return valid args when kernel params file is enabled",
+			name: "should return valid args when kernel params flag is enabled",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
 				BufferDir:  "test-buffer-dir",
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 				TempDir:    "test-temp-dir",
-				Options:    []string{util.EnableKernelParamsFileFlag + "=true"},
+				Options:    []string{util.EnableKernelParamsFileFlag + "=true", "kernel-params-file=foo", "file-system:kernel-params-file:bar"},
 			},
 			expectedArgs: map[string]string{
 				"app-name":    GCSFuseAppName,
@@ -438,6 +438,30 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:format":           "json",
 				"cache-dir":                "",
 				KernelParamsFileConfigFlag: filepath.Join("test-temp-dir", util.GCSFuseKernelParamsFileName),
+			},
+		},
+		{
+			name: "should return valid args when kernel params flag is disabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				TempDir:    "test-temp-dir",
+				Options:    []string{"kernel-params-file=foo", "file-system:kernel-params-file:bar"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
 			},
 		},
 	}
