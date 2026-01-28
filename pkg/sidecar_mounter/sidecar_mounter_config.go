@@ -348,9 +348,18 @@ func (mc *MountConfig) prepareMountArgs() {
 		mc.CacheDir = cacheDir
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
 	}
+
+	// The "KernelParamsFileConfigFlag" is an internal configuration key.
+	// It is set by the CSI driver only when the gcsfuse kernel parameters feature is supported.
+	// Any value for this key provided by a user will be discarded.
+	if value, ok := configFileFlagMap[KernelParamsFileConfigFlag]; ok {
+		klog.Warningf("got invalid value for internal flag %q: %q. Will discard and continue to mount.", KernelParamsFileConfigFlag, value)
+		delete(configFileFlagMap, KernelParamsFileConfigFlag)
+	}
 	if mc.EnableKernelParamsFileFlag {
 		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
+
 	mc.FlagMap = flagMap
 	mc.ConfigFileFlagMap = configFileFlagMap
 }
