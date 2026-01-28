@@ -36,10 +36,11 @@ import (
 )
 
 const (
-	GCSFuseAppName     = "gke-gcs-fuse-csi"
-	TempDir            = "/temp-dir"
-	unixSocketBasePath = "unix://"
-	TokenFileName      = "token.sock" // #nosec G101
+	GCSFuseAppName             = "gke-gcs-fuse-csi"
+	TempDir                    = "/temp-dir"
+	unixSocketBasePath         = "unix://"
+	TokenFileName              = "token.sock" // #nosec G101
+	KernelParamsFileConfigFlag = "file-system:kernel-params-file"
 )
 
 // MountConfig contains the information gcsfuse needs.
@@ -57,6 +58,7 @@ type MountConfig struct {
 	ConfigFileFlagMap              map[string]string     `json:"-"`
 	TokenServerIdentityProvider    string                `json:"-"`
 	HostNetworkKSAOptIn            bool                  `json:"-"`
+	EnableKernelParamsFileFlag     bool                  `json:"-"`
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
@@ -90,6 +92,7 @@ var disallowedFlags = map[string]bool{
 	"o":                    true,
 	"cache-dir":            true,
 	"prometheus-port":      true,
+	"kernel-params-file":   true,
 }
 
 var boolFlags = map[string]bool{
@@ -297,6 +300,10 @@ func (mc *MountConfig) prepareMountArgs() {
 				mc.GcsFuseNumaNode = idx
 			}
 			continue
+
+		case util.EnableKernelParamsFileFlag:
+			mc.EnableKernelParamsFileFlag = value == util.TrueStr
+			continue
 		}
 
 		switch {
@@ -340,6 +347,17 @@ func (mc *MountConfig) prepareMountArgs() {
 		configFileFlagMap["cache-dir"] = cacheDir
 		mc.CacheDir = cacheDir
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
+	}
+
+	// The "KernelParamsFileConfigFlag" is an internal configuration key.
+	// It is set by the CSI driver only when the gcsfuse kernel parameters feature is supported.
+	// Any value for this key provided by a user will be discarded.
+	if value, ok := configFileFlagMap[KernelParamsFileConfigFlag]; ok {
+		klog.Warningf("got internal only flag %q with value %q. Will discard and continue to mount.", KernelParamsFileConfigFlag, value)
+		delete(configFileFlagMap, KernelParamsFileConfigFlag)
+	}
+	if mc.EnableKernelParamsFileFlag {
+		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
 
 	mc.FlagMap = flagMap

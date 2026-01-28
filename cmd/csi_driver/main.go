@@ -70,6 +70,8 @@ var (
 	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
 	assumeGoodSidecarVersion       = flag.Bool("assume-good-sidecar-version", false, "Assume the sidecar version is compatible with all features in the running version of the driver.")
 
+	// GCSFuse kernel params feature.
+	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
 	// GCSFuse profiles flags.
 	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
 	datafluxParallelism           = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
@@ -208,6 +210,7 @@ func main() {
 			},
 			EnableGcsfuseProfilesInternal: *enableGcsfuseProfilesInternal,
 		},
+		EnableGCSFuseKernelParams: *enableGCSFuseKernelParams,
 	}
 
 	var mounter mount.Interface
