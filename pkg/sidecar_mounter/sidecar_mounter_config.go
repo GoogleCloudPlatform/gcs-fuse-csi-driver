@@ -353,7 +353,7 @@ func (mc *MountConfig) prepareMountArgs() {
 	// It is set by the CSI driver only when the gcsfuse kernel parameters feature is supported.
 	// Any value for this key provided by a user will be discarded.
 	if value, ok := configFileFlagMap[KernelParamsFileConfigFlag]; ok {
-		klog.Warningf("got invalid value for internal flag %q: %q. Will discard and continue to mount.", KernelParamsFileConfigFlag, value)
+		klog.Warningf("got internal only flag %q with value %q. Will discard and continue to mount.", KernelParamsFileConfigFlag, value)
 		delete(configFileFlagMap, KernelParamsFileConfigFlag)
 	}
 	if mc.EnableKernelParamsFileFlag {
