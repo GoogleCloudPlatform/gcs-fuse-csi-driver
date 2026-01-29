@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -115,8 +116,8 @@ func MonitorKernelParamsFile(ctx context.Context, targetPath string, interval ti
 				klog.Warningf("%v Failed to read kernel parameter %q from file path %q: %v", logPrefix, param.Name, path, err)
 				continue
 			}
-			if string(currVal) != param.Value {
-				klog.Infof("%v Updating kernel param %q: from current value %q to new value %q for requestID %q", logPrefix, param.Name, currVal, param.Value, config.RequestID)
+			if strings.TrimSpace(string(currVal)) != param.Value {
+				klog.Infof("%v Updating kernel param %q: from current value %q to new value %q for requestID %q", logPrefix, param.Name, strings.TrimSpace(string(currVal)), param.Value, config.RequestID)
 				if err := os.WriteFile(path, []byte(param.Value+"\n"), 0o644); err != nil {
 					klog.Warningf("%v Failed to write kernel param %q to file path %q for requestID: %q, err: %v", logPrefix, param.Name, path, config.RequestID, err)
 				} else {
