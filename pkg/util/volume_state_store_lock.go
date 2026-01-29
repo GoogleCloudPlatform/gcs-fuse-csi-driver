@@ -18,6 +18,7 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 )
@@ -29,7 +30,13 @@ type VolumeStateStore struct {
 }
 
 type VolumeState struct {
-	BucketAccessCheckPassed bool
+	BucketAccessCheckPassed   bool
+	GCSFuseKernelMonitorState GCSFuseKernelParamsMonitor
+}
+
+type GCSFuseKernelParamsMonitor struct {
+	StartKernelParamsFileMonitorOnce sync.Once
+	CancelFunc                       context.CancelFunc
 }
 
 // NewVolumeStateStore initializes the volume state store.

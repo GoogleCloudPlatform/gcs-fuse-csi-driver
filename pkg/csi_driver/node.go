@@ -40,9 +40,9 @@ import (
 )
 
 const (
-	UmountTimeout = time.Second * 5
-
-	FuseMountType = "fuse"
+	UmountTimeout                       = time.Second * 5
+	GCSFuseKernelParamsFilePollInterval = time.Second * 5
+	FuseMountType                       = "fuse"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -144,18 +144,20 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	defer s.volumeLocks.Release(targetPath)
 
+	// Use target path as an volume identifier because it corresponds to Pods and volumes.
+	// Pods may belong to different namespaces and would need their own access check. Create volumeStateStore
+	// irrespective of bucket access check as kernel params file monitoring is also tracked using volumeState for non dynamic mounts.
+	vs, ok := s.volumeStateStore.Load(targetPath)
+	if !ok && args.bucketName != "_" {
+		s.volumeStateStore.Store(targetPath, &util.VolumeState{})
+		vs, _ = s.volumeStateStore.Load(targetPath)
+	}
+	// volumeState is safe to access for remaining of function since volumeLock prevents
+	// Node Publish/Unpublish Volume calls from running more than once at a time per volume.
+
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
 	if args.bucketName != "_" && !args.skipCSIBucketAccessCheck {
-		// Use target path as an volume identifier because it corresponds to Pods and volumes.
-		// Pods may belong to different namespaces and would need their own access check.
-		vs, ok := s.volumeStateStore.Load(targetPath)
-		if !ok {
-			s.volumeStateStore.Store(targetPath, &util.VolumeState{})
-			vs, _ = s.volumeStateStore.Load(targetPath)
-		}
-		// volumeState is safe to access for remaining of function since volumeLock prevents
-		// Node Publish/Unpublish Volume calls from running more than once at a time per volume.
 		if !vs.BucketAccessCheckPassed {
 			storageService, err := s.prepareStorageService(ctx, vc)
 			if err != nil {
@@ -290,6 +292,18 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 		// TODO: Check if the socket listener timed out
 
+		// Start GCSFuse Kernel Params monitoring for non dynamic mounts. This invokes a single long lived goroutine
+		// which is terminated from NodeUnpublishVolume operation, this scenario fires monitoring
+		// go routine for existing mounts when driver restarts.
+		if s.driver.config.FeatureOptions.EnableGCSFuseKernelParams && args.bucketName != "_" {
+			vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
+				ctx, cancel := context.WithCancel(context.Background())
+				vs.GCSFuseKernelMonitorState.CancelFunc = cancel
+				// Fire kernel params monitoring goroutine.
+				go util.MonitorKernelParamsFile(ctx, targetPath, GCSFuseKernelParamsFilePollInterval)
+			})
+		}
+
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
 		return &csi.NodePublishVolumeResponse{}, nil
@@ -328,6 +342,17 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
 	}
 
+	// Start GCSFuse Kernel Params monitoring for non dynamic mounts. This invokes a single long lived goroutine
+	// which is terminated from NodeUnpublishVolume operation, this scenario fires monitoring
+	// go routine for new mounts.
+	if s.driver.config.FeatureOptions.EnableGCSFuseKernelParams && args.bucketName != "_" {
+		vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			vs.GCSFuseKernelMonitorState.CancelFunc = cancel
+			// Fire kernel params monitoring goroutine.
+			go util.MonitorKernelParamsFile(ctx, targetPath, GCSFuseKernelParamsFilePollInterval)
+		})
+	}
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", args.bucketName, targetPath)
 
 	return &csi.NodePublishVolumeResponse{}, nil
@@ -352,7 +377,13 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
 	}
 
-	s.volumeStateStore.Delete(targetPath)
+	// Stop GCSFuse Kernel Params monitoring.
+	if vs, ok := s.volumeStateStore.Load(targetPath); ok {
+		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+			vs.GCSFuseKernelMonitorState.CancelFunc()
+		}
+		s.volumeStateStore.Delete(targetPath)
+	}
 
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {
