@@ -43,13 +43,7 @@ gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
   --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa" \
   --role="projects/${GCS_PROJECT}/roles/gke.gcsfuse.profileUser"
 
-# 3. Grant the Monitoring Viewer role to the GCSFuse CSI controller in the bucket project.
-# This grants read access to monitoring data, including GCS metrics.
-gcloud projects add-iam-policy-binding ${GCS_PROJECT} \
-  --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa" \
-  --role="roles/monitoring.viewer"
-
-# 4. Grant access needed to determine zones for anywherecaches:
+# 3. Grant access needed to determine zones for anywherecaches:
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 	    --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/gcs-fuse-csi-driver/sa/gcs-fuse-csi-controller-sa" \
 	    --role "roles/compute.viewer"
