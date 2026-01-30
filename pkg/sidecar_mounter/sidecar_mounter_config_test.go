@@ -423,7 +423,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				CacheDir:   "test-cache-dir",
 				ConfigFile: "test-config-file",
 				TempDir:    "test-temp-dir",
-				Options:    []string{util.EnableKernelParamsFileFlag + "=true", "kernel-params-file=foo", "file-system:kernel-params-file:bar"},
+				Options:    []string{util.EnableGCSFuseKernelParams + "=true", "kernel-params-file=foo", "file-system:kernel-params-file:bar"},
 			},
 			expectedArgs: map[string]string{
 				"app-name":    GCSFuseAppName,
