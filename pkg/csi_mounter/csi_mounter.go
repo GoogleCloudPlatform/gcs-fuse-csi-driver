@@ -135,8 +135,8 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return err
 	}
 
-	// Clean up stale /error and /kernel-params.json file. We clean up the stale error file and the kernel-params.json file when the CSI driver when
-	// the driver is about to set up the mountpoint within NodePublishVolume call, and it is done just before the sidecar container and gcsfuse
+	// Clean up stale /error and /kernel-params.json file. We clean up the stale error file and the kernel-params.json file when the CSI driver is
+	// about to set up the mountpoint within NodePublishVolume call, and it is done just before the sidecar container and gcsfuse
 	// attempt to start up. Since gcsfuse cant start up without file descriptor, we ensure cleanup is done before we make the file descriptor available.
 	// We put this cleanup step here because:
 	// 1. We can keep visibility into sidecar failures through subsequent NodePublishVolume calls.
