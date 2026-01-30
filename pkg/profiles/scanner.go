@@ -140,6 +140,7 @@ const (
 	anywhereCacheAPIAdmissionPolicy   = "admission_policy"
 	anywhereCacheAPIRunning           = "running"
 	anywhereCacheAPICreating          = "creating"
+	anywhereCacheAPIUpdating          = "updating"
 
 	// Zonal bucket constants
 	bucketLocationTypeZoneKey  = "zone"
@@ -154,7 +155,7 @@ var (
 	timeNow = time.Now
 
 	// Fake error to signal worker to re-queue the object without emitting an error log.
-	errRequeueNeeded = errors.New("requeue needed")
+	errRequeueNeeded = errors.New("operation in progress")
 
 	bucketAttrs            = defaultBucketAttrs
 	scanBucketWithMetrics  = defaultScanBucketWithMetrics
@@ -226,6 +227,15 @@ type bucketInfo struct {
 type syncInfo struct {
 	lastSuccessfulScan time.Time
 	nextScan           time.Time
+	lastEvent          *EventInfo
+}
+
+// EventInfo holds information relevant to a PV event.
+type EventInfo struct {
+	pv        *corev1.PersistentVolume
+	eventType string
+	reason    string
+	message   string
 }
 
 // Scanner is the main controller structure.
@@ -272,8 +282,9 @@ type Scanner struct {
 // anywhereCacheSyncResult holds information relevant to the sync
 // result of an Anywhere Cache.
 type anywhereCacheSyncResult struct {
-	state string
-	err   error
+	err     error
+	message string
+	done    bool
 }
 
 // storageControlClient defines the interface that the real and mock clients satisfy.
@@ -892,6 +903,43 @@ func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVo
 	return nil // Remove from queue since this is considered a complete and successful "scan" (bypass).
 }
 
+// emitCachedEvent filters out duplicate events for the same PV to prevent
+// event flooding during cases like "anywhere cache" creation period (which can
+// take up to 1 hour). It only emits and updates the cache if the event
+// reason or message has changed.
+func (s *Scanner) emitCachedEvent(cur *EventInfo) error {
+	if cur == nil || cur.pv == nil {
+		return fmt.Errorf("invalid event info")
+	}
+
+	s.pvMutex.RLock()
+	syncInfo, ok := s.trackedPVs[cur.pv.Name]
+	s.pvMutex.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("PV %q not found in tracked PVs", cur.pv.Name)
+	}
+
+	last := syncInfo.lastEvent
+	if last != nil && last.reason == cur.reason && last.message == cur.message {
+		return nil
+	}
+
+	s.eventRecorder.Event(cur.pv, cur.eventType, cur.reason, cur.message)
+
+	s.pvMutex.Lock()
+	defer s.pvMutex.Unlock()
+
+	// Re-fetch to ensure we don't overwrite other changes made
+	// during the RUnlock/Lock gap
+	if info, exists := s.trackedPVs[cur.pv.Name]; exists {
+		info.lastEvent = cur
+		s.trackedPVs[cur.pv.Name] = info
+	}
+
+	return nil
+}
+
 // syncPV is the core reconciliation function for a PersistentVolume.
 // It checks if the PV is relevant and if a scan is required, performs the bucket scan, and updates the PV annotations.
 func (s *Scanner) syncPV(ctx context.Context, key string) error {
@@ -990,23 +1038,36 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		return err
 	}
 
+	// Sort the final cache zones so that messages are deterministic, attempting
+	// to iterate through the unordered map will cause the emitCachedEvent function to
+	// not deduplicate properly.
+	sortedZones := make([]string, 0, len(syncResults))
+	for k := range syncResults {
+		sortedZones = append(sortedZones, k)
+	}
+	slices.Sort(sortedZones)
+
 	// Map each error to a category for processing in the next step.
 	var retriableFailures, nonRetriableFailures, pendingOperations error
-	successes := make(map[string]string)
-	for zone, result := range syncResults {
+	var messages []string
+	for _, zone := range sortedZones {
+		result := syncResults[zone]
 		if result.err != nil {
-			switch {
-			case errors.Is(result.err, errRequeueNeeded):
-				pendingOperations = errors.Join(pendingOperations, fmt.Errorf("%s:[%w]", zone, result.err))
-			case status.Code(result.err) == codes.InvalidArgument:
-				nonRetriableFailures = errors.Join(nonRetriableFailures, fmt.Errorf("%s:[%w]", zone, result.err))
-			default:
-				retriableFailures = errors.Join(retriableFailures, fmt.Errorf("%s:[%w]", zone, result.err))
+			zoneErr := fmt.Errorf("%s:[%w]", zone, result.err)
+			messages = append(messages, zoneErr.Error())
+			if status.Code(result.err) == codes.InvalidArgument {
+				nonRetriableFailures = errors.Join(nonRetriableFailures, zoneErr)
+			} else {
+				retriableFailures = errors.Join(retriableFailures, zoneErr)
 			}
 		} else {
-			successes[zone] = result.state
+			messages = append(messages, fmt.Sprintf("%s:[%s]", zone, result.message))
+			if !result.done {
+				pendingOperations = errors.Join(pendingOperations, fmt.Errorf("%w: %s", errRequeueNeeded, result.message))
+			}
 		}
 	}
+	message := strings.Join(messages, ",")
 
 	// Handle each error category. Retriable failures (e.g. internal errors) have the highest precedence and will
 	// cause the PV to re-sync. Pending operations also cause the PV to re-sync, but the event is logged as informational.
@@ -1014,25 +1075,48 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	// considered a success.
 
 	if retriableFailures != nil {
+		if err := s.emitCachedEvent(&EventInfo{
+			pv:        pv,
+			eventType: v1.EventTypeWarning,
+			reason:    reasonAnywhereCacheSyncError,
+			message:   fmt.Sprintf("Anywhere Cache sync failed for PV %q: %+v", pv.Name, message),
+		}); err != nil {
+			klog.Errorf("failed to emit event: %v", err)
+		}
 		// Return retriable failures first, as they are the highest priority.
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncError, "Anywhere Cache sync failed for PV %q: %v", pv.Name, retriableFailures)
 		return retriableFailures
 	}
 
 	if pendingOperations != nil {
-		// Return pending opeations that require retries.
-		s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncInfo, "Anywhere Cache sync in progress for PV %q: %v", pv.Name, pendingOperations)
+		// Caches can take several minutes, up to hours in worst cases, to be created.
+		// Cache the event to prevent repeated messages from flooding the customer's PV.
+		if err := s.emitCachedEvent(&EventInfo{
+			pv:        pv,
+			eventType: v1.EventTypeNormal,
+			reason:    reasonAnywhereCacheSyncInfo,
+			message:   fmt.Sprintf("Anywhere Cache sync in progress for PV %q: %+v", pv.Name, message),
+		}); err != nil {
+			klog.Errorf("failed to emit event: %v", err)
+		}
+		// Return pending operations that require retries.
 		return pendingOperations
 	}
 
 	if nonRetriableFailures != nil {
 		// These failures may be because if invalid arguments (e.g. invalid zones or invalid parameters). Avoid retrying, since
 		// the state won't change.
-		s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonAnywhereCacheSyncWarning, "Anywhere Cache sync warning for PV %q: %v", pv.Name, nonRetriableFailures)
+		if err := s.emitCachedEvent(&EventInfo{
+			pv:        pv,
+			eventType: v1.EventTypeWarning,
+			reason:    reasonAnywhereCacheSyncWarning,
+			message:   fmt.Sprintf("Anywhere Cache sync warning for PV %q: %+v", pv.Name, message),
+		}); err != nil {
+			klog.Errorf("failed to emit event: %v", err)
+		}
 	}
 
 	// If we reach this point, there are no failures or pending operations, so we log success.
-	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncSucceeded, "Anywhere Cache sync succeeded for PV %q: %+v", pv.Name, successes)
+	s.eventRecorder.Eventf(pv, v1.EventTypeNormal, reasonAnywhereCacheSyncSucceeded, "Anywhere Cache sync succeeded for PV %q: %+v", pv.Name, message)
 	return nil
 }
 
@@ -1056,8 +1140,13 @@ func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName strin
 	gotAC, err := s.storageControlClient.GetAnywhereCache(ctx, &controlpb.GetAnywhereCacheRequest{Name: wantAC.GetName()})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
+			if createErr := s.createAnywhereCache(ctx, bucketName, wantAC); createErr != nil {
+				return &anywhereCacheSyncResult{
+					err: createErr,
+				}
+			}
 			return &anywhereCacheSyncResult{
-				err: s.createAnywhereCache(ctx, bucketName, wantAC),
+				message: anywhereCacheAPICreating,
 			}
 		}
 		return &anywhereCacheSyncResult{
@@ -1066,31 +1155,42 @@ func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName strin
 	}
 
 	klog.Infof("Found cache %s/%s in state %q", bucketName, wantAC.GetZone(), gotAC.GetState())
-	process := func() error {
-		switch strings.ToLower(gotAC.GetState()) {
-		case anywhereCacheAPICreating:
-			// Retry until the cache reaches a more stable state.
-			return fmt.Errorf("%w: cache creation in progress", errRequeueNeeded)
-		case anywhereCacheAPIRunning:
-			if gotAC.GetPendingUpdate() {
-				return fmt.Errorf("%w: pending update operation", errRequeueNeeded)
-			}
-
-			if s.isCacheConfigSynced(gotAC, wantAC) {
-				return nil
-			}
-
-			return s.updateAnywhereCache(ctx, bucketName, gotAC, wantAC)
-		default:
-			// These states (PAUSED, DISABLED) were likely set by user manually.
-			// We should treat them as final states. Avoid retrying, since a paused
-			// cache can potentially stay paused forever and waste API calls.
-			return nil
+	switch strings.ToLower(gotAC.GetState()) {
+	case anywhereCacheAPICreating:
+		// Retry until the cache reaches a more stable state.
+		return &anywhereCacheSyncResult{
+			message: anywhereCacheAPICreating,
 		}
-	}
-	return &anywhereCacheSyncResult{
-		state: gotAC.GetState(),
-		err:   process(),
+	case anywhereCacheAPIRunning:
+		if gotAC.GetPendingUpdate() {
+			return &anywhereCacheSyncResult{
+				message: anywhereCacheAPIUpdating,
+			}
+		}
+
+		if s.isCacheConfigSynced(gotAC, wantAC) {
+			return &anywhereCacheSyncResult{
+				message: anywhereCacheAPIRunning,
+				done:    true,
+			}
+		}
+
+		if updateErr := s.updateAnywhereCache(ctx, bucketName, gotAC, wantAC); updateErr != nil {
+			return &anywhereCacheSyncResult{
+				err: updateErr,
+			}
+		}
+		return &anywhereCacheSyncResult{
+			message: anywhereCacheAPIUpdating,
+		}
+	default:
+		// These states (PAUSED, DISABLED) were likely set by user manually.
+		// We should treat them as final states. Avoid retrying, since a paused
+		// cache can potentially stay paused forever and waste API calls.
+		return &anywhereCacheSyncResult{
+			message: gotAC.GetState(),
+			done:    true,
+		}
 	}
 }
 
@@ -1106,7 +1206,7 @@ func (s *Scanner) createAnywhereCache(ctx context.Context, bucketName string, wa
 	if err != nil {
 		return fmt.Errorf("failed to create cache: %w", err)
 	}
-	return fmt.Errorf("%w: cache creation initiated", errRequeueNeeded)
+	return nil
 }
 
 // updateAnywhereCache sends a request to update an existing Anywhere Cache instance
@@ -1124,7 +1224,7 @@ func (s *Scanner) updateAnywhereCache(ctx context.Context, bucketName string, go
 	if err != nil {
 		return fmt.Errorf("failed to update cache: %w", err)
 	}
-	return fmt.Errorf("%w: cache update initiated", errRequeueNeeded)
+	return nil
 }
 
 // syncAnywhereCache ensures that a Google Cloud Storage Anywhere Cache is
