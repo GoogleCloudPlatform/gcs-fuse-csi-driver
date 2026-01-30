@@ -81,18 +81,19 @@ type sidecarRetryConfig struct {
 var prometheusPort = 62990
 
 var disallowedFlags = map[string]bool{
-	"temp-dir":             true,
-	"config-file":          true,
-	"foreground":           true,
-	"log-file":             true,
-	"log-format":           true,
-	"key-file":             true,
-	"token-url":            true,
-	"reuse-token-from-url": true,
-	"o":                    true,
-	"cache-dir":            true,
-	"prometheus-port":      true,
-	"kernel-params-file":   true,
+	"temp-dir":                 true,
+	"config-file":              true,
+	"foreground":               true,
+	"log-file":                 true,
+	"log-format":               true,
+	"key-file":                 true,
+	"token-url":                true,
+	"reuse-token-from-url":     true,
+	"o":                        true,
+	"cache-dir":                true,
+	"prometheus-port":          true,
+	"kernel-params-file":       true,
+	KernelParamsFileConfigFlag: true,
 }
 
 var boolFlags = map[string]bool{
@@ -349,13 +350,6 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
 	}
 
-	// The "KernelParamsFileConfigFlag" is an internal configuration key.
-	// It is set by the CSI driver only when the gcsfuse kernel parameters feature is supported.
-	// Any value for this key provided by a user will be discarded.
-	if value, ok := configFileFlagMap[KernelParamsFileConfigFlag]; ok {
-		klog.Warningf("got internal only flag %q with value %q. Will discard and continue to mount.", KernelParamsFileConfigFlag, value)
-		delete(configFileFlagMap, KernelParamsFileConfigFlag)
-	}
 	if mc.EnableGCSFuseKernelParams {
 		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
