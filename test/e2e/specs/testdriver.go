@@ -178,9 +178,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			bucketName = InvalidVolume
 		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix, EnableMetadataPrefetchPrefixForceNewBucketPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
-			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name, n.EnableZB)
+		case KernelReaderPrefix:
+			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name, true)
 		case ProfilesOverrideAllOverridablePrefix:
-			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name, n.EnableZB)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
 		case ProfilesControllerCrashTestPrefix:
 			bucketName = gcsfuseCSIProfilesStaticBucket
@@ -204,7 +206,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			isMultipleBucketsPrefix = true
 			l := []string{}
 			for range 2 {
-				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name, n.EnableZB)
 				n.volumeStore = append(n.volumeStore, &gcsVolume{
 					bucketName:              bucketName,
 					serviceAccountNamespace: config.Framework.Namespace.Name,
@@ -219,13 +221,13 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			config.Prefix = strings.Join(l, ",")
 		case SubfolderInBucketPrefix:
 			if len(n.volumeStore) == 0 {
-				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name, n.EnableZB)
 			} else {
 				bucketName = n.volumeStore[len(n.volumeStore)-1].bucketName
 			}
 		default:
 			if len(n.volumeStore) == 0 {
-				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+				bucketName = n.createBucket(ctx, config.Framework.Namespace.Name, n.EnableZB)
 			} else {
 				config.Prefix = n.volumeStore[0].bucketName
 
@@ -297,7 +299,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, KernelReaderPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
@@ -476,7 +478,7 @@ func (n *GCSFuseCSITestDriver) RemoveIAMPolicy(ctx context.Context, bucket *stor
 }
 
 // createBucket creates a GCS bucket.
-func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountNamespace string) string {
+func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountNamespace string, enableZB bool) string {
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
@@ -489,7 +491,7 @@ func (n *GCSFuseCSITestDriver) createBucket(ctx context.Context, serviceAccountN
 		Location:                       n.bucketLocation,
 		EnableUniformBucketLevelAccess: true,
 		EnableHierarchicalNamespace:    n.EnableHierarchicalNamespace,
-		EnableZB:                       n.EnableZB,
+		EnableZB:                       enableZB,
 	}
 
 	ginkgo.By(fmt.Sprintf("Creating bucket %q", newBucket.Name))

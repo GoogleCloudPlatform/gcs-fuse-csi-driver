@@ -84,6 +84,7 @@ const (
 	SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix = "gcsfuse-csi-skip-bucket-access-check-invalid-mount-options-volume"
 	SkipCSIBucketAccessCheckAndNonRootVolumePrefix             = "gcsfuse-csi-skip-bucket-access-check-non-root-volume"
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
+	KernelReaderPrefix                                         = "gcsfuse-csi-kernel-reader"
 
 	// Read ahead config custom settings to verify testing.
 	ReadAheadCustomReadAheadKb = "15360"

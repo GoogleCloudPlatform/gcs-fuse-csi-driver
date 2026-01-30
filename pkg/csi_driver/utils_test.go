@@ -323,6 +323,12 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				expectedSupported:          true,
 				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
 			},
+			{
+				name:                       "Zonal Optimizations - should return true for supported sidecar version",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.999@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseZonalOptimizationsMinVersion,
+			},
 		}
 
 		for _, tc := range testCases {
