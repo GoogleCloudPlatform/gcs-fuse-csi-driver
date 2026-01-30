@@ -82,6 +82,7 @@ const (
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v999.999.999-gke.999" // TODO: update this when a release is cut
+	GCSFuseZonalOptimizationsMinVersion    = "v999.999.999-gke.999" // TODO: update this when a release is cut
 	MultiNICMinVersion                     = "v999.999.999-gke.999" // TODO: update this when a release is cut
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
