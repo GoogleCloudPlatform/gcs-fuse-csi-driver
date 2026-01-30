@@ -23,7 +23,19 @@ import (
 	"os"
 )
 
-const (
+// File kernel_params_contract.go defines the strict schema and contract used for
+// inter-process communication between the GCSFuse Sidecar and the GKE GCSFuse CSI Driver.
+//
+// Purpose:
+// This file facilitates the "Zero Configuration" feature where GCSFuse automatically
+// determines optimal kernel settings (e.g., for Zonal Buckets) and communicates them
+// to the CSI Driver for enforcement.
+//
+//
+// CRITICAL:
+// This file acts as a shared contract. Any changes here must be compatible with
+// both the producer (GCSFuse) and the consumer (CSI Driver).
+//
 // BREAKING CHANGES
 // 1. Renaming any JSON tag (e.g., changing `json:"request_id"` to `json:"id"`).
 // 2. Removing an existing field from a struct.
@@ -34,7 +46,6 @@ const (
 // 1. Adding a new field with a new JSON tag.
 // 2. Adding a new ParamName constant.
 // Follow this guide to make any changes to this contract: TODO(mohit)
-)
 
 // ParamName acts as an Enum for the parameter keys to ensure contract safety from typo errors.
 type ParamName string
