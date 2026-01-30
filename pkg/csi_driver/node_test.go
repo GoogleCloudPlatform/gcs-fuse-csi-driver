@@ -582,7 +582,7 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 	}
 }
 
-func TestNodePublishVolumeEnableKernelParamsFileFlag(t *testing.T) {
+func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -596,25 +596,25 @@ func TestNodePublishVolumeEnableKernelParamsFileFlag(t *testing.T) {
 			name:                       "feature enabled, sidecar supported",
 			enableKernelParamsFileFlag: true,
 			assumeGoodSidecarVersion:   true,
-			expectedOptions:            []string{"enable-kernel-params-file-flag=true"},
+			expectedOptions:            []string{"enable-gcsfuse-kernel-params=true"},
 		},
 		{
 			name:                       "feature enabled, sidecar not supported",
 			enableKernelParamsFileFlag: true,
 			assumeGoodSidecarVersion:   false,
-			unexpectedOptions:          []string{"enable-kernel-params-file-flag=true"},
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
 		},
 		{
 			name:                       "feature disabled, sidecar supported",
 			enableKernelParamsFileFlag: false,
 			assumeGoodSidecarVersion:   true,
-			unexpectedOptions:          []string{"enable-kernel-params-file-flag=true"},
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
 		},
 		{
 			name:                       "feature disabled, sidecar not supported",
 			enableKernelParamsFileFlag: false,
 			assumeGoodSidecarVersion:   false,
-			unexpectedOptions:          []string{"enable-kernel-params-file-flag=true"},
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
 		},
 	}
 
