@@ -58,7 +58,7 @@ type MountConfig struct {
 	ConfigFileFlagMap              map[string]string     `json:"-"`
 	TokenServerIdentityProvider    string                `json:"-"`
 	HostNetworkKSAOptIn            bool                  `json:"-"`
-	EnableKernelParamsFileFlag     bool                  `json:"-"`
+	EnableGCSFuseKernelParams      bool                  `json:"-"`
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
@@ -301,8 +301,8 @@ func (mc *MountConfig) prepareMountArgs() {
 			}
 			continue
 
-		case util.EnableKernelParamsFileFlag:
-			mc.EnableKernelParamsFileFlag = value == util.TrueStr
+		case util.EnableGCSFuseKernelParams:
+			mc.EnableGCSFuseKernelParams = value == util.TrueStr
 			continue
 		}
 
@@ -356,7 +356,7 @@ func (mc *MountConfig) prepareMountArgs() {
 		klog.Warningf("got internal only flag %q with value %q. Will discard and continue to mount.", KernelParamsFileConfigFlag, value)
 		delete(configFileFlagMap, KernelParamsFileConfigFlag)
 	}
-	if mc.EnableKernelParamsFileFlag {
+	if mc.EnableGCSFuseKernelParams {
 		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
 
