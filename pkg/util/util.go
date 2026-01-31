@@ -49,6 +49,8 @@ const (
 	PodNamespaceConst                   = "pod-namespace"
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	FileCacheMediumConst                = "file-cache-medium"
+	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
+	GCSFuseKernelParamsFileName         = "kernel-params.json"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"

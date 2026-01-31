@@ -315,6 +315,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is enabled and sidecar version supports it.
+	gcsfuseKernelParamsSupported := s.driver.config.FeatureOptions.EnableGCSFuseKernelParams && gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
+	if gcsfuseKernelParamsSupported {
+		// Note: enable-gcsfuse-kernel-params *must* be delimeted with an "=" sign, since it's an internal CSI flag.
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseKernelParams + "=true"})
+	}
+
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
 	// Start to mount

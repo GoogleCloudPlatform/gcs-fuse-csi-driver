@@ -36,10 +36,11 @@ import (
 )
 
 const (
-	GCSFuseAppName     = "gke-gcs-fuse-csi"
-	TempDir            = "/temp-dir"
-	unixSocketBasePath = "unix://"
-	TokenFileName      = "token.sock" // #nosec G101
+	GCSFuseAppName             = "gke-gcs-fuse-csi"
+	TempDir                    = "/temp-dir"
+	unixSocketBasePath         = "unix://"
+	TokenFileName              = "token.sock" // #nosec G101
+	KernelParamsFileConfigFlag = "file-system:kernel-params-file"
 )
 
 // MountConfig contains the information gcsfuse needs.
@@ -57,6 +58,7 @@ type MountConfig struct {
 	ConfigFileFlagMap              map[string]string     `json:"-"`
 	TokenServerIdentityProvider    string                `json:"-"`
 	HostNetworkKSAOptIn            bool                  `json:"-"`
+	EnableGCSFuseKernelParams      bool                  `json:"-"`
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
@@ -79,17 +81,19 @@ type sidecarRetryConfig struct {
 var prometheusPort = 62990
 
 var disallowedFlags = map[string]bool{
-	"temp-dir":             true,
-	"config-file":          true,
-	"foreground":           true,
-	"log-file":             true,
-	"log-format":           true,
-	"key-file":             true,
-	"token-url":            true,
-	"reuse-token-from-url": true,
-	"o":                    true,
-	"cache-dir":            true,
-	"prometheus-port":      true,
+	"temp-dir":                 true,
+	"config-file":              true,
+	"foreground":               true,
+	"log-file":                 true,
+	"log-format":               true,
+	"key-file":                 true,
+	"token-url":                true,
+	"reuse-token-from-url":     true,
+	"o":                        true,
+	"cache-dir":                true,
+	"prometheus-port":          true,
+	"kernel-params-file":       true,
+	KernelParamsFileConfigFlag: true,
 }
 
 var boolFlags = map[string]bool{
@@ -297,6 +301,10 @@ func (mc *MountConfig) prepareMountArgs() {
 				mc.GcsFuseNumaNode = idx
 			}
 			continue
+
+		case util.EnableGCSFuseKernelParams:
+			mc.EnableGCSFuseKernelParams = value == util.TrueStr
+			continue
 		}
 
 		switch {
@@ -340,6 +348,10 @@ func (mc *MountConfig) prepareMountArgs() {
 		configFileFlagMap["cache-dir"] = cacheDir
 		mc.CacheDir = cacheDir
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
+	}
+
+	if mc.EnableGCSFuseKernelParams {
+		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
 
 	mc.FlagMap = flagMap

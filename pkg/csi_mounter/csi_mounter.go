@@ -135,14 +135,15 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return err
 	}
 
-	// Clean up stale /error file. We clean up the stale error file when the CSI driver when the driver is about to
-	// set up the mountpoint within NodePublishVolume call, and it is done just before the sidecar container and gcsfuse
+	// Clean up stale /error and /kernel-params.json file. We clean up the stale error file and the kernel-params.json file when the CSI driver is
+	// about to set up the mountpoint within NodePublishVolume call, and it is done just before the sidecar container and gcsfuse
 	// attempt to start up. Since gcsfuse cant start up without file descriptor, we ensure cleanup is done before we make the file descriptor available.
 	// We put this cleanup step here because:
 	// 1. We can keep visibility into sidecar failures through subsequent NodePublishVolume calls.
 	// 2. SLOs report sidecar failures.
 	// 3. File gets cleaned up before sidecar starts to prevent false positives. These are cases where we report NodePublishVolume (NPV)
 	//    failures (due to stale error file) in scenarios where sidecar takes a while to start up after first NPV suceeded.
+	// 4. We don't end up applying stale kernel parameter configurations to new mount points.
 	emptyDirBasePath, err := util.PrepareEmptyDir(target, false /* m.createSocket creates emptydir */)
 	if err != nil {
 		klog.Errorf("failed to get emptyDir path: %v", err)
@@ -151,6 +152,11 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, "/error")
 	if err != nil {
 		klog.Errorf("failed to check and delete stale /error file: %v", err)
+	}
+
+	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.GCSFuseKernelParamsFileName)
+	if err != nil {
+		klog.Errorf("failed to check and delete stale %s file: %v", util.GCSFuseKernelParamsFileName, err)
 	}
 
 	// Close the listener and fd after 1 hour timeout

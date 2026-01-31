@@ -26,8 +26,6 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -197,7 +195,7 @@ func TestNodePublishVolume(t *testing.T) {
 			if test.expectErr != nil && !errors.Is(err, test.expectErr) {
 				t.Errorf("got error %q, expected error %q", err, test.expectErr)
 			}
-			validateMountPoint(t, testEnv.fm, test.expectedMount)
+			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
 		})
 	}
 }
@@ -389,7 +387,7 @@ func TestNodePublishVolumeMultiNIC(t *testing.T) {
 				Path:   testTargetPath,
 				Type:   "fuse",
 				Opts:   tc.expectedOpts,
-			})
+			}, nil)
 		})
 	}
 }
@@ -453,12 +451,12 @@ func TestNodeUnpublishVolume(t *testing.T) {
 				t.Errorf("got error %q, expected error %q", err, test.expectErr)
 			}
 
-			validateMountPoint(t, testEnv.fm, test.expectedMount)
+			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
 		})
 	}
 }
 
-func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint) {
+func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint, unexpectedOpts []string) {
 	t.Helper()
 	if e == nil {
 		if len(fm.MountPoints) != 0 {
@@ -485,9 +483,22 @@ func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint
 		t.Errorf("got type %q, expected %q", a.Type, e.Type)
 	}
 
-	less := func(a, b string) bool { return a > b }
-	if diff := cmp.Diff(a.Opts, e.Opts, cmpopts.SortSlices(less)); diff != "" {
-		t.Errorf("unexpected options args (-got, +want)\n%s", diff)
+	// Validate expected options are present in actual options.
+	actualOpts := make(map[string]bool)
+	for _, opt := range a.Opts {
+		actualOpts[opt] = true
+	}
+	for _, expectedOpt := range e.Opts {
+		if !actualOpts[expectedOpt] {
+			t.Errorf("expected option %q not found in actual options %v", expectedOpt, a.Opts)
+		}
+	}
+
+	// Validate unexpected options are not present in actual options.
+	for _, unexpectedOpt := range unexpectedOpts {
+		if actualOpts[unexpectedOpt] {
+			t.Errorf("unexpected option %q found in actual options %v", unexpectedOpt, a.Opts)
+		}
 	}
 }
 
@@ -568,5 +579,78 @@ func TestNodePublishVolumeWILabelCheck(t *testing.T) {
 		if test.expectErr != nil && !errors.Is(err, test.expectErr) {
 			t.Errorf("test %q failed:got error %q, expected error %q", test.name, err, test.expectErr)
 		}
+	}
+}
+
+func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                       string
+		enableKernelParamsFileFlag bool
+		assumeGoodSidecarVersion   bool
+		expectedOptions            []string
+		unexpectedOptions          []string
+	}{
+		{
+			name:                       "feature enabled, sidecar supported",
+			enableKernelParamsFileFlag: true,
+			assumeGoodSidecarVersion:   true,
+			expectedOptions:            []string{"enable-gcsfuse-kernel-params=true"},
+		},
+		{
+			name:                       "feature enabled, sidecar not supported",
+			enableKernelParamsFileFlag: true,
+			assumeGoodSidecarVersion:   false,
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
+		},
+		{
+			name:                       "feature disabled, sidecar supported",
+			enableKernelParamsFileFlag: false,
+			assumeGoodSidecarVersion:   true,
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
+		},
+		{
+			name:                       "feature disabled, sidecar not supported",
+			enableKernelParamsFileFlag: false,
+			assumeGoodSidecarVersion:   false,
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testTargetPath, cleanup := setupMountTarget(t)
+			defer cleanup()
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+			driver.config.FeatureOptions.EnableGCSFuseKernelParams = tc.enableKernelParamsFileFlag
+			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns := newNodeServer(driver, fakeMounter)
+
+			_, err := ns.NodePublishVolume(context.TODO(), req)
+
+			if err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOptions,
+			},
+				tc.unexpectedOptions)
+		})
 	}
 }

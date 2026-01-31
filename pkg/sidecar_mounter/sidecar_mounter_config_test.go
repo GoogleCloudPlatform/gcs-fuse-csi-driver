@@ -56,6 +56,7 @@ var (
 		"reuse-token-from-url",
 		"o",
 		"cache-dir",
+		"kernel-params-file",
 	}
 )
 
@@ -407,6 +408,55 @@ func TestPrepareMountArgs(t *testing.T) {
 				"uid":                               "0",
 				"gid":                               "0",
 				"experimental-local-socket-address": "128.0.0.1",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
+			},
+		},
+		{
+			name: "should return valid args when kernel params flag is enabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				TempDir:    "test-temp-dir",
+				Options:    []string{util.EnableGCSFuseKernelParams + "=true", "kernel-params-file=foo", "file-system:kernel-params-file:bar"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path":        "/dev/fd/1",
+				"logging:format":           "json",
+				"cache-dir":                "",
+				KernelParamsFileConfigFlag: filepath.Join("test-temp-dir", util.GCSFuseKernelParamsFileName),
+			},
+		},
+		{
+			name: "should return valid args when kernel params flag is disabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				TempDir:    "test-temp-dir",
+				Options:    []string{"kernel-params-file=foo", "file-system:kernel-params-file:bar"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
 			},
 			expectedConfigMapArgs: map[string]string{
 				"logging:file-path": "/dev/fd/1",
