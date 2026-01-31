@@ -103,9 +103,9 @@ var (
 		putil.AnnotationLastUpdatedTime: "anything",
 		putil.AnnotationStatus:          "completed",
 		putil.AnnotationNumObjects:      "20852700",
-		// Total size is expected to be 0 since size is the aggregate of object sizes and 
+		// Total size is expected to be 0 since size is the aggregate of object sizes and
 		// the bucket we are using is 20852700 empty files.
-		putil.AnnotationTotalSize:       "0",
+		putil.AnnotationTotalSize: "0",
 	}
 )
 
