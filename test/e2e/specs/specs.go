@@ -1158,6 +1158,26 @@ func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
 		"Should NOT find 'profile:aiml-training' within the gcsfuse config file content map, but it was found.")
 }
 
+func (t *TestPod) VerifyKernelParamsFlagsAreNotPassed(namespace, volumeName string) {
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+
+	// handles kernel-params-file=/path/to/params-file (User Provided)
+	gomega.Expect(stdout).To(gomega.Not(gomega.ContainSubstring("--kernel-params-file params-file")),
+		"Should not find kernel-params-file flag string in stdout")
+
+	// hanldes kernel-params-file:/path/to/params-file (User Provided)
+	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*kernel-params-file:params-file.*\]`)),
+		"Should not find 'kernel-params-file:params-file' within the gcsfuse config file content map, but it was found.")
+
+	// hanldes file-system:kernel-params-file:/gcsfuse-tmp/.volumes/<volume-name>/kernel-params.json (CSI Driver provided)
+	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*kernel-params-file:/gcsfuse-tmp/.volumes/`+volumeName+`/kernel-params.json*\]`)),
+		"Should not find CSI Driver provided kernel-params-file flag string in stdout")
+
+}
+
 func runKubectlOrDie(namespace string, args ...string) {
 	_, _, err := runKubectlWithFullOutputWithRetry(namespace, args...)
 	framework.ExpectNoError(err)
