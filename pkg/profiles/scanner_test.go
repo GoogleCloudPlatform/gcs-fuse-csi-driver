@@ -1892,7 +1892,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 		storageControlClient storageControlClient
 	}{
 		{
-			name: "AnyC not found - create it - requeue needed",
+			name: "AnyC not found - create it - done false",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-aib"}, nil
@@ -1900,10 +1900,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-b": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 			},
 			wantErr: false,
@@ -1917,7 +1917,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC not found - user provided zones - create it - requeue needed",
+			name: "AnyC not found - user provided zones - create it - done false",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -1925,10 +1925,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-b": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -1959,7 +1959,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC not found - user provided zones wildcard - create all - requeue needed",
+			name: "AnyC not found - user provided zones wildcard - create all - done false",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -1967,16 +1967,16 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-b": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-c": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-d": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -2007,7 +2007,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC not found - user provided zones empty string - create all - requeue needed",
+			name: "AnyC not found - user provided zones empty string - create all - done false",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -2015,16 +2015,16 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-b": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-c": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-d": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -2166,12 +2166,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "creating",
-					err:   errRequeueNeeded,
+					message: "creating",
 				},
 				"zone-b": {
-					state: "creating",
-					err:   errRequeueNeeded,
+					message: "creating",
 				},
 			},
 			wantErr: false,
@@ -2184,7 +2182,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC found - state PAUSED - requeue needed",
+			name: "AnyC found - state PAUSED - requeue not needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b"}, nil
@@ -2192,12 +2190,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "paused",
-					err:   nil,
+					message: "paused",
+					done:    true,
 				},
 				"zone-b": {
-					state: "paused",
-					err:   nil,
+					message: "paused",
+					done:    true,
 				},
 			},
 			wantErr: false,
@@ -2218,12 +2216,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "disabled",
-					err:   nil,
+					message: "disabled",
+					done:    true,
 				},
 				"zone-b": {
-					state: "disabled",
-					err:   nil,
+					message: "disabled",
+					done:    true,
 				},
 			},
 			wantErr: false,
@@ -2244,12 +2242,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "running",
-					err:   errRequeueNeeded,
+					message: "updating",
 				},
 				"zone-b": {
-					state: "running",
-					err:   errRequeueNeeded,
+					message: "updating",
 				},
 			},
 			wantErr: false,
@@ -2271,12 +2267,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "running",
-					err:   nil,
+					message: "running",
+					done:    true,
 				},
 				"zone-b": {
-					state: "running",
-					err:   nil,
+					message: "running",
+					done:    true,
 				},
 			},
 			wantErr: false,
@@ -2347,7 +2343,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					err: fmt.Errorf("failed"),
 				},
 				"zone-b": {
-					err: errRequeueNeeded,
+					message: "creating",
 				},
 			},
 			storageControlClient: &mockStorageControlClient{
@@ -2363,7 +2359,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "One zone fails - already exists with different TTL - should update - requeue needed",
+			name: "One zone fails - already exists with different TTL - should update - done false",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -2371,12 +2367,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "running",
-					err:   errRequeueNeeded,
+					message: "updating",
 				},
 				"zone-b": {
-					state: "running",
-					err:   errRequeueNeeded,
+					message: "updating",
 				},
 			},
 			wantErr: false,
@@ -2425,12 +2419,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			wantErr: false,
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					state: "running",
-					err:   errRequeueNeeded,
+					message: "updating",
 				},
 				"zone-b": {
-					state: "running",
-					err:   errRequeueNeeded,
+					message: "updating",
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -2505,8 +2497,8 @@ func TestCreateAnywhereCache(t *testing.T) {
 				if !ok {
 					t.Fatalf("zone %q not found in gotResults", zone)
 				}
-				if wantResult.state != gotResult.state {
-					t.Fatalf("zone %q want state: %q, got state: %q", zone, wantResult.state, gotResult.state)
+				if wantResult.message != gotResult.message {
+					t.Fatalf("zone %q want state: %q, got state: %q", zone, wantResult.message, gotResult.message)
 				}
 				if errors.Is(wantResult.err, errRequeueNeeded) != errors.Is(gotResult.err, errRequeueNeeded) {
 					t.Fatalf("zone %q want requeueNeeded: %t, got requeueNeeded: %t", zone, errors.Is(wantResult.err, errRequeueNeeded), errors.Is(gotResult.err, errRequeueNeeded))
