@@ -90,6 +90,7 @@ type ProfileConfig struct {
 type pvDetails struct {
 	numObjects     int64  // The number of objects reported by the PV.
 	totalSizeBytes int64  // The total size in bytes reported by the PV.
+	locationType   string // The location type of the bucket.
 	name           string // The name of the PersistentVolume.
 }
 
@@ -292,6 +293,7 @@ type GCSFuseCSIRecommendationLog struct {
 	InputSignals struct {
 		BucketTotalObjects                   int64  `json:"bucketTotalObjects"`
 		BucketTotalDataSizeBytes             int64  `json:"bucketTotalDataSizeBytes"`
+		BucketLocationType                   string `json:"bucketLocationType"`
 		RequiredFileCacheBytes               int64  `json:"requiredFileCacheBytes"`
 		RequiredMetadataStatCacheBytes       int64  `json:"requiredMetadataStatCacheBytes"`
 		RequiredMetadataTypeCacheBytes       int64  `json:"requiredMetadataTypeCacheBytes"`
@@ -355,6 +357,7 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	// Bucket signals
 	logEntry.InputSignals.BucketTotalObjects = config.pvDetails.numObjects
 	logEntry.InputSignals.BucketTotalDataSizeBytes = config.pvDetails.totalSizeBytes
+	logEntry.InputSignals.BucketLocationType = config.pvDetails.locationType
 
 	// Node signals
 	logEntry.InputSignals.NodeType = config.nodeDetails.nodeType
@@ -451,10 +454,15 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 // buildCacheRequirements constructs a cacheRequirements struct based on the provided pvDetails.
 // It calculates the ideal sizes for metadata stat, metadata type, and file caches.
 func buildCacheRequirements(pvDetails *pvDetails) *cacheRequirements {
+	requiredFileCacheBytes := pvDetails.totalSizeBytes
+	if isZonalBucket(pvDetails.locationType) {
+		klog.Infof("Bucket location type is %q, file cache not required. Disabling file cache.", pvDetails.locationType)
+		requiredFileCacheBytes = 0
+	}
 	return &cacheRequirements{
 		metadataStatCacheBytes: pvDetails.numObjects * metadataStatCacheBytesPerObject,
 		metadataTypeCacheBytes: pvDetails.numObjects * metadataTypeCacheBytesPerObject,
-		fileCacheBytes:         pvDetails.totalSizeBytes,
+		fileCacheBytes:         requiredFileCacheBytes,
 	}
 }
 
@@ -704,10 +712,14 @@ func buildPVDetails(
 		return nil, fmt.Errorf("invalid annotation format on PV %q: %s", pv.Name, errorMsg)
 	}
 
+	// Parse the location type.
+	locationType := pvAnnotations[profilesutil.AnnotationLocationType]
+
 	return &pvDetails{
 		name:           pv.Name,
 		numObjects:     numObjects,
 		totalSizeBytes: totalSizeBytes,
+		locationType:   locationType,
 	}, nil
 }
 
