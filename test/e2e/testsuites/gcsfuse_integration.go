@@ -70,7 +70,7 @@ const (
 
 var gcsfuseVersionStr = ""
 
-const gcsfuseGoVersionCommand = `grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-`
+const gcsfuseGoVersionCommand = `cat ./gcsfuse/.go-version | tr -d '[:space:]'`
 
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
