@@ -120,12 +120,12 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	}
 
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
-	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, map[string]string{
+	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, volumeName, map[string]string{
 		"pod_name":       podName,
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
-		"pod_uid":        podUID,
+		"pod_uid":        "",
 	}, mm.clientset)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
@@ -172,7 +172,7 @@ func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
 
 	// metricsCollector uses a hash of pod UID and volume name as an identifier.
-	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil)
+	c := NewMetricsCollector("", "", "", "", volumeName, nil, nil)
 
 	// Lock the number of registered collectors while we attempt to unregister a collector.
 	mm.mutex.Lock()
@@ -198,13 +198,13 @@ type metricsCollector struct {
 }
 
 // NewMetricsCollector returns a new Collector exposing metrics read from the give path.
-func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface) prometheus.Collector {
+func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, volumeName string, labels map[string]string, clientset clientset.Interface) prometheus.Collector {
 	c := &metricsCollector{
 		emptyDirBasePath: emptyDirBasePath,
 		constLabels:      labels,
 		namespace:        namespace,
 		podName:          podName,
-		podUID:           podUID,
+		podUID:           "", // podUID is emptied to avoid infinite cardinality
 		volumeName:       volumeName,
 		clientset:        clientset,
 	}
@@ -226,7 +226,7 @@ func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, p
 // Prometheus Registry relies on this func to identify collectors.
 func (c *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	// Collector id is a hash of the values of the ConstLabels and fqName.
-	ch <- prometheus.NewDesc("gke_gcsfuse_csi_metric", "GKE GCSFuse CSI metric.", nil, map[string]string{"pod_uid": c.podUID, "volume_name": c.volumeName})
+	ch <- prometheus.NewDesc("gke_gcsfuse_csi_metric", "GKE GCSFuse CSI metric.", nil, map[string]string{"pod_uid": "", "volume_name": c.volumeName})
 }
 
 // Collect scrapes metrics from the sidecar and emits metrics.
