@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,6 +113,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 
 	if len(sysfsBDI) != 0 {
 		go func() {
+			if slices.Contains(sidecarMountOptions, fmt.Sprintf("%s=true", util.EnableGCSFuseKernelParams)) {
+				klog.Warningf("The mount option `%s` is soft deprecated for zonal buckets. GCSFuse automatically applies appropriate Read Ahead Kb kernel setting for best performance by default for Zonal Buckets.", readAheadKBMountFlag)
+			}
 			// updateSysfsConfig may hang until the file descriptor (fd) is either consumed or canceled.
 			// It will succeed once dfuse finishes the mount process, or it will fail if dfuse fails
 			// or the mount point is cleaned up due to mounting failures.
