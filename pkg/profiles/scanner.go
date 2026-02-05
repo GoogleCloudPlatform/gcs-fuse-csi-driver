@@ -143,8 +143,7 @@ const (
 	anywhereCacheAPIUpdating          = "updating"
 
 	// Zonal bucket constants
-	bucketLocationTypeZoneKey  = "zone"
-	bucketStorageClassRapidKey = "RAPID"
+	bucketLocationTypeZoneKey = "zone"
 
 	// AI suffix for zones
 	aiZoneToken = "ai"
@@ -220,7 +219,7 @@ type bucketInfo struct {
 	numObjects     int64
 	totalSizeBytes int64
 	isOverride     bool
-	isZonalBucket  bool
+	locationType   string
 }
 
 // syncInfo holds information relevant to the PV resync.
@@ -1029,7 +1028,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	anywhereCacheProvidedZones, shouldEnableAnywhereCache := anywhereCacheZonesVal(pv, sc)
 
 	// Skip Anywhere Cache sync if it's disabled, or if the bucket is zonal, as it's not supported.
-	if !shouldEnableAnywhereCache || bucketI.isZonalBucket {
+	if !shouldEnableAnywhereCache || isZonalBucket(bucketI.locationType) {
 		return nil
 	}
 	syncResults, err := s.syncAnywhereCache(ctx, pv, sc, anywhereCacheProvidedZones)
@@ -1581,6 +1580,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 		profilesutil.AnnotationNumObjects:      int64Ptr(bucketI.numObjects),
 		profilesutil.AnnotationTotalSize:       int64Ptr(bucketI.totalSizeBytes),
 		profilesutil.AnnotationLastUpdatedTime: stringPtr(currentTime.UTC().Format(time.RFC3339)),
+		profilesutil.AnnotationLocationType:    stringPtr(bucketI.locationType),
 	}
 	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, scanStatus)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
@@ -1610,6 +1610,11 @@ func (s *Scanner) updateLastSuccessfulScanInMemory(pv *corev1.PersistentVolume, 
 	s.pvMutex.Unlock()
 	klog.V(6).Infof("Updated lastSuccessfulScan in-memory map for PV %q to %q, next scan: %q", pv.Name, lastScanTime, lastScanTime.Add(resyncPeriod))
 	return nil
+}
+
+// isZonalBucket returns a boolean, indicating whether the location type is zonal.
+func isZonalBucket(locationType string) bool {
+	return strings.EqualFold(locationType, bucketLocationTypeZoneKey)
 }
 
 // checkPVRelevance determines if a PersistentVolume is relevant for gcsfuse profiles and whether there is a scan pending.
@@ -1653,7 +1658,7 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 		name:          bucketName,
 		dir:           dir,
 		projectNumber: fmt.Sprint(bucketAttrs.ProjectNumber),
-		isZonalBucket: strings.EqualFold(bucketAttrs.LocationType, bucketLocationTypeZoneKey) || strings.EqualFold(bucketAttrs.StorageClass, bucketStorageClassRapidKey),
+		locationType:  bucketAttrs.LocationType,
 	}
 
 	// Handle the override annotation, if set.
