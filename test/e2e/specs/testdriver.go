@@ -257,11 +257,20 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",only-dir=" + dirPath
 		case EnableFileCachePrefix, EnableFileCacheForceNewBucketPrefix:
 			v.fileCacheCapacity = "100Mi"
+			if n.EnableZB {
+				mountOptions += ",file-system:enable-kernel-reader:false"
+			}
 		case EnableFileCacheAndMetricsPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
 			v.fileCacheCapacity = "100Mi"
 			v.enableMetrics = true
+			if n.EnableZB {
+				mountOptions += ",file-system:enable-kernel-reader:false"
+			}
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
+			if n.EnableZB {
+				mountOptions += ",file-system:enable-kernel-reader:false"
+			}
 		case SkipCSIBucketAccessCheckPrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
 			v.skipBucketAccessCheck = true
 		case SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix:
