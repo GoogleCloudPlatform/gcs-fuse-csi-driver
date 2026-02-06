@@ -70,7 +70,7 @@ const (
 
 var gcsfuseVersionStr = ""
 
-const gcsfuseGoVersionCommand = `grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-`
+const gcsfuseGoVersionCommand = `cat ./gcsfuse/.go-version | tr -d '[:space:]'`
 
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
@@ -538,6 +538,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true")
 	})
 
+	ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(2), func() {
+		if !zbEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v with file-system:enable-kernel-reader:false as it requires zonal buckets", testNameReadLargeFiles)
+		}
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true", "file-system:enable-kernel-reader:false")
+	})
+
 	ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(1), func() {
 		init()
 		defer cleanup()
@@ -589,6 +599,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(2), func() {
+		if !zbEnabled(driver) {
+			e2eskipper.Skipf("skip gcsfuse integration test %v with file-system:enable-kernel-reader:false as it requires zonal buckets", testNameConcurrentOperations)
+		}
+		init()
+		defer cleanup()
+
+		gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "file-system:enable-kernel-reader:false")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(1), func() {
@@ -713,45 +733,43 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", "file-system:enable-kernel-reader:false", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "file-system:enable-kernel-reader:false", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "file-system:enable-kernel-reader:false", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
 	})
 
-	// These buffered_read tests are set up in consistency with gcsfuse integration tests defined here:
-	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/94e4ade71cfa056bc3dd18a573bfbbb7cc4ae765/tools/integration_tests/run_tests_mounted_directory.sh#L713-L745
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, "enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
