@@ -78,6 +78,7 @@ type TestParameters struct {
 	EnableZB                       bool
 	EnableSidecarBucketAccessCheck bool
 	EnableGcsFuseProfiles          bool
+	EnableGCSFuseKernelParams      bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
@@ -294,6 +295,7 @@ func Handle(testParams *TestParameters) error {
 		fmt.Sprintf("--enable-zb=%s", strconv.FormatBool(testParams.EnableZB)),
 		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
 		fmt.Sprintf("--enable-gcsfuse-profiles-test=%s", strconv.FormatBool(testParams.EnableGcsFuseProfiles)),
+		fmt.Sprintf("--enable-gcsfuse-kernel-params-test=%s", strconv.FormatBool(testParams.EnableGCSFuseKernelParams)),
 		"--api-env", envAPIMap[testParams.APIEndpointOverride],
 	)
 
@@ -321,6 +323,12 @@ func generateTestSkip(testParams *TestParameters) string {
 
 	if testParams.EnableGcsFuseProfiles {
 		skipTests = append(skipTests, "should.not.pass.profile")
+	}
+
+	if testParams.EnableGCSFuseKernelParams {
+		skipTests = append(skipTests, "should.not.pass.kernel.params.file")
+	} else {
+		skipTests = append(skipTests, "should.pass.kernel.params.file")
 	}
 
 	if !testParams.SupportsNativeSidecar {

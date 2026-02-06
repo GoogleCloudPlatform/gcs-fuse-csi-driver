@@ -18,6 +18,7 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 )
@@ -29,7 +30,17 @@ type VolumeStateStore struct {
 }
 
 type VolumeState struct {
-	BucketAccessCheckPassed bool
+	BucketAccessCheckPassed   bool
+	GCSFuseKernelMonitorState GCSFuseKernelParamsMonitor
+}
+
+// GCSFuseKernelParamsMonitor holds the state for a goroutine that monitors the GCSFuse kernel parameters file.
+type GCSFuseKernelParamsMonitor struct {
+	// StartKernelParamsFileMonitorOnce ensures the kernel params file monitor is started only once per volume (target path).
+	StartKernelParamsFileMonitorOnce sync.Once
+	// CancelFunc holds the cancel function for the kernel params file monitor goroutine which
+	// is populated in NodePublishVolume operation and called in NodeUnpublishVolume operation.
+	CancelFunc context.CancelFunc
 }
 
 // NewVolumeStateStore initializes the volume state store.

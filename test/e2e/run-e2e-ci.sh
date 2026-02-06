@@ -44,6 +44,7 @@ readonly gke_gcloud_command=${GKE_GCLOUD_COMMAND:-gcloud}
 readonly gke_gcloud_args=${GKE_GCLOUD_ARGS:-}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-false}
+readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
 readonly overlay="${OVERLAY:-stable}"
 
 # Install golang
@@ -88,6 +89,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gcsfuse-enable-zb=${enable_zb} \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
+            --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params} \
             --gke-gcloud-command='${gke_gcloud_command}' \
             --gke-gcloud-args='${gke_gcloud_args}'\
             --deploy-overlay-name=${overlay}"

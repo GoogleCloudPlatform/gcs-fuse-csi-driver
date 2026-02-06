@@ -39,15 +39,16 @@ import (
 )
 
 var (
-	err            error
-	c              clientset.Interface
-	m              metadata.Service
-	clientProtocol = flag.String("client-protocol", "http", "the test bucket location")
-	bucketLocation = flag.String("test-bucket-location", "us-central1", "the test bucket location")
-	skipGcpSaTest  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
-	apiEnv         = flag.String("api-env", "prod", "cluster API env")
-	zbFlag         = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
-	profilesFlag   = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
+	err              error
+	c                clientset.Interface
+	m                metadata.Service
+	clientProtocol   = flag.String("client-protocol", "http", "the test bucket location")
+	bucketLocation   = flag.String("test-bucket-location", "us-central1", "the test bucket location")
+	skipGcpSaTest    = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
+	apiEnv           = flag.String("api-env", "prod", "cluster API env")
+	zbFlag           = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
+	profilesFlag     = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
+	kernelParamsFlag = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
 )
 
 var _ = func() bool {
@@ -123,6 +124,10 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 
 		if *profilesFlag {
 			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
+		}
+
+		if *kernelParamsFlag {
+			suites = append(suites, testsuites.InitGcsFuseKernelParamsTestSuite)
 		}
 
 		return suites

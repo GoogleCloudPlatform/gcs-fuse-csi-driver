@@ -57,6 +57,7 @@ spec:
             - --http-endpoint=:9920
             - --max-metric-collectors=10
             - --enable-sidecar-bucket-access-check=true
+            - --enable-gcsfuse-kernel-params=true
           ports:
           - containerPort: 9920
             name: metrics

@@ -240,6 +240,48 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod.Cleanup(ctx)
 	}
 
+	testGcsfuseKernelParamsFileFlagFilters := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring test pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		// Verify that both CLI based option and Config based option are filtered based on disallowedFlagMap.
+		kernelParamsFileMO := "kernel-params-file=params-file,file-system:kernel-params-file:params-file"
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false, kernelParamsFileMO)
+
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking pod does not have kernel-params-file passed to gcsfuse")
+		tPod.VerifyKernelParamsFlagsAreNotPassed(f.Namespace.Name, volumeName)
+
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
+	testGcsfuseKernelParamsFileFlag := func(configPrefix ...string) {
+		init(configPrefix...)
+		defer cleanup()
+
+		ginkgo.By("Configuring test pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+
+		tPod.Create(ctx)
+
+		ginkgo.By("Checking pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking pod does have kernel-params-file passed to gcsfuse")
+		tPod.VerifyKernelParamsFlagsArePassed(f.Namespace.Name)
+
+		ginkgo.By("Deleting pod")
+		tPod.Cleanup(ctx)
+	}
+
 	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse", func() {
 		testDefaultingFlags(specs.DisableAutoconfig)
 	})
@@ -276,5 +318,13 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	// TODO(chrisThePattyEater): add test for 'should pass profile' once storage profiles feature goes GA
 	ginkgo.It("should not pass profile as a user-specified mountOption to gcsfuse when profile is specified and 'enable-gcsfuse-profiles-internal' flag is false", func() {
 		testGcsfuseProfilesFlagFilters()
+	})
+
+	ginkgo.It("should not pass kernel params file from csi driver to gcsfuse when the feature is disabled", func() {
+		testGcsfuseKernelParamsFileFlagFilters()
+	})
+
+	ginkgo.It("should pass kernel params file from csi driver to gcsfuse when feature is enabled", func() {
+		testGcsfuseKernelParamsFileFlag()
 	})
 }

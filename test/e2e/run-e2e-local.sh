@@ -43,6 +43,7 @@ readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 readonly enable_zb=${ENABLE_ZB:-false}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-false}
+readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
 
 if [ "${skip_csi_driver_install}" = true ]; then
   use_gke_managed_driver=false
@@ -87,5 +88,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --ginkgo-flake-attempts=${ginkgo_flake_attempts} \
             --gcsfuse-enable-zb=${enable_zb} \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
-            --enable-gcsfuse-profiles=${enable_gcsfuse_profiles}"
+            --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
+            --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params}"
 eval "$base_cmd"

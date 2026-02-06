@@ -46,6 +46,7 @@ var (
 	gkeGcloudArgs                  = flag.String("gke-gcloud-args", "", "(gke only) Additional arguments to custom gcloud command.")
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "enables bucket access check in sidecar")
 	enableGcsFuseProfiles          = flag.Bool("enable-gcsfuse-profiles", false, "enables gcsfuse profiles for e2e tests")
+	enableGCSFuseKernelParams      = flag.Bool("enable-gcsfuse-kernel-params", false, "enables kernel params for e2e tests")
 	skipCSIDriverInstall           = flag.Bool("skip-csi-driver-install", false, "skips the install of the driver. You must have manually deployed the driver and webhook.")
 
 	// Test infrastructure flags.
@@ -120,6 +121,7 @@ func main() {
 		GkeGcloudArgs:                  *gkeGcloudArgs,
 		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
 		EnableGcsFuseProfiles:          *enableGcsFuseProfiles,
+		EnableGCSFuseKernelParams:      *enableGCSFuseKernelParams,
 		SkipCSIDriverInstall:           *skipCSIDriverInstall,
 	}
 

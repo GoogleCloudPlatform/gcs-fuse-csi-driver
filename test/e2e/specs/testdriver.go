@@ -179,6 +179,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			bucketName = InvalidVolume
 		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix, EnableMetadataPrefetchPrefixForceNewBucketPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
+		case EnableKernelParamsPrefix:
+			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 		case ProfilesOverrideAllOverridablePrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
@@ -306,7 +308,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
