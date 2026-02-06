@@ -70,7 +70,8 @@ const (
 
 var gcsfuseVersionStr = ""
 
-const gcsfuseGoVersionCommand = `cat ./gcsfuse/.go-version | tr -d '[:space:]'`
+const gcsfuseGoVersionLegacyCommand = `grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-`
+const gcsfuseCentralizedLocationGoVersionCommand = `cat ./gcsfuse/.go-version | tr -d '[:space:]'`
 
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
@@ -87,6 +88,18 @@ func zbEnabled(driver storageframework.TestDriver) bool {
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
 
 	return gcsfuseCSITestDriver.EnableZB
+}
+
+// getGoParsingCommand returns the command to get the go version for the gcsfuse integration tests based on the gcsfuse version and branch.
+// In gcsfuse v3.7.0 the go location was moved to a centralized dir ./gcsfuse/.go-version.
+// If using v3.6.0 or older, we use gcsfuseGoVersionLegacyCommand; otherwise we use gcsfuseCentralizedLocationGoVersionCommand.
+func getGoParsingCommand(gcsfuseVersion version.Version, gcsfuseTestBranch string) string {
+	gcsfuseGoVersionCommand := gcsfuseGoVersionLegacyCommand
+	if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v3.7.0-gke.0")) {
+		gcsfuseGoVersionCommand = gcsfuseCentralizedLocationGoVersionCommand
+	}
+
+	return gcsfuseGoVersionCommand
 }
 
 func getClientProtocol(driver storageframework.TestDriver) string {
@@ -317,6 +330,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install -y google-cloud-cli")
 
 		ginkgo.By("Getting gcsfuse testsuite go version")
+
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
+
 		gcsfuseTestSuiteVersion := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, gcsfuseGoVersionCommand)
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
@@ -327,7 +344,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 		baseTestCommandWithTestBucket := baseTestCommand + fmt.Sprintf(" --testbucket=%v", bucketName)
 
-		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
 		var finalTestCommand string
 		switch testName {
 		case testNameReadonly:
