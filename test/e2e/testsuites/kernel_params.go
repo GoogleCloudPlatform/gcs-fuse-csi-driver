@@ -137,6 +137,24 @@ func kernelParamValueFromConfigFile(f *framework.Framework, tPod *specs.TestPod,
 	return ""
 }
 
+func updateKernelParamValueInConfigFileAtomically(f *framework.Framework, tPod *specs.TestPod, paramName ParamName, volumeName, newValue string) {
+	configFilePath := kernelParamsConfigFilePath(volumeName)
+	originalContent := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("cat %s", configFilePath))
+
+	// Using a regular expression to replace the value of the specified parameter.
+	// This approach is chosen to be resilient to formatting changes in the JSON file.
+	re := regexp.MustCompile(fmt.Sprintf(`("name"\s*:\s*"%s".*?"value"\s*:\s*")[^"]*(")`, regexp.QuoteMeta(string(paramName))))
+	newContent := re.ReplaceAllString(originalContent, fmt.Sprintf("${1}%s${2}", newValue))
+
+	tmpConfigFile := fmt.Sprintf("%s-tmp", configFilePath)
+	// Write the updated content to a temporary file in the pod.
+	// Using a heredoc to avoid issues with special characters in the content.
+	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("cat <<'EOF' > %s\n%s\nEOF", tmpConfigFile, newContent))
+
+	// Atomically move the temporary file to the original file path.
+	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mv %s %s", tmpConfigFile, configFilePath))
+}
+
 func KernelParamValueFromMount(f *framework.Framework, tPod *specs.TestPod, paramName ParamName) string {
 	bdi := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf(`mountpoint -d "%s"`, mountPath))
 	parts := strings.Split(strings.TrimSpace(bdi), ":")
@@ -271,7 +289,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		tPod.Cleanup(ctx)
 	})
 
-	ginkgo.It("should verify that max-background and congestion-threshold are changed to GCSFuse user provided value for zonal bucket", func() {
+	ginkgo.It("should verify that max-background and congestion-threshold are changed to user provided value for zonal bucket", func() {
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && !driver.EnableZB {
 			e2eskipper.Skipf("skip for regional bucket")
 		}
@@ -281,14 +299,14 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		ginkgo.By("Configuring and setting up test pod")
 		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, true /* needsFuseConnections */, fmt.Sprintf("file-system:max-background:%s,file-system:congestion-threshold:%s", CustomMaxBackground, CustomCongestionThreshold))
 
-		ginkgo.By("Verifying max-background is eventually changed to GCSFuse default value")
+		ginkgo.By("Verifying max-background is eventually changed to user provided value")
 		expectedMaxBackground := kernelParamValueFromConfigFile(f, tPod, volumeName, MaxBackgroundRequests)
 		gomega.Expect(CustomMaxBackground).Should(gomega.Equal(expectedMaxBackground))
 		gomega.Eventually(func() string {
 			return KernelParamValueFromMount(f, tPod, MaxBackgroundRequests)
 		}, retryTimeout, retryPolling).Should(gomega.Equal(expectedMaxBackground))
 
-		ginkgo.By("Verifying congestion-threshold is eventually changed to GCSFuse default value")
+		ginkgo.By("Verifying congestion-threshold is eventually changed to user provided value")
 		expectedCongestionThreshold := kernelParamValueFromConfigFile(f, tPod, volumeName, CongestionWindowThreshold)
 		gomega.Expect(CustomCongestionThreshold).Should(gomega.Equal(expectedCongestionThreshold))
 		gomega.Eventually(func() string {
@@ -298,6 +316,37 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		ginkgo.By("Deleting the pod")
 		tPod.Cleanup(ctx)
 	})
+
+	ginkgo.DescribeTable("should verify that kernel params are continuously updated if config file is changed for zonal bucket",
+		func(paramName ParamName, newValue string, needsFuseConnections bool) {
+			if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && !driver.EnableZB {
+				e2eskipper.Skipf("skip for regional bucket")
+			}
+			init(specs.EnableKernelParamsPrefix)
+			defer cleanup()
+
+			ginkgo.By("Configuring and setting up test pod")
+			tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, true /* needsFuseConnections */)
+
+			ginkgo.By(fmt.Sprintf("Verifying %s is eventually changed to GCSFuse default value", paramName))
+			expectedDefaultValue := kernelParamValueFromConfigFile(f, tPod, volumeName, paramName)
+			gomega.Eventually(func() string {
+				return KernelParamValueFromMount(f, tPod, paramName)
+			}, retryTimeout, retryPolling).Should(gomega.Equal(expectedDefaultValue))
+
+			ginkgo.By(fmt.Sprintf("Verifying %s is eventually changed to new value upon config file change", paramName))
+			updateKernelParamValueInConfigFileAtomically(f, tPod, paramName, volumeName, newValue)
+			gomega.Eventually(func() string {
+				return KernelParamValueFromMount(f, tPod, paramName)
+			}, retryTimeout, retryPolling).Should(gomega.Equal(newValue))
+
+			ginkgo.By("Deleting the pod")
+			tPod.Cleanup(ctx)
+		},
+		ginkgo.Entry("for read-ahead-kb", MaxReadAheadKb, CustomGCSFuseMaxReadAhead8MB, false),
+		ginkgo.Entry("for max-background", MaxBackgroundRequests, CustomMaxBackground, true),
+		ginkgo.Entry("for congestion-threshold", CongestionWindowThreshold, CustomCongestionThreshold, true),
+	)
 
 	ginkgo.It("should verify kernel params config file is not written for regional bucket", func() {
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
