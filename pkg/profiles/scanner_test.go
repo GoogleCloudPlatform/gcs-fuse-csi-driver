@@ -486,22 +486,6 @@ func TestCheckPVRelevance(t *testing.T) {
 			}},
 		},
 		{
-			name: "Relevant scan is pending - Zonal bucket by storageClass - Should return relevant, pending scan, and isZonalBucket field should be true",
-			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
-				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
-			}, nil),
-			scs:               []*storagev1.StorageClass{validSC},
-			wantRelevant:      true,
-			wantBucket:        testBucketName,
-			wantIsPendingScan: true,
-			wantIsZonalBucket: true,
-			fakeGetAttrs: fakebucketAttrsFunc{attrs: &storage.BucketAttrs{
-				Name:          testBucketName,
-				ProjectNumber: projectNumber,
-				StorageClass:  "rapid",
-			}},
-		},
-		{
 			name:              "Relevant - Override mode - Should return relevant and override",
 			pv:                createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, validOverrideAnnotations, nil),
 			scs:               []*storagev1.StorageClass{validSC},
@@ -601,8 +585,8 @@ func TestCheckPVRelevance(t *testing.T) {
 				if bucketI.isOverride != tc.wantIsOverride {
 					t.Errorf("checkPVRelevance(%v) isOverride = %v, want %v", tc.pv.Name, bucketI.isOverride, tc.wantIsOverride)
 				}
-				if bucketI.isZonalBucket != tc.wantIsZonalBucket {
-					t.Errorf("checkPVRelevance(%v) bucket = %t, want %t", tc.pv.Name, bucketI.isZonalBucket, tc.wantIsZonalBucket)
+				if isZonalBucket(bucketI.locationType) != tc.wantIsZonalBucket {
+					t.Errorf("checkPVRelevance(%v) locationType = %s, want %t", tc.pv.Name, bucketI.locationType, tc.wantIsZonalBucket)
 				}
 			}
 			if isPendingScan != tc.wantIsPendingScan {
@@ -633,6 +617,7 @@ func TestSyncPV(t *testing.T) {
 	attrs := &storage.BucketAttrs{
 		Name:          testBucketName,
 		ProjectNumber: 111,
+		LocationType:  "region",
 	}
 	attrsFunc := fakebucketAttrsFunc{attrs: attrs}
 	bucketAttrs = attrsFunc.getBucketAttributes
@@ -661,9 +646,10 @@ func TestSyncPV(t *testing.T) {
 			bucketI:        scanResult,
 			wantErr:        false,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects: "1234",
-				putil.AnnotationTotalSize:  "567890",
-				putil.AnnotationStatus:     "completed",
+				putil.AnnotationNumObjects:   "1234",
+				putil.AnnotationTotalSize:    "567890",
+				putil.AnnotationStatus:       "completed",
+				putil.AnnotationLocationType: "region",
 			},
 			expectScanCall: true,
 		},
@@ -673,9 +659,10 @@ func TestSyncPV(t *testing.T) {
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects: "1234",
-				putil.AnnotationTotalSize:  "567890",
-				putil.AnnotationStatus:     "completed",
+				putil.AnnotationNumObjects:   "1234",
+				putil.AnnotationTotalSize:    "567890",
+				putil.AnnotationStatus:       "completed",
+				putil.AnnotationLocationType: "region",
 			},
 			wantErr:        false,
 			expectScanCall: true,
@@ -687,9 +674,10 @@ func TestSyncPV(t *testing.T) {
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects: "1234",
-				putil.AnnotationTotalSize:  "567890",
-				putil.AnnotationStatus:     "completed",
+				putil.AnnotationNumObjects:   "1234",
+				putil.AnnotationTotalSize:    "567890",
+				putil.AnnotationStatus:       "completed",
+				putil.AnnotationLocationType: "region",
 			},
 			wantErr:         false,
 			expectScanCall:  true,
@@ -712,9 +700,10 @@ func TestSyncPV(t *testing.T) {
 			scanErr:        context.DeadlineExceeded,
 			wantErr:        false,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects: "0",
-				putil.AnnotationTotalSize:  "0",
-				putil.AnnotationStatus:     "timeout",
+				putil.AnnotationNumObjects:   "0",
+				putil.AnnotationTotalSize:    "0",
+				putil.AnnotationStatus:       "timeout",
+				putil.AnnotationLocationType: "region",
 			},
 			expectScanCall: true,
 		},
@@ -755,9 +744,10 @@ func TestSyncPV(t *testing.T) {
 			wantErr:        false,
 			expectScanCall: false, // Scan should be bypassed
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects: "111",
-				putil.AnnotationTotalSize:  "2222",
-				putil.AnnotationStatus:     "override",
+				putil.AnnotationNumObjects:   "111",
+				putil.AnnotationTotalSize:    "2222",
+				putil.AnnotationStatus:       "override",
+				putil.AnnotationLocationType: "region",
 			},
 		},
 	}

@@ -971,10 +971,11 @@ func TestBuildPVDetails(t *testing.T) {
 		{
 			name: "TestBuildPVDetails - Should parse valid annotations",
 			annotations: map[string]string{
-				putil.AnnotationNumObjects: "12345",
-				putil.AnnotationTotalSize:  "67890",
+				putil.AnnotationNumObjects:   "12345",
+				putil.AnnotationTotalSize:    "67890",
+				putil.AnnotationLocationType: "zone",
 			},
-			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890},
+			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890, locationType: "zone"},
 			wantErr: false,
 		},
 		{
@@ -1345,6 +1346,32 @@ func TestBuildCacheRequirements(t *testing.T) {
 				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
 				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
 				fileCacheBytes:         10 * mib,
+			},
+		},
+		{
+			name: "Zonal bucket - Should disable file cache",
+			pv: &pvDetails{
+				numObjects:     1000,
+				totalSizeBytes: 10 * mib,
+				locationType:   "zone",
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
+				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
+				fileCacheBytes:         0,
+			},
+		},
+		{
+			name: "Zonal bucket case insensitive - Should disable file cache",
+			pv: &pvDetails{
+				numObjects:     1000,
+				totalSizeBytes: 10 * mib,
+				locationType:   "ZoNe",
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
+				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
+				fileCacheBytes:         0,
 			},
 		},
 		{
