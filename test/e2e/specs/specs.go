@@ -84,6 +84,7 @@ const (
 	SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix = "gcsfuse-csi-skip-bucket-access-check-invalid-mount-options-volume"
 	SkipCSIBucketAccessCheckAndNonRootVolumePrefix             = "gcsfuse-csi-skip-bucket-access-check-non-root-volume"
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
+	EnableKernelParamsPrefix                                   = "gcsfuse-csi-enable-kernel-params"
 
 	// Read ahead config custom settings to verify testing.
 	ReadAheadCustomReadAheadKb = "15360"
@@ -1156,6 +1157,36 @@ func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
 	// handles profile:aiml-training case
 	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*profile:aiml-training.*\]`)),
 		"Should NOT find 'profile:aiml-training' within the gcsfuse config file content map, but it was found.")
+}
+
+func (t *TestPod) VerifyKernelParamsFlagsAreNotPassed(namespace, volumeName string) {
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+
+	// Should not find kernel-params-file=/path/to/params-file (User Provided)
+	gomega.Expect(stdout).To(gomega.Not(gomega.ContainSubstring("--kernel-params-file params-file")),
+		"Should not find kernel-params-file flag string in stdout")
+
+	// Shuld not find kernel-params-file:/path/to/params-file (User Provided)
+	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*kernel-params-file:params-file.*\]`)),
+		"Should not find 'kernel-params-file:params-file' within the gcsfuse config file content map, but it was found.")
+
+	// Should not find file-system:kernel-params-file:/gcsfuse-tmp/.volumes/<volume-name>/kernel-params.json (CSI Driver provided)
+	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`file-system:map\[kernel-params-file:/gcsfuse-tmp/.volumes/.*/kernel-params.json\]`)),
+		"Should not find CSI Driver provided kernel-params-file flag string in stdout")
+}
+
+func (t *TestPod) VerifyKernelParamsFlagsArePassed(namespace string) {
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	framework.ExpectNoError(err,
+		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
+		t.pod.Name, err, stdout, stderr)
+
+	// Should find file-system:kernel-params-file:/gcsfuse-tmp/.volumes/<volume-name>/kernel-params.json (CSI Driver provided flag in config map)
+	gomega.Expect(stdout).To(gomega.MatchRegexp(`file-system:map\[kernel-params-file:/gcsfuse-tmp/.volumes/.*/kernel-params.json\]`),
+		"Should find CSI Driver provided kernel-params-file flag string in stdout")
 }
 
 func runKubectlOrDie(namespace string, args ...string) {

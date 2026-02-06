@@ -351,6 +351,7 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	if mc.EnableGCSFuseKernelParams {
+		// This kernel params config file is created by GCSFuse only.
 		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
 	}
 
