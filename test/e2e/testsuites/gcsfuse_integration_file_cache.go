@@ -174,6 +174,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 
+		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
+
 		baseTestCommand := fmt.Sprintf("export GO_VERSION=$(%v) && export GOTOOLCHAIN=go$GO_VERSION && export PATH=$PATH:/usr/local/go/bin && cd %v/read_cache && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v --testbucket=%v -run %v", gcsfuseGoVersionCommand, gcsfuseIntegrationTestsBasePath, mountPath, bucketName, testName)
 		if zbEnabled(driver) {
 			baseTestCommand += " --zonal=true"
