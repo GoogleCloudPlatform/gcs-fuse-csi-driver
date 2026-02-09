@@ -160,6 +160,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
+	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch(gcsfuseVersionStr)
+	kernelParamsSupported := branch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion))
 
 	// skipTestOrProceedWithBranch works by skipping tests for gcsfuse versions that do not support them.
 	// These tests run against all non-managed driver versions, and for selected gke managed driver versions. This is because when
@@ -234,6 +236,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		if gcsfuseVersionStr == "" {
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+		stripUnsupportedMountOptions(&mountOptions, gcsfuseVersion)
+
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
 		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
@@ -331,7 +336,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		ginkgo.By("Getting gcsfuse testsuite go version")
 
-		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
 		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
 		gcsfuseTestSuiteVersion := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, gcsfuseGoVersionCommand)
@@ -560,8 +564,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		}
 		init()
 		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true", "file-system:enable-kernel-reader:false")
+		mountOptions := []string{"implicit-dirs=true"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameReadLargeFiles, false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(1), func() {
@@ -624,7 +631,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 
-		gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "file-system:enable-kernel-reader:false")
+		mountOptions := []string{"implicit-dirs=true", "kernel-list-cache-ttl-secs=-1"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameConcurrentOperations, false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(1), func() {
@@ -749,43 +760,71 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, "read-inactive-stream-timeout=0s", "file-system:enable-kernel-reader:false", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+		mountOptions := []string{"read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, "read-inactive-stream-timeout=1s", "file-system:enable-kernel-reader:false", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+		mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "file-system:enable-kernel-reader:false", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+		mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
 		init()
 		defer cleanup()
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, "enable-buffered-read", "file-system:enable-kernel-reader:false", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace")
+		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, mountOptions...)
 	})
 
 	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {

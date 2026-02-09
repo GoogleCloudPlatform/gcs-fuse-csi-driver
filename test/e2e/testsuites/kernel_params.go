@@ -23,11 +23,13 @@ import (
 	"strings"
 
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -185,7 +187,22 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 	f := framework.NewFrameworkWithCustomTimeouts("kernel-params", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
+	skipIfKernelParamsNotSupported := func(ctx context.Context) {
+		gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch(ctx, f)
+
+		// Running since we are on master branch.
+		if branch == utils.MasterBranchName {
+			return
+		}
+		// Kernel parameters were introduced in v3.7.0-gke.0.
+		if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion)) {
+			e2eskipper.Skipf("skip kernel params test for unsupported gcsfuse version %s", gcsfuseVersion.String())
+		}
+	}
+
 	init := func(configPrefix ...string) {
+		skipIfKernelParamsNotSupported(ctx)
+
 		l = local{}
 		l.config = driver.PrepareTest(ctx, f)
 		l.config.Prefix = configPrefix[0]

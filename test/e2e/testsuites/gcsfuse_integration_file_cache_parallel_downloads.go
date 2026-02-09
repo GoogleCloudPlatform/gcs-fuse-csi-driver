@@ -145,12 +145,18 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.SetupCacheVolumeMount("/tmp/"+cacheDir, ".volumes/"+volumeName)
 		mountOptions = append(mountOptions, "logging:file-path:/gcsfuse-tmp/log.json", "logging:format:json", "logging:severity:trace")
 		mountOptions = append(mountOptions,
-			"file-system:enable-kernel-reader:false",
 			"file-cache:enable-parallel-downloads:true",
 			"file-cache:parallel-downloads-per-file:4",
 			"file-cache:max-parallel-downloads:-1",
 			"file-cache:download-chunk-size-mb:3",
 			"file-cache:enable-crc:true")
+
+		kernelParamsSupported := gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion))
+		if kernelParamsSupported {
+			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+		}
+
+		stripUnsupportedMountOptions(&mountOptions, gcsfuseVersion)
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{

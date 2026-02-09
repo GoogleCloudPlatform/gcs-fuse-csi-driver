@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"local/test/e2e/utils"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
@@ -34,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	clientset "k8s.io/client-go/kubernetes"
@@ -1119,6 +1122,18 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 		framework.Logf("Received GCS Fuse version %s does not follow to x.y.z-gke.v format which might lead to unprecedented test skips, continuing with %s", l[2])
 	}
 	return l[2]
+}
+
+func GCSFuseVersionAndBranch(ctx context.Context, f *framework.Framework) (*version.Version, string) {
+	vStr := GetGCSFuseVersion(ctx, f)
+	v, branch := utils.GCSFuseBranch(vStr)
+	if v == nil {
+		// This happens for master branch builds. We still need to parse the version.
+		var err error
+		v, err = version.ParseSemantic(vStr)
+		framework.ExpectNoError(err, "Failed to parse GCS Fuse version string %s into version.Version", vStr)
+	}
+	return v, branch
 }
 
 func DeployIstioSidecar(namespace string) {

@@ -27,6 +27,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
+
 var (
 	MasterBranchName = "master"
 
