@@ -34,3 +34,4 @@ spec:
             - --enable-sidecar-bucket-access-check=true
             - --enable-gcsfuse-profiles=true
             - --enable-gcsfuse-profiles-internal=true
+            - --enable-gcsfuse-kernel-params=true
