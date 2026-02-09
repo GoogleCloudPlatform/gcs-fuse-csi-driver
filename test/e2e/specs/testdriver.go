@@ -38,6 +38,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/version"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
@@ -55,6 +56,8 @@ type GCSFuseCSITestDriver struct {
 	EnableHierarchicalNamespace bool
 	EnableZB                    bool             // Enable Zonal Buckets
 	storageService              *storage.Service // Client to interact with GCS
+	gcsfuseVersion              *version.Version
+	gcsfuseBranch               string
 }
 
 type gcsVolume struct {
@@ -76,7 +79,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
 	}
 
-	return &GCSFuseCSITestDriver{
+	testDriver := &GCSFuseCSITestDriver{
 		driverInfo: storageframework.DriverInfo{
 			Name:        driver.DefaultName,
 			MaxFileSize: storageframework.FileSizeLarge,
@@ -98,6 +101,8 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		EnableHierarchicalNamespace: enableHierarchicalNamespace || enableZB,
 		EnableZB:                    enableZB, // Enable Zonal Buckets
 	}
+
+	return testDriver
 }
 
 const (
@@ -244,6 +249,10 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		if n.ClientProtocol == "grpc" {
 			mountOptions += ",client-protocol=grpc"
 		}
+		if n.gcsfuseVersion == nil || n.gcsfuseBranch == "" {
+			n.gcsfuseVersion, n.gcsfuseBranch = GCSFuseVersionAndBranch(ctx, config.Framework)
+		}
+		kernelParamsSupported := n.gcsfuseBranch == utils.MasterBranchName || n.gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion))
 
 		switch config.Prefix {
 		case NonRootVolumePrefix:
@@ -259,18 +268,18 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",only-dir=" + dirPath
 		case EnableFileCachePrefix, EnableFileCacheForceNewBucketPrefix:
 			v.fileCacheCapacity = "100Mi"
-			if n.EnableZB {
+			if n.EnableZB && kernelParamsSupported {
 				mountOptions += ",file-system:enable-kernel-reader:false"
 			}
 		case EnableFileCacheAndMetricsPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
 			v.fileCacheCapacity = "100Mi"
 			v.enableMetrics = true
-			if n.EnableZB {
+			if n.EnableZB && kernelParamsSupported {
 				mountOptions += ",file-system:enable-kernel-reader:false"
 			}
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
-			if n.EnableZB {
+			if n.EnableZB && kernelParamsSupported {
 				mountOptions += ",file-system:enable-kernel-reader:false"
 			}
 		case SkipCSIBucketAccessCheckPrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
