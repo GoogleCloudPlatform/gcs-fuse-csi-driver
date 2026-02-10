@@ -42,13 +42,14 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get"]
-# Required to list PV annotations.
+# PV is required to read PV annotations.
+# PVC required to map PVC to PV from Pod.
   - apiGroups: [""]
-    resources: ["persistentvolumes"]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch"]
-# Required to map PVC to PV from Pod.
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
+# Required to get gcsfuse profile configs.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
