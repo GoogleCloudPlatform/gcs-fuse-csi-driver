@@ -125,6 +125,19 @@ func kernelParamsConfigFilePath(volumeName string) string {
 //	}
 const kernelParamExtractRegex = `"name"\s*:\s*"%s".*?"value"\s*:\s*"(.*?)"`
 
+func skipIfKernelParamsNotSupported(ctx context.Context, f *framework.Framework) {
+	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch(ctx, f)
+
+	// Running since we are on master branch.
+	if branch == utils.MasterBranchName {
+		return
+	}
+	// Kernel parameters were introduced in v3.7.0-gke.0.
+	if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion)) {
+		e2eskipper.Skipf("skip kernel params test for unsupported gcsfuse version %s", gcsfuseVersion.String())
+	}
+}
+
 func kernelParamValueFromConfigFile(f *framework.Framework, tPod *specs.TestPod, volumeName string, paramName ParamName) string {
 	configFileData := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("cat %s", kernelParamsConfigFilePath(volumeName)))
 	pattern := fmt.Sprintf(kernelParamExtractRegex, regexp.QuoteMeta(string(paramName)))
@@ -186,6 +199,8 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	init := func(configPrefix ...string) {
+		skipIfKernelParamsNotSupported(ctx, f)
+
 		l = local{}
 		l.config = driver.PrepareTest(ctx, f)
 		l.config.Prefix = configPrefix[0]
