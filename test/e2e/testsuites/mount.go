@@ -321,10 +321,12 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	})
 
 	ginkgo.It("should not pass kernel params file from csi driver to gcsfuse when the feature is disabled", func() {
+		skipIfKernelParamsNotSupported(ctx, f)
 		testGcsfuseKernelParamsFileFlagFilters()
 	})
 
 	ginkgo.It("should pass kernel params file from csi driver to gcsfuse when feature is enabled", func() {
+		skipIfKernelParamsNotSupported(ctx, f)
 		testGcsfuseKernelParamsFileFlag()
 	})
 }
