@@ -143,6 +143,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 			}
 		}
 		tPod.SetupCacheVolumeMount("/tmp/"+cacheDir, ".volumes/"+volumeName)
+
 		mountOptions = append(mountOptions, "logging:file-path:/gcsfuse-tmp/log.json", "logging:format:json", "logging:severity:trace")
 		mountOptions = append(mountOptions,
 			"file-cache:enable-parallel-downloads:true",
@@ -193,138 +194,290 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
 
-	// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
+	gcsfuseIntegrationFileCacheTestNew := func(testName string, config utils.ParsedConfig) {
 
-	ginkgo.It("should succeed in TestCacheFileForRangeReadFalseTest 1", func() {
-		init()
-		defer cleanup()
+		ginkgo.By("Checking GCSFuse version and skip test if needed")
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
+		}
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
 
-		gcsfuseIntegrationFileCacheTest("TestCacheFileForRangeReadFalseTest/TestRangeReadsWithCacheMiss", false, "50Mi", "false", "3600")
-	})
+		ginkgo.By("Configuring the test pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetImage(specs.GolangImage)
 
-	ginkgo.It("should succeed in TestCacheFileForRangeReadFalseTest 2", func() {
-		init()
-		defer cleanup()
+		framework.Logf("Log file path: %v", config.LogFilePath)
+		tPod.SetCommand(fmt.Sprintf("tail -F %v", config.LogFilePath))
 
-		gcsfuseIntegrationFileCacheTest("TestCacheFileForRangeReadFalseTest/TestConcurrentReads_ReadIsTreatedNonSequentialAfterFileIsRemovedFromCache", false, "50Mi", "false", "3600")
-	})
+		tPod.SetResource("1", "1Gi", "5Gi")
+		if strings.HasPrefix(testName, "TestRangeReadTest") {
+			tPod.SetResource("1", "2Gi", "5Gi")
+		}
 
-	ginkgo.It("should succeed in TestCacheFileForRangeReadTrueTest 1", func() {
-		init()
-		defer cleanup()
+		l.volumeResource.VolSource.CSI.VolumeAttributes["fileCacheCapacity"] = config.FileCacheCapacity
+		tPod.SetupTmpVolumeMount(gkeTempDir)
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+		framework.Logf("Cache file path: %v", config.CacheDir)
+		tPod.SetupCacheVolumeMount(config.CacheDir, ".volumes/"+volumeName)
 
-		gcsfuseIntegrationFileCacheTest("TestCacheFileForRangeReadTrueTest/TestRangeReadsWithCacheHit", false, "50Mi", "true", "3600")
-	})
+		// Filter out duplicate logging:severity:info from testdriver set up
+		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
+		mo = strings.ReplaceAll(mo, "logging:severity:info", "")
+		mo = strings.TrimPrefix(mo, ",") // Remove leading comma because of ,onlyDir
+		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
 
-	ginkgo.It("should succeed in TestDisabledCacheTTLTest 1", func() {
-		init()
-		defer cleanup()
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, config.ReadOnly, config.MountOptions...)
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/cpu-limit":               "1",
+			"gke-gcsfuse/memory-request":          defaultSidecarMemoryRequest,
+			"gke-gcsfuse/memory-limit":            defaultSidecarMemoryLimit,
+			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestDisabledCacheTTLTest/TestReadAfterObjectUpdateIsCacheMiss", false, "9Mi", "false", "0")
-	})
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		onlyDir := utils.ExtractOnlyDirFromMountOptions(l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"])
 
-	ginkgo.It("should succeed in TestLocalModificationTest 1", func() {
-		init()
-		defer cleanup()
+		ginkgo.By("Deploying the test pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
-		gcsfuseIntegrationFileCacheTest("TestLocalModificationTest/TestReadAfterLocalGCSFuseWriteIsCacheMiss", false, "9Mi", "false", "3600")
-	})
+		ginkgo.By("Checking that the test pod is running")
+		tPod.WaitForRunning(ctx)
 
-	ginkgo.It("should succeed in TestRangeReadTest 1", func() {
-		init()
-		defer cleanup()
+		ginkgo.By("Checking that the test pod command exits with no error")
+		if config.ReadOnly {
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath))
+		} else {
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		}
 
-		gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsBeyondReadChunkSizeWithChunkDownloaded", false, "500Mi", "false", "3600")
-	})
+		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 
-	ginkgo.It("should succeed in TestRangeReadTest 2", func() {
-		init()
-		defer cleanup()
+		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
-		gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsBeyondReadChunkSizeWithChunkDownloaded", false, "500Mi", "true", "3600")
-	})
+		commandArgs := []string{
+			fmt.Sprintf("export GO_VERSION=$(%v)", gcsfuseGoVersionCommand),
+			"export GOTOOLCHAIN=go$GO_VERSION",
+			"export PATH=$PATH:/usr/local/go/bin",
+			fmt.Sprintf("export MOUNTED_DIR=%v", mountPath),
+			fmt.Sprintf("export BUCKET_NAME=%v", bucketName),
+			fmt.Sprintf("export ONLY_DIR=%v", onlyDir),
+			fmt.Sprintf("cd %v", gcsfuseIntegrationTestsBasePath),
+			fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./read_cache/... -p 1 --integrationTest -v -run ^%v$ --config-file=../test_config.yaml", testName),
+		}
+		baseTestCommand := strings.Join(commandArgs, " && ")
+		framework.Logf("Executing tests with command:\n%s", baseTestCommand)
+		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
+	}
 
-	ginkgo.It("should succeed in TestReadOnlyTest 1", func() {
-		init()
-		defer cleanup()
+	generateDynamicTests := func(configVersion string) {
+		framework.Logf("Generating dynamic tests for parallel downloads with config version: %s", configVersion)
+		if utils.IsReadFromTestConfig(configVersion) && len(utils.LoadedTestPackages) == 0 {
+			framework.Logf("Loading test config for GCSFuse version %v", configVersion)
+			err := utils.LoadTestConfig(configVersion)
+			if err != nil {
+				framework.Failf("Failed to load test config: %v", err)
+			}
+		}
+		// Dynamically generate tests from test_config.yaml in GCSFuse
+		for pkgName, pkgList := range utils.LoadedTestPackages {
+			if !utils.IsFileCacheEnabled(pkgName) {
+				continue
+			}
+			// The YAML parser treats test package as a list because of the '-' syntax.
+			// But there is only one configuration item under each package, so we take the first element.
+			pkg := pkgList[0]
+			for _, config := range pkg.Configs {
+				if !config.RunOnGke {
+					continue
+				}
+				if !config.Compatible.HNS && hnsEnabled(driver) {
+					continue
+				}
+				if !config.Compatible.Zonal && zbEnabled(driver) {
+					continue
+				}
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestSecondSequentialReadIsCacheHit", true, "9Mi", "false", "3600")
-	})
+				for _, flagStr := range config.Flags {
+					if !utils.IsParallelDownloadsEnabled(flagStr) {
+						continue
+					}
 
-	ginkgo.It("should succeed in TestReadOnlyTest 2", func() {
-		init()
-		defer cleanup()
+					testName := config.Run
+					if testName == "" {
+						testName = pkgName
+					}
+					ginkgo.It(fmt.Sprintf("should succeed in %s with flags %s", testName, flagStr), func() {
+						ginkgo.By(fmt.Sprintf("Starting parallel download test: %s", testName))
+						framework.Logf("Original flag string from config: %s", flagStr)
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileSequentiallyLargerThanCacheCapacity", true, "9Mi", "false", "3600")
-	})
+						if utils.IsOnlyDirEnabled(pkg) {
+							ginkgo.By("Configuring test with only_dir enabled")
+							init(specs.SubfolderInBucketPrefix)
+						} else {
+							init()
+						}
+						defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 3", func() {
-		init()
-		defer cleanup()
+						parsedFlags := utils.ParseConfigFlags(flagStr)
+						framework.Logf("Parsed arguments: %+v", parsedFlags)
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileRandomlyLargerThanCacheCapacity", true, "9Mi", "false", "3600")
-	})
+						gcsfuseIntegrationFileCacheTestNew(testName, parsedFlags)
+					})
+				}
+			}
+		}
+	}
 
-	ginkgo.It("should succeed in TestReadOnlyTest 4", func() {
-		init()
-		defer cleanup()
+	generateStaticTests := func() {
+		// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesMoreThanCacheLimit", true, "9Mi", "false", "3600")
-	})
+		ginkgo.It("should succeed in TestCacheFileForRangeReadFalseTest 1", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 5", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestCacheFileForRangeReadFalseTest/TestRangeReadsWithCacheMiss", false, "50Mi", "false", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesWithinCacheLimit", true, "9Mi", "false", "3600")
-	})
+		ginkgo.It("should succeed in TestCacheFileForRangeReadFalseTest 2", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 6", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestCacheFileForRangeReadFalseTest/TestConcurrentReads_ReadIsTreatedNonSequentialAfterFileIsRemovedFromCache", false, "50Mi", "false", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestSecondSequentialReadIsCacheHit", true, "9Mi", "true", "3600")
-	})
+		ginkgo.It("should succeed in TestCacheFileForRangeReadTrueTest 1", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 7", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestCacheFileForRangeReadTrueTest/TestRangeReadsWithCacheHit", false, "50Mi", "true", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileSequentiallyLargerThanCacheCapacity", true, "9Mi", "true", "3600")
-	})
+		ginkgo.It("should succeed in TestDisabledCacheTTLTest 1", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 8", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestDisabledCacheTTLTest/TestReadAfterObjectUpdateIsCacheMiss", false, "9Mi", "false", "0")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileRandomlyLargerThanCacheCapacity", true, "9Mi", "true", "3600")
-	})
+		ginkgo.It("should succeed in TestLocalModificationTest 1", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 9", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestLocalModificationTest/TestReadAfterLocalGCSFuseWriteIsCacheMiss", false, "9Mi", "false", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesMoreThanCacheLimit", true, "9Mi", "true", "3600")
-	})
+		ginkgo.It("should succeed in TestRangeReadTest 1", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestReadOnlyTest 10", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsBeyondReadChunkSizeWithChunkDownloaded", false, "500Mi", "false", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesWithinCacheLimit", true, "9Mi", "true", "3600")
-	})
+		ginkgo.It("should succeed in TestRangeReadTest 2", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestSmallCacheTTLTest 1", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestRangeReadTest/TestRangeReadsBeyondReadChunkSizeWithChunkDownloaded", false, "500Mi", "true", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestSmallCacheTTLTest/TestReadAfterUpdateAndCacheExpiryIsCacheMiss", false, "9Mi", "false", "10")
-	})
+		ginkgo.It("should succeed in TestReadOnlyTest 1", func() {
+			init()
+			defer cleanup()
 
-	ginkgo.It("should succeed in TestSmallCacheTTLTest 2", func() {
-		init()
-		defer cleanup()
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestSecondSequentialReadIsCacheHit", true, "9Mi", "false", "3600")
+		})
 
-		gcsfuseIntegrationFileCacheTest("TestSmallCacheTTLTest/TestReadForLowMetaDataCacheTTLIsCacheHit", false, "9Mi", "false", "10")
-	})
+		ginkgo.It("should succeed in TestReadOnlyTest 2", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileSequentiallyLargerThanCacheCapacity", true, "9Mi", "false", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 3", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileRandomlyLargerThanCacheCapacity", true, "9Mi", "false", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 4", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesMoreThanCacheLimit", true, "9Mi", "false", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 5", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesWithinCacheLimit", true, "9Mi", "false", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 6", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestSecondSequentialReadIsCacheHit", true, "9Mi", "true", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 7", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileSequentiallyLargerThanCacheCapacity", true, "9Mi", "true", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 8", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadFileRandomlyLargerThanCacheCapacity", true, "9Mi", "true", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 9", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesMoreThanCacheLimit", true, "9Mi", "true", "3600")
+		})
+
+		ginkgo.It("should succeed in TestReadOnlyTest 10", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestReadOnlyTest/TestReadMultipleFilesWithinCacheLimit", true, "9Mi", "true", "3600")
+		})
+
+		ginkgo.It("should succeed in TestSmallCacheTTLTest 1", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestSmallCacheTTLTest/TestReadAfterUpdateAndCacheExpiryIsCacheMiss", false, "9Mi", "false", "10")
+		})
+
+		ginkgo.It("should succeed in TestSmallCacheTTLTest 2", func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationFileCacheTest("TestSmallCacheTTLTest/TestReadForLowMetaDataCacheTTLIsCacheHit", false, "9Mi", "false", "10")
+		})
+	}
+
+	framework.Logf("Generating tests based on test config")
+
+	// The gcsfuse test_config.yaml is introduced from the gcsfuse v3.5+.
+	// If the gcsfuse version is less than v3.5+, we will use the static tests.
+	// We will remove the static tests in the future.
+	if utils.IsReadFromTestConfig(gcsfuseVersionStr) {
+		generateDynamicTests(gcsfuseVersionStr)
+	} else {
+		generateStaticTests()
+	}
 }

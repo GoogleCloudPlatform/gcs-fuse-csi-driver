@@ -25,10 +25,11 @@ import (
 	"strings"
 	"testing"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
 	"local/test/e2e/utils"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"context"
 
@@ -60,6 +61,7 @@ var (
 
 var _ = func() bool {
 	testing.Init()
+
 	if os.Getenv(clientcmd.RecommendedConfigPathEnvVar) == "" {
 		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 		os.Setenv(clientcmd.RecommendedConfigPathEnvVar, kubeconfig)
@@ -74,6 +76,17 @@ var _ = func() bool {
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
+
+	// klog.Info("Fetching GCSFuse version from cluster")
+	// v := specs.GetGCSFuseVersion(context.Background(), c)
+	// klog.Infof("Detected GCSFuse version: %v", v)
+
+	// klog.Info("Loading test config")
+	// Load the integration test configurations before Ginkgo parses the test tree
+	// if err := utils.LoadTestConfig(v); err != nil {
+	// 	klog.Fatalf("Failed to load test_config.yaml for version %v: %v", v, err)
+	// }
+	// klog.Infof("Successfully loaded %d test packages from test_config.yaml", len(utils.LoadedTestPackages))
 
 	kubeConfig, err := clientcmd.LoadFromFile(framework.TestContext.KubeConfig)
 	if err != nil {
@@ -155,6 +168,25 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
 		}
 
+		suites = append(suites, []func() storageframework.TestSuite{
+			testsuites.InitGcsFuseCSIVolumesTestSuite,
+			testsuites.InitGcsFuseCSIFailedMountTestSuite,
+			testsuites.InitGcsFuseCSIWorkloadsTestSuite,
+			testsuites.InitGcsFuseCSIMultiVolumeTestSuite,
+			testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
+			testsuites.InitGcsFuseCSIPerformanceTestSuite,
+			testsuites.InitGcsFuseCSISubPathTestSuite,
+			testsuites.InitGcsFuseCSIAutoTerminationTestSuite,
+			testsuites.InitGcsFuseCSIFileCacheTestSuite,
+			testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
+			testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
+			testsuites.InitGcsFuseCSIIstioTestSuite,
+			testsuites.InitGcsFuseCSIMetricsTestSuite,
+			testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
+			testsuites.InitGcsFuseMountTestSuite,
+			testsuites.InitGcsFuseCSIOIDCTestSuite,
+		}...)
+
 		if *kernelParamsFlag {
 			suites = append(suites, testsuites.InitGcsFuseKernelParamsTestSuite)
 		}
@@ -167,6 +199,13 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
 	})
+
+	// Skip HNS tests suites for ZB since enable ZB will automatically enable HNS
+	// And the test cases in GCSFuseCSITestSuites already includes HNS tests
+	if *zbFlag {
+		ginkgo.Skip("Skipping HNS tests suites for ZB")
+		return
+	}
 
 	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,

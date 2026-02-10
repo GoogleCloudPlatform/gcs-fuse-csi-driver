@@ -66,6 +66,8 @@ const (
 	// So for temporary files, that would be mountPath: /gcsfuse-tmp, via the gke-gcsfuse-tmp volume.
 	inactive_stream_timeout_log_file = "/gcsfuse-tmp/log.json"
 	buffered_reads_log_file          = "/gcsfuse-tmp/log.json"
+
+	gkeTempDir = "/gcsfuse-tmp"
 )
 
 var gcsfuseVersionStr = ""
