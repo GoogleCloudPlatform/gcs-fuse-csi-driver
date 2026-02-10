@@ -270,19 +270,19 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				minFeatureVersionSupported: TokenServerSidecarMinVersion,
 			},
 			{
-				name:                       "Token server - should return true for supported sidecar version with container registory gke.gcr.io",
+				name:                       "Token server - should return true for supported sidecar version with container registry gke.gcr.io",
 				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
 				expectedSupported:          true,
 				minFeatureVersionSupported: TokenServerSidecarMinVersion,
 			},
 			{
-				name:                       "Token server - should return false for unmanaged container registory with substring gke.gcr.io",
+				name:                       "Token server - false for unsupported registry host suffix gke.gcr.io",
 				imageName:                  "random-gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
 				expectedSupported:          false,
 				minFeatureVersionSupported: TokenServerSidecarMinVersion,
 			},
 			{
-				name:                       "Token server - should return false for unmanaged container registory with subdir gke.gcr.io",
+				name:                       "Token server - false for gke.gcr.io in image path",
 				imageName:                  "randomhost.gcr.io/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.18.3-gke.2@sha256:abcd",
 				expectedSupported:          false,
 				minFeatureVersionSupported: TokenServerSidecarMinVersion,
@@ -306,25 +306,90 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				minFeatureVersionSupported: TokenServerSidecarMinVersion,
 			},
 			{
-				name:                       "Storage Profiles Internal - should return false for unsupported sidecar version",
-				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.16.7-gke.1@sha256:abcd",
-				expectedSupported:          false,
-				minFeatureVersionSupported: TokenServerSidecarMinVersion,
-			},
-			{
-				name:                       "Storage Profiles Internal - should return false for unsupported sidecar version",
-				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.2-gke.2@sha256:abcd",
-				expectedSupported:          false,
-				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
-			},
-			{
-				name:                       "Storage Profiles Internal - should return true for supported sidecar version",
-				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.2@sha256:abcd",
+				name:                       "GKE GCSFuse Profiles Internal - should return true for supported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.0@sha256:abcd",
 				expectedSupported:          true,
 				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
 			},
+			{
+				name:                       "GKE GCSFuse Profiles Internal - should return true for supported sidecar version with container registry gke.gcr.io",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "GKE GCSFuse Profiles Internal - false for unsupported registry host suffix gke.gcr.io",
+				imageName:                  "random-gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "GKE GCSFuse Profiles Internal - false for gke.gcr.io in image path",
+				imageName:                  "randomhost.gcr.io/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "GKE GCSFuse Profiles Internal - should return true for supported sidecar version in staging gcr",
+				imageName:                  "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "GKE GCSFuse Profiles Internal - should return false for unsupported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.19.2-gke.1@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "GKE GCSFuse Profiles Internal - should return false for private sidecar",
+				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.19.3-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseProfilesMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - should return true for supported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.2@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - should return true for supported sidecar version with container registry gke.gcr.io",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - false for unsupported registry host suffix gke.gcr.io",
+				imageName:                  "random-gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - false for gke.gcr.io in image path",
+				imageName:                  "randomhost.gcr.io/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - should return true for supported sidecar version in staging gcr",
+				imageName:                  "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - should return false for unsupported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.21.0-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Kernel Params - should return false for private sidecar",
+				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
 		}
-
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
 			d := &GCSDriver{config: &GCSDriverConfig{}}
