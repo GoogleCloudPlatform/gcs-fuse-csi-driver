@@ -274,11 +274,8 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
-	if [ "$(OVERLAY)" = "profiles" ]; then \
-		echo "Applying profiles configmap..."; \
-		cd ./deploy/overlays/profiles; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=create --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION}; \
-		cd ./deploy/overlays/profiles; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=create --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER}; \
-	fi
+	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION};
+	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER};
 # Must be unindented. When Make sees indented text, it attempts to pass it to the shell (/bin/sh) to execute. The shell doesn't know what ifeq is, so it crashes.
 ifeq ($(SELF_MANAGED_K8S), true)
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json

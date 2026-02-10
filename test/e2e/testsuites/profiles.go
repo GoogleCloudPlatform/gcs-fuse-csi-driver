@@ -352,6 +352,11 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 					"Should find %q in recommendation log stdout with overrides", substr)
 			}
 		}
+		isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
+		if isZBEnabled == "true" {
+			// AC is not supported for zb, so we only validate AC for non zb tests.
+			return
+		}
 
 		t.validateAC(l.volumeResourceList, ctx)
 		klog.Infof("Successfully validated AnywhereCache creation for all profiles test")
@@ -537,7 +542,12 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 			// specific zone which has limited quota, we should not make caches in this zone.
 			va[anywhereCacheTTLKey] = "2h"
 			va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
-			va[anywhereCacheZonesKey] = "us-central1-c"
+			isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
+			if isZBEnabled == "false" {
+				// AC is not supported for zb, so we only use AC for non zb tests.
+				va[anywhereCacheZonesKey] = "us-central1-c"
+			}
+
 		}
 	case specs.ProfilesControllerCrashTestPrefix:
 		va[bucketScanResyncPeriodKey] = "5m"

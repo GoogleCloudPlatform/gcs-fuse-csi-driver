@@ -92,11 +92,15 @@ const (
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
 	EnableKernelParamsPrefix                                   = "gcsfuse-csi-enable-kernel-params"
 
+	expectedTrainingProfileFlag   = "--profile=aiml-training"
+	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
+
 	// Read ahead config custom settings to verify testing.
 	ReadAheadCustomReadAheadKb = "15360"
 	ReadAheadCustomMaxRatio    = "100"
 
-	DisableAutoconfig = "disable-autoconfig"
+	DisableAutoconfig           = "disable-autoconfig"
+	PassProfilesToSidecarPrefix = "pass-profiles-to-sidecar"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.7"
@@ -1217,19 +1221,29 @@ func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachi
 		"Should find MachineType flag string %q in stdout", expectedMachineTypeFlagString)
 }
 
-func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
+func (t *TestPod) VerifyProfileFlagsArePassed(namespace string, expectedProfileFlag string, expectedProfile bool) {
 	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
 	framework.ExpectNoError(err,
 		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
 		t.pod.Name, err, stdout, stderr)
 
-	// handles profile=aiml-training case
-	gomega.Expect(stdout).To(gomega.Not(gomega.ContainSubstring("--profile aiml-training")),
-		"Should not find profile flag string in stdout")
+	if expectedProfile {
+		// handles profile=<profile> case
+		gomega.Expect(stdout).To(gomega.ContainSubstring(expectedTrainingProfileFlag),
+			"Should find profile flag string in stdout")
 
-	// handles profile:aiml-training case
-	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*profile:aiml-training.*\]`)),
-		"Should NOT find 'profile:aiml-training' within the gcsfuse config file content map, but it was found.")
+		// handles profile:<profile> case
+		gomega.Expect(stdout).To(gomega.MatchRegexp(expectedTrainingProfileConfig),
+			"Should find 'profile:%s' within the gcsfuse config file content map, but it was not found.", expectedProfileFlag)
+	} else {
+		// handles profile=<profile> case
+		gomega.Expect(stdout).NotTo(gomega.ContainSubstring(expectedTrainingProfileFlag),
+			"Should not find profile flag string in stdout")
+
+		// handles profile:<profile> case
+		gomega.Expect(stdout).NotTo(gomega.MatchRegexp(expectedTrainingProfileConfig),
+			"Should not find 'profile:%s' within the gcsfuse config file content map, but it was found.", expectedProfileFlag)
+	}
 }
 
 func (t *TestPod) VerifyKernelParamsFlagsAreNotPassed(namespace, volumeName string) {
