@@ -156,8 +156,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 
-		stripUnsupportedMountOptions(&mountOptions, gcsfuseVersion)
-
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, readOnly, mountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "1",

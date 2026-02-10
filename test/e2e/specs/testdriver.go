@@ -79,7 +79,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
 	}
 
-	testDriver := &GCSFuseCSITestDriver{
+	return &GCSFuseCSITestDriver{
 		driverInfo: storageframework.DriverInfo{
 			Name:        driver.DefaultName,
 			MaxFileSize: storageframework.FileSizeLarge,
@@ -101,8 +101,6 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		EnableHierarchicalNamespace: enableHierarchicalNamespace || enableZB,
 		EnableZB:                    enableZB, // Enable Zonal Buckets
 	}
-
-	return testDriver
 }
 
 const (

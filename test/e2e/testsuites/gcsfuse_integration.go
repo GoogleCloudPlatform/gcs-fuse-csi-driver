@@ -136,6 +136,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	type local struct {
 		config         *storageframework.PerTestConfig
 		volumeResource *storageframework.VolumeResource
+		gcsfuseVersion *version.Version
+		gcsfuseBranch  string
 	}
 	var l local
 	ctx := context.Background()
@@ -160,8 +162,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
-	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch(gcsfuseVersionStr)
-	kernelParamsSupported := branch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion))
+
+	isKernelParamSupported := func(ctx context.Context, f *framework.Framework) bool {
+		if l.gcsfuseBranch != "" || l.gcsfuseVersion == nil {
+			l.gcsfuseVersion, l.gcsfuseBranch = specs.GCSFuseVersionAndBranch(ctx, f)
+		}
+		return l.gcsfuseBranch == utils.MasterBranchName || l.gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion))
+	}
 
 	// skipTestOrProceedWithBranch works by skipping tests for gcsfuse versions that do not support them.
 	// These tests run against all non-managed driver versions, and for selected gke managed driver versions. This is because when
@@ -237,7 +244,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
 		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
-		stripUnsupportedMountOptions(&mountOptions, gcsfuseVersion)
 
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
 		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
@@ -565,7 +571,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"implicit-dirs=true"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameReadLargeFiles, false, mountOptions...)
@@ -632,7 +638,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		defer cleanup()
 
 		mountOptions := []string{"implicit-dirs=true", "kernel-list-cache-ttl-secs=-1"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameConcurrentOperations, false, mountOptions...)
@@ -761,7 +767,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, mountOptions...)
@@ -771,7 +777,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, mountOptions...)
@@ -781,7 +787,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, mountOptions...)
@@ -791,7 +797,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, mountOptions...)
@@ -801,7 +807,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, mountOptions...)
@@ -811,7 +817,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, mountOptions...)
@@ -821,7 +827,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if kernelParamsSupported {
+		if isKernelParamSupported(ctx, f) {
 			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
 		}
 		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, mountOptions...)
