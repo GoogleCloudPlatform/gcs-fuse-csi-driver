@@ -71,3 +71,8 @@ parameters:
   fuseEphemeralStorageAllocatableFactor: "0.85"
   bucketScanResyncPeriod: "168h"
   bucketScanTimeout: "2m"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gcsfusecsi-profiles-config

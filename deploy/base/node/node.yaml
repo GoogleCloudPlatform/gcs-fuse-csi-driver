@@ -58,6 +58,8 @@ spec:
             - --max-metric-collectors=10
             - --enable-sidecar-bucket-access-check=true
             - --enable-gcsfuse-kernel-params=true
+            - --enable-gcsfuse-profiles=true
+            - --enable-gcsfuse-profiles-internal=true
           ports:
           - containerPort: 9920
             name: metrics
