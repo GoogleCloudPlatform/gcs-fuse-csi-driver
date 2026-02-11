@@ -126,6 +126,7 @@ endif
 		--platform=linux/amd64 .
 
 	docker run \
+		--user $(shell id -u):$(shell id -g) \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
@@ -139,6 +140,7 @@ ifeq (${BUILD_ARM}, true)
 		--build-arg ARCHITECTURE=arm64 \
 		--platform=linux/arm64 .
 	docker run \
+		--user $(shell id -u):$(shell id -g) \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
