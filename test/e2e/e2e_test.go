@@ -25,13 +25,20 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
+	"local/test/e2e/utils"
+
+	"context"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -87,8 +94,30 @@ var _ = func() bool {
 	return true
 }()
 
+func maybeDeleteGCSFuseVersionConfigMap() {
+	config, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
+	if err != nil {
+		klog.Errorf("Failed to build kube config while deleting gcsfuse version configmap: %v", err)
+		return
+	}
+
+	standardClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		klog.Errorf("Failed to create client while deleting gcsfuse version configmap: %v", err)
+		return
+	}
+	err = standardClient.CoreV1().ConfigMaps(utils.DefaultNamespace).Delete(context.Background(), specs.GcsfuseVersionConfigMapName, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		klog.Errorf("Failed to delete gcsfuse version configmap: %v", err)
+	}
+}
+
 func TestE2E(t *testing.T) {
+	// Try to delete the gcsfuse version configmap before running the tests. This is to handle the case where the previous test run is interrupted and the configmap is not deleted, which can cause issues for the current test run.
+	maybeDeleteGCSFuseVersionConfigMap()
 	t.Parallel()
+	// Delete the gcsfuse version configmap after the test finishes.
+	defer maybeDeleteGCSFuseVersionConfigMap()
 	gomega.RegisterFailHandler(framework.Fail)
 	if framework.TestContext.ReportDir != "" {
 		if err := os.MkdirAll(framework.TestContext.ReportDir, 0o755); err != nil {
