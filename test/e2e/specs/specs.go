@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/kubelet/events"
@@ -118,6 +119,9 @@ const (
 	driverDaemonsetLabel   = "k8s-app=gcs-fuse-csi-driver"
 
 	IsOSSEnvVar = "IS_OSS"
+
+	GcsfuseVersionConfigMapName = "gcsfuse-version-config"
+	gcsfuseVersionConfigMapKey  = "gcsfuse-version"
 )
 
 // Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
@@ -1073,6 +1077,15 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 }
 
 func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
+	versionData, err := utils.ReadConfigMap(ctx, f.ClientSet, utils.DefaultNamespace, GcsfuseVersionConfigMapName)
+	if err != nil {
+		klog.Errorf("Failed to read GCS Fuse version configmap %s: %v, will retrieve it manually", GcsfuseVersionConfigMapName, err)
+	}
+
+	if versionData != nil && versionData[gcsfuseVersionConfigMapKey] != "" {
+		return versionData[gcsfuseVersionConfigMapKey]
+	}
+
 	client := f.ClientSet
 	configMaps, err := client.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=gcsfusecsi-image-config",
@@ -1121,7 +1134,14 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 		// Versioning package (https://semver.org/#spec-item-9) treats `-gke.V` as pre release packages which can lead to comparison erros like v3.1.0 > v3.1.0-gke.0 (not considered same)
 		framework.Logf("Received GCS Fuse version %s does not follow to x.y.z-gke.v format which might lead to unprecedented test skips, continuing with %s", l[2])
 	}
-	return l[2]
+	gcsfuseVersion := l[2]
+	err = utils.UpsertConfigMap(ctx, f.ClientSet, utils.DefaultNamespace, GcsfuseVersionConfigMapName, map[string]string{
+		gcsfuseVersionConfigMapKey: gcsfuseVersion,
+	})
+	if err != nil {
+		klog.Errorf("Failed to upsert GCS Fuse version %s to configmap %s: %v, continuing...", gcsfuseVersion, GcsfuseVersionConfigMapName, err)
+	}
+	return gcsfuseVersion
 }
 
 func GCSFuseVersionAndBranch(ctx context.Context, f *framework.Framework) (*version.Version, string) {

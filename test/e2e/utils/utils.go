@@ -18,16 +18,26 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
 
-const MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
+const (
+	DefaultNamespace              = "default"
+	MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
+)
 
 var (
 	MasterBranchName = "master"
@@ -35,6 +45,12 @@ var (
 	// Use release branch for corresponding gcsfuse version. This ensures we
 	// can pick up test fixes without requiring a new gcsfuse release.
 	gcsfuseReleaseBranchFormat = "v%v.%v.%v_release"
+	configMapBackoff           = wait.Backoff{
+		Duration: 200 * time.Millisecond,
+		Factor:   2.0,
+		Jitter:   0.1,
+		Steps:    5,
+	}
 )
 
 func EnsureVariable(v *string, set bool, msgOnError string) {
@@ -75,4 +91,69 @@ func GCSFuseBranch(gcsfuseVersionStr string) (*version.Version, string) {
 	}
 
 	return v, fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor(), v.Patch())
+}
+
+func ReadConfigMap(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace, name string,
+) (map[string]string, error) {
+
+	cm, err := client.CoreV1().
+		ConfigMaps(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return cm.Data, nil
+}
+
+func UpsertConfigMap(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace, name string,
+	data map[string]string,
+) error {
+
+	cmClient := client.CoreV1().ConfigMaps(namespace)
+
+	// First try create
+	_, err := cmClient.Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Data: data,
+	}, metav1.CreateOptions{})
+
+	if err == nil {
+		return nil
+	}
+
+	if !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Exists → update with retry on conflict
+	return wait.ExponentialBackoffWithContext(ctx, configMapBackoff, func(ctx context.Context) (bool, error) {
+		existing, err := cmClient.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		if existing.Data == nil {
+			existing.Data = make(map[string]string)
+		}
+		for k, v := range data {
+			existing.Data[k] = v
+		}
+
+		_, err = cmClient.Update(ctx, existing, metav1.UpdateOptions{})
+		if apierrors.IsConflict(err) {
+			return false, nil
+		}
+
+		return true, err
+	})
 }
