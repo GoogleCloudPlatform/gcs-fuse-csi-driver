@@ -125,7 +125,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
-		"pod_uid":        podUID,
+		"pod_uid":        "", // podUID is emptied to avoid infinite cardinality in the metric labels
 	}, mm.clientset)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
