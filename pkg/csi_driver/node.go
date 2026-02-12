@@ -239,8 +239,14 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Register metrics collector.
 	// It is idempotent to register the same collector in node republish calls.
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-		s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName)
+		gcsFuseVolumeCount := s.countGcsFuseVolumes(pod)
+
+		if gcsFuseVolumeCount > 10 {
+			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of 10.", pod.Namespace, pod.Name, gcsFuseVolumeCount)
+		} else {
+			klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName)
+		}
 	}
 
 	// Check if the sidecar container is still required,
@@ -538,4 +544,14 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 		}
 	}
 	return ""
+}
+
+func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
+	gcsFuseVolumeCount := 0
+	for _, v := range pod.Spec.Volumes {
+		if v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
+			gcsFuseVolumeCount++
+		}
+	}
+	return gcsFuseVolumeCount
 }
