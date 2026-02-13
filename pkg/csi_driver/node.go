@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	UmountTimeout = 5 * time.Microsecond
+	UmountTimeout = time.Second * 5
 	// GCSFuseKernelParamsFilePollInterval is the interval at which the GCSFuse kernel
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
