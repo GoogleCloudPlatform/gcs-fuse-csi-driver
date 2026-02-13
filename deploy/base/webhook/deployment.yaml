@@ -60,6 +60,7 @@ spec:
             - --port=22030
             - --health-probe-bind-address=:22031
             - --should-inject-sa-vol=true
+            - --enable-gcsfuse-profiles=true
           env:
             - name: SIDECAR_IMAGE_PULL_POLICY
               value: "IfNotPresent"
