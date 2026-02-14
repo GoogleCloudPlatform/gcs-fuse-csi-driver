@@ -180,7 +180,8 @@ func joinMountOptions(existingOptions []string, newOptions []string) []string {
 	}
 
 	ignorableOptions := map[string]bool{
-		LocalSocketAddressArg: true,
+		LocalSocketAddressArg:                    true,
+		util.EnableSidecarBucketAccessCheckConst: true, // do not set the flag again if already set through pod mount options
 	}
 
 	ignoreOptionAlreadySeen := sets.NewString()
