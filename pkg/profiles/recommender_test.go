@@ -1599,7 +1599,7 @@ func TestRecommendMetadataCacheSize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotRecommended, gotRemainingBudget := recommendMetadataCacheSize(config, tt.required, tt.memoryBudget, "test")
+			gotRecommended, gotRemainingBudget := recommendMetadataCacheSize(config, tt.required, tt.memoryBudget, nil, "test")
 			if gotRecommended != tt.wantRecommended || gotRemainingBudget != tt.wantRemainingBudget {
 				t.Errorf("recommendMetadataCacheSize(%d, %d) = (%d, %d), want (%d, %d) - Should match recommended and remaining budgets", tt.required, tt.memoryBudget, gotRecommended, gotRemainingBudget, tt.wantRecommended, tt.wantRemainingBudget)
 			}
@@ -1763,7 +1763,7 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSize, gotMedium, err := recommendFileCacheSizeAndMedium(tt.cacheRequirements, tt.config, tt.memoryBudget, tt.ephemeralStorageBudget)
+			gotSize, gotMedium, err := recommendFileCacheSizeAndMedium(tt.cacheRequirements.fileCacheBytes, nil, tt.config, tt.memoryBudget, tt.ephemeralStorageBudget)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("recommendFileCacheSizeAndMedium() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2023,7 +2023,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := recommendCacheConfigs(tt.config)
+			got, err := recommendCacheConfigs([]string{}, tt.config)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("recommendCacheConfigs() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2054,6 +2054,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
 	}
 	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+	podWithCustomCache := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}}
 	baseNode := &nodeDetails{nodeType: "general_purpose"}
 
 	tests := []struct {
@@ -2200,11 +2201,11 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 		},
 		{
-			name: "Pre-existing mount options for file cache in config - Should not recommend cache configs",
+			name: "Override - Stat cache fits in RAM - Should override and recommend RAM + type cache",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
-					mountOptions:                          []string{"implicit-dirs", "file-cache:max-size-mb:50", "file-cache-medium=fake"},
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:1"},
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
 					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
@@ -2220,17 +2221,153 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				podDetails: basePod,
 			},
 			wantOptions: []string{
-				"implicit-dirs",
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:1",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Stat cache doesn't fit in RAM - Should override and cap type cache + disable file cache RAM",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:1000000000"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:0",
+				"metadata-cache:stat-cache-max-size-mb:1000000000",
+				"metadata-cache:type-cache-max-size-mb:0",
+				// "file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Stat cache infinite, estimated size fits in RAM - Should override and recommend RAM file cache + type cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:-1"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:-1",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Stat cache disabled - Should override and recommend RAM file cache + type cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:0"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:0",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Type cache disabled - Should override and recommend RAM file cache + stat cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:0"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:0",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - File cache fits in RAM - Should override and recommend RAM + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:50"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
 				"file-cache:max-size-mb:50",
-				"file-cache-medium=fake",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
 			},
 		},
 		{
-			name: "Pre-existing mount options for metadata cache in user mount options - Should not recommend cache configs",
+			name: "Override - File cache infinite, estimated size fits in RAM - Should override and recommend RAM + metadata cache sizes",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
-					mountOptions:                          []string{"implicit-dir"},
+					mountOptions:                          []string{"file-cache:max-size-mb:-1"},
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
 					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
@@ -2245,14 +2382,182 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				},
 				podDetails: basePod,
 			},
-			userMountOptions: []string{"stat-cache-max-size-mb=2"},
 			wantOptions: []string{
-				"implicit-dir",
-				"stat-cache-max-size-mb=2",
+				"file-cache:max-size-mb:-1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
 			},
 		},
 		{
-			name: "Pre-existing cache in customer's pod spec - Should not recommend cache configs",
+			name: "Override - File cache disabled - Should override and disable file cache + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:0"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:0",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				// "file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - File cache doesn't fit in RAM, fits in LSSD - Should override and recommend LSSD + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:100"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType, // Not enough RAM for file cache
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=lssd",
+			},
+		},
+		{
+			name: "Override - File cache infinite, estimate size doesn't fit in RAM, fits in LSSD - Should override and recommend LSSD + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:-1"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType, // Not enough RAM for file cache
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:-1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=lssd",
+			},
+		},
+		{
+			name: "Override - File cache doesn't fit in RAM nor LSSD - Should override and recommend largest medium (LSSD) + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:1000000"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType, // Not enough RAM for file cache
+						ephemeralStorageBytes: fileCacheSize,     // Not enough LSSD for file cache
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:1000000",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=lssd",
+			},
+		},
+		{
+			name: "Override - File cache infinite, estimated size doesn't fit in RAM nor LSSD - Should override and recommend largest medium (LSSD) + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:-1"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType, // Not enough RAM for file cache
+						ephemeralStorageBytes: fileCacheSize / 2, // Not enough LSSD for file cache
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:-1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=lssd",
+			},
+		},
+		{
+			name: "Override - File cache doesn't fit in RAM nor LSSD - Should override and recommend largest medium (RAM) + metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:1000000"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           fileCacheSize,     // Not enough LSSD for file cache
+						ephemeralStorageBytes: reqStat + reqType, // Not enough RAM for file cache
+					},
+					hasLocalSSDEphemeralStorageAnnotation: true,
+					name:                                  "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:1000000",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Pre-existing cache in customer's pod spec - Should recommend infinite cache size (default)",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
@@ -2269,11 +2574,68 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 					},
 					name: "test-gpu-node",
 				},
-				podDetails: &podDetails{labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}},
+				podDetails: podWithCustomCache,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:-1",
+				"implicit-dir",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+			},
+		},
+		{
+			name: "Override - Pre-existing cache in customer's pod spec with file cache size override - Should use override and recommends metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dir", "file-cache:max-size-mb:42"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: podWithCustomCache,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:42",
+				"implicit-dir",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+			},
+		},
+		{
+			name: "Override - Pre-existing cache in customer's pod spec and file cache size override - Should override file cache max size and not recommend medium",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dir", "file-cache:max-size-mb:123"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: podWithCustomCache,
 			},
 			wantOptions: []string{
 				"implicit-dir",
-				// No cache recommendations.
+				"file-cache:max-size-mb:123",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				// No medium
 			},
 		},
 		{
@@ -2365,7 +2727,7 @@ func TestGetMountOptionKey(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getMountOptionKey(tc.opt)
+			got, _ := getMountOptionKey(tc.opt)
 			if got != tc.want {
 				t.Errorf("getMountOptionKey(%q) = %q, want %q", tc.opt, got, tc.want)
 			}
