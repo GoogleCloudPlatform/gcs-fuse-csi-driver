@@ -1599,7 +1599,7 @@ func TestRecommendMetadataCacheSize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotRecommended, gotRemainingBudget := recommendMetadataCacheSize(config, tt.required, tt.memoryBudget, "test")
+			gotRecommended, gotRemainingBudget := recommendMetadataCacheSize(config, tt.required, tt.memoryBudget, nil, "test")
 			if gotRecommended != tt.wantRecommended || gotRemainingBudget != tt.wantRemainingBudget {
 				t.Errorf("recommendMetadataCacheSize(%d, %d) = (%d, %d), want (%d, %d) - Should match recommended and remaining budgets", tt.required, tt.memoryBudget, gotRecommended, gotRemainingBudget, tt.wantRecommended, tt.wantRemainingBudget)
 			}
@@ -1763,7 +1763,7 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSize, gotMedium, err := recommendFileCacheSizeAndMedium(tt.cacheRequirements, tt.config, tt.memoryBudget, tt.ephemeralStorageBudget)
+			gotSize, gotMedium, err := recommendFileCacheSizeAndMedium(tt.cacheRequirements.fileCacheBytes, nil, tt.config, tt.memoryBudget, tt.ephemeralStorageBudget)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("recommendFileCacheSizeAndMedium() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2023,7 +2023,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := recommendCacheConfigs(tt.config)
+			got, err := recommendCacheConfigs([]string{}, tt.config)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("recommendCacheConfigs() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2054,6 +2054,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
 	}
 	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
+	podWithCustomCache := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}}
 	baseNode := &nodeDetails{nodeType: "general_purpose"}
 
 	tests := []struct {
@@ -2200,11 +2201,11 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 		},
 		{
-			name: "Pre-existing mount options for file cache in config - Should not recommend cache configs",
+			name: "Override - Stat cache fits in RAM - Should override and recommend RAM + type cache",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
-					mountOptions:                          []string{"implicit-dirs", "file-cache:max-size-mb:50", "file-cache-medium=fake"},
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:1"},
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
 					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
@@ -2220,13 +2221,231 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				podDetails: basePod,
 			},
 			wantOptions: []string{
-				"implicit-dirs",
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:1",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Type cache fits in RAM - Should override and recommend RAM + stat cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:1"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						// +1 since the caches exactly fit in RAM and the algorithm checks for "<",
+						// so this is just to make the unit test pass and doesn't actually matter.
+						memoryBytes:           reqStat + 1*1024*1024 + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Stat cache doesn't fit in RAM - Should override and cap type cache + disable file cache RAM",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:1000000000"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:0",
+				"metadata-cache:stat-cache-max-size-mb:1000000000",
+				"metadata-cache:type-cache-max-size-mb:0",
+				// "file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Type cache doesn't fit in RAM - Should override and cap stat cache + disable file cache RAM",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:1000000000"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:0",
+				"metadata-cache:type-cache-max-size-mb:1000000000",
+				"metadata-cache:stat-cache-max-size-mb:0",
+				// "file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Stat cache infinite, estimated size fits in RAM - Should override and recommend RAM file cache + type cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:-1"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:-1",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Type cache infinite, estimated size fits in RAM - Should override and recommend RAM file cache + stat cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:-1"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:type-cache-max-size-mb:-1",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Stat cache disabled - Should override and recommend RAM file cache + type cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:stat-cache-max-size-mb:0"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:0",
+				"metadata-cache:type-cache-max-size-mb:1",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - Type cache disabled - Should override and recommend RAM file cache + stat cache",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:0"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:100",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:0",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Override - File cache max size set - Should override and disable medium recommendation",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"file-cache:max-size-mb:50"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
 				"file-cache:max-size-mb:50",
-				"file-cache-medium=fake",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
-			name: "Pre-existing mount options for metadata cache in user mount options - Should not recommend cache configs",
+			name: "Override - Pre-existing cache in customer's pod spec - Should recommend infinite cache size (default)",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
@@ -2243,20 +2462,21 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 					},
 					name: "test-gpu-node",
 				},
-				podDetails: basePod,
+				podDetails: podWithCustomCache,
 			},
-			userMountOptions: []string{"stat-cache-max-size-mb=2"},
 			wantOptions: []string{
+				"file-cache:max-size-mb:-1",
 				"implicit-dir",
-				"stat-cache-max-size-mb=2",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
-			name: "Pre-existing cache in customer's pod spec - Should not recommend cache configs",
+			name: "Override - Pre-existing cache in customer's pod spec and file cache size override - Should override file cache size and not recommend medium",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
-					mountOptions:                          []string{"implicit-dir"},
+					mountOptions:                          []string{"implicit-dir", "file-cache:max-size-mb:1000000"},
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
 					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
@@ -2269,11 +2489,68 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 					},
 					name: "test-gpu-node",
 				},
-				podDetails: &podDetails{labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}},
+				podDetails: podWithCustomCache,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:1000000",
+				"implicit-dir",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+			},
+		},
+		{
+			name: "Override - Pre-existing cache in customer's pod spec with file cache size override - Should use override and recommends metadata cache sizes",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dir", "file-cache:max-size-mb:42"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: podWithCustomCache,
+			},
+			wantOptions: []string{
+				"file-cache:max-size-mb:42",
+				"implicit-dir",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+			},
+		},
+		{
+			name: "Override - Pre-existing cache in customer's pod spec and file cache size override - Should override file cache max size and not recommend medium",
+			config: &ProfileConfig{
+				pvDetails: basePV,
+				scDetails: &scDetails{
+					mountOptions:                          []string{"implicit-dir", "file-cache:max-size-mb:123"},
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           reqStat + reqType + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: podWithCustomCache,
 			},
 			wantOptions: []string{
 				"implicit-dir",
-				// No cache recommendations.
+				"file-cache:max-size-mb:123",
+				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:type-cache-max-size-mb:1",
+				// No medium
 			},
 		},
 		{
@@ -2365,7 +2642,7 @@ func TestGetMountOptionKey(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getMountOptionKey(tc.opt)
+			got, _ := getMountOptionKey(tc.opt)
 			if got != tc.want {
 				t.Errorf("getMountOptionKey(%q) = %q, want %q", tc.opt, got, tc.want)
 			}
@@ -2375,116 +2652,191 @@ func TestGetMountOptionKey(t *testing.T) {
 
 func TestMergeMountOptionsOnMissingKeys(t *testing.T) {
 	tests := []struct {
-		name     string
-		dstOpts  []string
-		srcOpts  []string
-		wantOpts []string
-		wantErr  bool
+		name       string
+		userOpts   []string
+		systemOpts []string
+		wantOpts   []string
+		wantErr    bool
 	}{
 		{
-			name:     "empty src - should return dstOpts",
-			dstOpts:  []string{"a=b"},
-			srcOpts:  []string{},
-			wantOpts: []string{"a=b"},
+			name:       "empty src - should return userOpts",
+			userOpts:   []string{"a=b"},
+			systemOpts: []string{},
+			wantOpts:   []string{"a=b"},
 		},
 		{
-			name:     "empty dst - should return srcOpts",
-			dstOpts:  []string{},
-			srcOpts:  []string{"a=b"},
-			wantOpts: []string{"a=b"},
+			name:       "empty dst - should return systemOpts",
+			userOpts:   []string{},
+			systemOpts: []string{"a=b"},
+			wantOpts:   []string{"a=b"},
 		},
 		{
-			name:     "new key added - should append srcOpt",
-			dstOpts:  []string{"key1=val1"},
-			srcOpts:  []string{"key2=val2"},
-			wantOpts: []string{"key1=val1", "key2=val2"},
+			name:       "new key added - should append srcOpt",
+			userOpts:   []string{"key1=val1"},
+			systemOpts: []string{"key2=val2"},
+			wantOpts:   []string{"key1=val1", "key2=val2"},
 		},
 		{
-			name:     "existing key not added - should skip srcOpt",
-			dstOpts:  []string{"mykey=val1"},
-			srcOpts:  []string{"mykey=val2"},
-			wantOpts: []string{"mykey=val1"},
+			name:       "existing key not added - should skip srcOpt",
+			userOpts:   []string{"mykey=val1"},
+			systemOpts: []string{"mykey=val2"},
+			wantOpts:   []string{"mykey=val1"},
 		},
 		{
-			name:     "case insensitive key - should treat keys as case insensitive",
-			dstOpts:  []string{"MyKey=val1"},
-			srcOpts:  []string{"mykey=val2"},
-			wantOpts: []string{"MyKey=val1"},
+			name:       "case insensitive key - should treat keys as case insensitive",
+			userOpts:   []string{"MyKey=val1"},
+			systemOpts: []string{"mykey=val2"},
+			wantOpts:   []string{"MyKey=val1"},
 		},
 		{
-			name:     "colon key in dst, different key in src - should add srcOpt",
-			dstOpts:  []string{"a:b:c"},
-			srcOpts:  []string{"b=d"},
-			wantOpts: []string{"a:b:c", "b=d"},
+			name:       "colon key in dst, different key in src - should add srcOpt",
+			userOpts:   []string{"a:b:c"},
+			systemOpts: []string{"b=d"},
+			wantOpts:   []string{"a:b:c", "b=d"},
 		},
 		{
-			name:     "invalid src opts - should return InvalidArgument error",
-			dstOpts:  []string{"valid=a"},
-			srcOpts:  []string{"invalid=b=c"}, // Invalid
-			wantOpts: nil,
-			wantErr:  true,
+			name:       "invalid src opts - should return InvalidArgument error",
+			userOpts:   []string{"valid=a"},
+			systemOpts: []string{"invalid=b=c"}, // Invalid
+			wantOpts:   nil,
+			wantErr:    true,
 		},
 		{
-			name:     "another invalid src opts - should return InvalidArgument error",
-			dstOpts:  []string{"valid=a"},
-			srcOpts:  []string{"valid2=b", ":bad"}, // Invalid ":bad"
-			wantOpts: nil,
-			wantErr:  true,
+			name:       "another invalid src opts - should return InvalidArgument error",
+			userOpts:   []string{"valid=a"},
+			systemOpts: []string{"valid2=b", ":bad"}, // Invalid ":bad"
+			wantOpts:   nil,
+			wantErr:    true,
 		},
 		{
-			name:     "invalid dst opts - should return InvalidArgument error",
-			dstOpts:  []string{"valid=a", "bad=opt=x"}, // Invalid "bad:opt=x"
-			srcOpts:  []string{"valid2=b"},
-			wantOpts: nil,
-			wantErr:  true,
+			name:       "invalid dst opts - should return InvalidArgument error",
+			userOpts:   []string{"valid=a", "bad=opt=x"}, // Invalid "bad:opt=x"
+			systemOpts: []string{"valid2=b"},
+			wantOpts:   nil,
+			wantErr:    true,
 		},
 		{
-			name:    "complex merge with only valid - should merge correctly",
-			dstOpts: []string{"a=1", "b:c"},
-			srcOpts: []string{"a=2", "b:d", "g=h"},
-			// Valid dstOpts keys (lower): {"a": true, "b": true}
+			name:       "complex merge with only valid - should merge correctly",
+			userOpts:   []string{"a=1", "b:c"},
+			systemOpts: []string{"a=2", "b:d", "g=h"},
+			// Valid userOpts keys (lower): {"a": true, "b": true}
 			// "a=2": Key "a" exists. Skip.
 			// "b:d": Key "b" exists. Skip.
 			// "g=h": Key "g" is new. Add "g=h".
 			wantOpts: []string{"a=1", "b:c", "g=h"},
 		},
 		{
-			name:     "complex merge with invalid in dst - should error",
-			dstOpts:  []string{"a=1", "b:c", "d=e=f"}, // "d=e=f" is invalid
-			srcOpts:  []string{"g=h"},
-			wantOpts: nil,
-			wantErr:  true,
+			name:       "complex merge with invalid in dst - should error",
+			userOpts:   []string{"a=1", "b:c", "d=e=f"}, // "d=e=f" is invalid
+			systemOpts: []string{"g=h"},
+			wantOpts:   nil,
+			wantErr:    true,
 		},
 		{
-			name:     "complex merge with invalid in src - should error",
-			dstOpts:  []string{"a=1", "b:c"},
-			srcOpts:  []string{"a=2", "b:d", "g=h", "b=c=x"}, // "b=c=x" is invalid
-			wantOpts: nil,
-			wantErr:  true,
+			name:       "complex merge with invalid in src - should error",
+			userOpts:   []string{"a=1", "b:c"},
+			systemOpts: []string{"a=2", "b:d", "g=h", "b=c=x"}, // "b=c=x" is invalid
+			wantOpts:   nil,
+			wantErr:    true,
 		},
 		{
-			name:     "key overlap equals vs colon - should not add srcOpt",
-			dstOpts:  []string{"a=b"}, // Key: "a", Normalized: "a"
-			srcOpts:  []string{"a:c"}, // Key: "a", Normalized: "a"
-			wantOpts: []string{"a=b"},
+			name:       "key overlap equals vs colon - should not add srcOpt",
+			userOpts:   []string{"a=b"}, // Key: "a", Normalized: "a"
+			systemOpts: []string{"a:c"}, // Key: "a", Normalized: "a"
+			wantOpts:   []string{"a=b"},
 		},
 		{
-			name:     "colon key contains colon, no overlap with hyphen key - should add srcOpt",
-			dstOpts:  []string{"key:key-sub:val1"},
-			srcOpts:  []string{"key-sub=val2"},
-			wantOpts: []string{"key:key-sub:val1", "key-sub=val2"},
+			name:       "colon key contains colon, no overlap with hyphen key - should add srcOpt",
+			userOpts:   []string{"key:key-sub:val1"},
+			systemOpts: []string{"key-sub=val2"},
+			wantOpts:   []string{"key:key-sub:val1", "key-sub=val2"},
+		},
+		// Special case: File cache max size mb
+		{
+			name:       "file cache max size mb CLI format in userOpts should override config-file format in systemOpts",
+			userOpts:   []string{"file-cache-max-size-mb=42"},
+			systemOpts: []string{"file-cache:max-size-mb:31"},
+			wantOpts:   []string{"file-cache-max-size-mb=42"},
+		},
+		{
+			name:       "file cache max size mb config-file format in userOpts should override CLI format in systemOpts",
+			userOpts:   []string{"file-cache:max-size-mb:42"},
+			systemOpts: []string{"file-cache-max-size-mb=31"},
+			wantOpts:   []string{"file-cache:max-size-mb:42"},
+		},
+		{
+			name:       "file cache max size mb CLI format in userOpts should override CLI format in systemOpts",
+			userOpts:   []string{"file-cache-max-size-mb=42"},
+			systemOpts: []string{"file-cache-max-size-mb=31"},
+			wantOpts:   []string{"file-cache-max-size-mb=42"},
+		},
+		{
+			name:       "file cache max size mb config-file format in userOpts should override config-file format in systemOpts",
+			userOpts:   []string{"file-cache:max-size-mb:42"},
+			systemOpts: []string{"file-cache:max-size-mb:31"},
+			wantOpts:   []string{"file-cache:max-size-mb:42"},
+		},
+		// Special case: Metadata stat cache max size mb
+		{
+			name:       "metadata stat cache max size mb CLI format in userOpts should override config-file format in systemOpts",
+			userOpts:   []string{"stat-cache-max-size-mb=42"},
+			systemOpts: []string{"metadata-cache:stat-cache-max-size-mb:31"},
+			wantOpts:   []string{"stat-cache-max-size-mb=42"},
+		},
+		{
+			name:       "metadata stat cache max size mb config-file format in userOpts should override CLI format in systemOpts",
+			userOpts:   []string{"metadata-cache:stat-cache-max-size-mb:42"},
+			systemOpts: []string{"stat-cache-max-size-mb=31"},
+			wantOpts:   []string{"metadata-cache:stat-cache-max-size-mb:42"},
+		},
+		{
+			name:       "metadata stat cache max size mb CLI format in userOpts should override CLI format in systemOpts",
+			userOpts:   []string{"stat-cache-max-size-mb=42"},
+			systemOpts: []string{"stat-cache-max-size-mb=31"},
+			wantOpts:   []string{"stat-cache-max-size-mb=42"},
+		},
+		{
+			name:       "metadata stat cache max size mb config-file format in userOpts should override config-file format in systemOpts",
+			userOpts:   []string{"metadata-cache:stat-cache-max-size-mb:42"},
+			systemOpts: []string{"metadata-cache:stat-cache-max-size-mb:31"},
+			wantOpts:   []string{"metadata-cache:stat-cache-max-size-mb:42"},
+		},
+		// Special case: Metadata type cache max size mb
+		{
+			name:       "metadata type cache max size mb CLI format in userOpts should override config-file format in systemOpts",
+			userOpts:   []string{"type-cache-max-size-mb=42"},
+			systemOpts: []string{"metadata-cache:type-cache-max-size-mb:31"},
+			wantOpts:   []string{"type-cache-max-size-mb=42"},
+		},
+		{
+			name:       "metadata type cache max size mb config-file format in userOpts should override CLI format in systemOpts",
+			userOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
+			systemOpts: []string{"type-cache-max-size-mb=31"},
+			wantOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
+		},
+		{
+			name:       "metadata type cache max size mb CLI format in userOpts should override CLI format in systemOpts",
+			userOpts:   []string{"type-cache-max-size-mb=42"},
+			systemOpts: []string{"type-cache-max-size-mb=31"},
+			wantOpts:   []string{"type-cache-max-size-mb=42"},
+		},
+		{
+			name:       "metadata type cache max size mb config-file format in userOpts should override config-file format in systemOpts",
+			userOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
+			systemOpts: []string{"metadata-cache:type-cache-max-size-mb:31"},
+			wantOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotOpts, gotErr := mergeMountOptionsOnMissingKeys(tc.dstOpts, tc.srcOpts)
+			gotOpts, gotErr := mergeMountOptionsOnMissingKeys(tc.userOpts, tc.systemOpts)
 
 			if gotErr == nil && tc.wantErr {
-				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got error %v, want error %v", tc.dstOpts, tc.srcOpts, gotErr, tc.wantErr)
+				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got error %v, want error %v", tc.userOpts, tc.systemOpts, gotErr, tc.wantErr)
 			}
 			if !reflect.DeepEqual(gotOpts, tc.wantOpts) {
-				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got options \n%v, want \n%v", tc.dstOpts, tc.srcOpts, gotOpts, tc.wantOpts)
+				t.Errorf("mergeMountOptionsIfKeyUnset(%v, %v) got options \n%v, want \n%v", tc.userOpts, tc.systemOpts, gotOpts, tc.wantOpts)
 			}
 		})
 	}

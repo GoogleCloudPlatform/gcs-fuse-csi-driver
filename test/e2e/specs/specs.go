@@ -1132,7 +1132,7 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 	if len(strings.Split(l[2], "-")) < 2 {
 		// All the version comparison operations in driver expect the GCS Fuse version in X.Y.Z-gke.V format.
 		// Versioning package (https://semver.org/#spec-item-9) treats `-gke.V` as pre release packages which can lead to comparison erros like v3.1.0 > v3.1.0-gke.0 (not considered same)
-		framework.Logf("Received GCS Fuse version %s does not follow to x.y.z-gke.v format which might lead to unprecedented test skips, continuing with %s", l[2])
+		framework.Logf("Received GCS Fuse version %s does not follow to x.y.z-gke.v format which might lead to unprecedented test skips, continuing with %s", l[2], l[2])
 	}
 	gcsfuseVersion := l[2]
 	err = utils.UpsertConfigMap(ctx, f.ClientSet, utils.DefaultNamespace, GcsfuseVersionConfigMapName, map[string]string{
