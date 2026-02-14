@@ -61,7 +61,7 @@ spec:
             kaggle competitions download -c imagenet-object-localization-challenge -p /local_disk;
             mkdir /local_disk/imagenet -p;
             unzip /local_disk/imagenet-object-localization-challenge.zip -x "ILSVRC/Annotations/*" "ILSVRC/ImageSets/*" "ILSVRC/*.csv" -d /local_disk/imagenet;
-            gsutil -m cp -R /local_disk/imagenet gs://${BUCKET_NAME}/imagenet;
+            gcloud storage cp --recursive /local_disk/imagenet gs://${BUCKET_NAME}/imagenet;
         resources:
           limits:
             cpu: "1"
