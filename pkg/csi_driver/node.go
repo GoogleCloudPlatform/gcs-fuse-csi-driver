@@ -45,6 +45,7 @@ const (
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
+	maxGcsFuseVolumesForMetrics         = 10
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -241,7 +242,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
 		gcsFuseVolumeCount := s.countGcsFuseVolumes(pod)
 
-		if gcsFuseVolumeCount > 10 {
+		if gcsFuseVolumeCount > maxGcsFuseVolumesForMetrics {
 			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of 10.", pod.Namespace, pod.Name, gcsFuseVolumeCount)
 		} else {
 			klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
@@ -542,6 +543,11 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 
 func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
 	gcsFuseVolumeCount := 0
+
+	if pod.Spec.Volumes == nil {
+		return gcsFuseVolumeCount
+	}
+
 	for _, v := range pod.Spec.Volumes {
 		if v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
 			gcsFuseVolumeCount++
