@@ -158,6 +158,12 @@ func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 	c.fakeSC.Labels = scConfig.Labels
 }
 
+func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
+	if c.fakePod != nil {
+		c.fakePod.Spec.Volumes = append(c.fakePod.Spec.Volumes, volumes...)
+	}
+}
+
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	c.fakePod.ObjectMeta.Name = name
 	c.fakePod.ObjectMeta.Namespace = namespace
