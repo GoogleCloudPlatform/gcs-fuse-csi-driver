@@ -22,16 +22,20 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	mount "k8s.io/mount-utils"
 )
 
@@ -651,6 +655,256 @@ func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 				Opts:   tc.expectedOptions,
 			},
 				tc.unexpectedOptions)
+		})
+	}
+}
+
+func TestCountGcsFuseVolumes(t *testing.T) {
+	testEnv := initTestNodeServer(t)
+	ns, ok := testEnv.ns.(*nodeServer)
+	if !ok {
+		t.Fatalf("Failed to cast NodeServer to *nodeServer")
+	}
+
+	testCases := []struct {
+		name          string
+		pod           *corev1.Pod
+		expectedCount int
+	}{
+		{
+			name: "no volumes",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{},
+				},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "one gcsfuse volume",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: "gcs-fuse-csi-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: ns.driver.config.Name,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "multiple gcsfuse volumes",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: "gcs-fuse-csi-volume-1",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: ns.driver.config.Name,
+								},
+							},
+						},
+						{
+							Name: "gcs-fuse-csi-volume-2",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: ns.driver.config.Name,
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 2,
+		},
+		{
+			name: "mixed volumes",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: "gcs-fuse-csi-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: ns.driver.config.Name,
+								},
+							},
+						},
+						{
+							Name: "other-volume",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "other csi driver",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: "other-csi-volume",
+							VolumeSource: corev1.VolumeSource{
+								CSI: &corev1.CSIVolumeSource{
+									Driver: "other-csi-driver",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "volume with no csi source",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: "other-volume",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			count := ns.countGcsFuseVolumes(tc.pod)
+			if count != tc.expectedCount {
+				t.Errorf("got %d, want %d", count, tc.expectedCount)
+			}
+		})
+	}
+}
+
+func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
+	t.Parallel()
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+
+	driverName := "gcs-fuse-csi.storage.gke.io"
+	baseReq := &csi.NodePublishVolumeRequest{
+		VolumeId:         testVolumeID,
+		TargetPath:       testTargetPath,
+		VolumeCapability: testVolumeCapability,
+		VolumeContext: map[string]string{
+			VolumeContextKeyPodName:      "test-pod",
+			VolumeContextKeyPodNamespace: "test-ns",
+			"bucketName":                 testVolumeID,
+		},
+	}
+
+	testCases := []struct {
+		name                      string
+		gcsFuseVolumeCount        int
+		disableMetricsCollection  bool
+		metricsManagerIsNil       bool
+		expectCollectorRegistered bool
+	}{
+		{
+			name:                      "should register collector for 1 volume",
+			gcsFuseVolumeCount:        1,
+			expectCollectorRegistered: true,
+		},
+		{
+			name:                      "should register collector for 10 volumes",
+			gcsFuseVolumeCount:        10,
+			expectCollectorRegistered: true,
+		},
+		{
+			name:                      "should not register collector for 11 volumes",
+			gcsFuseVolumeCount:        11,
+			expectCollectorRegistered: false,
+		},
+		{
+			name:                      "should not register collector when disableMetrics is true",
+			gcsFuseVolumeCount:        1,
+			disableMetricsCollection:  true,
+			expectCollectorRegistered: false,
+		},
+		{
+			name:                      "should not register collector when MetricsManager is nil",
+			gcsFuseVolumeCount:        1,
+			metricsManagerIsNil:       true,
+			expectCollectorRegistered: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Setup mock clientset
+			fakeClientSet := clientset.NewFakeClientset()
+			volumes := []corev1.Volume{}
+			for i := 0; i < tc.gcsFuseVolumeCount; i++ {
+				volumes = append(volumes, corev1.Volume{
+					Name: "gcs-fuse-csi-volume-" + strconv.Itoa(i),
+					VolumeSource: corev1.VolumeSource{
+						CSI: &corev1.CSIVolumeSource{
+							Driver: driverName,
+						},
+					},
+				})
+			}
+			fakeClientSet.AddPodVolumes(volumes)
+			// Setup node server
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.Name = driverName
+
+			// Setup metrics manager
+			mm := metrics.NewFakeMetricsManager()
+			if tc.metricsManagerIsNil {
+				ns.driver.config.MetricsManager = nil
+			} else {
+				ns.driver.config.MetricsManager = mm
+			}
+
+			// Update request
+			req := *baseReq
+			if tc.disableMetricsCollection {
+				req.VolumeContext["disableMetrics"] = "true"
+			}
+
+			// Call NodePublishVolume
+			_, err := ns.NodePublishVolume(context.Background(), &req)
+			if err != nil {
+				// The fake clientset does not have the pod annotations,
+				// which will cause the sidecar check to fail.
+				// See if we can find a workaround.
+				if !strings.Contains(err.Error(), "failed to find the sidecar container in Pod spec") {
+					t.Fatalf("NodePublishVolume() failed: %v", err)
+				}
+			}
+
+			// Assertions
+			collectors := mm.GetCollectors()
+			_, collectorRegistered := collectors[testTargetPath]
+			if tc.expectCollectorRegistered && !collectorRegistered {
+				t.Error("expected metrics collector to be registered, but it was not")
+			}
+			if !tc.expectCollectorRegistered && collectorRegistered {
+				t.Error("expected metrics collector not to be registered, but it was")
+			}
 		})
 	}
 }
