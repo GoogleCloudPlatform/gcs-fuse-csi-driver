@@ -56,7 +56,6 @@ func (f *FakeMetricsManager) GetCollectors() map[string]string {
 	return f.collectors
 }
 
-
 type FakePrometheusMetricManager struct {
 	syncPVCounter  map[string]int
 	syncPodCounter map[string]int
