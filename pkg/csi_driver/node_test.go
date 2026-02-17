@@ -35,6 +35,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	mount "k8s.io/mount-utils"
 )
@@ -880,13 +881,13 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			}
 
 			// Update request
-			req := *baseReq
+			req := proto.Clone(baseReq).(*csi.NodePublishVolumeRequest)
 			if tc.disableMetricsCollection {
 				req.VolumeContext["disableMetrics"] = "true"
 			}
 
 			// Call NodePublishVolume
-			_, err := ns.NodePublishVolume(context.Background(), &req)
+			_, err := ns.NodePublishVolume(context.Background(), req)
 			if err != nil {
 				// The fake clientset does not have the pod annotations,
 				// which will cause the sidecar check to fail.
