@@ -101,3 +101,41 @@ roleRef:
   kind: Role
   name: gcs-fuse-csi-leaderelection-role
   apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gcs-fuse-csi-bucket-scanner-role
+rules:
+# Required to remove Pod scheduling gates.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "patch"]
+# Required to patch PV annotations.
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "patch"]
+# Required to map PVC to PV from Pod.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+# Required to get gcsfuse profile configs.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+# Required to get node zone to enable AnyC.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gcs-fuse-csi-bucket-scanner-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: gcs-fuse-csi-controller-sa
+roleRef:
+  kind: ClusterRole
+  name: gcs-fuse-csi-bucket-scanner-role
+  apiGroup: rbac.authorization.k8s.io

@@ -17,9 +17,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: gcs-fuse-csi-driver
 resources:
+
 - ../../base/setup
 - ../../base/webhook
 - ../../base/node
+- ../../base/controller
 transformers:
 - ../../images/stable
 patches:

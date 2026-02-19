@@ -94,11 +94,13 @@ const (
 	ProjectNumberEnvVar                    = "PROJECT_NUMBER"
 	TestEnvEnvVar                          = "TEST_ENV"
 	IsOSSEnvVar                            = "IS_OSS"
+	IsZBEnabledEnvVar                      = "IS_ZB_ENABLED"
 )
 
 var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
 
 func Handle(testParams *TestParameters) error {
+	setTestEnvVars(testParams)
 	// Validating the test parameters.
 
 	oldMask := syscall.Umask(0o000)
@@ -304,6 +306,12 @@ func Handle(testParams *TestParameters) error {
 	}
 
 	return nil
+}
+
+func setTestEnvVars(testParams *TestParameters) {
+	if err := os.Setenv(IsZBEnabledEnvVar, strconv.FormatBool(testParams.EnableZB)); err != nil {
+		klog.Errorf(`env variable "%s" could not be set: %v`, IsZBEnabledEnvVar, err)
+	}
 }
 
 func generateTestSkip(testParams *TestParameters) string {

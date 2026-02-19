@@ -225,16 +225,15 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 
 		ginkgo.By("Configuring test pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		profileMO := "profile=aiml-training,profile:aiml-training"
-		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false, profileMO)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		tPod.Create(ctx)
 
 		ginkgo.By("Checking pod is running")
 		tPod.WaitForRunning(ctx)
 
-		ginkgo.By("Checking pod is does not have --profile=aiml-training passed to gcsfuse")
-		tPod.VerifyProfileFlagsAreNotPassed(f.Namespace.Name)
+		ginkgo.By("Checking pod has --profile=aiml-training passed to gcsfuse")
+		tPod.VerifyProfileFlagsArePassed(f.Namespace.Name)
 
 		ginkgo.By("Deleting pod")
 		tPod.Cleanup(ctx)
@@ -315,9 +314,8 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		testCaseLongMountOptions()
 	})
 
-	// TODO(chrisThePattyEater): add test for 'should pass profile' once storage profiles feature goes GA
-	ginkgo.It("should not pass profile as a user-specified mountOption to gcsfuse when profile is specified and 'enable-gcsfuse-profiles-internal' flag is false", func() {
-		testGcsfuseProfilesFlagFilters()
+	ginkgo.It("should pass profile as a user-specified mountOption to gcsfuse when profile is specified and 'enable-gcsfuse-profiles-internal' flag is true", func() {
+		testGcsfuseProfilesFlagFilters(specs.PassProfilesToSidecarPrefix)
 	})
 
 	ginkgo.It("should not pass kernel params file from csi driver to gcsfuse when the feature is disabled", func() {
