@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Build webhook go binary
-FROM --platform=$BUILDPLATFORM golang:1.24.3 AS webhook-builder
+FROM --platform=$BUILDPLATFORM google-go.pkg.dev/golang:1.24.13@sha256:2ea380febc64f22355a66fd6141eb6575276b3ec45c97c1594f657bc47b60e60 AS webhook-builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
