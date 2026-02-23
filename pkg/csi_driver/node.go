@@ -18,10 +18,12 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -263,11 +265,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Skip mount if the mount on target path already exists.
 	if mounted {
-		// Check if there is any error from the gcsfuse
-		// We only check for sidecar liveliness if the path is reported as mounted.
-		// This indicates the initial kernel mount is complete, and gcsfuse is ready to proceed.
-		// With this approach, NodePublishVolume will still report an error if gcsfuse itself fails.
-		code, err := checkGcsFuseErr(isInitContainer, pod, targetPath)
+		code, err := s.waitForGcsFuseMount(ctx, targetPath, isInitContainer, pod)
 		if code != codes.OK {
 			if code == codes.Canceled {
 				klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the gcsfuse has terminated.", bucketName, targetPath)
@@ -277,14 +275,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 			return nil, status.Error(code, err.Error())
 		}
-
-		// Check if there is any error from the sidecar container
-		code, err = checkSidecarContainerErr(isInitContainer, pod)
-		if code != codes.OK {
-			return nil, status.Error(code, err.Error())
-		}
-
-		// TODO: Check if the socket listener timed out
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", bucketName, targetPath)
 
@@ -316,9 +306,54 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", bucketName, targetPath, err)
 	}
 
+	code, err := s.waitForGcsFuseMount(ctx, targetPath, isInitContainer, pod)
+	if code != codes.OK {
+		if code == codes.Canceled {
+			klog.V(4).Infof("NodePublishVolume on volume %q to target path %q is not needed because the gcsfuse has terminated.", bucketName, targetPath)
+
+			return &csi.NodePublishVolumeResponse{}, nil
+		}
+		return nil, status.Error(code, err.Error())
+	}
+
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", bucketName, targetPath)
 
 	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+func (s *nodeServer) waitForGcsFuseMount(ctx context.Context, targetPath string, isInitContainer bool, pod *corev1.Pod) (codes.Code, error) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return codes.DeadlineExceeded, fmt.Errorf("timeout waiting for gcsfuse mount: %w", ctx.Err())
+		case <-ticker.C:
+			_, err := os.Stat(targetPath)
+			if err == nil {
+				return codes.OK, nil
+			}
+
+			if errors.Is(err, syscall.ENOTCONN) || errors.Is(err, syscall.ESTALE) || os.IsNotExist(err) {
+				// Check if there is any error from the gcsfuse
+				code, fuseErr := checkGcsFuseErr(isInitContainer, pod, targetPath)
+				if code != codes.OK {
+					return code, fuseErr
+				}
+
+				// Check if there is any error from the sidecar container
+				code, sidecarErr := checkSidecarContainerErr(isInitContainer, pod)
+				if code != codes.OK {
+					return code, sidecarErr
+				}
+
+				continue
+			}
+
+			klog.V(6).Infof("waitForGcsFuseMount os.Stat(%q) failed with error: %v, continuing to poll", targetPath, err)
+		}
+	}
 }
 
 func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {

@@ -508,6 +508,9 @@ func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code
 }
 
 func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
 	var containerStatusList []corev1.ContainerStatus
 	// Use ContainerStatuses or InitContainerStatuses
 	if isInitContainer {
