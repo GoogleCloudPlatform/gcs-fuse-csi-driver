@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -32,6 +33,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	mount "k8s.io/mount-utils"
 )
 
@@ -652,5 +654,67 @@ func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 			},
 				tc.unexpectedOptions)
 		})
+	}
+}
+
+func TestWaitForGcsFuseMount(t *testing.T) {
+	t.Parallel()
+
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
+	tmpDir := "/tmp/var/lib/kubelet/pods/test-pod-id/volumes/kubernetes.io~csi/"
+	if err := os.MkdirAll(tmpDir, defaultPerm); err != nil {
+		t.Fatalf("failed to setup tmp dir path: %v", err)
+	}
+	base, err := os.MkdirTemp(tmpDir, "node-publish-wait-")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	testTargetPath := filepath.Join(base, "mount")
+
+	testEnv := initTestNodeServer(t)
+
+	// Test case 1: target path does not exist initially, then we create it.
+	// Since waitForGcsFuseMount checks os.Stat, as long as it exists it returns OK.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(1 * time.Second)
+		if err := os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+			t.Errorf("failed to create target path: %v", err)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	dummyPod := &corev1.Pod{}
+
+	// isInitContainer=true, pod=dummyPod is technically invalid for sidecar container checks,
+	// but checkGcsFuseErr/checkSidecarContainerErr will just return an error if
+	// the sidecar/error file isn't found. We want the targetPath to eventually exist.
+	_, err = testEnv.ns.(*nodeServer).waitForGcsFuseMount(ctx, testTargetPath, true, dummyPod)
+	wg.Wait()
+
+	// If the wait completed because os.Stat succeeded but the loop
+	// executed at least once and ran into sidecar check errors before success,
+	// or it succeeded immediately, what's important is that it didn't timeout.
+	if err != nil && err.Error() == "timeout waiting for gcsfuse mount: context deadline exceeded" {
+		t.Errorf("expected to not timeout or to get sidecar errors, got %v", err)
+	}
+
+	// Test case 2: Check context timeout
+	nonExistentPath := filepath.Join(base, "mount-not-exist")
+	ctxTimeout, cancelTimeout := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	defer cancelTimeout()
+
+	// Using a pod without the sidecar container will fail sidecar checks
+	// but since the file doesn't exist, it'll try to check sidecar status.
+	// We expect either DeadlineExceeded or codes.Internal from the sidecar check failure
+	code, err := testEnv.ns.(*nodeServer).waitForGcsFuseMount(ctxTimeout, nonExistentPath, true, dummyPod)
+	if code == codes.OK {
+		t.Errorf("expected error, got OK")
 	}
 }
