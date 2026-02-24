@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -549,9 +550,37 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
 	}
 
 	for _, v := range pod.Spec.Volumes {
-		if v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
+		// Count ephemeral gcsfuse volumes
+		if v.PersistentVolumeClaim == nil && v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
+			gcsFuseVolumeCount++
+		}
+
+		// Count persistent gcsfuse volumes
+		pvc, err := s.k8sClients.GetPVC(pod.Namespace, v.PersistentVolumeClaim.ClaimName)
+
+		// If an error occurs in getting information regarding the persistent volume, we ignore it's impact for metrics cardinality volume count restriction
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Warningf("pvc %q not found: %v", v.Name, err)
+			}
+
+			continue
+		}
+
+		pv, err := s.k8sClients.GetPV(pvc.Spec.VolumeName)
+
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Warningf("pv %q not found: %v", pvc.Spec.VolumeName, err)
+			}
+
+			continue
+		}
+
+		if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == s.driver.config.Name {
 			gcsFuseVolumeCount++
 		}
 	}
+
 	return gcsFuseVolumeCount
 }

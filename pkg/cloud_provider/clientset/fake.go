@@ -45,6 +45,14 @@ type FakePVConfig struct {
 	SCName      string
 }
 
+type FakePVCSpec struct {
+	VolumeName string
+}
+
+type FakePVCConfig struct {
+	Spec FakePVCSpec
+}
+
 type FakeSCConfig struct {
 	Labels       map[string]string
 	Parameters   map[string]string
@@ -55,6 +63,7 @@ type FakeClientset struct {
 	fakePod  *corev1.Pod
 	fakeNode *corev1.Node
 	fakePV   *corev1.PersistentVolume
+	fakePVC  *corev1.PersistentVolumeClaim
 	fakeSC   *storagev1.StorageClass
 }
 
@@ -78,6 +87,8 @@ func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
 func (c *FakeClientset) ConfigureNodeLister(_ context.Context, _ string) {}
 
 func (c *FakeClientset) ConfigurePVLister(_ context.Context) {}
+
+func (c *FakeClientset) ConfigurePVCLister(_ context.Context) {}
 
 func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
 
@@ -145,6 +156,19 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 	c.fakePV.Spec.StorageClassName = pvConfig.SCName
 }
 
+func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
+	c.fakePVC = &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "",
+			Labels: map[string]string{},
+		},
+	}
+
+	c.fakePVC.Spec = corev1.PersistentVolumeClaimSpec{
+		VolumeName: pvcConfig.Spec.VolumeName,
+	}
+}
+
 func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 	c.fakeSC = &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -181,6 +205,13 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	c.fakePV.ObjectMeta.Name = name
 
 	return c.fakePV, nil
+}
+
+func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
+	c.fakePV.ObjectMeta.Name = name
+	c.fakePV.ObjectMeta.Namespace = namespace
+
+	return c.fakePVC, nil
 }
 
 func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
