@@ -40,7 +40,10 @@ metadata:
 provisioner: gcsfuse.csi.storage.gke.io
 mountOptions:
   - profile:aiml-serving
-  - read_ahead_kb=1024
+  - read_ahead_kb=131072
+  - file-cache:max-size-mb:0
+  - read:enable-buffered-read:true
+  - read:global-max-blocks:80
 parameters:
   anywhereCacheZones: "*"
   anywhereCacheAdmissionPolicy: "admit-on-first-miss"

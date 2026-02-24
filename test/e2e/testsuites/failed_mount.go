@@ -74,7 +74,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	}
 	enableSidecarBucketAccessCheck, err := strconv.ParseBool(os.Getenv(utils.TestWithSidecarBucketAccessCheckEnvVar))
 	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, enableSidecarBucketAccessCheck)
+		klog.Fatalf(`env variable "%t" could not be converted to boolean`, enableSidecarBucketAccessCheck)
 	}
 	// In 1.28 (non native sidecar), when the sidecar is injected as a main
 	// container, the gcsFuseSidecarContainerImage always returns "". This
