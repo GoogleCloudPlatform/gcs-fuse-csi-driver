@@ -73,6 +73,7 @@ func NewFakeClientset() *FakeClientset {
 	fakeClientSet.CreatePod(FakePodConfig{HostNetworkEnabled: false})
 	fakeClientSet.CreateNode(FakeNodeConfig{IsWorkloadIdentityEnabled: true})
 	fakeClientSet.CreatePV(FakePVConfig{})
+	fakeClientSet.CreatePVC(FakePVCConfig{})
 	fakeClientSet.CreateSC(FakeSCConfig{})
 
 	return fakeClientSet
@@ -208,8 +209,8 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 }
 
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
-	c.fakePV.ObjectMeta.Name = name
-	c.fakePV.ObjectMeta.Namespace = namespace
+	c.fakePVC.ObjectMeta.Name = name
+	c.fakePVC.ObjectMeta.Namespace = namespace
 
 	return c.fakePVC, nil
 }
