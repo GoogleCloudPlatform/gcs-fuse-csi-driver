@@ -96,19 +96,6 @@ var disallowedFlags = map[string]bool{
 	KernelParamsFileConfigFlag: true,
 }
 
-var boolFlags = map[string]bool{
-	"implicit-dirs":                 true,
-	"enable-nonexistent-type-cache": true,
-	"debug_fuse_errors":             true,
-	"debug_fuse":                    true,
-	"debug_fs":                      true,
-	"debug_gcs":                     true,
-	"debug_http":                    true,
-	"debug_invariants":              true,
-	"debug_mutex":                   true,
-	"disable-autoconfig":            true,
-}
-
 // Fetch the following information from a given socket path:
 // 1. Pod volume name
 // 2. The file descriptor
@@ -307,17 +294,7 @@ func (mc *MountConfig) prepareMountArgs() {
 			continue
 		}
 
-		switch {
-		case boolFlags[flag] && value != "":
-			flag = flag + "=" + value
-			if value == util.TrueStr || value == util.FalseStr {
-				value = ""
-			} else {
-				invalidArgs = append(invalidArgs, flag)
-
-				continue
-			}
-		case flag == "app-name":
+		if flag == util.GCSFuseAppNameArg {
 			value = GCSFuseAppName + "-" + value
 		}
 
