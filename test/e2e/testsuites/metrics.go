@@ -241,6 +241,10 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 							if value != f.Namespace.Name {
 								continue metricLoop
 							}
+						case "pod_uid":
+							if value != "" {
+								continue metricLoop
+							}
 						}
 					}
 					metricsList = append(metricsList, m)
