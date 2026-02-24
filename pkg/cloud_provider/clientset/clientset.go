@@ -158,6 +158,12 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 			},
 			Spec: corev1.PersistentVolumeSpec{
 				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
+				PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: &corev1.CSIPersistentVolumeSource{
+						Driver:       pvObj.Spec.CSI.Driver, // Required by cardinality mitigation to disable metric collectors when gcsfuse volumes exceed threshold
+						VolumeHandle: pvObj.Spec.CSI.VolumeHandle,
+					},
+				},
 			},
 		}, nil
 	}
