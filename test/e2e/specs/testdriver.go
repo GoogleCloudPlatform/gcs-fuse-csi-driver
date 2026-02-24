@@ -552,7 +552,7 @@ func prepareGcpSAName(ns string) string {
 func (n *GCSFuseCSITestDriver) CreateImplicitDirInBucket(ctx context.Context, dirPath, bucketName string) {
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
-		e2eframework.Failf("failed to prepare storage service: %w", err)
+		e2eframework.Failf("failed to prepare storage service: %v", err)
 		return
 	}
 	// Use bucketName as the name of a temp file since bucketName is unique.
@@ -584,7 +584,7 @@ func (n *GCSFuseCSITestDriver) CreateTestFileWithSizeInBucket(ctx context.Contex
 func (n *GCSFuseCSITestDriver) createTestFileInBucket(ctx context.Context, fileName, bucketName string, fileContent []byte) {
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
-		e2eframework.Failf("failed to prepare storage service: %w", err)
+		e2eframework.Failf("failed to prepare storage service: %v", err)
 		return
 	}
 
@@ -607,8 +607,7 @@ func (n *GCSFuseCSITestDriver) createTestFileInBucket(ctx context.Context, fileN
 func (n *GCSFuseCSITestDriver) DownloadGCSObject(ctx context.Context, bucketName, objectName, localPath string) error {
 	storageService, err := n.prepareStorageService(ctx)
 	if err != nil {
-		fmt.Errorf("failed to prepare storage service: %w", err)
-		return err
+		return fmt.Errorf("failed to prepare storage service: %w", err)
 	}
 
 	if err := storageService.DownloadGCSObject(ctx, bucketName, objectName, localPath); err != nil {
