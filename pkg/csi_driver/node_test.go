@@ -891,7 +891,6 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			if err != nil {
 				// The fake clientset does not have the pod annotations,
 				// which will cause the sidecar check to fail.
-				// See if we can find a workaround.
 				if !strings.Contains(err.Error(), "failed to find the sidecar container in Pod spec") {
 					t.Fatalf("NodePublishVolume() failed: %v", err)
 				}

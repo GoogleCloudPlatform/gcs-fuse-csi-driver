@@ -53,7 +53,15 @@ func (f *FakeMetricsManager) UnregisterMetricsCollector(identifier string) {
 func (f *FakeMetricsManager) GetCollectors() map[string]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.collectors
+	// Create a new map with the same capacity as the original
+	cp := make(map[string]string, len(f.collectors))
+
+	// Copy all key-value pairs into the new map
+	for k, v := range f.collectors {
+		cp[k] = v
+	}
+
+	return cp
 }
 
 type FakePrometheusMetricManager struct {
