@@ -375,12 +375,25 @@ func (s *nodeServer) waitForGcsFuseMount(ctx context.Context, targetPath string,
 	defer ticker.Stop()
 
 	for {
-		_, err := os.Stat(targetPath)
-		if err == nil {
+		statChan := make(chan error, 1)
+		go func() {
+			_, err := os.Stat(targetPath)
+			statChan <- err
+		}()
+
+		var statErr error
+		select {
+		case <-ctx.Done():
+			return codes.DeadlineExceeded, fmt.Errorf("timeout waiting for gcsfuse mount: %w", ctx.Err())
+		case err := <-statChan:
+			statErr = err
+		}
+
+		if statErr == nil {
 			return codes.OK, nil
 		}
 
-		if errors.Is(err, syscall.ENOTCONN) || errors.Is(err, syscall.ESTALE) || os.IsNotExist(err) {
+		if errors.Is(statErr, syscall.ENOTCONN) || errors.Is(statErr, syscall.ESTALE) || os.IsNotExist(statErr) {
 			// Check if there is any error from the gcsfuse
 			code, fuseErr := checkGcsFuseErr(isInitContainer, pod, targetPath)
 			if code != codes.OK {
@@ -393,7 +406,7 @@ func (s *nodeServer) waitForGcsFuseMount(ctx context.Context, targetPath string,
 				return code, sidecarErr
 			}
 		} else {
-			klog.V(6).Infof("waitForGcsFuseMount os.Stat(%q) failed with error: %v, continuing to poll", targetPath, err)
+			klog.V(6).Infof("waitForGcsFuseMount os.Stat(%q) failed with error: %v, continuing to poll", targetPath, statErr)
 		}
 
 		// Wait for the next tick or timeout.

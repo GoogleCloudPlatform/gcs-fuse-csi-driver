@@ -320,15 +320,31 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		for i, tPod := range podsArray {
 			sc := l.volumeResourceList[i].Pv.Spec.StorageClassName
 			profileMO := fmt.Sprintf("aiml-%s", strings.TrimPrefix(sc, "gcsfusecsi-"))
-			tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{profileMountOptionKey: profileMO, metadataStatCacheMaxSizeMiBMountOptionKey: "10", fileCacheSizeMiBMountOptionKey: "30", cacheDirKey: fmt.Sprintf("/gcsfuse-cache/.volumes/%s", l.volumeResourceList[i].Pv.Name)})
+			tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{
+				profileMountOptionKey:                     profileMO,
+				metadataStatCacheMaxSizeMiBMountOptionKey: "10",
+				metadataTypeCacheMaxSizeMiBMountOptionKey: "20",
+				fileCacheSizeMiBMountOptionKey:            "30",
+				cacheDirKey:                               fmt.Sprintf("/gcsfuse-cache/.volumes/%s", l.volumeResourceList[i].Pv.Name),
+			})
 		}
 
-		// No recommendation should be found because smart cache calculation is disabled when cx overrides cache sizes.
-		ginkgo.By("Verifying no recommendation was made")
+		ginkgo.By("Verifying recommendation was made with overrides")
 		for _, tpod := range podsArray {
 			stdout, err := tpod.FindLogsByNewLine(gcsFuseCsiRecommendationLog)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "error while getting logs from pod")
-			gomega.Expect(stdout).To(gomega.BeEmpty(), "expected no recommendation logs, but found: %s", stdout)
+			expectedSubstrings := []string{
+				fmt.Sprintf(`"podName":"%s/%s"`, f.Namespace.Name, tpod.GetPodName()),
+				fmt.Sprintf(`"metadataStatCacheBytes":%d`, 10*1024*1024),
+				fmt.Sprintf(`"metadataTypeCacheBytes":%d`, 20*1024*1024),
+				fmt.Sprintf(`"fileCacheBytes":%d`, 30*1024*1024),
+				fmt.Sprintf(`"fileCacheMedium":%q`, ""),
+			}
+			for _, substr := range expectedSubstrings {
+				gomega.Expect(stdout).To(
+					gomega.ContainSubstring(substr),
+					"Should find %q in recommendation log stdout with overrides", substr)
+			}
 		}
 
 		t.validateAC(l.volumeResourceList, ctx)
@@ -408,10 +424,10 @@ func modifyAndRedeployPVCPVs(ctx context.Context, f *framework.Framework, testSc
 	waitForPVDeleted(cs, vr.Pv.Name, ctx)
 
 	// Modify PV & PVC.
-	klog.Info("pv annotations before %s", vr.Pv.Annotations)
+	klog.Infof("pv annotations before %s", vr.Pv.Annotations)
 	vr.Pv = modifyPVForProfiles(testScenario, vr.Pv, profile)
-	klog.Info("pv annotations after %s", vr.Pv.Annotations)
-	vr.Pvc = modifyPVCForProfiles(testScenario, vr.Pvc, profile)
+	klog.Infof("pv annotations after %s", vr.Pv.Annotations)
+	vr.Pvc = modifyPVCForProfiles(vr.Pvc, profile)
 
 	// Recreate PV & PVC.
 	newPv, err := cs.CoreV1().PersistentVolumes().Create(ctx, vr.Pv, metav1.CreateOptions{})
@@ -483,7 +499,7 @@ func waitForPVDeleted(clientset kubernetes.Interface, pvName string, ctx context
 	return nil
 }
 
-func modifyPVCForProfiles(testScenario string, pvc *v1.PersistentVolumeClaim, sc string) *v1.PersistentVolumeClaim {
+func modifyPVCForProfiles(pvc *v1.PersistentVolumeClaim, sc string) *v1.PersistentVolumeClaim {
 	pvc.Spec.StorageClassName = &sc
 	pvc.Name = pvc.Name + "-modified"
 	return sanitizeForRecreationPVC(pvc)
@@ -508,7 +524,7 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 
 		// Modify Mount Options.
 		mo = append(mo, fmt.Sprintf("%s:%s", metadataStatCacheMaxSizeMiBMountOptionKey, "10"))
-		// Purposely omit one - mo = append(mo, fmt.Sprintf("%s:%s", metadataTypeCacheMaxSizeMiBMountOptionKey, "20"))
+		mo = append(mo, fmt.Sprintf("%s:%s", metadataTypeCacheMaxSizeMiBMountOptionKey, "20"))
 		mo = append(mo, fmt.Sprintf("%s:%s", fileCacheSizeMiBMountOptionKey, "30"))
 
 		if sc == "gcsfusecsi-serving" {
@@ -534,7 +550,7 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 
 func (t *gcsFuseCSIProfilesTestSuite) validateAC(vrList []*storageframework.VolumeResource, ctx context.Context) {
 	for _, vr := range vrList {
-		klog.Info("handling vr %+v", vr)
+		klog.Infof("handling vr %+v", vr)
 		// AC is only enabled for serving profile.
 		if vr.Pv.Spec.StorageClassName != "gcsfusecsi-serving" {
 			continue
