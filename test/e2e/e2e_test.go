@@ -132,7 +132,13 @@ func TestE2E(t *testing.T) {
 
 var _ = ginkgo.Describe("E2E Test Suite", func() {
 	GCSFuseCSITestSuites := func() []func() storageframework.TestSuite {
-		suites := []func() storageframework.TestSuite{
+		var suites []func() storageframework.TestSuite
+
+		if *profilesFlag {
+			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
+		}
+
+		suites = append(suites, []func() storageframework.TestSuite{
 			testsuites.InitGcsFuseCSIVolumesTestSuite,
 			testsuites.InitGcsFuseCSIFailedMountTestSuite,
 			testsuites.InitGcsFuseCSIWorkloadsTestSuite,
@@ -149,11 +155,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
 			testsuites.InitGcsFuseMountTestSuite,
 			testsuites.InitGcsFuseCSIOIDCTestSuite,
-		}
-
-		if *profilesFlag {
-			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
-		}
+		}...)
 
 		if *kernelParamsFlag {
 			suites = append(suites, testsuites.InitGcsFuseKernelParamsTestSuite)
