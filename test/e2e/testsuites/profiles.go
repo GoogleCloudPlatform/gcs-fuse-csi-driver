@@ -102,10 +102,8 @@ var (
 	controllerAnnotationValidationMap = map[string]string{
 		putil.AnnotationLastUpdatedTime: "anything",
 		putil.AnnotationStatus:          "completed",
-		putil.AnnotationNumObjects:      "20852700",
-		// Total size is expected to be 0 since size is the aggregate of object sizes and
-		// the bucket we are using is 20852700 empty files.
-		putil.AnnotationTotalSize: "0",
+		putil.AnnotationNumObjects:      "20099789",
+		putil.AnnotationTotalSize:       "1422508687360",
 	}
 )
 
@@ -249,6 +247,15 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 
 		// Verify pod came up succesfully.
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+
+		// TODO(fuechr): Remove metadata prefetch annotations once oss tests follow the same defaults as the managed version.
+		// Adding metadata prefetch annotations because oss tests do not follow the same defaults as the managed version, the defaults are 10Mi,
+		// which is not sufficient for the heavy load of a 20 million object bucket as used in this test,
+		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/155d3167e6652daa1d7c535102ac11bdc0fdccfe/cmd/webhook/main.go#L59.
+		tPod.SetAnnotations(map[string]string{
+			"gke-gcsfuse/metadata-prefetch-memory-limit":   "250Mi",
+			"gke-gcsfuse/metadata-prefetch-memory-request": "250Mi",
+		})
 		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
 
 		tPod.Create(ctx)

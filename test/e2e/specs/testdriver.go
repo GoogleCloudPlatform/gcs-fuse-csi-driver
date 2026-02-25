@@ -104,7 +104,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 }
 
 const (
-	gcsfuseCSIProfilesStaticBucket       = "gcsfuse-csi-profiles-test-bucket-20mil"
+	gcsfuseCSIProfilesStaticBucket       = "gcsfusecsi-list-storm-hns-bucket"
 	gcsfuseCSIProfilesStaticBucketRegion = "us-central1"
 	gkeScalabilityImagesProjectID        = "gke-scalability-images"
 )
