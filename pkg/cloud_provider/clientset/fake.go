@@ -151,8 +151,9 @@ func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   pvConfig.Name,
-			Labels: map[string]string{},
+			Name:        pvConfig.Name,
+			Labels:      map[string]string{},
+			Annotations: pvConfig.Annotations,
 		},
 		Spec: corev1.PersistentVolumeSpec{
 			StorageClassName: pvConfig.SCName,
@@ -170,7 +171,7 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: pvcConfig.Name,
+			Name:   pvcConfig.Name,
 			Labels: map[string]string{},
 		},
 	}
