@@ -51,6 +51,13 @@ var expectedMetricNames = []string{
 	"file_cache_read_latencies",
 }
 
+var expectedGrpcMetricNames = []string{
+	"grpc_client_attempt_started",
+	"grpc_client_call_duration",
+	"grpc_lb_rls_default_target_picks",
+	"grpc_lb_rls_failed_picks",
+}
+
 type gcsFuseCSIMetricsTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
@@ -259,6 +266,48 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			}
 			ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
 		}
+
+
+		if l.config.Prefix == specs.EnableGrpcAndMetricsPrefix {
+			for _, metricName := range expectedGrpcMetricNames {
+				metricsList := []*dto.Metric{}
+				metricFamily, ok := families[metricName]
+				if ok {
+				grpcMetricLoop:
+					for _, m := range metricFamily.GetMetric() {
+						for _, pair := range m.GetLabel() {
+							name, value := pair.GetName(), pair.GetValue()
+							switch name {
+							case "bucket_name":
+								if value != bucketName {
+									continue grpcMetricLoop
+								}
+							case "pod_name":
+								if value != podName {
+									continue grpcMetricLoop
+								}
+							case "volume_name":
+								if value != volume {
+									continue grpcMetricLoop
+								}
+							case "namespace_name":
+								if value != f.Namespace.Name {
+									continue grpcMetricLoop
+								}
+							case "pod_uid":
+								if value != "" {
+									continue grpcMetricLoop
+								}
+							}
+						}
+						metricsList = append(metricsList, m)
+					}
+				}
+				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
+				gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">", 0), fmt.Sprintf("Found metric %q count: %v, expected count > 0", metricName, len(metricsList)))
+				ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
+			}
+		}
 	}
 
 	// This tests below configuration:
@@ -312,5 +361,29 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
 			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i))
 		}
+	})
+
+	// This tests below configuration:
+	//    [pod1]
+	//       |
+	//   [volume1]
+	//       |
+	//   [bucket1]
+	ginkgo.It("should emit gRPC metrics", func() {
+		init(1, specs.EnableGrpcAndMetricsPrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
 	})
 }

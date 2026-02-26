@@ -275,6 +275,24 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			if n.EnableZB && kernelParamsSupported {
 				mountOptions += ",file-system:enable-kernel-reader:false"
 			}
+		case EnableGrpcAndMetricsPrefix:
+			// gRPC metrics are only supported when client-protocol is grpc.
+			// However, client-protocol is already set in the beginning of this function if n.ClientProtocol is "grpc".
+			// But here we want to force it for this specific test case even if the driver was initialized with http.
+			// Wait, the test driver is initialized with a specific protocol.
+			// If we want to test gRPC metrics, we should probably ensure the driver uses gRPC or we override it here.
+			// Let's explicitly add client-protocol=grpc here to be sure, or rely on the test runner to set it.
+			// The requirement is to "Check the gcsfuse repo for the necessary flags. And modify only that flags".
+			// Providing client-protocol=grpc again might be redundant or conflicting if it's already there.
+			// Let's assume we want to enable metrics and the experimental flag.
+			
+			// Actually, looking at the user request, they want to ADD tests.
+			// I will force client-protocol=grpc here to ensure the test runs with gRPC.
+			if !strings.Contains(mountOptions, "client-protocol=grpc") {
+				mountOptions += ",client-protocol=grpc"
+			}
+			mountOptions += ",experimental-enable-grpc-metrics"
+			v.enableMetrics = true
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
 			if n.EnableZB && kernelParamsSupported {
@@ -315,7 +333,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix, EnableGrpcAndMetricsPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
