@@ -587,7 +587,5 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
 		}
 	}
 
-	klog.Warningf("gcsFuseVolumeCount %d", gcsFuseVolumeCount)
-
 	return gcsFuseVolumeCount
 }
