@@ -70,11 +70,11 @@ func TestSanity(t *testing.T) {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
 		K8sClients:            clientset.NewFakeClientset(),
-		MetricsManager:        metrics.NewFakeMetricsManager(),
+		MetricsManager:        &metrics.FakeMetricsManager{},
 		FeatureOptions:        &driver.GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{}},
 	}
 
-	gcfsDriver, err := driver.NewGCSDriver(driverConfig, nil)
+	gcfsDriver, err := driver.NewGCSDriver(driverConfig)
 	if err != nil {
 		t.Fatalf("Failed to initialize Cloud Storage FUSE CSI Driver: %v", err)
 	}

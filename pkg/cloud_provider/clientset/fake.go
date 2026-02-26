@@ -43,14 +43,13 @@ type FakePodConfig struct {
 type FakePVConfig struct {
 	Annotations map[string]string
 	SCName      string
-}
-
-type FakePVCSpec struct {
-	VolumeName string
+	DriverName  string
+	Name        string
 }
 
 type FakePVCConfig struct {
-	Spec FakePVCSpec
+	Name       string
+	VolumeName string
 }
 
 type FakeSCConfig struct {
@@ -62,13 +61,17 @@ type FakeSCConfig struct {
 type FakeClientset struct {
 	fakePod  *corev1.Pod
 	fakeNode *corev1.Node
-	fakePV   *corev1.PersistentVolume
-	fakePVC  *corev1.PersistentVolumeClaim
-	fakeSC   *storagev1.StorageClass
+	fakePVs  map[string]*corev1.PersistentVolume
+	fakePVCs map[string]*corev1.PersistentVolumeClaim
+	fakeSCs  map[string]*storagev1.StorageClass
 }
 
 func NewFakeClientset() *FakeClientset {
-	fakeClientSet := &FakeClientset{}
+	fakeClientSet := &FakeClientset{
+		fakePVs:  make(map[string]*corev1.PersistentVolume),
+		fakePVCs: make(map[string]*corev1.PersistentVolumeClaim),
+		fakeSCs:  make(map[string]*storagev1.StorageClass),
+	}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
 	fakeClientSet.CreatePod(FakePodConfig{HostNetworkEnabled: false})
 	fakeClientSet.CreateNode(FakeNodeConfig{IsWorkloadIdentityEnabled: true})
@@ -146,41 +149,50 @@ func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 }
 
 func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
-	c.fakePV = &corev1.PersistentVolume{
+	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "",
+			Name:   pvConfig.Name,
 			Labels: map[string]string{},
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			StorageClassName: pvConfig.SCName,
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver: pvConfig.DriverName,
+				},
+			},
 		},
 	}
 
-	c.fakePV.Annotations = pvConfig.Annotations
-	c.fakePV.Spec.StorageClassName = pvConfig.SCName
+	c.fakePVs[pv.Name] = pv
 }
 
 func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
-	c.fakePVC = &corev1.PersistentVolumeClaim{
+	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "",
+			Name: pvcConfig.Name,
 			Labels: map[string]string{},
 		},
 	}
 
-	c.fakePVC.Spec = corev1.PersistentVolumeClaimSpec{
-		VolumeName: pvcConfig.Spec.VolumeName,
+	pvc.Spec = corev1.PersistentVolumeClaimSpec{
+		VolumeName: pvcConfig.VolumeName,
 	}
+	c.fakePVCs[pvc.Name] = pvc
 }
 
 func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
-	c.fakeSC = &storagev1.StorageClass{
+	sc := &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "",
 			Labels: map[string]string{},
 		},
 	}
 
-	c.fakeSC.MountOptions = scConfig.MountOptions
-	c.fakeSC.Parameters = scConfig.Parameters
-	c.fakeSC.Labels = scConfig.Labels
+	sc.MountOptions = scConfig.MountOptions
+	sc.Parameters = scConfig.Parameters
+	sc.Labels = scConfig.Labels
+	c.fakeSCs[sc.Name] = sc
 }
 
 func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
@@ -203,22 +215,27 @@ func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
 }
 
 func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
-	c.fakePV.ObjectMeta.Name = name
+	if pv, ok := c.fakePVs[name]; ok {
+		return pv, nil
+	}
 
-	return c.fakePV, nil
+	return c.fakePVs[""], nil
 }
 
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
-	c.fakePVC.ObjectMeta.Name = name
-	c.fakePVC.ObjectMeta.Namespace = namespace
+	if pvc, ok := c.fakePVCs[name]; ok {
+		return pvc, nil
+	}
 
-	return c.fakePVC, nil
+	return c.fakePVCs[""], nil
 }
 
 func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
-	c.fakeSC.ObjectMeta.Name = name
+	if sc, ok := c.fakeSCs[name]; ok {
+		return sc, nil
+	}
 
-	return c.fakeSC, nil
+	return c.fakeSCs[""], nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
