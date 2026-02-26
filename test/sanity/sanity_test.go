@@ -74,7 +74,7 @@ func TestSanity(t *testing.T) {
 		FeatureOptions:        &driver.GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{}},
 	}
 
-	gcfsDriver, err := driver.NewGCSDriver(driverConfig)
+	gcfsDriver, err := driver.NewGCSDriver(driverConfig, nil)
 	if err != nil {
 		t.Fatalf("Failed to initialize Cloud Storage FUSE CSI Driver: %v", err)
 	}
