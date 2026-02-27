@@ -660,126 +660,171 @@ func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 	}
 }
 
-func TestCountGcsFuseVolumes(t *testing.T) {
-	testEnv := initTestNodeServer(t)
-	ns, ok := testEnv.ns.(*nodeServer)
-	if !ok {
-		t.Fatalf("Failed to cast NodeServer to *nodeServer")
+type volumeTestCase struct {
+	name                         string
+	totalEphemeralVolumeCount    int
+	totalPersistentVolumeCount   int
+	gcsFuseEphemeralVolumeCount  int
+	gcsFusePersistentVolumeCount int
+	expectCollectorRegistered    bool
+}
+
+const csiDriverName string = "gcs-fuse-csi.storage.gke.io"
+const otherDriverName string = "other.csi.driver"
+
+func createVolumesTestCase(fakeClientSet *clientset.FakeClientset, tc volumeTestCase) []corev1.Volume {
+	volumes := []corev1.Volume{}
+
+	// Add GCS Fuse ephemeral volumes.
+	for i := 0; i < tc.gcsFuseEphemeralVolumeCount; i++ {
+		volumes = append(volumes, corev1.Volume{
+			Name: "gcs-fuse-csi-ephemeral-volume-" + strconv.Itoa(i),
+			VolumeSource: corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver: csiDriverName,
+				},
+			},
+		})
 	}
 
+	// Add non GCS Fuse ephemeral volumes.
+	for i := 0; i < tc.totalEphemeralVolumeCount-tc.gcsFuseEphemeralVolumeCount; i++ {
+		volumes = append(volumes, corev1.Volume{
+			Name: "other-csi-ephemeral-volume-" + strconv.Itoa(i),
+			VolumeSource: corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver: otherDriverName,
+				},
+			},
+		})
+	}
+
+	// Add GCS Fuse persistent volumes.
+	for i := 0; i < tc.gcsFusePersistentVolumeCount; i++ {
+		pvcName := "gcs-fuse-csi-pvc-" + strconv.Itoa(i)
+		pvName := "gcs-fuse-csi-pv-" + strconv.Itoa(i)
+		volumes = append(volumes, corev1.Volume{
+			Name: pvcName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+				},
+			},
+		})
+		fakeClientSet.CreatePV(clientset.FakePVConfig{
+			Name:       pvName,
+			DriverName: csiDriverName,
+		})
+		fakeClientSet.CreatePVC(clientset.FakePVCConfig{
+			Name:       pvcName,
+			VolumeName: pvName,
+		})
+	}
+
+	// Add non GCS Fuse persistent volumes.
+	for i := 0; i < tc.totalPersistentVolumeCount-tc.gcsFusePersistentVolumeCount; i++ {
+		pvcName := "other-csi-pvc-" + strconv.Itoa(i)
+		pvName := "other-csi-pv-" + strconv.Itoa(i)
+		volumes = append(volumes, corev1.Volume{
+			Name: pvcName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+				},
+			},
+		})
+		fakeClientSet.CreatePV(clientset.FakePVConfig{
+			Name:       pvName,
+			DriverName: otherDriverName,
+			SCName:     "test-sc",
+		})
+		fakeClientSet.CreatePVC(clientset.FakePVCConfig{
+			Name:       pvcName,
+			VolumeName: pvName,
+		})
+	}
+
+	return volumes
+}
+
+func TestCountGcsFuseVolumes(t *testing.T) {
 	testCases := []struct {
 		name          string
-		pod           *corev1.Pod
+		tcVolumes     volumeTestCase
 		expectedCount int
 	}{
 		{
-			name: "no volumes",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{},
-				},
-			},
+			name:          "no volumes",
+			tcVolumes:     volumeTestCase{},
 			expectedCount: 0,
 		},
 		{
-			name: "one gcsfuse volume",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{
-						{
-							Name: "gcs-fuse-csi-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: ns.driver.config.Name,
-								},
-							},
-						},
-					},
-				},
+			name: "one gcsfuse ephemeral volume",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:   1,
+				gcsFuseEphemeralVolumeCount: 1,
 			},
 			expectedCount: 1,
 		},
 		{
-			name: "multiple gcsfuse volumes",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{
-						{
-							Name: "gcs-fuse-csi-volume-1",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: ns.driver.config.Name,
-								},
-							},
-						},
-						{
-							Name: "gcs-fuse-csi-volume-2",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: ns.driver.config.Name,
-								},
-							},
-						},
-					},
-				},
+			name: "one gcsfuse persistent volume",
+			tcVolumes: volumeTestCase{
+				totalPersistentVolumeCount:   1,
+				gcsFusePersistentVolumeCount: 1,
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "multiple gcsfuse ephemeral volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:   2,
+				gcsFuseEphemeralVolumeCount: 2,
 			},
 			expectedCount: 2,
 		},
 		{
-			name: "mixed volumes",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{
-						{
-							Name: "gcs-fuse-csi-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: ns.driver.config.Name,
-								},
-							},
-						},
-						{
-							Name: "other-volume",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
-				},
+			name: "multiple gcsfuse persistent volumes",
+			tcVolumes: volumeTestCase{
+				totalPersistentVolumeCount:   2,
+				gcsFusePersistentVolumeCount: 2,
 			},
-			expectedCount: 1,
+			expectedCount: 2,
 		},
 		{
-			name: "other csi driver",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{
-						{
-							Name: "other-csi-volume",
-							VolumeSource: corev1.VolumeSource{
-								CSI: &corev1.CSIVolumeSource{
-									Driver: "other-csi-driver",
-								},
-							},
-						},
-					},
-				},
+			name: "one ephemeral and one persistent gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:    1,
+				totalPersistentVolumeCount:   1,
+				gcsFuseEphemeralVolumeCount:  1,
+				gcsFusePersistentVolumeCount: 1,
 			},
-			expectedCount: 0,
+			expectedCount: 2,
 		},
 		{
-			name: "volume with no csi source",
-			pod: &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{
-						{
-							Name: "other-volume",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
-				},
+			name: "multiple ephemeral and multiple persistent gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:    2,
+				totalPersistentVolumeCount:   3,
+				gcsFuseEphemeralVolumeCount:  2,
+				gcsFusePersistentVolumeCount: 3,
+			},
+			expectedCount: 5,
+		},
+		{
+			name: "mixed csi drivers with some gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:    5,
+				totalPersistentVolumeCount:   5,
+				gcsFuseEphemeralVolumeCount:  2,
+				gcsFusePersistentVolumeCount: 3,
+			},
+			expectedCount: 5,
+		},
+		{
+			name: "mixed csi drivers with no gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:  5,
+				totalPersistentVolumeCount: 5,
 			},
 			expectedCount: 0,
 		},
@@ -787,7 +832,20 @@ func TestCountGcsFuseVolumes(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			count := ns.countGcsFuseVolumes(tc.pod)
+			fakeClientSet := clientset.NewFakeClientset()
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.Name = csiDriverName
+			volumes := createVolumesTestCase(fakeClientSet, tc.tcVolumes)
+			pod := &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: volumes,
+				},
+			}
+			count, _ := ns.countGcsFuseVolumes(pod)
 			if count != tc.expectedCount {
 				t.Errorf("got %d, want %d", count, tc.expectedCount)
 			}
@@ -800,9 +858,6 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 	testTargetPath, cleanup := setupMountTarget(t)
 	defer cleanup()
 
-	csiDriverName := "gcs-fuse-csi.storage.gke.io"
-	otherDriverName := "other.csi.driver"
-
 	baseReq := &csi.NodePublishVolumeRequest{
 		VolumeId:         testVolumeID,
 		TargetPath:       testTargetPath,
@@ -814,14 +869,7 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 		},
 	}
 
-	testCases := []struct {
-		name                         string
-		totalEphemeralVolumeCount    int
-		totalPersistentVolumeCount   int
-		gcsFuseEphemeralVolumeCount  int
-		gcsFusePersistentVolumeCount int
-		expectCollectorRegistered    bool
-	}{
+	testCases := []volumeTestCase{
 		{
 			name:                        "should register collector for 1 gcsfuse ephemeral volume",
 			totalEphemeralVolumeCount:   1,
@@ -904,76 +952,7 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup mock clientset
 			fakeClientSet := clientset.NewFakeClientset()
-			volumes := []corev1.Volume{}
-
-			// Add GCS Fuse ephemeral volumes.
-			for i := 0; i < tc.gcsFuseEphemeralVolumeCount; i++ {
-				volumes = append(volumes, corev1.Volume{
-					Name: "gcs-fuse-csi-ephemeral-volume-" + strconv.Itoa(i),
-					VolumeSource: corev1.VolumeSource{
-						CSI: &corev1.CSIVolumeSource{
-							Driver: csiDriverName,
-						},
-					},
-				})
-			}
-
-			// Add non GCS Fuse ephemeral volumes.
-			for i := 0; i < tc.totalEphemeralVolumeCount-tc.gcsFuseEphemeralVolumeCount; i++ {
-				volumes = append(volumes, corev1.Volume{
-					Name: "other-csi-ephemeral-volume-" + strconv.Itoa(i),
-					VolumeSource: corev1.VolumeSource{
-						CSI: &corev1.CSIVolumeSource{
-							Driver: otherDriverName,
-						},
-					},
-				})
-			}
-
-			// Add GCS Fuse persistent volumes.
-			for i := 0; i < tc.gcsFusePersistentVolumeCount; i++ {
-				pvcName := "gcs-fuse-csi-pvc-" + strconv.Itoa(i)
-				pvName := "gcs-fuse-csi-pv-" + strconv.Itoa(i)
-				volumes = append(volumes, corev1.Volume{
-					Name: pvcName,
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: pvcName,
-						},
-					},
-				})
-				fakeClientSet.CreatePV(clientset.FakePVConfig{
-					Name:       pvName,
-					DriverName: csiDriverName,
-				})
-				fakeClientSet.CreatePVC(clientset.FakePVCConfig{
-					Name:       pvcName,
-					VolumeName: pvName,
-				})
-			}
-
-			// Add non GCS Fuse persistent volumes.
-			for i := 0; i < tc.totalPersistentVolumeCount-tc.gcsFusePersistentVolumeCount; i++ {
-				pvcName := "other-csi-pvc-" + strconv.Itoa(i)
-				pvName := "other-csi-pv-" + strconv.Itoa(i)
-				volumes = append(volumes, corev1.Volume{
-					Name: pvcName,
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: pvcName,
-						},
-					},
-				})
-				fakeClientSet.CreatePV(clientset.FakePVConfig{
-					Name:       pvName,
-					DriverName: otherDriverName,
-					SCName:     "test-sc",
-				})
-				fakeClientSet.CreatePVC(clientset.FakePVCConfig{
-					Name:       pvcName,
-					VolumeName: pvName,
-				})
-			}
+			volumes := createVolumesTestCase(fakeClientSet, tc)
 
 			fakeClientSet.AddPodVolumes(volumes)
 			// Setup node server

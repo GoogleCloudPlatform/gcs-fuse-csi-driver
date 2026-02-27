@@ -50,6 +50,7 @@ type FakePVConfig struct {
 type FakePVCConfig struct {
 	Name       string
 	VolumeName string
+	Namespace  string
 }
 
 type FakeSCConfig struct {
