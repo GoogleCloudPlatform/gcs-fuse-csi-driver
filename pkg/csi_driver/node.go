@@ -46,7 +46,7 @@ const (
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
-	maxGcsFuseVolumesForMetrics         = 10
+	maxGCSFuseVolumesForMetrics         = 10
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -241,10 +241,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Register metrics collector.
 	// It is idempotent to register the same collector in node republish calls.
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		gcsFuseVolumeCount := s.countGcsFuseVolumes(pod)
+		gcsFuseVolumeCount, err := s.countGcsFuseVolumes(pod)
 
-		if gcsFuseVolumeCount > maxGcsFuseVolumesForMetrics {
-			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGcsFuseVolumesForMetrics)
+		if err != nil {
+			klog.Errorf("Metrics collection is disabled for Pod %s/%s as counting the number of GCS FUSE volumes failed with error: %v", pod.Namespace, pod.Name, err)
+		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
+			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
 		} else {
 			klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
 			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName)
@@ -542,11 +544,11 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	return ""
 }
 
-func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
+func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 	gcsFuseVolumeCount := 0
 
 	if pod.Spec.Volumes == nil {
-		return gcsFuseVolumeCount
+		return gcsFuseVolumeCount, nil
 	}
 
 	for _, v := range pod.Spec.Volumes {
@@ -566,10 +568,12 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
 		// If an error occurs in getting information regarding the persistent volume, we ignore it's impact for metrics cardinality volume count restriction
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				klog.Warningf("pvc %q not found: %v", v.Name, err)
+				klog.Warningf("pvc %q not found: %v", v.PersistentVolumeClaim.ClaimName, err)
+				continue
 			}
 
-			continue
+			klog.Errorf("internal error getting PVC %q: %v. GCS Fuse metric count may be inaccurate", v.PersistentVolumeClaim.ClaimName, err)
+			return 0, err
 		}
 
 		pv, err := s.k8sClients.GetPV(pvc.Spec.VolumeName)
@@ -577,9 +581,11 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("pv %q not found: %v", pvc.Spec.VolumeName, err)
+				continue
 			}
 
-			continue
+			klog.Errorf("internal error getting PV %q: %v. GCS Fuse metric count may be inaccurate", pvc.Spec.VolumeName, err)
+			return 0, err
 		}
 
 		if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == s.driver.config.Name {
@@ -587,5 +593,5 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) int {
 		}
 	}
 
-	return gcsFuseVolumeCount
+	return gcsFuseVolumeCount, nil
 }
