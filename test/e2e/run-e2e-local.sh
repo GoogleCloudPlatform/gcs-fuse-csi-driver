@@ -55,7 +55,7 @@ fi
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
 ## Keep this up to date with ../go.mod.
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.23.0
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.27.0
 
 cd "${PKGDIR}"
 

@@ -137,13 +137,11 @@ func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCreden
 		volumeMounts = append(volumeMounts, saTokenVolumeMount)
 	}
 
-	// The sidecar container follows Restricted Pod Security Standard,
-	// see https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 	container := corev1.Container{
 		Name:            GcsFuseSidecarName,
 		Image:           c.ContainerImage,
 		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
-		SecurityContext: GetSecurityContext(),
+		SecurityContext: GetSecurityContext(c),
 		Args: []string{
 			"--v=5",
 		},
@@ -170,10 +168,12 @@ func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCreden
 	return container
 }
 
-// GetSecurityContext ensures the sidecar that uses it follows Restricted Pod Security Standard.
-// See https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
-func GetSecurityContext() *corev1.SecurityContext {
-	return &corev1.SecurityContext{
+// GetSecurityContext ensures the sidecar that uses it follows Restricted Pod Security Standard,
+// when appropriate. See
+// https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted.
+// It is not always possible, eg if the workload needs to have a NUMA-pinned GCS Fuse instance.
+func GetSecurityContext(c *Config) *corev1.SecurityContext {
+	securityContext := &corev1.SecurityContext{
 		AllowPrivilegeEscalation: ptr.To(false),
 		ReadOnlyRootFilesystem:   ptr.To(true),
 		Capabilities: &corev1.Capabilities{
@@ -186,6 +186,12 @@ func GetSecurityContext() *corev1.SecurityContext {
 		RunAsUser:      ptr.To(int64(NobodyUID)),
 		RunAsGroup:     ptr.To(int64(NobodyGID)),
 	}
+
+	if c.EnableNumaPinning {
+		securityContext.SeccompProfile.Type = corev1.SeccompProfileTypeUnconfined
+		securityContext.Capabilities.Add = append(securityContext.Capabilities.Add, corev1.Capability("CAP_SYS_NICE"))
+	}
+	return securityContext
 }
 
 func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.Pod, c *Config) corev1.Container {
@@ -202,7 +208,7 @@ func (si *SidecarInjector) GetMetadataPrefetchSidecarContainerSpec(pod *corev1.P
 		Name:            MetadataPrefetchSidecarName,
 		Image:           c.ContainerImage,
 		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
-		SecurityContext: GetSecurityContext(),
+		SecurityContext: GetSecurityContext(c),
 		Resources: corev1.ResourceRequirements{
 			Limits:   limits,
 			Requests: requests,

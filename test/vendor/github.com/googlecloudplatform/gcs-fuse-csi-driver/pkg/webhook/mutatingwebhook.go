@@ -55,6 +55,7 @@ const (
 	metadataPrefetchMemoryLimitAnnotation            = "gke-gcsfuse/metadata-prefetch-memory-limit"
 	metadataPrefetchMemoryRequestAnnotation          = "gke-gcsfuse/metadata-prefetch-memory-request"
 	GCPWorkloadIdentityCredentialConfigMapAnnotation = "gke-gcsfuse/workload-identity-credential-configmap"
+	NumaPinningAnnotation                            = "gke-gcsfuse/enable-numa-pinning"
 )
 
 var (

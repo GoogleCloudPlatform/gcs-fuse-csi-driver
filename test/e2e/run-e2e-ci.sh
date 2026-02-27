@@ -55,7 +55,7 @@ export PATH=$PATH:/usr/local/go/bin && go version && rm go_tar.tar.gz
 
 # Initialize ginkgo.
 export PATH=${PATH}:$(go env GOPATH)/bin
-go install github.com/onsi/ginkgo/v2/ginkgo@v2.19.1
+go install github.com/onsi/ginkgo/v2/ginkgo@v2.27.0
 
 cd "${PKGDIR}"
 
