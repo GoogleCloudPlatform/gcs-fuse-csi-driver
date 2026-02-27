@@ -553,7 +553,7 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 
 	for _, v := range pod.Spec.Volumes {
 		// Count ephemeral gcsfuse volumes
-		if v.PersistentVolumeClaim == nil && v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
+		if v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
 			gcsFuseVolumeCount++
 			continue
 		}
