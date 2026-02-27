@@ -41,6 +41,11 @@ const (
 	fuseMemoryAllocatableFactorKey           = "fuseMemoryAllocatableFactor"
 	fuseEphemeralStorageAllocatableFactorKey = "fuseEphemeralStorageAllocatableFactor"
 
+	// Default values for StorageClass param keys.
+	fuseFileCacheMediumPriorityDefaultVal           = "gpu:ram|lssd,tpu:ram,general_purpose:ram|lssd"
+	fuseMemoryAllocatableFactorDefaultVal           = "0.7"
+	fuseEphemeralStorageAllocatableFactorDefaultVal = "0.85"
+
 	// Node allocatable resource keys.
 	nvidiaGpuResourceName = corev1.ResourceName("nvidia.com/gpu")
 	googleTpuResourceName = corev1.ResourceName("google.com/tpu")
@@ -85,6 +90,7 @@ type ProfileConfig struct {
 type pvDetails struct {
 	numObjects     int64  // The number of objects reported by the PV.
 	totalSizeBytes int64  // The total size in bytes reported by the PV.
+	locationType   string // The location type of the bucket.
 	name           string // The name of the PersistentVolume.
 }
 
@@ -287,12 +293,14 @@ type GCSFuseCSIRecommendationLog struct {
 	InputSignals struct {
 		BucketTotalObjects                   int64  `json:"bucketTotalObjects"`
 		BucketTotalDataSizeBytes             int64  `json:"bucketTotalDataSizeBytes"`
+		BucketLocationType                   string `json:"bucketLocationType"`
 		RequiredFileCacheBytes               int64  `json:"requiredFileCacheBytes"`
 		RequiredMetadataStatCacheBytes       int64  `json:"requiredMetadataStatCacheBytes"`
 		RequiredMetadataTypeCacheBytes       int64  `json:"requiredMetadataTypeCacheBytes"`
 		NodeType                             string `json:"nodeType"`
 		NodeAllocatableMemoryBytes           int64  `json:"nodeAllocatableMemoryBytes"`
 		NodeAllocatableEphemeralStorageBytes int64  `json:"nodeAllocatableEphemeralStorageBytes"`
+		NodeHasEphemeralStorageLSSD          bool   `json:"nodeHasEphemeralStorageLSSD"`
 		SidecarLimitMemoryBytes              int64  `json:"sidecarLimitMemoryBytes"`
 		SidecarLimitEphemeralStorageBytes    int64  `json:"sidecarLimitEphemeralStorageBytes"`
 		FuseBudgetMemoryBytes                int64  `json:"fuseBudgetMemoryBytes"`
@@ -349,11 +357,13 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	// Bucket signals
 	logEntry.InputSignals.BucketTotalObjects = config.pvDetails.numObjects
 	logEntry.InputSignals.BucketTotalDataSizeBytes = config.pvDetails.totalSizeBytes
+	logEntry.InputSignals.BucketLocationType = config.pvDetails.locationType
 
 	// Node signals
 	logEntry.InputSignals.NodeType = config.nodeDetails.nodeType
 	logEntry.InputSignals.NodeAllocatableMemoryBytes = config.nodeDetails.nodeAllocatables.memoryBytes
 	logEntry.InputSignals.NodeAllocatableEphemeralStorageBytes = config.nodeDetails.nodeAllocatables.ephemeralStorageBytes
+	logEntry.InputSignals.NodeHasEphemeralStorageLSSD = config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation
 
 	// Pod signals
 	logEntry.InputSignals.SidecarLimitMemoryBytes = config.podDetails.sidecarLimits.memoryBytes
@@ -416,21 +426,20 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 
 	cacheOptions := []string{}
 
-	// Map the recommended metadata stat cache size to equivalent mount option.
-	if recommendation.metadataStatCacheBytes > 0 {
-		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", metadataStatCacheMaxSizeMiBMountOptionKey, bytesToMiB(recommendation.metadataStatCacheBytes)))
+	// Map the recommended cache sizes and medium recommendations to mount options.
+	// The mount options must be passed, even if they are set to zero, in order to override
+	// GCSFuse's --profile flag.
+	for moKey, bytes := range map[string]int64{
+		metadataStatCacheMaxSizeMiBMountOptionKey: recommendation.metadataStatCacheBytes,
+		metadataTypeCacheMaxSizeMiBMountOptionKey: recommendation.metadataTypeCacheBytes,
+		fileCacheSizeMiBMountOptionKey:            recommendation.fileCacheBytes,
+	} {
+		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", moKey, bytesToMiB(bytes)))
 	}
 
-	// Map the recommended metadata type cache size to equivalent mount option.
-	if recommendation.metadataTypeCacheBytes > 0 {
-		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", metadataTypeCacheMaxSizeMiBMountOptionKey, bytesToMiB(recommendation.metadataTypeCacheBytes)))
-	}
-
-	// Map the recommended file cache size & medium to equivalent mount options.
+	// Only pass the file cache medium if file cache is enabled.
 	if recommendation.fileCacheBytes > 0 && recommendation.fileCacheMedium != "" {
-		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", fileCacheSizeMiBMountOptionKey, bytesToMiB(recommendation.fileCacheBytes)))
 		// Note: File cache medium *must* be delimeted with an "=" sign, since it's an internal CSI flag.
-		// TODO(urielguzman): Add a sidecar version check in the driver before passing this flag down to the sidecar mounter.
 		cacheOptions = append(cacheOptions, fmt.Sprintf("%s=%s", util.FileCacheMediumConst, recommendation.fileCacheMedium))
 	}
 
@@ -445,10 +454,15 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 // buildCacheRequirements constructs a cacheRequirements struct based on the provided pvDetails.
 // It calculates the ideal sizes for metadata stat, metadata type, and file caches.
 func buildCacheRequirements(pvDetails *pvDetails) *cacheRequirements {
+	requiredFileCacheBytes := pvDetails.totalSizeBytes
+	if isZonalBucket(pvDetails.locationType) {
+		klog.Infof("Bucket location type is %q, file cache not required. Disabling file cache.", pvDetails.locationType)
+		requiredFileCacheBytes = 0
+	}
 	return &cacheRequirements{
 		metadataStatCacheBytes: pvDetails.numObjects * metadataStatCacheBytesPerObject,
 		metadataTypeCacheBytes: pvDetails.numObjects * metadataTypeCacheBytesPerObject,
-		fileCacheBytes:         pvDetails.totalSizeBytes,
+		fileCacheBytes:         requiredFileCacheBytes,
 	}
 }
 
@@ -596,13 +610,11 @@ func recommendMetadataCacheSize(config *ProfileConfig, required, memoryBudget in
 }
 
 // parseFloatParameterNonNegative extracts a parameter by key from the params map,
-// parses it as a float64, and returns an error if the key is missing, the value
-// is not a valid float, or the value is negative.
-func parseFloatParameterNonNegative(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, key string) (float64, error) {
-	stringVal, ok := profilesutil.AttributeWithSCFallback(pv, sc, key)
-	if !ok {
-		return 0, fmt.Errorf("missing %q", key)
-	}
+// parses it as a float64, and returns an error if the value
+// is not a valid float, or the value is negative. If the value is not found, it defaults
+// to an internal value.
+func parseFloatParameterNonNegative(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, key, defaultVal string) (float64, error) {
+	stringVal := profilesutil.AttributeWithSCFallback(pv, sc, key, defaultVal)
 	floatVal, err := strconv.ParseFloat(stringVal, 64)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse %q: %w", key, err)
@@ -700,10 +712,14 @@ func buildPVDetails(
 		return nil, fmt.Errorf("invalid annotation format on PV %q: %s", pv.Name, errorMsg)
 	}
 
+	// Parse the location type.
+	locationType := pvAnnotations[profilesutil.AnnotationLocationType]
+
 	return &pvDetails{
 		name:           pv.Name,
 		numObjects:     numObjects,
 		totalSizeBytes: totalSizeBytes,
+		locationType:   locationType,
 	}, nil
 }
 
@@ -792,23 +808,20 @@ func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttr
 	}
 
 	// Get the file cache medium priority from the StorageClass parameters (or PV override).
-	fileCacheMediumPriorityStr, ok := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey)
-	if !ok {
-		return nil, fmt.Errorf("missing fuseFileCacheMediumPriority in StorageClass %q", sc.Name)
-	}
+	fileCacheMediumPriorityStr := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey, fuseFileCacheMediumPriorityDefaultVal)
 	fileCacheMediumPriority, err := parseFileCacheMediumPriority(fileCacheMediumPriorityStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuseFileCacheMediumPriority in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse memory allocatable factor from the StorageClass parameters (or PV override).
-	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseMemoryAllocatableFactorKey)
+	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseMemoryAllocatableFactorKey, fuseMemoryAllocatableFactorDefaultVal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse memory allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse ephemeral storage allocatable factor from the StorageClass parameters.
-	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseEphemeralStorageAllocatableFactorKey)
+	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseEphemeralStorageAllocatableFactorKey, fuseEphemeralStorageAllocatableFactorDefaultVal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse ephemeral storage allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}

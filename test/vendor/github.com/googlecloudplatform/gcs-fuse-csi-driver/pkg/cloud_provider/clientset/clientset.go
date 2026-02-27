@@ -40,6 +40,7 @@ import (
 )
 
 type Interface interface {
+	K8sClient() kubernetes.Interface
 	ConfigurePodLister(ctx context.Context, nodeName string)
 	ConfigureNodeLister(ctx context.Context, nodeName string)
 	ConfigurePVLister(ctx context.Context)
@@ -71,6 +72,10 @@ const (
 	MachineTypeKey                    = "node.kubernetes.io/instance-type"
 	GkeAppliedNodeLabelsAnnotationKey = "node.gke.io/last-applied-node-labels"
 )
+
+func (c *Clientset) K8sClient() kubernetes.Interface {
+	return c.k8sClients
+}
 
 func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 	trim := func(obj interface{}) (interface{}, error) {

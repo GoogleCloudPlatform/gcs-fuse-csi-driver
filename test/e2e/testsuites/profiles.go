@@ -278,7 +278,9 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 
 	})
 
-	ginkgo.It("should override profiles all overridable values", ginkgo.Serial, func() {
+	// ginkgo.PrioritySpec should be set to a high value as to guarantee it runs early in e2e queue to prevent timeouts.
+	// Running this test first gives it time to create and delete the anywhere cache which can take up to 2 hours.
+	ginkgo.It("should override profiles all overridable values", ginkgo.SpecPriority(10), func() {
 		err := utils.AddComputeBindingForAC(ctx)
 		if err != nil {
 			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)

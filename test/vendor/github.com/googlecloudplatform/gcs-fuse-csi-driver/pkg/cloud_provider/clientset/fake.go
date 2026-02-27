@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 type FakeNodeConfig struct {
@@ -66,6 +67,10 @@ func NewFakeClientset() *FakeClientset {
 	fakeClientSet.CreateSC(FakeSCConfig{})
 
 	return fakeClientSet
+}
+
+func (c *FakeClientset) K8sClient() kubernetes.Interface {
+	return nil
 }
 
 func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}

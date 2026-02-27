@@ -20,6 +20,7 @@ package webhook
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,7 @@ type Config struct {
 	ShouldInjectSAVolume  bool   `json:"-"`
 	EnableGcsfuseProfiles bool   `json:"-"`
 	PodHostNetworkSetting bool   `json:"-"`
+	EnableNumaPinning     bool   `json:"enable-numa-pinning,omitempty"`
 	ContainerImage        string `json:"-"`
 	ImagePullPolicy       string `json:"-"`
 	//nolint:tagliatelle
@@ -145,13 +147,13 @@ func getConfigFromAnnotation(defaultConfig Config, prefix string, annotations ma
 		ImagePullPolicy:       defaultConfig.ImagePullPolicy,
 		EnableGcsfuseProfiles: defaultConfig.EnableGcsfuseProfiles,
 	}
-	extractedData := make(map[string]string)
+	extractedData := make(map[string]any)
 	for key, value := range annotations {
 		// Check if the key starts with the given prefix
 		if strings.HasPrefix(key, prefix) {
 			// Remove the prefix and keep only the case name
 			newKey := strings.TrimPrefix(key, prefix)
-			extractedData[newKey] = value
+			extractedData[newKey] = digestConfigAnnotation(newKey, value)
 		}
 	}
 	extractedJSON, err := json.Marshal(extractedData)
@@ -164,6 +166,29 @@ func getConfigFromAnnotation(defaultConfig Config, prefix string, annotations ma
 	}
 
 	return config, nil
+}
+
+// digestConfigAnnotation transforms annotation values into the right type for json marshalling.
+// Right now it only handles strings and bools.
+func digestConfigAnnotation(key, value string) any {
+	configType := reflect.TypeOf(Config{})
+	for i := 0; i < configType.NumField(); i++ {
+		field := configType.Field(i)
+		tag := field.Tag.Get("json")
+		if !strings.Contains(tag, ",") {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name != key {
+			continue
+		}
+		if field.Type.String() == "bool" {
+			return strings.ToLower(value) == "true"
+		} else {
+			return value
+		}
+	}
+	return value
 }
 
 func (si *SidecarInjector) getDefaultConfig(prefix string) (*Config, error) {
