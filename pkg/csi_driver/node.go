@@ -565,7 +565,7 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 		// Count persistent gcsfuse volumes
 		pvc, err := s.k8sClients.GetPVC(pod.Namespace, v.PersistentVolumeClaim.ClaimName)
 
-		// If an error occurs in getting information regarding the persistent volume, we ignore it's impact for metrics cardinality volume count restriction
+		// A NotFound error is tolerated, but other errors will abort the count and disable metrics.
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("pvc %q not found: %v", v.PersistentVolumeClaim.ClaimName, err)
