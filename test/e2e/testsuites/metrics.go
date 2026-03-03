@@ -276,34 +276,19 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 				metricsList := []*dto.Metric{}
 				metricFamily, ok := families[metricName]
 				if ok {
-				grpcMetricLoop:
 					for _, m := range metricFamily.GetMetric() {
+						labels := make(map[string]string, len(m.GetLabel()))
 						for _, pair := range m.GetLabel() {
-							name, value := pair.GetName(), pair.GetValue()
-							switch name {
-							case "bucket_name":
-								if value != bucketName {
-									continue grpcMetricLoop
-								}
-							case "pod_name":
-								if value != podName {
-									continue grpcMetricLoop
-								}
-							case "volume_name":
-								if value != volume {
-									continue grpcMetricLoop
-								}
-							case "namespace_name":
-								if value != f.Namespace.Name {
-									continue grpcMetricLoop
-								}
-							case "pod_uid":
-								if value != "" {
-									continue grpcMetricLoop
-								}
-							}
+							labels[pair.GetName()] = pair.GetValue()
 						}
-						metricsList = append(metricsList, m)
+
+						if labels["bucket_name"] == bucketName &&
+							labels["pod_name"] == podName &&
+							labels["volume_name"] == volume &&
+							labels["namespace_name"] == f.Namespace.Name &&
+							labels["pod_uid"] == "" {
+							metricsList = append(metricsList, m)
+						}
 					}
 				}
 				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
