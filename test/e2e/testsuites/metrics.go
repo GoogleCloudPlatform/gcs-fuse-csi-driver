@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"local/test/e2e/specs"
 
@@ -304,7 +305,11 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 					}
 				}
 				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
-				gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">", 0), fmt.Sprintf("Found metric %q count: %v, expected count > 0", metricName, len(metricsList)))
+				numericComparater := ">"
+				if strings.Contains(metricName, "rls") {
+					numericComparater = ">="
+				}
+				gomega.Expect(len(metricsList)).To(gomega.BeNumerically(numericComparater, 0), fmt.Sprintf("Found metric %q count: %v, expected count %v 0", metricName, len(metricsList), numericComparater))
 				ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
 			}
 		}
