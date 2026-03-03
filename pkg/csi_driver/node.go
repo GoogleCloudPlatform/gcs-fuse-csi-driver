@@ -572,7 +572,7 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 				continue
 			}
 
-			klog.Errorf("internal error getting PVC %q: %v. GCS Fuse metric count may be inaccurate", v.PersistentVolumeClaim.ClaimName, err)
+			klog.Errorf("internal error getting PVC %q: %v. Setting GCS Fuse metric count to 0", v.PersistentVolumeClaim.ClaimName, err)
 			return 0, err
 		}
 
@@ -584,7 +584,7 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 				continue
 			}
 
-			klog.Errorf("internal error getting PV %q: %v. GCS Fuse metric count may be inaccurate", pvc.Spec.VolumeName, err)
+			klog.Errorf("internal error getting PV %q: %v. Setting GCS Fuse metric count to 0", pvc.Spec.VolumeName, err)
 			return 0, err
 		}
 

@@ -148,24 +148,29 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		pvObj, ok := obj.(*corev1.PersistentVolume)
-		if !ok {
+
+		if !ok || pvObj == nil {
 			return obj, nil
 		}
-		return &corev1.PersistentVolume{
+
+		trimmedPV := &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvObj.ObjectMeta.Name,
-				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
+				Annotations: pvObj.ObjectMeta.Annotations,
 			},
 			Spec: corev1.PersistentVolumeSpec{
-				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
-				PersistentVolumeSource: corev1.PersistentVolumeSource{
-					CSI: &corev1.CSIPersistentVolumeSource{
-						Driver:       pvObj.Spec.CSI.Driver, // Required by cardinality mitigation to disable metric collectors when gcsfuse volumes exceed threshold
-						VolumeHandle: pvObj.Spec.CSI.VolumeHandle,
-					},
-				},
+				StorageClassName: pvObj.Spec.StorageClassName,
 			},
-		}, nil
+		}
+
+		if pvObj.Spec.CSI != nil {
+			trimmedPV.Spec.PersistentVolumeSource.CSI = &corev1.CSIPersistentVolumeSource{
+				Driver:       pvObj.Spec.CSI.Driver,
+				VolumeHandle: pvObj.Spec.CSI.VolumeHandle,
+			}
+		}
+
+		return trimmedPV, nil
 	}
 
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
