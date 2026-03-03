@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"local/test/e2e/specs"
 
@@ -306,7 +307,14 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 					}
 				}
 				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
-				gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">=", 0), fmt.Sprintf("Found metric %q count: %v, expected count >= 0", metricName, len(metricsList)))
+				matcher := gomega.BeNumerically(">", 0)
+				expectedCountMsg := "expected count > 0"
+				if strings.Contains(metricName, "rls") {
+					// For RLS metrics, it's possible that there are no RLS calls and thus the count is 0. We just want to make sure the metric is emitted with the correct labels.
+					matcher = gomega.BeNumerically(">=", 0)
+					expectedCountMsg = "expected count >= 0"
+				}
+				gomega.Expect(len(metricsList)).To(matcher, fmt.Sprintf("Found metric %q count: %v, %s", metricName, len(metricsList), expectedCountMsg))
 				ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
 			}
 		}
