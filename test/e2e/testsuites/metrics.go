@@ -94,6 +94,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		config             *storageframework.PerTestConfig
 		volumeResourceList []*storageframework.VolumeResource
 		artifactsDir       string
+		originalPrefix     string
 	}
 	var l local
 	ctx := context.Background()
@@ -108,6 +109,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
+			l.originalPrefix = configPrefix[0]
 		}
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
@@ -130,7 +132,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string, expectGrpcMetrics bool) {
+	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string) {
 		ginkgo.By("Running file operations on the volume")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 
@@ -268,7 +270,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 
-		if expectGrpcMetrics {
+		if l.originalPrefix == specs.EnableGrpcAndMetricsPrefix {
 			for _, metricName := range expectedGrpcMetricNames {
 				metricsList := []*dto.Metric{}
 				metricFamily, ok := families[metricName]
@@ -331,7 +333,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
 
-		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName, false)
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
 	})
 
 	// This tests below configuration:
@@ -359,7 +361,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		for i, vr := range l.volumeResourceList {
 			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), false)
+			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i))
 		}
 	})
 
@@ -384,6 +386,6 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
 
-		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName, true)
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
 	})
 }
