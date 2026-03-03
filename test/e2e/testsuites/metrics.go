@@ -270,7 +270,6 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
 		}
 
-
 		if l.originalPrefix == specs.EnableGrpcAndMetricsPrefix {
 			for _, metricName := range expectedGrpcMetricNames {
 				metricsList := []*dto.Metric{}
