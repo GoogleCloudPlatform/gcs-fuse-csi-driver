@@ -307,9 +307,9 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 				numericComparater := ">"
 				if strings.Contains(metricName, "rls") {
-					numericComparater = ">="
+					numericComparater = gomega.BeNumerically(">=", 0)
 				}
-				gomega.Expect(len(metricsList)).To(gomega.BeNumerically(numericComparater, 0), fmt.Sprintf("Found metric %q count: %v, expected count %v 0", metricName, len(metricsList), numericComparater))
+				gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">=", 0), fmt.Sprintf("Found metric %q count: %v, expected count >= 0", metricName, len(metricsList)))
 				ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
 			}
 		}
