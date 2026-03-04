@@ -1090,12 +1090,21 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 	configMaps, err := client.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=gcsfusecsi-image-config",
 	})
-	framework.ExpectNoError(err)
-	gomega.Expect(configMaps.Items).To(gomega.HaveLen(1))
+	if err != nil {
+		klog.Errorf("Expected no error when list configmaps, but found: %v", err)
+		return ""
+	}
+	if len(configMaps.Items) != 1 {
+		klog.Errorf("Expected 1 gcsfusecsi-image-config ConfigMap, found %d", len(configMaps.Items))
+		return ""
+	}
 
 	sidecarImageConfig := configMaps.Items[0]
 	image := sidecarImageConfig.Data["sidecar-image"]
-	gomega.Expect(image).ToNot(gomega.BeEmpty())
+	if image == "" {
+		klog.Errorf("sidecar-image data is empty in configmap")
+		return ""
+	}
 
 	tPod := NewTestPod(client, f.Namespace)
 	tPod.pod = &corev1.Pod{
@@ -1119,16 +1128,33 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 
 	tPod.Create(ctx)
 	tPod.WaitForRunning(ctx)
-	defer tPod.Cleanup(ctx)
 
-	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, tPod.pod.Name, webhook.GcsFuseSidecarName, "/gcsfuse", "--version")
-	framework.ExpectNoError(err,
-		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
-		err, stdout, stderr)
+	// Use a custom cleanup function instead of tPod.Cleanup() here.
+	// Since GetGCSFuseVersion is called during the Ginkgo tree construction phase (init()),
+	// standard framework cleanup methods that rely on framework.ExpectNoError or Gomega
+	// assertions must be avoided. They will cause a fatal nil pointer panic if an error occurs.
+	defer func() {
+		err := client.CoreV1().Pods(f.Namespace.Name).Delete(ctx, tPod.pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			framework.Logf("Failed to cleanup pod %s in standalone fetcher: %v", tPod.pod.Name, err)
+		}
+	}()
+
+	// Use raw kubectl exec instead of framework.ExecCommandInContainer() for the same reason
+	// as above: to bypass internal ExpectNoError assertions that panic during the init() phase.
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(f.Namespace.Name, "exec", tPod.pod.Name, "-c", webhook.GcsFuseSidecarName, "--", "/gcsfuse", "--version")
+	if err != nil {
+		klog.Errorf("/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
+			err, stdout, stderr)
+		return ""
+	}
 
 	// Before GCSFuse v2.4.1, the output of is saved in stderr
 	l := strings.Split(stdout+stderr, " ")
-	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
+	if len(l) <= 3 {
+		klog.Errorf("Unexpected GCSFuse version output format: %s", stdout+stderr)
+		return ""
+	}
 	if len(strings.Split(l[2], "-")) < 2 {
 		// All the version comparison operations in driver expect the GCS Fuse version in X.Y.Z-gke.V format.
 		// Versioning package (https://semver.org/#spec-item-9) treats `-gke.V` as pre release packages which can lead to comparison erros like v3.1.0 > v3.1.0-gke.0 (not considered same)

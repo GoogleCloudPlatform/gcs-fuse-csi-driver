@@ -112,11 +112,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 
 	gcsfuseIntegrationFileCacheTest := func(testName string, readOnly bool, fileCacheCapacity, fileCacheForRangeRead, metadataCacheTTLSeconds string, mountOptions ...string) {
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
+		if GCSFuseVersionStr == "" {
+			GCSFuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
-		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
-		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, GCSFuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, testName)
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
 
 		ginkgo.By("Configuring the test pod")
@@ -134,7 +134,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
 		cacheDir := "cache-dir"
-		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+		gcsfuseVersion := version.MustParseSemantic(GCSFuseVersionStr)
 		if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 			if hnsEnabled(driver) {
 				cacheDir = "cache-dir-read-cache-hns-true"

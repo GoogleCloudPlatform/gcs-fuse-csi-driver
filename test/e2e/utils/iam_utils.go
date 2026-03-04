@@ -296,7 +296,7 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 		}
 	}
 	if binding == nil {
-		klog.Warning("Attempted to delete a member from a binding that does not exist %s in project %s", role, projectID)
+		klog.Warningf("Attempted to delete a member from a binding that does not exist %s in project %s", role, projectID)
 		return nil
 	}
 
@@ -383,7 +383,7 @@ func ExpectNoError(err error, msgAndArgs ...interface{}) {
 }
 
 func ValidateIAMRoleExists(ctx context.Context, projectID string, roleID string) error {
-	klog.Info("Validating role exists: %s", roleID)
+	klog.Infof("Validating role exists: %s", roleID)
 	iamClient, err := iamadmin.NewIamClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create IAM client: %v", err)
@@ -405,7 +405,7 @@ func ValidateIAMRoleExists(ctx context.Context, projectID string, roleID string)
 }
 
 func deleteIAMRoleForProfilesTests(ctx context.Context, projectID string, roleID string) {
-	klog.Info("Deleting role: %s", roleID)
+	klog.Infof("Deleting role: %s", roleID)
 	iamClient, err := iamadmin.NewIamClient(ctx)
 	if err != nil {
 		klog.Errorf("failed to create IAM client: %v", err)

@@ -25,10 +25,11 @@ import (
 	"strings"
 	"testing"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
 	"local/test/e2e/utils"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"context"
 
@@ -38,7 +39,10 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/client-go/kubernetes"
+	k8sclientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -60,6 +64,7 @@ var (
 
 var _ = func() bool {
 	testing.Init()
+
 	if os.Getenv(clientcmd.RecommendedConfigPathEnvVar) == "" {
 		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 		os.Setenv(clientcmd.RecommendedConfigPathEnvVar, kubeconfig)
@@ -91,8 +96,37 @@ var _ = func() bool {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
 
+	testsuites.GCSFuseVersionStr = fetchGCSFuseVersion()
+
 	return true
 }()
+
+// fetchGCSFuseVersion initiates a minimal, standalone framework to query the cluster sidecar
+// during the init() phase. This enables dynamic test tree construction depending on the
+// version found in the remote cluster.
+func fetchGCSFuseVersion() string {
+	config, err := framework.LoadConfig()
+	if err != nil {
+		klog.Fatalf("failed to load kube config for standalone version fetch: %v", err)
+	}
+	k8sClient, err := k8sclientset.NewForConfig(config)
+	if err != nil {
+		klog.Fatalf("failed to create client for standalone version fetch: %v", err)
+	}
+
+	minimalFramework := &framework.Framework{
+		ClientSet: k8sClient,
+		Namespace: &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "default",
+			},
+		},
+	}
+	ctx := context.Background()
+	versionStr := specs.GetGCSFuseVersion(ctx, minimalFramework)
+	klog.Infof("Fetched GCSFuse version globally: %s", versionStr)
+	return versionStr
+}
 
 func maybeDeleteGCSFuseVersionConfigMap() {
 	config, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
@@ -167,6 +201,13 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
 	})
+
+	// Skip HNS tests suites for ZB since enable ZB will automatically enable HNS
+	// And the test cases in GCSFuseCSITestSuites already includes HNS tests
+	if *zbFlag {
+		ginkgo.Skip("Skipping HNS tests suites for ZB")
+		return
+	}
 
 	GCSFuseCSITestSuitesHNS := []func() storageframework.TestSuite{
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
