@@ -178,7 +178,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		switch config.Prefix {
 		case FakeVolumePrefix, SkipCSIBucketAccessCheckAndFakeVolumePrefix, EnableMetadataPrefetchAndFakeVolumePrefix:
 			bucketName = uuid.NewString()
-		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix:
+		case InvalidVolumePrefix, SkipCSIBucketAccessCheckAndInvalidVolumePrefix, EnableGrpcAndMetricsPrefixNonExistentBucket:
 			bucketName = InvalidVolume
 		case ForceNewBucketPrefix, EnableFileCacheForceNewBucketPrefix, EnableMetadataPrefetchPrefixForceNewBucketPrefix, EnableFileCacheForceNewBucketAndMetricsPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
@@ -275,7 +275,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			if n.EnableZB && kernelParamsSupported {
 				mountOptions += ",file-system:enable-kernel-reader:false"
 			}
-		case EnableGrpcAndMetricsPrefix:
+		case EnableGrpcAndMetricsPrefix, EnableGrpcAndMetricsPrefixNonExistentBucket:
 			// Ensure gRPC is used for this test, as it's required for gRPC metrics.
 			if !strings.Contains(mountOptions, "client-protocol=grpc") {
 				mountOptions += ",client-protocol=grpc"
@@ -322,7 +322,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix, EnableGrpcAndMetricsPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix, EnableGrpcAndMetricsPrefix, EnableGrpcAndMetricsPrefixNonExistentBucket:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
