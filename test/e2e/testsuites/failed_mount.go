@@ -154,7 +154,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		}
 		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
 		}
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0"))) {
@@ -199,7 +199,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod has failed mount error")
 
 		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
 		}
 		v, err := version.ParseSemantic(gcsfuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0-gke.0"))) {
