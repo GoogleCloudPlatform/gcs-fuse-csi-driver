@@ -26,8 +26,10 @@ import (
 	"local/test/e2e/utils"
 
 	"github.com/onsi/ginkgo/v2"
+
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -112,11 +114,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 
 	gcsfuseIntegrationFileCacheTest := func(testName string, readOnly bool, fileCacheCapacity, fileCacheForRangeRead, metadataCacheTTLSeconds string, mountOptions ...string) {
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
-		}
-		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
-		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, GCSFuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, testName)
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
 
 		ginkgo.By("Configuring the test pod")
@@ -134,7 +133,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 
 		tPod.SetupTmpVolumeMount("/tmp/gcsfuse_read_cache_test_logs")
 		cacheDir := "cache-dir"
-		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+		gcsfuseVersion := version.MustParseSemantic(GCSFuseVersionStr)
 		if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 			if hnsEnabled(driver) {
 				cacheDir = "cache-dir-read-cache-hns-true"
@@ -197,11 +196,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 	gcsfuseIntegrationFileCacheTestNew := func(testName string, config utils.ParsedConfig) {
 
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
-		}
-		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
-		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, GCSFuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, testName)
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
 
 		ginkgo.By("Configuring the test pod")
@@ -218,7 +214,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 
 		l.volumeResource.VolSource.CSI.VolumeAttributes["fileCacheCapacity"] = config.FileCacheCapacity
 		tPod.SetupTmpVolumeMount(gkeTempDir)
-		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
 		framework.Logf("Cache file path: %v", config.CacheDir)
 		tPod.SetupCacheVolumeMount(config.CacheDir, ".volumes/"+volumeName)
 
@@ -257,6 +252,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 
+		gcsfuseVersion := version.MustParseSemantic(GCSFuseVersionStr)
 		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
 		commandArgs := []string{
@@ -475,9 +471,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 	// The gcsfuse test_config.yaml is introduced from the gcsfuse v3.5+.
 	// If the gcsfuse version is less than v3.5+, we will use the static tests.
 	// We will remove the static tests in the future.
-	if utils.IsReadFromTestConfig(gcsfuseVersionStr) {
-		generateDynamicTests(gcsfuseVersionStr)
+
+	if utils.IsReadFromTestConfig(GCSFuseVersionStr) {
+		klog.Info("Generating tests based on test config")
+		generateDynamicTests(GCSFuseVersionStr)
 	} else {
+		klog.Info("Generating static tests")
 		generateStaticTests()
 	}
 }

@@ -153,10 +153,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		} else {
 			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		}
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
-		}
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		v, err := version.ParseSemantic(GCSFuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0"))) {
 			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "bucket does not exist")
 		} else {
@@ -198,10 +195,10 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
+		if GCSFuseVersionStr == "" {
+			GCSFuseVersionStr = specs.GetGCSFuseVersion(ctx, f)
 		}
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		v, err := version.ParseSemantic(GCSFuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0-gke.0"))) {
 			if enableSidecarBucketAccessCheck {
 				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")

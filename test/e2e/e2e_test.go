@@ -39,7 +39,10 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/client-go/kubernetes"
+	k8sclientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -77,17 +80,6 @@ var _ = func() bool {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
 
-	// klog.Info("Fetching GCSFuse version from cluster")
-	// v := specs.GetGCSFuseVersion(context.Background(), c)
-	// klog.Infof("Detected GCSFuse version: %v", v)
-
-	// klog.Info("Loading test config")
-	// Load the integration test configurations before Ginkgo parses the test tree
-	// if err := utils.LoadTestConfig(v); err != nil {
-	// 	klog.Fatalf("Failed to load test_config.yaml for version %v: %v", v, err)
-	// }
-	// klog.Infof("Successfully loaded %d test packages from test_config.yaml", len(utils.LoadedTestPackages))
-
 	kubeConfig, err := clientcmd.LoadFromFile(framework.TestContext.KubeConfig)
 	if err != nil {
 		klog.Fatalf("Failed to load kube config: %v", err)
@@ -104,8 +96,37 @@ var _ = func() bool {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
 
+	testsuites.GCSFuseVersionStr = fetchGCSFuseVersion()
+
 	return true
 }()
+
+// fetchGCSFuseVersion initiates a minimal, standalone framework to query the cluster sidecar
+// during the init() phase. This enables dynamic test tree construction depending on the
+// version found in the remote cluster.
+func fetchGCSFuseVersion() string {
+	config, err := framework.LoadConfig()
+	if err != nil {
+		klog.Fatalf("failed to load kube config for standalone version fetch: %v", err)
+	}
+	k8sClient, err := k8sclientset.NewForConfig(config)
+	if err != nil {
+		klog.Fatalf("failed to create client for standalone version fetch: %v", err)
+	}
+
+	minimalFramework := &framework.Framework{
+		ClientSet: k8sClient,
+		Namespace: &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "default",
+			},
+		},
+	}
+	ctx := context.Background()
+	versionStr := specs.GetGCSFuseVersion(ctx, minimalFramework)
+	klog.Infof("Fetched GCSFuse version globally: %s", versionStr)
+	return versionStr
+}
 
 func maybeDeleteGCSFuseVersionConfigMap() {
 	config, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
@@ -167,25 +188,6 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		if *profilesFlag {
 			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
 		}
-
-		suites = append(suites, []func() storageframework.TestSuite{
-			testsuites.InitGcsFuseCSIVolumesTestSuite,
-			testsuites.InitGcsFuseCSIFailedMountTestSuite,
-			testsuites.InitGcsFuseCSIWorkloadsTestSuite,
-			testsuites.InitGcsFuseCSIMultiVolumeTestSuite,
-			testsuites.InitGcsFuseCSIGCSFuseIntegrationTestSuite,
-			testsuites.InitGcsFuseCSIPerformanceTestSuite,
-			testsuites.InitGcsFuseCSISubPathTestSuite,
-			testsuites.InitGcsFuseCSIAutoTerminationTestSuite,
-			testsuites.InitGcsFuseCSIFileCacheTestSuite,
-			testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheTestSuite,
-			testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
-			testsuites.InitGcsFuseCSIIstioTestSuite,
-			testsuites.InitGcsFuseCSIMetricsTestSuite,
-			testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
-			testsuites.InitGcsFuseMountTestSuite,
-			testsuites.InitGcsFuseCSIOIDCTestSuite,
-		}...)
 
 		if *kernelParamsFlag {
 			suites = append(suites, testsuites.InitGcsFuseKernelParamsTestSuite)

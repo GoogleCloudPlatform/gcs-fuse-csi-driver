@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onsi/ginkgo/v2"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -79,9 +80,9 @@ func isVariableSet(v string) bool {
 }
 
 func runCommand(action string, cmd *exec.Cmd) error {
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = ginkgo.GinkgoWriter
 	cmd.Stdin = os.Stdin
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = ginkgo.GinkgoWriter
 
 	klog.Infof("%s", action)
 	klog.Infof("cmd env=%v", cmd.Env)
@@ -347,11 +348,15 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 // Checks if the gcsfuse version supports test_config.yaml for integration tests.
 func IsReadFromTestConfig(gcsfuseVersionStr string) bool {
 	if gcsfuseVersionStr == "" {
-		// TODO: Remove this after implement the get gcsfuse version from the cluster during test tree init.
+		return false
+	}
+
+	v, branch := GCSFuseBranch(gcsfuseVersionStr)
+	if branch == MasterBranchName {
 		return true
 	}
-	gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
-	return gcsfuseVersion.AtLeast(version.MustParseSemantic(MinGCSFuseTestConfigVersion)) || gcsfuseVersionStr == MasterBranchName
+
+	return v.AtLeast(version.MustParseSemantic(MinGCSFuseTestConfigVersion))
 }
 
 // Extracts the only-dir UUID from the mountOptions string.
