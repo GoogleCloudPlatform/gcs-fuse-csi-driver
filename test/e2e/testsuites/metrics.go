@@ -380,4 +380,28 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
 	})
+
+	// This tests below configuration:
+	//    [pod1]
+	//       |
+	//   [volume1]
+	//       |
+	//   [bucket1]
+	ginkgo.It("should emit gRPC metrics with non-existent bucket", func() {
+		init(1, specs.EnableGrpcAndMetricsPrefixNonExistentBucket)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
+	})
 }
