@@ -127,8 +127,8 @@ func kernelParamsConfigFilePath(volumeName string) string {
 //	}
 const kernelParamExtractRegex = `"name"\s*:\s*"%s".*?"value"\s*:\s*"(.*?)"`
 
-func skipIfKernelParamsNotSupported(ctx context.Context, f *framework.Framework) {
-	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch(ctx, f)
+func skipIfKernelParamsNotSupported(ctx context.Context) {
+	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch(ctx)
 
 	// Running since we are on master branch.
 	if branch == utils.MasterBranchName {
@@ -201,7 +201,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	init := func(configPrefix ...string) {
-		skipIfKernelParamsNotSupported(ctx, f)
+		skipIfKernelParamsNotSupported(ctx)
 
 		l = local{}
 		l.config = driver.PrepareTest(ctx, f)

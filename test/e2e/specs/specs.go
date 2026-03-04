@@ -41,6 +41,7 @@ import (
 	"k8s.io/klog/v2"
 
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
@@ -120,8 +121,7 @@ const (
 
 	IsOSSEnvVar = "IS_OSS"
 
-	GcsfuseVersionConfigMapName = "gcsfuse-version-config"
-	gcsfuseVersionConfigMapKey  = "gcsfuse-version"
+	GcsfuseVersionVarName = "gcsfuse-version"
 )
 
 // Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
@@ -1076,38 +1076,56 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
-	versionData, err := utils.ReadConfigMap(ctx, f.ClientSet, utils.DefaultNamespace, GcsfuseVersionConfigMapName)
+func GetGCSFuseVersion(ctx context.Context) string {
+	config, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
+	framework.ExpectNoError(err)
+
+	cs, err := clientset.NewForConfig(config)
+	framework.ExpectNoError(err)
+
+	versionData := os.Getenv(GcsfuseVersionVarName)
+	if versionData != "" {
+		return versionData
+	}
+	klog.Infof("GCSFuseVersion env var has not been set will retrieve it manually")
+
+	gcsfuseVersion, err := deployGCSFuseVersionFetcherPod(ctx, cs)
 	if err != nil {
-		klog.Errorf("Failed to read GCS Fuse version configmap %s: %v, will retrieve it manually", GcsfuseVersionConfigMapName, err)
+		klog.Errorf("Failed to deploy GCS Fuse version fetcher pod: %v", err)
+		framework.ExpectNoError(err)
 	}
 
-	if versionData != nil && versionData[gcsfuseVersionConfigMapKey] != "" {
-		return versionData[gcsfuseVersionConfigMapKey]
-	}
+	return gcsfuseVersion
+}
 
-	client := f.ClientSet
-	configMaps, err := client.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
+func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Interface) (string, error) {
+	configMaps, err := clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=gcsfusecsi-image-config",
 	})
 	framework.ExpectNoError(err)
-	gomega.Expect(configMaps.Items).To(gomega.HaveLen(1))
+	if len(configMaps.Items) != 1 {
+		framework.Failf("expected one config map `gcsfusecsi-image-config` but found %d", len(configMaps.Items))
+	}
 
 	sidecarImageConfig := configMaps.Items[0]
-	image := sidecarImageConfig.Data["sidecar-image"]
-	gomega.Expect(image).ToNot(gomega.BeEmpty())
 
-	tPod := NewTestPod(client, f.Namespace)
-	tPod.pod = &corev1.Pod{
+	image := sidecarImageConfig.Data["sidecar-image"]
+	if image == "" {
+		framework.Failf("expected data for key `sidecar-image` in the config map `gcsfusecsi-image-config`")
+	}
+
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "gcsfuse-version-fetcher-",
+			Namespace:    utils.DefaultNamespace,
 		},
 		Spec: corev1.PodSpec{
 			TerminationGracePeriodSeconds: ptr.To(int64(0)),
 			Containers: []corev1.Container{
 				{
-					Name:  webhook.GcsFuseSidecarName,
-					Image: image,
+					Name:    webhook.GcsFuseSidecarName,
+					Image:   image,
+					Command: []string{"/gcsfuse", "--version"},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -1117,35 +1135,33 @@ func GetGCSFuseVersion(ctx context.Context, f *framework.Framework) string {
 		},
 	}
 
-	tPod.Create(ctx)
-	tPod.WaitForRunning(ctx)
-	defer tPod.Cleanup(ctx)
-
-	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, tPod.pod.Name, webhook.GcsFuseSidecarName, "/gcsfuse", "--version")
+	createdPod, err := clientset.CoreV1().Pods(utils.DefaultNamespace).Create(ctx, pod, metav1.CreateOptions{})
+	if createdPod != nil {
+		defer clientset.CoreV1().Pods(utils.DefaultNamespace).Delete(context.Background(), createdPod.Name, metav1.DeleteOptions{})
+	}
 	framework.ExpectNoError(err,
-		"/gcsfuse --version should succeed, but failed with error message %q\nstdout: %s\nstderr: %s",
-		err, stdout, stderr)
+		"Pods.Create should succeed, but failed with error message: %v", err)
 
-	// Before GCSFuse v2.4.1, the output of is saved in stderr
-	l := strings.Split(stdout+stderr, " ")
-	gomega.Expect(len(l)).To(gomega.BeNumerically(">", 3))
-	if len(strings.Split(l[2], "-")) < 2 {
-		// All the version comparison operations in driver expect the GCS Fuse version in X.Y.Z-gke.V format.
-		// Versioning package (https://semver.org/#spec-item-9) treats `-gke.V` as pre release packages which can lead to comparison erros like v3.1.0 > v3.1.0-gke.0 (not considered same)
-		framework.Logf("Received GCS Fuse version %s does not follow to x.y.z-gke.v format which might lead to unprecedented test skips, continuing with %s", l[2], l[2])
-	}
-	gcsfuseVersion := l[2]
-	err = utils.UpsertConfigMap(ctx, f.ClientSet, utils.DefaultNamespace, GcsfuseVersionConfigMapName, map[string]string{
-		gcsfuseVersionConfigMapKey: gcsfuseVersion,
-	})
+	e2epod.WaitForPodSuccessInNamespace(ctx, clientset, createdPod.Name, utils.DefaultNamespace)
+
+	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{})
+	logs, err := req.DoRaw(ctx)
 	if err != nil {
-		klog.Errorf("Failed to upsert GCS Fuse version %s to configmap %s: %v, continuing...", gcsfuseVersion, GcsfuseVersionConfigMapName, err)
+		return "", fmt.Errorf("failed to read pod logs: %w", err)
 	}
-	return gcsfuseVersion
+
+	output := string(logs)
+
+	// Parse: "gcsfuse version 3.7.1-gke.0 ..."
+	l := strings.Split(strings.TrimSpace(output), " ")
+	if len(l) <= 2 {
+		return "", fmt.Errorf("unexpected version output format: %s", output)
+	}
+	return l[2], nil
 }
 
-func GCSFuseVersionAndBranch(ctx context.Context, f *framework.Framework) (*version.Version, string) {
-	vStr := GetGCSFuseVersion(ctx, f)
+func GCSFuseVersionAndBranch(ctx context.Context) (*version.Version, string) {
+	vStr := GetGCSFuseVersion(ctx)
 	v, branch := utils.GCSFuseBranch(vStr)
 	if v == nil {
 		// This happens for master branch builds. We still need to parse the version.
