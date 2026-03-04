@@ -656,7 +656,6 @@ func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 		})
 	}
 }
-
 func TestWaitForGcsFuseMount(t *testing.T) {
 	t.Parallel()
 
