@@ -372,7 +372,7 @@ func (s *nodeServer) startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidec
 
 // isGcsFuseKernelParamsFeatureSupported returns true if the GCSFuse kernel parameters feature is enabled and supported by sidecar version.
 // GCSFuse Kernel Params feature is not applicable for dynamic mounts as a single kernel parameter setting doesn’t apply for different type
-// of buckets that a dynamic mount serves. This feature is only applicable for non-dynamic mounts i.e when volumeState(vs) is not nil. 
+// of buckets that a dynamic mount serves. This feature is only applicable for non-dynamic mounts i.e when volumeState(vs) is not nil.
 func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage string, vs *util.VolumeState) bool {
 	return vs != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
