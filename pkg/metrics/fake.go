@@ -17,13 +17,52 @@ limitations under the License.
 
 package metrics
 
-type FakeMetricsManager struct{}
+import "sync"
 
+// FakeMetricsManager is a fake implementation of the MetricsManager interface for testing.
+type FakeMetricsManager struct {
+	collectors map[string]string
+	mu         sync.Mutex
+}
+
+// NewFakeMetricsManager returns a new FakeMetricsManager.
+func NewFakeMetricsManager() *FakeMetricsManager {
+	return &FakeMetricsManager{
+		collectors: make(map[string]string),
+	}
+}
+
+// InitializeHTTPHandler is a no-op.
 func (*FakeMetricsManager) InitializeHTTPHandler() {}
 
-func (*FakeMetricsManager) RegisterMetricsCollector(_, _, _, _ string) {}
+// RegisterMetricsCollector records the registration of a metrics collector.
+func (f *FakeMetricsManager) RegisterMetricsCollector(targetPath, _, _, bucketName string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collectors[targetPath] = bucketName
+}
 
-func (*FakeMetricsManager) UnregisterMetricsCollector(_ string) {}
+// UnregisterMetricsCollector records the unregistration of a metrics collector.
+func (f *FakeMetricsManager) UnregisterMetricsCollector(targetPath string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.collectors, targetPath)
+}
+
+// GetCollectors returns the map of registered collectors.
+func (f *FakeMetricsManager) GetCollectors() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Create a new map with the same capacity as the original
+	cp := make(map[string]string, len(f.collectors))
+
+	// Copy all key-value pairs into the new map
+	for k, v := range f.collectors {
+		cp[k] = v
+	}
+
+	return cp
+}
 
 type FakePrometheusMetricManager struct {
 	syncPVCounter  map[string]int

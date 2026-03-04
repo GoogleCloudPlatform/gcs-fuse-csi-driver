@@ -70,7 +70,7 @@ func TestSanity(t *testing.T) {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               mount.NewFakeMounter([]mount.MountPoint{}),
 		K8sClients:            clientset.NewFakeClientset(),
-		MetricsManager:        &metrics.FakeMetricsManager{},
+		MetricsManager:        metrics.NewFakeMetricsManager(),
 		FeatureOptions:        &driver.GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{}},
 	}
 

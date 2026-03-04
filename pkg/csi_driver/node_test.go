@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,10 +31,12 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	mount "k8s.io/mount-utils"
 )
@@ -715,5 +719,338 @@ func TestWaitForGcsFuseMount(t *testing.T) {
 	code, err := testEnv.ns.(*nodeServer).waitForGcsFuseMount(ctxTimeout, nonExistentPath, true, dummyPod)
 	if code == codes.OK {
 		t.Errorf("expected error, got OK")
+	}
+}
+
+type volumeTestCase struct {
+	name                         string
+	totalEphemeralVolumeCount    int
+	totalPersistentVolumeCount   int
+	gcsFuseEphemeralVolumeCount  int
+	gcsFusePersistentVolumeCount int
+	expectCollectorRegistered    bool
+}
+
+const csiDriverName string = "gcs-fuse-csi.storage.gke.io"
+const otherDriverName string = "other.csi.driver"
+
+func createVolumesTestCase(fakeClientSet *clientset.FakeClientset, tc volumeTestCase) []corev1.Volume {
+	volumes := []corev1.Volume{}
+
+	// Add GCS Fuse ephemeral volumes.
+	for i := 0; i < tc.gcsFuseEphemeralVolumeCount; i++ {
+		volumes = append(volumes, corev1.Volume{
+			Name: "gcs-fuse-csi-ephemeral-volume-" + strconv.Itoa(i),
+			VolumeSource: corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver: csiDriverName,
+				},
+			},
+		})
+	}
+
+	// Add non GCS Fuse ephemeral volumes.
+	for i := 0; i < tc.totalEphemeralVolumeCount-tc.gcsFuseEphemeralVolumeCount; i++ {
+		volumes = append(volumes, corev1.Volume{
+			Name: "other-csi-ephemeral-volume-" + strconv.Itoa(i),
+			VolumeSource: corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver: otherDriverName,
+				},
+			},
+		})
+	}
+
+	// Add GCS Fuse persistent volumes.
+	for i := 0; i < tc.gcsFusePersistentVolumeCount; i++ {
+		pvcName := "gcs-fuse-csi-pvc-" + strconv.Itoa(i)
+		pvName := "gcs-fuse-csi-pv-" + strconv.Itoa(i)
+		volumes = append(volumes, corev1.Volume{
+			Name: pvcName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+				},
+			},
+		})
+		fakeClientSet.CreatePV(clientset.FakePVConfig{
+			Name:       pvName,
+			DriverName: csiDriverName,
+		})
+		fakeClientSet.CreatePVC(clientset.FakePVCConfig{
+			Name:       pvcName,
+			VolumeName: pvName,
+		})
+	}
+
+	// Add non GCS Fuse persistent volumes.
+	for i := 0; i < tc.totalPersistentVolumeCount-tc.gcsFusePersistentVolumeCount; i++ {
+		pvcName := "other-csi-pvc-" + strconv.Itoa(i)
+		pvName := "other-csi-pv-" + strconv.Itoa(i)
+		volumes = append(volumes, corev1.Volume{
+			Name: pvcName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+				},
+			},
+		})
+		fakeClientSet.CreatePV(clientset.FakePVConfig{
+			Name:       pvName,
+			DriverName: otherDriverName,
+			SCName:     "test-sc",
+		})
+		fakeClientSet.CreatePVC(clientset.FakePVCConfig{
+			Name:       pvcName,
+			VolumeName: pvName,
+		})
+	}
+
+	return volumes
+}
+
+func TestCountGcsFuseVolumes(t *testing.T) {
+	testCases := []struct {
+		name          string
+		tcVolumes     volumeTestCase
+		expectedCount int
+	}{
+		{
+			name:          "no volumes",
+			tcVolumes:     volumeTestCase{},
+			expectedCount: 0,
+		},
+		{
+			name: "one gcsfuse ephemeral volume",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:   1,
+				gcsFuseEphemeralVolumeCount: 1,
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "one gcsfuse persistent volume",
+			tcVolumes: volumeTestCase{
+				totalPersistentVolumeCount:   1,
+				gcsFusePersistentVolumeCount: 1,
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "multiple gcsfuse ephemeral volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:   2,
+				gcsFuseEphemeralVolumeCount: 2,
+			},
+			expectedCount: 2,
+		},
+		{
+			name: "multiple gcsfuse persistent volumes",
+			tcVolumes: volumeTestCase{
+				totalPersistentVolumeCount:   2,
+				gcsFusePersistentVolumeCount: 2,
+			},
+			expectedCount: 2,
+		},
+		{
+			name: "one ephemeral and one persistent gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:    1,
+				totalPersistentVolumeCount:   1,
+				gcsFuseEphemeralVolumeCount:  1,
+				gcsFusePersistentVolumeCount: 1,
+			},
+			expectedCount: 2,
+		},
+		{
+			name: "multiple ephemeral and multiple persistent gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:    2,
+				totalPersistentVolumeCount:   3,
+				gcsFuseEphemeralVolumeCount:  2,
+				gcsFusePersistentVolumeCount: 3,
+			},
+			expectedCount: 5,
+		},
+		{
+			name: "mixed csi drivers with some gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:    5,
+				totalPersistentVolumeCount:   5,
+				gcsFuseEphemeralVolumeCount:  2,
+				gcsFusePersistentVolumeCount: 3,
+			},
+			expectedCount: 5,
+		},
+		{
+			name: "mixed csi drivers with no gcsfuse volumes",
+			tcVolumes: volumeTestCase{
+				totalEphemeralVolumeCount:  5,
+				totalPersistentVolumeCount: 5,
+			},
+			expectedCount: 0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClientSet := clientset.NewFakeClientset()
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.Name = csiDriverName
+			volumes := createVolumesTestCase(fakeClientSet, tc.tcVolumes)
+			pod := &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Volumes: volumes,
+				},
+			}
+			count, _ := ns.countGcsFuseVolumes(pod)
+			if count != tc.expectedCount {
+				t.Errorf("got %d, want %d", count, tc.expectedCount)
+			}
+		})
+	}
+}
+
+func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
+	t.Parallel()
+	testTargetPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+
+	baseReq := &csi.NodePublishVolumeRequest{
+		VolumeId:         testVolumeID,
+		TargetPath:       testTargetPath,
+		VolumeCapability: testVolumeCapability,
+		VolumeContext: map[string]string{
+			VolumeContextKeyPodName:      "test-pod",
+			VolumeContextKeyPodNamespace: "test-ns",
+			"bucketName":                 testVolumeID,
+		},
+	}
+
+	testCases := []volumeTestCase{
+		{
+			name:                        "should register collector for 1 gcsfuse ephemeral volume",
+			totalEphemeralVolumeCount:   1,
+			gcsFuseEphemeralVolumeCount: 1,
+			expectCollectorRegistered:   true,
+		},
+		{
+			name:                         "should register collector for 1 gcsfuse persistent volume",
+			totalPersistentVolumeCount:   1,
+			gcsFusePersistentVolumeCount: 1,
+			expectCollectorRegistered:    true,
+		},
+		{
+			name:                         "should register collector for a mix of gcsfuse volumes",
+			totalEphemeralVolumeCount:    2,
+			totalPersistentVolumeCount:   2,
+			gcsFuseEphemeralVolumeCount:  1,
+			gcsFusePersistentVolumeCount: 1,
+			expectCollectorRegistered:    true,
+		},
+		{
+			name:                        "should register collector for 10 gcsfuse ephemeral volumes",
+			totalEphemeralVolumeCount:   10,
+			gcsFuseEphemeralVolumeCount: 10,
+			expectCollectorRegistered:   true,
+		},
+		{
+			name:                         "should register collector for 10 gcsfuse persistent volumes",
+			totalPersistentVolumeCount:   10,
+			gcsFusePersistentVolumeCount: 10,
+			expectCollectorRegistered:    true,
+		},
+		{
+			name:                         "should register collector for a mix of 10 gcsfuse volumes",
+			totalEphemeralVolumeCount:    5,
+			totalPersistentVolumeCount:   5,
+			gcsFuseEphemeralVolumeCount:  5,
+			gcsFusePersistentVolumeCount: 5,
+			expectCollectorRegistered:    true,
+		},
+		{
+			name:                        "should not register collector for 11 gcsfuse ephemeral volumes",
+			totalEphemeralVolumeCount:   11,
+			gcsFuseEphemeralVolumeCount: 11,
+			expectCollectorRegistered:   false,
+		},
+		{
+			name:                         "should not register collector for 11 gcsfuse persistent volumes",
+			totalPersistentVolumeCount:   11,
+			gcsFusePersistentVolumeCount: 11,
+			expectCollectorRegistered:    false,
+		},
+		{
+			name:                         "should not register collector for a mix of 11 gcsfuse volumes",
+			totalEphemeralVolumeCount:    6,
+			totalPersistentVolumeCount:   5,
+			gcsFuseEphemeralVolumeCount:  6,
+			gcsFusePersistentVolumeCount: 5,
+			expectCollectorRegistered:    false,
+		},
+		{
+			name:                         "should register collector with other non gcsfuse volumes",
+			totalEphemeralVolumeCount:    10,
+			totalPersistentVolumeCount:   10,
+			gcsFuseEphemeralVolumeCount:  5,
+			gcsFusePersistentVolumeCount: 5,
+			expectCollectorRegistered:    true,
+		},
+		{
+			name:                         "should not register collector with other non gcsfuse volumes when gcsfuse volumes exceeds limit",
+			totalEphemeralVolumeCount:    15,
+			totalPersistentVolumeCount:   15,
+			gcsFuseEphemeralVolumeCount:  6,
+			gcsFusePersistentVolumeCount: 5,
+			expectCollectorRegistered:    false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Setup mock clientset
+			fakeClientSet := clientset.NewFakeClientset()
+			volumes := createVolumesTestCase(fakeClientSet, tc)
+
+			fakeClientSet.AddPodVolumes(volumes)
+			// Setup node server
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.Name = csiDriverName
+
+			// Setup metrics manager
+			mm := metrics.NewFakeMetricsManager()
+			ns.driver.config.MetricsManager = mm
+
+			// Update request
+			req := proto.Clone(baseReq).(*csi.NodePublishVolumeRequest)
+
+			// Call NodePublishVolume
+			_, err := ns.NodePublishVolume(context.Background(), req)
+			if err != nil {
+				// The fake clientset does not have the pod annotations,
+				// which will cause the sidecar check to fail.
+				if !strings.Contains(err.Error(), "failed to find the sidecar container in Pod spec") {
+					t.Fatalf("NodePublishVolume() failed: %v", err)
+				}
+			}
+
+			// Assertions
+			collectors := mm.GetCollectors()
+			_, collectorRegistered := collectors[testTargetPath]
+			if tc.expectCollectorRegistered && !collectorRegistered {
+				t.Error("expected metrics collector to be registered, but it was not")
+			}
+			if !tc.expectCollectorRegistered && collectorRegistered {
+				t.Error("expected metrics collector not to be registered, but it was")
+			}
+		})
 	}
 }

@@ -42,7 +42,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		Mounter:               fm,
 		NetworkManager:        &fakeNetworkManager{},
 		K8sClients:            clientset.NewFakeClientset(),
-		MetricsManager:        &metrics.FakeMetricsManager{},
+		MetricsManager:        metrics.NewFakeMetricsManager(),
 		FeatureOptions:        &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
 	}
 	driver, err := NewGCSDriver(config, nil)
@@ -70,7 +70,7 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 		Mounter:                  fm,
 		NetworkManager:           &fakeNetworkManager{},
 		K8sClients:               clientSet,
-		MetricsManager:           &metrics.FakeMetricsManager{},
+		MetricsManager:           metrics.NewFakeMetricsManager(),
 		WINodeLabelCheck:         wiNodeLabelCheck,
 		FeatureOptions:           &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
 		AssumeGoodSidecarVersion: true,
