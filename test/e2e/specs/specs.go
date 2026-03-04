@@ -69,7 +69,6 @@ const (
 	EnableFileCacheForceNewBucketPrefix                        = "gcsfuse-csi-enable-file-cache-force-new-bucket"
 	EnableFileCacheForceNewBucketAndMetricsPrefix              = "gcsfuse-csi-enable-file-cache-force-new-bucket-and-metrics"
 	EnableGrpcAndMetricsPrefix                                 = "gcsfuse-csi-enable-grpc-and-metrics"
-	EnableGrpcAndMetricsPrefixNonExistentBucket                = "gcsfuse-csi-enable-grpc-and-metrics-non-existent-bucket"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
 	ProfilesOverrideAllOverridablePrefix                       = "gcsfuse-csi-profiles-override-all-overridable"
 	ProfilesControllerCrashTestPrefix                          = "gcsfuse-csi-profiles-controller-crash-test"
