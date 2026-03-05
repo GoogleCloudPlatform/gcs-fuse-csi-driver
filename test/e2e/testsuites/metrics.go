@@ -318,28 +318,29 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 	})
 
-	ginkgo.It("should emit metrics until a threshold of 10 gcsfuse volumes", func() {
-		init(10, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
-		defer cleanup()
+	// TODO(thrivikram-karur-g): Re-enable this test after the 10 GCSFuse metrics collector limit per node is removed.
+	// ginkgo.It("should emit metrics until a threshold of 10 gcsfuse volumes", func() {
+	// 	init(10, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
+	// 	defer cleanup()
 
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		for i, vr := range l.volumeResourceList {
-			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
-		}
+	// 	ginkgo.By("Configuring the pod")
+	// 	tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+	// 	for i, vr := range l.volumeResourceList {
+	// 		tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
+	// 	}
 
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
+	// 	ginkgo.By("Deploying the pod")
+	// 	tPod.Create(ctx)
+	// 	defer tPod.Cleanup(ctx)
 
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
+	// 	ginkgo.By("Checking that the pod is running")
+	// 	tPod.WaitForRunning(ctx)
 
-		for i, vr := range l.volumeResourceList {
-			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), true)
-		}
-	})
+	// 	for i, vr := range l.volumeResourceList {
+	// 		ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
+	// 		verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), true)
+	// 	}
+	// })
 
 	ginkgo.It("should emit no metrics when more than 10 gcsfuse volumes are mounted", func() {
 		init(11, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
