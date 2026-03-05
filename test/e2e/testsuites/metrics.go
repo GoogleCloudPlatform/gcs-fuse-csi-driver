@@ -190,6 +190,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		// Read symlink.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls -l %v/my-symlink", mountPath))
 
+		// Scrape the metrics from the sidecar's Prometheus endpoint and save them in a file.
 		ginkgo.By("Collecting Prometheus metrics from the CSI driver node server")
 		csiPodIP := tPod.GetCSIDriverNodePodIP(ctx)
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("wget -O %v/metrics.prom http://%v:9920/metrics", mountPath, csiPodIP))
@@ -200,6 +201,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			framework.Failf("Failed to download the Prometheus metrics data from GCS bucket %q: %v", bucketName, err)
 		}
 
+		// Parse the downloaded Prometheus metrics file into a structured format.
 		ginkgo.By("Parsing Prometheus metrics")
 		metricsFile, err := os.Open(promFile)
 		if err != nil {
@@ -216,6 +218,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
+		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
 		for _, metricName := range expectedMetricNames {
 			metricsList := []*dto.Metric{}
 			metricFamily, ok := families[metricName]
@@ -250,18 +253,18 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 					metricsList = append(metricsList, m)
 				}
 			}
-			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
+			ginkgo.By(fmt.Sprintf("Printing full metricList for pod %s/%s volume %q: %+v", tPod.GetPodNamespace(), tPod.GetPodName(), volume, metricsList))
 
 			// Skip the gcs_reader_count validation if Zonal Bucket is enabled.
 			// TODO(uriel-guzman): Remove once the GCSFuse bug is fixed.
 			if !gcsfuseDriver.EnableZB || metricName != "gcs_reader_count" {
 				if expectMetrics {
-					gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">", 0), fmt.Sprintf("Found metric %q count: %v, expected count > 0", metricName, len(metricsList)))
+					gomega.Expect(len(metricsList)).To(gomega.BeNumerically(">", 0), fmt.Sprintf("Found metric %q for pod %s/%s volume %q count: %v, expected count > 0", metricName, tPod.GetPodNamespace(), tPod.GetPodName(), volume, len(metricsList)))
 				} else {
-					gomega.Expect(len(metricsList)).To(gomega.BeNumerically("==", 0), fmt.Sprintf("Found no metrics for %q count: %v, expected count == 0", metricName, len(metricsList)))
+					gomega.Expect(len(metricsList)).To(gomega.BeNumerically("==", 0), fmt.Sprintf("Found no metric %q for pod %s/%s volume %q count: %v, expected count == 0", metricName, tPod.GetPodNamespace(), tPod.GetPodName(), volume, len(metricsList)))
 				}
 			}
-			ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
+			ginkgo.By(fmt.Sprintf("Found metric %q for pod %s/%s volume %q count: %v", metricName, tPod.GetPodNamespace(), tPod.GetPodName(), volume, len(metricsList)))
 		}
 	}
 
@@ -318,29 +321,28 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 	})
 
-	// TODO(thrivikram-karur-g): Re-enable this test after the 10 GCSFuse metrics collector limit per node is removed.
-	// ginkgo.It("should emit metrics until a threshold of 10 gcsfuse volumes", func() {
-	// 	init(10, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
-	// 	defer cleanup()
+	ginkgo.It("should emit metrics until a threshold of 10 gcsfuse volumes", func() {
+		init(10, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
+		defer cleanup()
 
-	// 	ginkgo.By("Configuring the pod")
-	// 	tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-	// 	for i, vr := range l.volumeResourceList {
-	// 		tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
-	// 	}
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		for i, vr := range l.volumeResourceList {
+			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
+		}
 
-	// 	ginkgo.By("Deploying the pod")
-	// 	tPod.Create(ctx)
-	// 	defer tPod.Cleanup(ctx)
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
 
-	// 	ginkgo.By("Checking that the pod is running")
-	// 	tPod.WaitForRunning(ctx)
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
 
-	// 	for i, vr := range l.volumeResourceList {
-	// 		ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-	// 		verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), true)
-	// 	}
-	// })
+		for i, vr := range l.volumeResourceList {
+			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
+			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), true)
+		}
+	})
 
 	ginkgo.It("should emit no metrics when more than 10 gcsfuse volumes are mounted", func() {
 		init(11, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
