@@ -248,8 +248,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
 			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
 		} else {
-			klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName)
+			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID)
 		}
 	}
 
@@ -395,7 +395,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	// Unregister metrics collecter.
 	// It is idempotent to unregister the same collector.
 	if s.driver.config.MetricsManager != nil {
-		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
+		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath, s.driver.config.NodeID)
 	}
 
 	// Stop GCSFuse Kernel Params monitoring.
