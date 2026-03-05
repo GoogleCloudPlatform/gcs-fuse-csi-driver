@@ -282,6 +282,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			}
 			mountOptions += ",experimental-enable-grpc-metrics"
 			v.enableMetrics = true
+			v.fileCacheCapacity = "100Mi"
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
 			if n.EnableZB && kernelParamsSupported {

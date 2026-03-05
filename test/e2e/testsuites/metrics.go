@@ -226,40 +226,29 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
-		for _, metricName := range expectedMetricNames {
+		getMetrics := func(metricFamily *dto.MetricFamily) []*dto.Metric {
 			metricsList := []*dto.Metric{}
-			metricFamily, ok := families[metricName]
-			if ok {
-			metricLoop:
+			if metricFamily != nil {
 				for _, m := range metricFamily.GetMetric() {
+					labels := make(map[string]string, len(m.GetLabel()))
 					for _, pair := range m.GetLabel() {
-						name, value := pair.GetName(), pair.GetValue()
-						switch name {
-						case "bucket_name":
-							if value != bucketName {
-								continue metricLoop
-							}
-						case "pod_name":
-							if value != podName {
-								continue metricLoop
-							}
-						case "volume_name":
-							if value != volume {
-								continue metricLoop
-							}
-						case "namespace_name":
-							if value != f.Namespace.Name {
-								continue metricLoop
-							}
-						case "pod_uid":
-							if value != "" {
-								continue metricLoop
-							}
-						}
+						labels[pair.GetName()] = pair.GetValue()
 					}
-					metricsList = append(metricsList, m)
+
+					if labels["bucket_name"] == bucketName &&
+						labels["pod_name"] == podName &&
+						labels["volume_name"] == volume &&
+						labels["namespace_name"] == f.Namespace.Name &&
+						labels["pod_uid"] == "" {
+						metricsList = append(metricsList, m)
+					}
 				}
 			}
+			return metricsList
+		}
+
+		for _, metricName := range expectedMetricNames {
+			metricsList := getMetrics(families[metricName])
 			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 
 			// Skip the gcs_reader_count validation if Zonal Bucket is enabled.
@@ -272,29 +261,13 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		if l.originalPrefix == specs.EnableGrpcAndMetricsPrefix {
 			for _, metricName := range expectedGrpcMetricNames {
-				metricsList := []*dto.Metric{}
-				metricFamily, ok := families[metricName]
-				if ok {
-					for _, m := range metricFamily.GetMetric() {
-						labels := make(map[string]string, len(m.GetLabel()))
-						for _, pair := range m.GetLabel() {
-							labels[pair.GetName()] = pair.GetValue()
-						}
-
-						if labels["bucket_name"] == bucketName &&
-							labels["pod_name"] == podName &&
-							labels["volume_name"] == volume &&
-							labels["namespace_name"] == f.Namespace.Name &&
-							labels["pod_uid"] == "" {
-							metricsList = append(metricsList, m)
-						}
-					}
-				}
+				metricsList := getMetrics(families[metricName])
 				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 				matcher := gomega.BeNumerically(">", 0)
 				expectedCountMsg := "expected count > 0"
 				if strings.Contains(metricName, "rls") {
-					// For RLS metrics, it's possible that there are no RLS calls and thus the count is 0. We just want to make sure the metric is emitted with the correct labels.
+					// For RLS metrics, it's possible that there are no RLS calls and thus the count is 0.
+					// We just want to make sure the metric is emitted with the correct labels.
 					matcher = gomega.BeNumerically(">=", 0)
 					expectedCountMsg = "expected count >= 0"
 				}
@@ -357,12 +330,8 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 	})
 
-	// This tests below configuration:
-	//    [pod1]
-	//       |
-	//   [volume1]
-	//       |
-	//   [bucket1]
+	// This test verifies that gRPC metrics are emitted when the CSI driver is
+	// configured to use gRPC.
 	ginkgo.It("should emit gRPC metrics", func() {
 		init(1, specs.EnableGrpcAndMetricsPrefix)
 		defer cleanup()
