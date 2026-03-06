@@ -275,6 +275,14 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			if n.EnableZB && kernelParamsSupported {
 				mountOptions += ",file-system:enable-kernel-reader:false"
 			}
+		case EnableGrpcAndMetricsPrefix:
+			// Ensure gRPC is used for this test, as it's required for gRPC metrics.
+			if !strings.Contains(mountOptions, "client-protocol=grpc") {
+				mountOptions += ",client-protocol=grpc"
+			}
+			mountOptions += ",experimental-enable-grpc-metrics"
+			v.enableMetrics = true
+			v.fileCacheCapacity = "100Mi"
 		case EnableFileCacheWithLargeCapacityPrefix:
 			v.fileCacheCapacity = "2Gi"
 			if n.EnableZB && kernelParamsSupported {
@@ -315,7 +323,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 
 		switch config.Prefix {
-		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix:
+		case "", EnableFileCachePrefix, EnableFileCacheWithLargeCapacityPrefix, EnableFileCacheAndMetricsPrefix, EnableKernelParamsPrefix, EnableGrpcAndMetricsPrefix:
 			// Use config.Prefix to pass the bucket names back to the test suite.
 			config.Prefix = bucketName
 		}
