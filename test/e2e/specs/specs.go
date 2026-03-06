@@ -1131,6 +1131,11 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 					Image:   image,
 					Command: []string{"/gcsfuse", "--version"},
 				},
+				{
+					Name:    "sleeper",
+					Image:   "busybox",
+					Command: []string{"sleep", "15s"},
+				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
 			Tolerations: []corev1.Toleration{
@@ -1146,7 +1151,7 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 	framework.ExpectNoError(err,
 		"Pods.Create should succeed, but failed with error message: %v", err)
 
-	e2epod.WaitForPodSuccessInNamespace(ctx, clientset, createdPod.Name, utils.DefaultNamespace)
+	e2epod.WaitForPodRunningInNamespace(ctx, clientset, createdPod)
 
 	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{})
 	logs, err := req.DoRaw(ctx)
