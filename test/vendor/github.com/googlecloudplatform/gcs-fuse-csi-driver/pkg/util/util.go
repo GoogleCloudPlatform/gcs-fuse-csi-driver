@@ -49,6 +49,8 @@ const (
 	PodNamespaceConst                   = "pod-namespace"
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	FileCacheMediumConst                = "file-cache-medium"
+	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
+	GCSFuseKernelParamsFileName         = "kernel-params.json"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"
@@ -57,6 +59,7 @@ const (
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
+	GCSFuseNumaNodeArg                  = "gcs-fuse-numa-node"
 )
 
 var (

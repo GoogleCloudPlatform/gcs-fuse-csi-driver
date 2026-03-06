@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -45,6 +46,7 @@ const (
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
+	maxGCSFuseVolumesForMetrics         = 10
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -239,8 +241,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Register metrics collector.
 	// It is idempotent to register the same collector in node republish calls.
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		klog.V(6).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-		s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName)
+		gcsFuseVolumeCount, err := s.countGcsFuseVolumes(pod)
+
+		if err != nil {
+			klog.Errorf("Metrics collection is disabled for Pod %s/%s as counting the number of GCS FUSE volumes failed with error: %v", pod.Namespace, pod.Name, err)
+		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
+			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
+		} else {
+			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID)
+		}
 	}
 
 	// Check if the sidecar container is still required,
@@ -385,7 +395,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	// Unregister metrics collecter.
 	// It is idempotent to unregister the same collector.
 	if s.driver.config.MetricsManager != nil {
-		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath)
+		s.driver.config.MetricsManager.UnregisterMetricsCollector(targetPath, s.driver.config.NodeID)
 	}
 
 	// Stop GCSFuse Kernel Params monitoring.
@@ -532,4 +542,56 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 		}
 	}
 	return ""
+}
+
+func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
+	gcsFuseVolumeCount := 0
+
+	if pod.Spec.Volumes == nil {
+		return gcsFuseVolumeCount, nil
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		// Count ephemeral gcsfuse volumes
+		if v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
+			gcsFuseVolumeCount++
+			continue
+		}
+
+		if v.PersistentVolumeClaim == nil {
+			continue
+		}
+
+		// Count persistent gcsfuse volumes
+		pvc, err := s.k8sClients.GetPVC(pod.Namespace, v.PersistentVolumeClaim.ClaimName)
+
+		// A NotFound error is tolerated, but other errors will abort the count and disable metrics.
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Warningf("pvc %q not found: %v", v.PersistentVolumeClaim.ClaimName, err)
+				continue
+			}
+
+			klog.Errorf("internal error getting PVC %q: %v. Setting GCS Fuse metric count to 0", v.PersistentVolumeClaim.ClaimName, err)
+			return 0, err
+		}
+
+		pv, err := s.k8sClients.GetPV(pvc.Spec.VolumeName)
+
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Warningf("pv %q not found: %v", pvc.Spec.VolumeName, err)
+				continue
+			}
+
+			klog.Errorf("internal error getting PV %q: %v. Setting GCS Fuse metric count to 0", pvc.Spec.VolumeName, err)
+			return 0, err
+		}
+
+		if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == s.driver.config.Name {
+			gcsFuseVolumeCount++
+		}
+	}
+
+	return gcsFuseVolumeCount, nil
 }
