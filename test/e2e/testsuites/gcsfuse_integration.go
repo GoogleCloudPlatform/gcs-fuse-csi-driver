@@ -178,6 +178,12 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	// qualifies the non-managed driver to run all the tests.
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
 		v, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+
+		// Rename_symlink tests are in separat test package only of v2.11.4 for now
+		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0")) || branch == utils.MasterBranchName) {
+			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
+		}
+
 		if branch == utils.MasterBranchName {
 			return branch
 		}
@@ -223,11 +229,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// GCSFuse buffered_read tests are supported after v3.3.0-gke.1.
 		if !v.AtLeast(version.MustParseSemantic("v3.3.0-gke.1")) && testName == testNameBufferedReads {
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameBufferedReads, v.String())
-		}
-
-		// Rename_symlink tests are in separat test package only of v2.11.4 for now
-		if testName == testNameRenameSymlink && (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0")) || branch == utils.MasterBranchName) {
-			e2eskipper.Skipf("skip gcsfuse integration rename_symlink test on gcsfuse version %v", v.String())
 		}
 
 		return branch
