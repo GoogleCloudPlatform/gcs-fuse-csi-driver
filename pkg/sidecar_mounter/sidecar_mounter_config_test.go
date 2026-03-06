@@ -120,7 +120,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				Options:    []string{"uid=100", "gid=200", "debug_gcs", "max-conns-per-host=10", "implicit-dirs=true"},
 			},
 			expectedArgs: map[string]string{
-				"implicit-dirs=true": "",
+				"implicit-dirs":      "true",
 				"app-name":           GCSFuseAppName,
 				"temp-dir":           "test-buffer-dir/temp-dir",
 				"config-file":        "test-config-file",

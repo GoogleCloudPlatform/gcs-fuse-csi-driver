@@ -61,6 +61,11 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 				expectedCode: codes.Unavailable,
 			},
 			{
+				name:         "invalid argument flag error",
+				errorMessage: []byte(`Error: invalid argument "trve" for "--file-cache-cache-file-for-range-read" flag: strconv.ParseBool: parsing "trve": invalid syntax`),
+				expectedCode: codes.InvalidArgument,
+			},
+			{
 				name:         "bucket doesn't exist error",
 				errorMessage: []byte("something went wrong: bucket doesn't exist"),
 				expectedCode: codes.NotFound,
