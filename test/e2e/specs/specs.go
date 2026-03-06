@@ -1124,7 +1124,6 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 			Namespace:    utils.DefaultNamespace,
 		},
 		Spec: corev1.PodSpec{
-			TerminationGracePeriodSeconds: ptr.To(int64(0)),
 			Containers: []corev1.Container{
 				{
 					Name:    webhook.GcsFuseSidecarName,
@@ -1134,7 +1133,7 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 				{
 					Name:    "sleeper",
 					Image:   "busybox",
-					Command: []string{"sleep", "15s"},
+					Command: []string{"sleep", "infinity"},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -1153,7 +1152,7 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 
 	e2epod.WaitForPodRunningInNamespace(ctx, clientset, createdPod)
 
-	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{})
+	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{Container: webhook.GcsFuseSidecarName})
 	logs, err := req.DoRaw(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to read pod logs: %w", err)
