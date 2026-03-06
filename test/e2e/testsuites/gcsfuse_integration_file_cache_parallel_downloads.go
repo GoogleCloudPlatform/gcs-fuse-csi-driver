@@ -219,8 +219,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 
 		// Filter out duplicate logging:severity:info from testdriver set up
 		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
-		mo = strings.ReplaceAll(mo, "logging:severity:info", "")
-		mo = strings.TrimPrefix(mo, ",") // Remove leading comma because of ,onlyDir
+		mo = strings.ReplaceAll(mo, "logging:severity:info", fmt.Sprintf("logging:severity:%v", config.LogSeverity))
 		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, config.ReadOnly, config.MountOptions...)

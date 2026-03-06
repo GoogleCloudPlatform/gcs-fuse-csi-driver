@@ -43,11 +43,16 @@ const (
 	MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
 	MinGCSFuseTestConfigVersion   = "v3.5.0-gke.0"
 
-	testConfigUrlFormat   = "https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/%s/tools/integration_tests/test_config.yaml"
-	flagFileCacheCapacity = "file-cache-max-size-mb="
-	flagReadOnly          = "o=ro"
-	flagLogFile           = "log-file="
-	flagCacheDir          = "cache-dir="
+	testConfigUrlFormat                  = "https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/%s/tools/integration_tests/test_config.yaml"
+	flagFileCacheCapacity                = "file-cache-max-size-mb="
+	flagReadOnly                         = "o=ro"
+	flagLogFile                          = "log-file="
+	flagCacheDir                         = "cache-dir="
+	flagLogSeverity                      = "log-severity="
+	flagLogFormat                        = "log-format="
+	flagFileCacheEnableParallelDownloads = "file-cache-enable-parallel-downloads"
+	flagFileCacheEnableODirect           = "file-cache-enable-o-direct"
+	flagEnableKernelReader               = "enable-kernel-reader"
 )
 
 var (
@@ -261,6 +266,7 @@ type ParsedConfig struct {
 	FileCacheCapacity string
 	ReadOnly          bool
 	LogFilePath       string
+	LogSeverity       string
 	CacheDir          string
 	MountOptions      []string
 }
@@ -272,6 +278,7 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 		FileCacheCapacity: "50Mi",
 		ReadOnly:          false,
 		LogFilePath:       "",
+		LogSeverity:       "info",
 		CacheDir:          "",
 		MountOptions:      []string{},
 	}
@@ -287,56 +294,63 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 		// They cannot be passed via mountOptions and must be parsed to configure the test environment manually.
 		// See: https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/main/pkg/sidecar_mounter/sidecar_mounter_config.go#L83
 
+		// Group 1: Flags that are parsed manually and should not be passed to mountOptions.
+
 		// file-cache:max-size-mb is used by the CSI driver to enable the file cache feature and configure the cache volume.
 		// If not provided or set to 0, the cache directory will not be created.
 		// See: https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/main/pkg/sidecar_mounter/sidecar_mounter_config.go#L237-L241
 		if strings.HasPrefix(f, flagFileCacheCapacity) {
 			parsed.FileCacheCapacity = strings.TrimPrefix(f, flagFileCacheCapacity) + "Mi"
+			continue
 		}
 
 		// "o" is disallowed and will be used in SetupVolume to set the readOnly flag for test pod.
 		if f == flagReadOnly {
 			parsed.ReadOnly = true
-		}
-
-		// "log-file" is disallowed. The gcsfuse e2e tests hardcoded the log file in their test config.s
-		// We parse this to configure the test pod to align with the gcsfuse test config.
-		if strings.HasPrefix(f, flagLogFile) {
-			parsed.LogFilePath = strings.TrimPrefix(f, flagLogFile)
-			f = "logging:file-path:" + parsed.LogFilePath
+			continue
 		}
 
 		// "cache-dir" is disallowed to prevent storage exhaustion. The gcsfuse e2e tests hardcoded the cache dir in their test config.
 		// We parse this to manually set up the cache volume in the test pod to align with the gcsfuse test config.
 		if strings.HasPrefix(f, flagCacheDir) {
 			parsed.CacheDir = strings.TrimPrefix(f, flagCacheDir)
+			continue
 		}
 
-		// Translate legacy CLI flags to config file representation
-		if f == "file-cache-enable-parallel-downloads" || strings.HasPrefix(f, "file-cache-enable-parallel-downloads=") {
+		// "log-severity" is disallowed so we parse it into the test pod configuration.
+		if strings.HasPrefix(f, flagLogSeverity) {
+			parsed.LogSeverity = strings.TrimPrefix(f, flagLogSeverity)
+			continue
+		}
+
+		// Group 2: The following flags are translated to config file representation and passed to mountOptions.
+
+		// "log-file" is disallowed. The gcsfuse e2e tests hardcoded the log file in their test config.s
+		// We parse this to configure the test pod to align with the gcsfuse test config.
+		if strings.HasPrefix(f, flagLogFile) {
+			parsed.LogFilePath = strings.TrimPrefix(f, flagLogFile)
+			f = "logging:file-path:" + parsed.LogFilePath
+		} else if f == flagFileCacheEnableParallelDownloads || strings.HasPrefix(f, flagFileCacheEnableParallelDownloads+"=") {
 			val := "true"
 			if strings.Contains(f, "=") {
 				val = strings.SplitN(f, "=", 2)[1]
 			}
 			f = "file-cache:enable-parallel-downloads:" + val
-		} else if f == "file-cache-enable-o-direct" || strings.HasPrefix(f, "file-cache-enable-o-direct=") {
+		} else if f == flagFileCacheEnableODirect || strings.HasPrefix(f, flagFileCacheEnableODirect+"=") {
 			val := "true"
 			if strings.Contains(f, "=") {
 				val = strings.SplitN(f, "=", 2)[1]
 			}
 			f = "file-cache:enable-o-direct:" + val
-		} else if f == "enable-kernel-reader" || strings.HasPrefix(f, "enable-kernel-reader=") {
+		} else if f == flagEnableKernelReader || strings.HasPrefix(f, flagEnableKernelReader+"=") {
 			val := "true"
 			if strings.Contains(f, "=") {
 				val = strings.SplitN(f, "=", 2)[1]
 			}
 			f = "file-system:enable-kernel-reader:" + val
-		} else if strings.HasPrefix(f, "log-severity=") {
-			// "log-severity" is disallowed so we need to format it to config file format
-			f = "logging:severity:" + strings.TrimPrefix(f, "log-severity=")
-		} else if strings.HasPrefix(f, "log-format=") {
+		} else if strings.HasPrefix(f, flagLogFormat) {
 			// "log-format" is disallowed so we need to format it to config file format
-			f = "logging:format:" + strings.TrimPrefix(f, "log-format=")
+			f = "logging:format:" + strings.TrimPrefix(f, flagLogFormat)
 		}
 
 		parsed.MountOptions = append(parsed.MountOptions, f)
