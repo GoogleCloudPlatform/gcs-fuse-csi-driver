@@ -399,6 +399,6 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
 
-		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName)
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName, true)
 	})
 }
