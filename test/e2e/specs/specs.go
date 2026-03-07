@@ -214,6 +214,10 @@ func (t *TestPod) GetPodName() string {
 	return t.pod.Name
 }
 
+func (t *TestPod) GetPodNamespace() string {
+	return t.pod.Namespace
+}
+
 func (t *TestPod) GetPodVols() []corev1.Volume {
 	return t.pod.Spec.Volumes
 }

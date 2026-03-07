@@ -142,6 +142,12 @@ func (b *PVConfigBuilder) WithSCName(scName string) *PVConfigBuilder {
 	return b
 }
 
+// WithName sets the Name field.
+func (b *PVConfigBuilder) WithName(name string) *PVConfigBuilder {
+	b.config.Name = name
+	return b
+}
+
 // Build returns the final FakePVConfig.
 func (b *PVConfigBuilder) Build() clientset.FakePVConfig {
 	return b.config
@@ -248,7 +254,7 @@ func TestBuildProfileConfig(t *testing.T) {
 			name:         "TestBuildProfileConfig - Should build config successfully",
 			targetPath:   testTargetPath,
 			wantErr:      false,
-			pvConfig:     NewPVConfigBuilder().Build(),
+			pvConfig:     NewPVConfigBuilder().WithName("test-pv").Build(),
 			scConfig:     NewSCConfigBuilder().Build(),
 			nodeName:     "test-node",
 			nodeConfig:   NewNodeConfigBuilder().Build(),

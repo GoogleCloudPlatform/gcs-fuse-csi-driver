@@ -52,8 +52,8 @@ const (
 
 type Manager interface {
 	InitializeHTTPHandler()
-	RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName string)
-	UnregisterMetricsCollector(targetPath string)
+	RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName, nodeName string)
+	UnregisterMetricsCollector(targetPath, nodeName string)
 }
 
 type manager struct {
@@ -104,18 +104,16 @@ func (mm *manager) InitializeHTTPHandler() {
 }
 
 // RegisterMetricsCollector registers the metrics collector. It is idempotent to register the same collector.
-func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName string) {
+func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName, nodeName string) {
 	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
 	if err != nil {
-		klog.Errorf("failed to register metrics collector for pod %v/%v, bucket %q: %v", podNamespace, podName, bucketName, err)
-
+		klog.Errorf("failed to register metrics collector for target path %q, bucket %q: %v", targetPath, bucketName, err)
 		return
 	}
 
 	socketBasePath := util.GetSocketBasePath(targetPath, mm.fuseSocketDir)
 	if err := os.Symlink(emptyDirBasePath, socketBasePath); err != nil && !os.IsExist(err) {
 		klog.Errorf("failed to create symbolic link to path %q: %v", socketBasePath, err)
-
 		return
 	}
 
@@ -125,7 +123,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
-		"pod_uid":        podUID,
+		"pod_uid":        "", // podUID is emptied to avoid infinite cardinality in the metric labels
 	}, mm.clientset)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
@@ -133,8 +131,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	defer mm.mutex.Unlock()
 
 	if mm.maximumNumberOfCollectors == 0 {
-		klog.Infof("could not register metrics collector: podUID: %s, volume: %s. metrics collector limit is set to zero.", podUID, bucketName)
-
+		klog.Infof("could not register metrics collector for target path %q. The metrics collector limit for node %q is set to zero.", targetPath, nodeName)
 		return
 	}
 
@@ -149,8 +146,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		}
 		// If collector hasn't been registered and there's no space left, log a warning.
 		if mm.volumePublishPathRegistered.Len() >= mm.maximumNumberOfCollectors {
-			klog.V(6).Infof("could not register a metrics collector: podUID: %s, volume: %s. there's already %d collectors registered.", podUID, bucketName, mm.volumePublishPathRegistered.Len())
-
+			klog.V(4).Infof("could not register a metrics collector for target path %q. There's already %d collectors registered on node %q.", targetPath, mm.volumePublishPathRegistered.Len(), nodeName)
 			return
 		}
 	}
@@ -159,16 +155,16 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 	err = mm.registry.Register(c)
 	if err != nil {
 		if !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
-			klog.Errorf("failed to register metrics collector for pod  %v/%v, volume %q, bucket %q: %v", podNamespace, podName, volumeName, bucketName, err)
+			klog.Errorf("failed to register metrics collector for target path %q, bucket %q: %v", targetPath, bucketName, err)
 		}
 	} else {
 		mm.volumePublishPathRegistered.Insert(targetPath)
-		klog.Infof("successfully registered a new metrics collector: podUID: %s, volume: %s. there's %d collectors registered.", podUID, bucketName, mm.volumePublishPathRegistered.Len())
+		klog.Infof("successfully registered a new metrics collector for target path %q. There's %d collectors registered on node %q.", targetPath, mm.volumePublishPathRegistered.Len(), nodeName)
 	}
 }
 
 // UnregisterMetricsCollector unregisters the metrics collector. It is idempotent to unregister the same collector.
-func (mm *manager) UnregisterMetricsCollector(targetPath string) {
+func (mm *manager) UnregisterMetricsCollector(targetPath, nodeName string) {
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
 
 	// metricsCollector uses a hash of pod UID and volume name as an identifier.
@@ -179,10 +175,10 @@ func (mm *manager) UnregisterMetricsCollector(targetPath string) {
 	defer mm.mutex.Unlock()
 
 	if ok := mm.registry.Unregister(c); !ok {
-		klog.Infof("Unregister metrics collector for targetPath %q is not needed since the collector is not registered", targetPath)
+		klog.Infof("Unregister metrics collector for target path %q is not needed since the collector is not registered.", targetPath)
 	} else {
 		mm.volumePublishPathRegistered.Delete(targetPath)
-		klog.Infof("successfully unregistered a metrics collector: podUID: %s, volume: %s. there's %d collectors registered.", podUID, volumeName, mm.volumePublishPathRegistered.Len())
+		klog.Infof("successfully unregistered a metrics collector for target path %q. There's %d collectors registered on node %q.", targetPath, mm.volumePublishPathRegistered.Len(), nodeName)
 	}
 }
 
