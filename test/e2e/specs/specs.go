@@ -1152,9 +1152,19 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 		"Pods.Create should succeed, but failed with error message: %v", err)
 
 	e2epod.WaitForPodRunningInNamespace(ctx, clientset, createdPod)
+	klog.Infof("Pod %s is running, waiting 60s before fetching GCSFuse version from logs", createdPod.Name)
+	time.Sleep(60 * time.Second)
 
+	var logs []byte
 	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{Container: webhook.GcsFuseSidecarName})
-	logs, err := req.DoRaw(ctx)
+	err = wait.PollUntilContextTimeout(ctx, 30*time.Second, time.Minute*10, true, func(context.Context) (bool, error) {
+		logs, err = req.DoRaw(ctx)
+		if err != nil {
+			framework.Logf("failed to read pod logs, retrying: %v", err)
+			return false, nil
+		}
+		return true, nil
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to read pod logs: %w", err)
 	}
