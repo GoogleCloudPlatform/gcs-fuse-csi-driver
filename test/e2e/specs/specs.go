@@ -1124,6 +1124,7 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 			Namespace:    utils.DefaultNamespace,
 		},
 		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: ptr.To(int64(0)),
 			Containers: []corev1.Container{
 				{
 					Name:    webhook.GcsFuseSidecarName,
