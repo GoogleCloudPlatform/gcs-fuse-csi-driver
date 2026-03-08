@@ -1154,7 +1154,7 @@ func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Int
 
 	e2epod.WaitForPodRunningInNamespace(ctx, clientset, createdPod)
 
-	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{})
+	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{Container: webhook.GcsFuseSidecarName})
 	logs, err := req.DoRaw(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to read pod logs: %w", err)
