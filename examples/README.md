@@ -147,3 +147,24 @@ cat ./multi-nic/index.yaml | \
   sed s/NODE-POOL/${NODE_POOL}/ | \
   kubectl apply -f -
 ```
+
+### Multi-NIC on Cloud TPU
+
+https://docs.cloud.google.com/kubernetes-engine/docs/how-to/tpus#deploy-multi-container
+shows how to run multi-container jobs on TPU platforms such a Ironwood (TPU7x)
+which have multiple NUMA nodes. The `multi-nic/cloudtpu.yaml` example shows how
+to use multi-NIC GCS Fuse in this setting. The cloud tpu driver on GKE injects a
+`WORKLOAD_NIC_PREFERRED_NUMA` environment variable into containers which gives
+the NUMA node that the container has been assigned to. Each container mounts the
+GCS fuse volumes indexed to all NUMA nodes. The `WORKLOAD_NIC_PREFERRED_NUMA`
+environment variable is then used to select the proper mount point for processes
+running in that container.
+
+To see the complete example, run the following on a cluster that has been set up
+both for multicontainer and multi-NIC as described above.
+
+```bash
+cat ./multi-nic/cloudtpu.yaml | \
+  sed s/BUCKET/${BUCKET}/ | \
+  kubectl apply -f -
+```
