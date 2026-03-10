@@ -18,7 +18,6 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -54,6 +54,7 @@ var (
 
 var _ = func() bool {
 	testing.Init()
+
 	if os.Getenv(clientcmd.RecommendedConfigPathEnvVar) == "" {
 		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 		os.Setenv(clientcmd.RecommendedConfigPathEnvVar, kubeconfig)
@@ -84,6 +85,8 @@ var _ = func() bool {
 	if err != nil {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
+
+	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
 	return true
 }()
 
@@ -101,13 +104,6 @@ func TestE2E(t *testing.T) {
 	klog.Infof("Starting e2e run %q on Ginkgo node %d", framework.RunID, suiteConfig.ParallelProcess)
 	ginkgo.RunSpecs(t, "Cloud Storage FUSE CSI Driver", suiteConfig, reporterConfig)
 }
-
-var _ = ginkgo.SynchronizedBeforeSuite(func(ctx context.Context) []byte {
-	gcsfuseVersion := specs.GetGCSFuseVersion(ctx)
-	return []byte(gcsfuseVersion)
-}, func(ctx context.Context, data []byte) {
-	os.Setenv(specs.GcsfuseVersionVarName, string(data))
-})
 
 var _ = ginkgo.Describe("E2E Test Suite", func() {
 	GCSFuseCSITestSuites := func() []func() storageframework.TestSuite {
@@ -156,6 +152,15 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *zbFlag)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
+		// Skip HNS tests suites for ZB since enable ZB will automatically enable HNS
+		// And the test cases in GCSFuseCSITestSuites already includes HNS tests
+		if *zbFlag {
+			ginkgo.It("should be skipped since ZB already enables HNS", func() {
+				ginkgo.Skip("Skipping HNS tests suites for ZB since enable ZB will automatically enable HNS")
+			})
+			return
+		}
+
 		storageframework.DefineTestSuites(testDriverHNS, GCSFuseCSITestSuitesHNS)
 	})
 })
