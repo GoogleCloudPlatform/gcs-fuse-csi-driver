@@ -1,0 +1,106 @@
+# Copyright 2018 The Kubernetes Authors.
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Based on https://docs.cloud.google.com/kubernetes-engine/docs/how-to/tpus#deploy-multi-container.
+# See ./README.md for how to use this
+#
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: tpu7x-gcsfuse-multinic
+spec:
+  failurePolicy:
+    maxRestarts: 0
+  replicatedJobs:
+    - name: tpu7x
+      replicas: 1
+      template:
+        spec:
+          parallelism: 2
+          completions: 2
+          backoffLimit: 0
+          template:
+            spec:
+              subdomain: test
+              restartPolicy: Never
+              nodeSelector:
+                cloud.google.com/gke-tpu-accelerator: tpu7x
+                cloud.google.com/gke-tpu-topology: 2x2x2
+              hostNetwork: true
+              volumes:
+              - name: gcs0
+                csi:
+                  driver: gcsfuse.csi.storage.gke.io
+                  volumeAttributes:
+                    bucketName: BUCKET
+                    multiNICIndex: "0"
+                    mountOptions: implicit-dirs
+                    hostNetworkPodKSA: "true"
+              - name: gcs1
+                csi:
+                  driver: gcsfuse.csi.storage.gke.io
+                  volumeAttributes:
+                    bucketName: BUCKET
+                    multiNICIndex: "1"
+                    mountOptions: implicit-dirs
+                    hostNetworkPodKSA: "true"
+              containers:
+              - name: jax-tpu-1
+                image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest
+                securityContext:
+                  privileged: false
+                command:
+                - bash
+                - -c
+                - |
+                  set -ex
+                  python -c 'import jax; print("local devices:", jax.local_device_count(), "devices:", jax.device_count())'
+                  echo "Use /gcs${WORKLOAD_NIC_PREFERRED_NUMA}/ for GCS access"
+                resources:
+                  requests:
+                    google.com/tpu: 2
+                  limits:
+                    google.com/tpu: 2
+                volumeMounts:
+                - name: gcs0
+                  mountPath: /gcs0
+                  readOnly: false
+                - name: gcs1
+                  mountPath: /gcs1
+                  readOnly: false
+              - name: jax-tpu-2
+                image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest
+                securityContext:
+                  privileged: false
+                command:
+                - bash
+                - -c
+                - |
+                  set -ex
+
+                  python -c 'import jax; print("local devices:", jax.local_device_count(), "devices:", jax.device_count())'
+                  echo "Use /gcs${WORKLOAD_NIC_PREFERRED_NUMA}/ for GCS access"
+                resources:
+                  requests:
+                    google.com/tpu: 2
+                  limits:
+                    google.com/tpu: 2
+                volumeMounts:
+                - name: gcs0
+                  mountPath: /gcs0
+                  readOnly: false
+                - name: gcs1
+                  mountPath: /gcs1
+                  readOnly: false
