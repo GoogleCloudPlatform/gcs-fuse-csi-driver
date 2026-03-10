@@ -147,10 +147,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
-		}
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		v, err := version.ParseSemantic(GCSFuseVersionStr)
 
 		if enableSidecarBucketAccessCheck && configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix {
 			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
@@ -201,10 +198,10 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
+		if GCSFuseVersionStr == "" {
+			GCSFuseVersionStr = specs.GetGCSFuseVersion()
 		}
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		v, err := version.ParseSemantic(GCSFuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0-gke.0"))) {
 			if enableSidecarBucketAccessCheck {
 				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
@@ -480,10 +477,10 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	})
 
 	ginkgo.It("should fail when invalid bool mount options are passed", func() {
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
+		if GCSFuseVersionStr == "" {
+			GCSFuseVersionStr = specs.GetGCSFuseVersion()
 		}
-		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		v, err := version.ParseSemantic(GCSFuseVersionStr)
 		if err == nil && v != nil && v.AtLeast(version.MustParseSemantic("v3.8.0-gke.0")) {
 			testcaseInvalidMountOptions(specs.InvalidBoolMountOptionsVolumePrefix, "invalid syntax")
 		}

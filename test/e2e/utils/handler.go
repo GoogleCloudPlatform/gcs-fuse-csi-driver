@@ -18,15 +18,19 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
+	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
 
@@ -275,6 +279,31 @@ func Handle(testParams *TestParameters) error {
 		_, err := setEnvProjectNumberUsingID(testParams.ProjectID)
 		if err != nil {
 			klog.Errorf("Failed while prepping env for profiles tests: %v", err)
+		}
+	}
+
+	// Fetch GCSFuse version dynamically. We need to initialize a K8s client to communicate with the cluster.
+	kubeConfigPath := os.Getenv(clientcmd.RecommendedConfigPathEnvVar)
+	if kubeConfigPath == "" {
+		kubeConfigPath = filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	}
+	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig for version fetch: %w", err)
+	}
+	k8sclientset, err := clientset.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset for version fetch: %w", err)
+	}
+
+	gcsfuseVersion, err := FetchGCSFuseVersion(context.Background(), k8sclientset)
+	if err != nil {
+		return fmt.Errorf("failed to fetch GCSFuse version from cluster: %v. Tests might skip or fail if depending on this version.", err)
+	} else {
+		klog.Infof("Fetched GCSFuse version from cluster: %s", gcsfuseVersion)
+		// Exporting the version so Ginkgo specs can read it
+		if err := os.Setenv(GcsfuseVersionVarName, gcsfuseVersion); err != nil {
+			return fmt.Errorf("failed to set %s env var: %w", GcsfuseVersionVarName, err)
 		}
 	}
 

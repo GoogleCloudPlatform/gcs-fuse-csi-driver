@@ -248,7 +248,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",client-protocol=grpc"
 		}
 		if n.gcsfuseVersion == nil || n.gcsfuseBranch == "" {
-			n.gcsfuseVersion, n.gcsfuseBranch = GCSFuseVersionAndBranch(ctx)
+			n.gcsfuseVersion, n.gcsfuseBranch = GCSFuseVersionAndBranch()
 		}
 		kernelParamsSupported := n.gcsfuseBranch == utils.MasterBranchName || n.gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion))
 
