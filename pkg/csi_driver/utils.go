@@ -82,7 +82,7 @@ const (
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
-	MultiNICMinVersion                     = "v999.999.999-gke.999" // TODO: update this when a release is cut
+	MultiNICMinVersion                     = "v1.22.2-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
