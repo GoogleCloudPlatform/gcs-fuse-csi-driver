@@ -53,7 +53,7 @@ spec:
         echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
         apt-get update && apt-get install -y google-cloud-cli
 
-        gsutil -m cp -R gs://{{ .Values.bucketName }}/* /data 
+        gcloud storage cp --recursive gs://{{ .Values.bucketName }}/* /data 
 
         echo "Sleeping 5 minutes to wait for Local SSD RAID to populate data."
         sleep 300
@@ -148,7 +148,7 @@ spec:
         done
         
         {{ if eq .Values.scenario "local-ssd" }}
-        gsutil -m cp -R /data/fio-output/local-ssd gs://{{ .Values.bucketName }}/fio-output
+        gcloud storage cp --recursive /data/fio-output/local-ssd gs://{{ .Values.bucketName }}/fio-output
         {{ end }}
         
         echo "fio job completed!"
