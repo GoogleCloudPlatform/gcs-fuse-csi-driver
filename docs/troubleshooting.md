@@ -181,6 +181,31 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
   Warnings that are not listed above and include a rpc error code `Internal` mean that other unexpected issues occurred in the CSI driver, Create a [new issue](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/new) on the GitHub project page. Include your GKE cluster verion, detailed workload information, and the Pod event warning message in the issue.
 
+### CreateContainerError failures
+
+#### Failed to reserve container name
+
+- Pod event warning examples:
+
+  - First:
+    > Error: context deadline exceeded
+
+  - Then:
+    > Error: failed to reserve container name "my-container_gcsfuse-test-pod_default_6d2761cc-c62c-4d6a-a738-ccf3d4a5727a_0": name "my-container_gcsfuse-test-pod_default_6d2761cc-c62c-4d6a-a738-ccf3d4a5727a_0" is reserved for "978df475eb6f2c718bc057af263dfc95c8421ca621589c96ce835863a99f7ccd"
+
+- Solutions:
+
+  This error indicates that the Kubelet timed out(2 minutes) while waiting for the container runtime (e.g., containerd) to create the container, but the runtime is still holding the reservation for the container name. 
+
+  **Sequence of events and why it happens:**
+  1. This issue typically stems from a hanging or extremely slow GCS Fuse mount operation during the container's setup phase.
+  2. The Kubelet enforces a timeout (usually 2 minutes) for the `CreateContainer` CRI request. If the container runtime takes longer than this timeout because it is blocked on the hanging FUSE mount, Kubelet cancels the container creation context.
+  3. Even though Kubelet aborted the operation on its end, the container runtime is still blocked on the FUSE mount and holds the reservation for the requested container name.
+  4. When Kubelet subsequently retries to create the container with the same name, the container runtime rejects it with the `failed to reserve container name` error because the name is still reserved by the stuck previous attempt.
+
+  **Recovery:**
+  This issue can recover naturally without manual intervention. Once the original hanging mount operation completes or times out at the FUSE layer, the container runtime will finish its operation, clean up the stuck container attempt, and release the name reservation. Subsequent Kubelet retries will then succeed, and the pod will transition to the `Running` state.
+
 ### File cache issues
 
 > Note: the file cache feautre requires these GKE versions: 1.25.16-gke.1759000, 1.26.15-gke.1158000, 1.27.12-gke.1190000, 1.28.8-gke.1175000, 1.29.3-gke.1093000 **or later**.
