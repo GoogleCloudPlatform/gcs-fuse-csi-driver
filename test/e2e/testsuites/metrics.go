@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"local/test/e2e/specs"
 
@@ -49,6 +50,13 @@ var expectedMetricNames = []string{
 	"file_cache_read_count",
 	"file_cache_read_bytes_count",
 	"file_cache_read_latencies",
+}
+
+var expectedGrpcMetricNames = []string{
+	"grpc_client_attempt_started",
+	"grpc_client_call_duration",
+	"grpc_lb_rls_default_target_picks",
+	"grpc_lb_rls_failed_picks",
 }
 
 type gcsFuseCSIMetricsTestSuite struct {
@@ -87,6 +95,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		config             *storageframework.PerTestConfig
 		volumeResourceList []*storageframework.VolumeResource
 		artifactsDir       string
+		originalPrefix     string
 	}
 	var l local
 	ctx := context.Background()
@@ -101,6 +110,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		l.config = driver.PrepareTest(ctx, f)
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
+			l.originalPrefix = configPrefix[0]
 		}
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
@@ -218,42 +228,30 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
-		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
-		for _, metricName := range expectedMetricNames {
+		getMetrics := func(metricFamily *dto.MetricFamily) []*dto.Metric {
 			metricsList := []*dto.Metric{}
-			metricFamily, ok := families[metricName]
-			if ok {
-			metricLoop:
+			if metricFamily != nil {
 				for _, m := range metricFamily.GetMetric() {
+					labels := make(map[string]string, len(m.GetLabel()))
 					for _, pair := range m.GetLabel() {
-						name, value := pair.GetName(), pair.GetValue()
-						switch name {
-						case "bucket_name":
-							if value != bucketName {
-								continue metricLoop
-							}
-						case "pod_name":
-							if value != podName {
-								continue metricLoop
-							}
-						case "volume_name":
-							if value != volume {
-								continue metricLoop
-							}
-						case "namespace_name":
-							if value != f.Namespace.Name {
-								continue metricLoop
-							}
-						case "pod_uid":
-							if value != "" {
-								continue metricLoop
-							}
-						}
+						labels[pair.GetName()] = pair.GetValue()
 					}
-					metricsList = append(metricsList, m)
+
+					if labels["bucket_name"] == bucketName &&
+						labels["pod_name"] == podName &&
+						labels["volume_name"] == volume &&
+						labels["namespace_name"] == f.Namespace.Name &&
+						labels["pod_uid"] == "" {
+						metricsList = append(metricsList, m)
+					}
 				}
 			}
-			ginkgo.By(fmt.Sprintf("Printing full metricList for pod %s/%s volume %q: %+v", tPod.GetPodNamespace(), tPod.GetPodName(), volume, metricsList))
+			return metricsList
+		}
+
+		for _, metricName := range expectedMetricNames {
+			metricsList := getMetrics(families[metricName])
+			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 
 			// Skip the gcs_reader_count validation if Zonal Bucket is enabled.
 			// TODO(uriel-guzman): Remove once the GCSFuse bug is fixed.
@@ -265,6 +263,23 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 				}
 			}
 			ginkgo.By(fmt.Sprintf("Found metric %q for pod %s/%s volume %q count: %v", metricName, tPod.GetPodNamespace(), tPod.GetPodName(), volume, len(metricsList)))
+		}
+
+		if l.originalPrefix == specs.EnableGrpcAndMetricsPrefix {
+			for _, metricName := range expectedGrpcMetricNames {
+				metricsList := getMetrics(families[metricName])
+				ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
+				matcher := gomega.BeNumerically(">", 0)
+				expectedCountMsg := "expected count > 0"
+				if strings.Contains(metricName, "rls") {
+					// For RLS metrics, it's possible that there are no RLS calls and thus the count is 0.
+					// We just want to make sure the metric is emitted with the correct labels.
+					matcher = gomega.BeNumerically(">=", 0)
+					expectedCountMsg = "expected count >= 0"
+				}
+				gomega.Expect(len(metricsList)).To(matcher, fmt.Sprintf("Found metric %q count: %v, %s", metricName, len(metricsList), expectedCountMsg))
+				ginkgo.By(fmt.Sprintf("Found metric %q count: %v", metricName, len(metricsList)))
+			}
 		}
 	}
 
@@ -365,5 +380,25 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
 			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), false)
 		}
+	})
+
+	// This test verifies that gRPC metrics are emitted when the CSI driver is
+	// configured to use gRPC.
+	ginkgo.It("should emit gRPC metrics", func() {
+		init(1, specs.EnableGrpcAndMetricsPrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName, true)
 	})
 }
