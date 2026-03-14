@@ -96,6 +96,8 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	klog.Info("*** CUSTOM BUILD: CSI Driver - Manual Test Version ***")
+
 	// All CSI sidecars use http-endpoint for metrics and health checks.
 	// Example: https://gke-internal.googlesource.com/third_party/kubernetes-csi/livenessprobe/+/refs/heads/master/cmd/livenessprobe/main.go#113
 	// At some point, we should replace "metrics-endpoint" with "http-endpoint".
