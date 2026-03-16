@@ -45,16 +45,15 @@ var (
 			"fileCacheCapacity":                     "2",
 			"fileCacheForRangeRead":                 "3",
 			"metadataStatCacheCapacity":             "4",
-			"metadataTypeCacheCapacity":             "5",
-			"metadataCacheTTLSeconds":               "6",
-			"gcsfuseLoggingSeverity":                "7",
-			"skipCSIBucketAccessCheck":              "8",
-			"hostNetworkPodKSA":                     "9",
-			"identityProvider":                      "10",
-			"disableMetrics":                        "11",
-			"identityPool":                          "12",
-			"enableCloudProfilerForSidecar":         "13",
-			"gcsfuseMetadataPrefetchOnMount":        "14",
+			"metadataCacheTTLSeconds":               "5",
+			"gcsfuseLoggingSeverity":                "6",
+			"skipCSIBucketAccessCheck":              "7",
+			"hostNetworkPodKSA":                     "8",
+			"identityProvider":                      "9",
+			"disableMetrics":                        "10",
+			"identityPool":                          "11",
+			"enableCloudProfilerForSidecar":         "12",
+			"gcsfuseMetadataPrefetchOnMount":        "13",
 		},
 		MountOptions: []string{
 			"implicit-dirs",
@@ -97,7 +96,6 @@ var (
 		"fileCacheCapacity":              {},
 		"fileCacheForRangeRead":          {},
 		"metadataStatCacheCapacity":      {},
-		"metadataTypeCacheCapacity":      {},
 		"metadataCacheTTLSeconds":        {},
 		"gcsfuseLoggingSeverity":         {},
 		"skipCSIBucketAccessCheck":       {},
@@ -280,16 +278,15 @@ func TestBuildProfileConfig(t *testing.T) {
 						"fileCacheCapacity":              "2",
 						"fileCacheForRangeRead":          "3",
 						"metadataStatCacheCapacity":      "4",
-						"metadataTypeCacheCapacity":      "5",
-						"metadataCacheTTLSeconds":        "6",
-						"gcsfuseLoggingSeverity":         "7",
-						"skipCSIBucketAccessCheck":       "8",
-						"hostNetworkPodKSA":              "9",
-						"identityProvider":               "10",
-						"disableMetrics":                 "11",
-						"identityPool":                   "12",
-						"enableCloudProfilerForSidecar":  "13",
-						"gcsfuseMetadataPrefetchOnMount": "14",
+						"metadataCacheTTLSeconds":        "5",
+						"gcsfuseLoggingSeverity":         "6",
+						"skipCSIBucketAccessCheck":       "7",
+						"hostNetworkPodKSA":              "8",
+						"identityProvider":               "9",
+						"disableMetrics":                 "10",
+						"identityPool":                   "11",
+						"enableCloudProfilerForSidecar":  "12",
+						"gcsfuseMetadataPrefetchOnMount": "13",
 					},
 					mountOptions: []string{
 						"implicit-dirs",
@@ -640,16 +637,15 @@ func TestBuildSCDetails(t *testing.T) {
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
 					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
+					"metadataCacheTTLSeconds":        "5",
+					"gcsfuseLoggingSeverity":         "6",
+					"skipCSIBucketAccessCheck":       "7",
+					"hostNetworkPodKSA":              "8",
+					"identityProvider":               "9",
+					"disableMetrics":                 "10",
+					"identityPool":                   "11",
+					"enableCloudProfilerForSidecar":  "12",
+					"gcsfuseMetadataPrefetchOnMount": "13",
 				},
 				mountOptions: defaultMountOptions,
 			},
@@ -681,16 +677,15 @@ func TestBuildSCDetails(t *testing.T) {
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
 					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
+					"metadataCacheTTLSeconds":        "5",
+					"gcsfuseLoggingSeverity":         "6",
+					"skipCSIBucketAccessCheck":       "7",
+					"hostNetworkPodKSA":              "8",
+					"identityProvider":               "9",
+					"disableMetrics":                 "10",
+					"identityPool":                   "11",
+					"enableCloudProfilerForSidecar":  "12",
+					"gcsfuseMetadataPrefetchOnMount": "13",
 				},
 				mountOptions: defaultMountOptions,
 			},
@@ -724,16 +719,15 @@ func TestBuildSCDetails(t *testing.T) {
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
 					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
+					"metadataCacheTTLSeconds":        "5",
+					"gcsfuseLoggingSeverity":         "6",
+					"skipCSIBucketAccessCheck":       "7",
+					"hostNetworkPodKSA":              "8",
+					"identityProvider":               "9",
+					"disableMetrics":                 "10",
+					"identityPool":                   "11",
+					"enableCloudProfilerForSidecar":  "12",
+					"gcsfuseMetadataPrefetchOnMount": "13",
 				},
 				mountOptions: defaultMountOptions,
 			},
@@ -776,16 +770,15 @@ func TestBuildSCDetails(t *testing.T) {
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
 					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
+					"metadataCacheTTLSeconds":        "5",
+					"gcsfuseLoggingSeverity":         "6",
+					"skipCSIBucketAccessCheck":       "7",
+					"hostNetworkPodKSA":              "8",
+					"identityProvider":               "9",
+					"disableMetrics":                 "10",
+					"identityPool":                   "11",
+					"enableCloudProfilerForSidecar":  "12",
+					"gcsfuseMetadataPrefetchOnMount": "13",
 				},
 				mountOptions: defaultMountOptions,
 			},
@@ -819,16 +812,15 @@ func TestBuildSCDetails(t *testing.T) {
 					"fileCacheCapacity":              "2",
 					"fileCacheForRangeRead":          "3",
 					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
+					"metadataCacheTTLSeconds":        "5",
+					"gcsfuseLoggingSeverity":         "6",
+					"skipCSIBucketAccessCheck":       "7",
+					"hostNetworkPodKSA":              "8",
+					"identityProvider":               "9",
+					"disableMetrics":                 "10",
+					"identityPool":                   "11",
+					"enableCloudProfilerForSidecar":  "12",
+					"gcsfuseMetadataPrefetchOnMount": "13",
 				},
 				mountOptions: defaultMountOptions,
 			},
@@ -980,8 +972,9 @@ func TestBuildPVDetails(t *testing.T) {
 				putil.AnnotationNumObjects:   "12345",
 				putil.AnnotationTotalSize:    "67890",
 				putil.AnnotationLocationType: "zone",
+				putil.AnnotationHNSEnabled:   "true",
 			},
-			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890, locationType: "zone"},
+			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890, locationType: "zone", hnsEnabled: true},
 			wantErr: false,
 		},
 		{
@@ -1349,8 +1342,19 @@ func TestBuildCacheRequirements(t *testing.T) {
 				totalSizeBytes: 10 * mib,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
-				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectFlat,
+				fileCacheBytes:         10 * mib,
+			},
+		},
+		{
+			name: "Non-zero PV details - Should calculate all cache requirements for HNS bucket",
+			pv: &pvDetails{
+				numObjects:     1000,
+				totalSizeBytes: 10 * mib,
+				hnsEnabled:     true,
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectHNS,
 				fileCacheBytes:         10 * mib,
 			},
 		},
@@ -1362,8 +1366,7 @@ func TestBuildCacheRequirements(t *testing.T) {
 				locationType:   "zone",
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
-				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         0,
 			},
 		},
@@ -1375,8 +1378,7 @@ func TestBuildCacheRequirements(t *testing.T) {
 				locationType:   "ZoNe",
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
-				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
+				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         0,
 			},
 		},
@@ -1388,7 +1390,6 @@ func TestBuildCacheRequirements(t *testing.T) {
 			},
 			want: &cacheRequirements{
 				metadataStatCacheBytes: 0,
-				metadataTypeCacheBytes: 0,
 				fileCacheBytes:         5 * mib,
 			},
 		},
@@ -1399,8 +1400,7 @@ func TestBuildCacheRequirements(t *testing.T) {
 				totalSizeBytes: 0,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 500 * metadataStatCacheBytesPerObject,
-				metadataTypeCacheBytes: 500 * metadataTypeCacheBytesPerObject,
+				metadataStatCacheBytes: 500 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         0,
 			},
 		},
@@ -1412,7 +1412,6 @@ func TestBuildCacheRequirements(t *testing.T) {
 			},
 			want: &cacheRequirements{
 				metadataStatCacheBytes: 0,
-				metadataTypeCacheBytes: 0,
 				fileCacheBytes:         0,
 			},
 		},
@@ -1556,7 +1555,7 @@ func TestCalculateResourceBudgets(t *testing.T) {
 	}
 }
 
-func TestRecommendMetadataCacheSize(t *testing.T) {
+func TestRecommendMetadataStatCacheSize(t *testing.T) {
 	config := &ProfileConfig{
 		nodeDetails: &nodeDetails{name: "test-node"},
 	}
@@ -1605,9 +1604,9 @@ func TestRecommendMetadataCacheSize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotRecommended, gotRemainingBudget := recommendMetadataCacheSize(config, tt.required, tt.memoryBudget, nil, "test")
+			gotRecommended, gotRemainingBudget := recommendMetadataStatCacheSize(config, tt.required, tt.memoryBudget, nil)
 			if gotRecommended != tt.wantRecommended || gotRemainingBudget != tt.wantRemainingBudget {
-				t.Errorf("recommendMetadataCacheSize(%d, %d) = (%d, %d), want (%d, %d) - Should match recommended and remaining budgets", tt.required, tt.memoryBudget, gotRecommended, gotRemainingBudget, tt.wantRecommended, tt.wantRemainingBudget)
+				t.Errorf("recommendMetadataStatCacheSize(%d, %d) = (%d, %d), want (%d, %d) - Should match recommended and remaining budgets", tt.required, tt.memoryBudget, gotRecommended, gotRemainingBudget, tt.wantRecommended, tt.wantRemainingBudget)
 			}
 		})
 	}
@@ -1785,10 +1784,8 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 
 func TestRecommendCacheConfigs(t *testing.T) {
 	// Constants for easier reading
-	objPerStat := metadataStatCacheBytesPerObject
-	objPerType := metadataTypeCacheBytesPerObject
+	objPerStat := metadataStatCacheBytesPerObjectFlat
 	reqStat := 1000 * objPerStat // 1.5MiB
-	reqType := 1000 * objPerType // 0.2MiB
 	reqFile := 100 * mib         // 100 MiB
 
 	// Example config components
@@ -1815,7 +1812,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + reqFile,
+						memoryBytes:           reqStat + reqFile,
 						ephemeralStorageBytes: reqFile,
 					},
 					name: "test-gpu-node",
@@ -1824,7 +1821,6 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: reqStat,
-				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         reqFile,
 				fileCacheMedium:        util.MediumRAM,
 			},
@@ -1841,7 +1837,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType,
+						memoryBytes:           reqStat,
 						ephemeralStorageBytes: reqFile,
 					},
 					hasLocalSSDEphemeralStorageAnnotation: true,
@@ -1851,7 +1847,6 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: reqStat,
-				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         reqFile,
 				fileCacheMedium:        util.MediumLSSD,
 			},
@@ -1877,33 +1872,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: 1 * mib,
-				metadataTypeCacheBytes: 0,
 				fileCacheBytes:         0, // Not enough RAM for file cache after metadata
-			},
-		},
-		{
-			name: "Limited memory caps type cache (GPU, RAM) - Should recommend stat cache and cap type cache",
-			config: &ProfileConfig{
-				pvDetails: defaultPV,
-				scDetails: &scDetails{
-					fuseMemoryAllocatableFactor:           1.0,
-					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
-				},
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + (reqType / 2), // Enough for stat, half for type
-						ephemeralStorageBytes: reqFile,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: defaultPod,
-			},
-			want: &recommendation{
-				metadataStatCacheBytes: reqStat,
-				metadataTypeCacheBytes: reqType / 2,
-				fileCacheBytes:         0, // Not enough RAM for file cache
 			},
 		},
 		{
@@ -1918,7 +1887,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + reqFile,
+						memoryBytes:           reqStat + reqFile,
 						ephemeralStorageBytes: reqFile / 2, // Insufficient for file cache
 					},
 					hasLocalSSDEphemeralStorageAnnotation: true,
@@ -1928,7 +1897,6 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: reqStat,
-				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         0, // LSSD failed, RAM not in priority
 			},
 		},
@@ -1944,7 +1912,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + reqFile,
+						memoryBytes:           reqStat + reqFile,
 						ephemeralStorageBytes: reqFile,
 					},
 					name: "test-gpu-node",
@@ -1953,7 +1921,6 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: reqStat,
-				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         0,
 				fileCacheMedium:        "",
 			},
@@ -1970,7 +1937,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeTPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + reqFile,
+						memoryBytes:           reqStat + reqFile,
 						ephemeralStorageBytes: reqFile,
 					},
 					name: "test-tpu-node",
@@ -1979,7 +1946,6 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: reqStat,
-				metadataTypeCacheBytes: reqType,
 				fileCacheBytes:         reqFile,
 				fileCacheMedium:        util.MediumRAM,
 			},
@@ -1996,7 +1962,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU, // Does not match SC priority key
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + reqFile,
+						memoryBytes:           reqStat + reqFile,
 						ephemeralStorageBytes: reqFile,
 					},
 					name: "test-gpu-node",
@@ -2045,10 +2011,8 @@ func TestRecommendCacheConfigs(t *testing.T) {
 
 func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 	// Constants for easier reading
-	objPerStat := metadataStatCacheBytesPerObject
-	objPerType := metadataTypeCacheBytesPerObject
+	objPerStat := metadataStatCacheBytesPerObjectFlat
 	reqStat := 1000 * objPerStat // 1.5MiB -> 2 MiB
-	reqType := 1000 * objPerType // 0.2MiB -> 1 MiB
 	fileCacheSize := 100 * mib   // 100 MiB
 
 	// Base config components
@@ -2078,7 +2042,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2088,7 +2052,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"implicit-dirs",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 				"file-cache:max-size-mb:100",
 				"file-cache-medium=ram",
 			},
@@ -2101,7 +2064,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType, // Not enough RAM for file cache
+						memoryBytes:           reqStat, // Not enough RAM for file cache
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					hasLocalSSDEphemeralStorageAnnotation: true,
@@ -2112,7 +2075,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"implicit-dirs",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 				"file-cache:max-size-mb:100",
 				"file-cache-medium=lssd",
 			},
@@ -2125,7 +2087,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType,
+						memoryBytes:           reqStat,
 						ephemeralStorageBytes: fileCacheSize / 2, // Insufficient LSSD
 					},
 					hasLocalSSDEphemeralStorageAnnotation: true,
@@ -2137,7 +2099,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"file-cache:max-size-mb:0",
 				"implicit-dirs",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2148,7 +2109,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2159,7 +2120,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"implicit-dirs",
 				"file-cache:max-size-mb:0",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2181,33 +2141,10 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"implicit-dirs",
 				"file-cache:max-size-mb:0",
 				"metadata-cache:stat-cache-max-size-mb:0",
-				"metadata-cache:type-cache-max-size-mb:0",
 			},
 		},
 		{
-			name: "Zero type cache required - Should disable type cache",
-			config: &ProfileConfig{
-				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
-				scDetails: baseSC,
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat,
-						ephemeralStorageBytes: 0,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"implicit-dirs",
-				"file-cache:max-size-mb:0",
-				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:0",
-			},
-		},
-		{
-			name: "Override - Stat cache fits in RAM - Should override and recommend RAM + type cache",
+			name: "Override - Stat cache fits in RAM - Should override and recommend RAM",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
@@ -2219,7 +2156,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2229,41 +2166,11 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:100",
 				"metadata-cache:stat-cache-max-size-mb:1",
-				"metadata-cache:type-cache-max-size-mb:1",
 				"file-cache-medium=ram",
 			},
 		},
 		{
-			name: "Override - Type cache fits in RAM - Should override and recommend RAM + stat cache",
-			config: &ProfileConfig{
-				pvDetails: basePV,
-				scDetails: &scDetails{
-					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:1"},
-					fuseMemoryAllocatableFactor:           1.0,
-					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
-				},
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						// +1 since the caches exactly fit in RAM and the algorithm checks for "<",
-						// so this is just to make the unit test pass and doesn't actually matter.
-						memoryBytes:           reqStat + 1*1024*1024 + fileCacheSize,
-						ephemeralStorageBytes: fileCacheSize,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"file-cache:max-size-mb:100",
-				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
-				"file-cache-medium=ram",
-			},
-		},
-		{
-			name: "Override - Stat cache doesn't fit in RAM - Should override and cap type cache + disable file cache RAM",
+			name: "Override - Stat cache doesn't fit in RAM - Should override and disable file cache RAM",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
@@ -2275,7 +2182,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2285,39 +2192,11 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:0",
 				"metadata-cache:stat-cache-max-size-mb:1000000000",
-				"metadata-cache:type-cache-max-size-mb:0",
 				// "file-cache-medium=ram",
 			},
 		},
 		{
-			name: "Override - Type cache doesn't fit in RAM - Should override and cap stat cache + disable file cache RAM",
-			config: &ProfileConfig{
-				pvDetails: basePV,
-				scDetails: &scDetails{
-					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:1000000000"},
-					fuseMemoryAllocatableFactor:           1.0,
-					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
-				},
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
-						ephemeralStorageBytes: fileCacheSize,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"file-cache:max-size-mb:0",
-				"metadata-cache:type-cache-max-size-mb:1000000000",
-				"metadata-cache:stat-cache-max-size-mb:0",
-				// "file-cache-medium=ram",
-			},
-		},
-		{
-			name: "Override - Stat cache infinite, estimated size fits in RAM - Should override and recommend RAM file cache + type cache",
+			name: "Override - Stat cache infinite, estimated size fits in RAM - Should override and recommend RAM file cache",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
@@ -2329,7 +2208,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2339,39 +2218,11 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:100",
 				"metadata-cache:stat-cache-max-size-mb:-1",
-				"metadata-cache:type-cache-max-size-mb:1",
 				"file-cache-medium=ram",
 			},
 		},
 		{
-			name: "Override - Type cache infinite, estimated size fits in RAM - Should override and recommend RAM file cache + stat cache",
-			config: &ProfileConfig{
-				pvDetails: basePV,
-				scDetails: &scDetails{
-					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:-1"},
-					fuseMemoryAllocatableFactor:           1.0,
-					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
-				},
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
-						ephemeralStorageBytes: fileCacheSize,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"file-cache:max-size-mb:100",
-				"metadata-cache:type-cache-max-size-mb:-1",
-				"metadata-cache:stat-cache-max-size-mb:2",
-				"file-cache-medium=ram",
-			},
-		},
-		{
-			name: "Override - Stat cache disabled - Should override and recommend RAM file cache + type cache",
+			name: "Override - Stat cache disabled - Should override and recommend RAM file cache",
 			config: &ProfileConfig{
 				pvDetails: basePV,
 				scDetails: &scDetails{
@@ -2383,7 +2234,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2393,34 +2244,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:100",
 				"metadata-cache:stat-cache-max-size-mb:0",
-				"metadata-cache:type-cache-max-size-mb:1",
-				"file-cache-medium=ram",
-			},
-		},
-		{
-			name: "Override - Type cache disabled - Should override and recommend RAM file cache + stat cache",
-			config: &ProfileConfig{
-				pvDetails: basePV,
-				scDetails: &scDetails{
-					mountOptions:                          []string{"metadata-cache:type-cache-max-size-mb:0"},
-					fuseMemoryAllocatableFactor:           1.0,
-					fuseEphemeralStorageAllocatableFactor: 1.0,
-					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
-				},
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
-						ephemeralStorageBytes: fileCacheSize,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"file-cache:max-size-mb:100",
-				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:0",
 				"file-cache-medium=ram",
 			},
 		},
@@ -2437,7 +2260,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2447,7 +2270,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:50",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2463,7 +2285,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2474,7 +2296,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"file-cache:max-size-mb:-1",
 				"implicit-dir",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2490,7 +2311,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2501,7 +2322,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"file-cache:max-size-mb:1000000",
 				"implicit-dir",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2517,7 +2337,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2528,7 +2348,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"file-cache:max-size-mb:42",
 				"implicit-dir",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 			},
 		},
 		{
@@ -2544,7 +2363,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat + reqType + fileCacheSize,
+						memoryBytes:           reqStat + fileCacheSize,
 						ephemeralStorageBytes: fileCacheSize,
 					},
 					name: "test-gpu-node",
@@ -2555,7 +2374,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				"implicit-dir",
 				"file-cache:max-size-mb:123",
 				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:1",
 				// No medium
 			},
 		},
@@ -2806,31 +2624,6 @@ func TestMergeMountOptionsOnMissingKeys(t *testing.T) {
 			userOpts:   []string{"metadata-cache:stat-cache-max-size-mb:42"},
 			systemOpts: []string{"metadata-cache:stat-cache-max-size-mb:31"},
 			wantOpts:   []string{"metadata-cache:stat-cache-max-size-mb:42"},
-		},
-		// Special case: Metadata type cache max size mb
-		{
-			name:       "metadata type cache max size mb CLI format in userOpts should override config-file format in systemOpts",
-			userOpts:   []string{"type-cache-max-size-mb=42"},
-			systemOpts: []string{"metadata-cache:type-cache-max-size-mb:31"},
-			wantOpts:   []string{"type-cache-max-size-mb=42"},
-		},
-		{
-			name:       "metadata type cache max size mb config-file format in userOpts should override CLI format in systemOpts",
-			userOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
-			systemOpts: []string{"type-cache-max-size-mb=31"},
-			wantOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
-		},
-		{
-			name:       "metadata type cache max size mb CLI format in userOpts should override CLI format in systemOpts",
-			userOpts:   []string{"type-cache-max-size-mb=42"},
-			systemOpts: []string{"type-cache-max-size-mb=31"},
-			wantOpts:   []string{"type-cache-max-size-mb=42"},
-		},
-		{
-			name:       "metadata type cache max size mb config-file format in userOpts should override config-file format in systemOpts",
-			userOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
-			systemOpts: []string{"metadata-cache:type-cache-max-size-mb:31"},
-			wantOpts:   []string{"metadata-cache:type-cache-max-size-mb:42"},
 		},
 	}
 

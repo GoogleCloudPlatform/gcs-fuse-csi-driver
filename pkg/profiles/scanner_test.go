@@ -385,6 +385,7 @@ func TestCheckPVRelevance(t *testing.T) {
 		wantIsOverride    bool
 		wantIsPendingScan bool
 		wantIsZonalBucket bool
+		wantHNSEnabled    bool
 		fakeGetAttrs      fakebucketAttrsFunc
 	}{
 		{
@@ -588,6 +589,9 @@ func TestCheckPVRelevance(t *testing.T) {
 				if isZonalBucket(bucketI.locationType) != tc.wantIsZonalBucket {
 					t.Errorf("checkPVRelevance(%v) locationType = %s, want %t", tc.pv.Name, bucketI.locationType, tc.wantIsZonalBucket)
 				}
+				if bucketI.hnsEnabled != tc.wantHNSEnabled {
+					t.Errorf("checkPVRelevance(%v) hnsEnabled = %v, want %v", tc.pv.Name, bucketI.hnsEnabled, tc.wantHNSEnabled)
+				}
 			}
 			if isPendingScan != tc.wantIsPendingScan {
 				t.Errorf("checkPVRelevance(%v) isPendingScan = %v, want %v", tc.pv.Name, isPendingScan, tc.wantIsPendingScan)
@@ -618,6 +622,9 @@ func TestSyncPV(t *testing.T) {
 		Name:          testBucketName,
 		ProjectNumber: 111,
 		LocationType:  "region",
+		HierarchicalNamespace: &storage.HierarchicalNamespace{
+			Enabled: true,
+		},
 	}
 	attrsFunc := fakebucketAttrsFunc{attrs: attrs}
 	bucketAttrs = attrsFunc.getBucketAttributes
@@ -650,6 +657,7 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationTotalSize:    "567890",
 				putil.AnnotationStatus:       "completed",
 				putil.AnnotationLocationType: "region",
+				putil.AnnotationHNSEnabled:   "true",
 			},
 			expectScanCall: true,
 		},
@@ -663,6 +671,7 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationTotalSize:    "567890",
 				putil.AnnotationStatus:       "completed",
 				putil.AnnotationLocationType: "region",
+				putil.AnnotationHNSEnabled:   "true",
 			},
 			wantErr:        false,
 			expectScanCall: true,
@@ -678,6 +687,7 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationTotalSize:    "567890",
 				putil.AnnotationStatus:       "completed",
 				putil.AnnotationLocationType: "region",
+				putil.AnnotationHNSEnabled:   "true",
 			},
 			wantErr:         false,
 			expectScanCall:  true,
@@ -704,6 +714,7 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationTotalSize:    "0",
 				putil.AnnotationStatus:       "timeout",
 				putil.AnnotationLocationType: "region",
+				putil.AnnotationHNSEnabled:   "true",
 			},
 			expectScanCall: true,
 		},
@@ -748,6 +759,7 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationTotalSize:    "2222",
 				putil.AnnotationStatus:       "override",
 				putil.AnnotationLocationType: "region",
+				putil.AnnotationHNSEnabled:   "true",
 			},
 		},
 	}
