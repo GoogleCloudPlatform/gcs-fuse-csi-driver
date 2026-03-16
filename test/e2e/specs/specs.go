@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
@@ -81,7 +82,6 @@ const (
 	EnableMetadataPrefetchPrefixForceNewBucketPrefix           = "gcsfuse-csi-enable-metadata-prefetch-and-force-new-bucket"
 	EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix   = "gcsfuse-csi-enable-metadata-prefetch-and-invalid-mount-options-volume"
 	ImplicitDirsPath                                           = "implicit-dir"
-	InvalidVolume                                              = "<invalid-name>"
 	OptInHnwKSAPrefix                                          = "opt-in-hnw-ksa"
 	SkipCSIBucketAccessCheckPrefix                             = "gcsfuse-csi-skip-bucket-access-check"
 	SkipCSIBucketAccessCheckAndFakeVolumePrefix                = "gcsfuse-csi-skip-bucket-access-check-fake-volume"
@@ -123,6 +123,8 @@ const (
 
 	GcsfuseVersionVarName = "gcsfuse-version"
 )
+
+var InvalidVolume = fmt.Sprintf("non-existent-test-bucket-%s", rand.String(8))
 
 // Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
 // konnectivity agents are wrapped with retry logic, see `runKubectlWithFullOutputWithRetry` as an example.

@@ -29,12 +29,15 @@ import (
 
 	"cloud.google.com/go/iam"
 	"cloud.google.com/go/storage"
+	control "cloud.google.com/go/storage/control/apiv2"
+	"cloud.google.com/go/storage/control/apiv2/controlpb"
 	"cloud.google.com/go/storage/experimental"
 	foUtils "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util/goclientobjectcommands"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
@@ -70,6 +73,8 @@ type ServiceManager interface {
 
 type gcsService struct {
 	storageClient *storage.Client
+	// The control client is for the GetStorageLayout bucket access check.
+	controlClient *control.StorageControlClient
 }
 
 type gcsServiceManager struct{}
@@ -97,7 +102,16 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 		return nil, err
 	}
 
-	return &gcsService{storageClient: storageClient}, nil
+	controlClient, err := control.NewStorageControlClient(ctx, option.WithTokenSource(ts))
+	if err != nil {
+		storageClient.Close()
+		return nil, err
+	}
+
+	return &gcsService{
+		storageClient: storageClient,
+		controlClient: controlClient,
+	}, nil
 }
 
 func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.Context, enableZB bool) (Service, error) {
@@ -112,7 +126,18 @@ func (manager *gcsServiceManager) SetupServiceWithDefaultCredential(ctx context.
 		return nil, err
 	}
 
-	return &gcsService{storageClient: storageClient}, nil
+	var controlClient *control.StorageControlClient
+	// Without explicit auth options, it automatically uses Application Default Credentials.
+	controlClient, err = control.NewStorageControlClient(ctx)
+	if err != nil {
+		storageClient.Close()
+		return nil, err
+	}
+
+	return &gcsService{
+		storageClient: storageClient,
+		controlClient: controlClient,
+	}, nil
 }
 
 func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
@@ -201,14 +226,24 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 	return nil, fmt.Errorf("failed to get bucket %q: got empty attrs", obj.Name)
 }
 
+// CheckBucketExists checks the bucket access the bucket exists by calling the
+// API's GetStorageLayout method which uses storage.objects.list permission.
+// If the customer hasn't set up permission to the bucket, this will return a
+// 403 error. A 404 error will be returned if the bucket doesn't exist, but
+// correct permissions are configured.
 func (service *gcsService) CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error) {
-	bkt := service.storageClient.Bucket(obj.Name)
-	_, err := bkt.Objects(ctx, &storage.Query{Prefix: ""}).Next()
-
-	if err == nil || errors.Is(err, iterator.Done) {
-		return true, nil
+	// This call matches the access check GCSFuse does:
+	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/919dbde3e074ff8f6a2cc7f7b612863542a1fb90/internal/storage/storage_handle.go#L319
+	req := &controlpb.GetStorageLayoutRequest{
+		Name:      fmt.Sprintf("projects/_/buckets/%s/storageLayout", obj.Name),
+		Prefix:    "",
+		RequestId: "",
 	}
 
+	_, err := service.controlClient.GetStorageLayout(ctx, req)
+	if err == nil {
+		return true, nil
+	}
 	return false, err
 }
 
@@ -244,6 +279,7 @@ func (service *gcsService) RemoveIAMPolicy(ctx context.Context, obj *ServiceBuck
 
 func (service *gcsService) Close() {
 	service.storageClient.Close()
+	service.controlClient.Close()
 }
 
 func cloudBucketToServiceBucket(attrs *storage.BucketAttrs) (*ServiceBucket, error) {
@@ -289,21 +325,31 @@ func isCanceledErr(err error) bool {
 }
 
 // ParseErrCode parses error and returns a gRPC code.
+// This function is necessary because the gcsService uses two different Google Cloud
+// clients: a gRPC-based StorageControlClient and a JSON-based vanilla GCS client.
+// These clients return different error types.
+//
+// The function first checks if the error is a gRPC status error.
+// If so, it returns the gRPC code. This is the case for errors from
+// the StorageControlClient (e.g., in CheckBucketExists).
+// If not, it falls back to checking for legacy error types used by the
+// vanilla GCS client (e.g., in GetBucket).
 func ParseErrCode(err error) codes.Code {
-	code := codes.Internal
+	if s, ok := status.FromError(err); ok {
+		return s.Code()
+	}
+
 	if IsNotExistErr(err) {
-		code = codes.NotFound
+		return codes.NotFound
 	}
-
 	if isPermissionDeniedErr(err) {
-		code = codes.PermissionDenied
+		return codes.PermissionDenied
 	}
-
 	if isCanceledErr(err) {
-		code = codes.Aborted
+		return codes.Aborted
 	}
 
-	return code
+	return codes.Internal
 }
 
 // UploadGCSObject uploads a local file to a specified GCS bucket and object.
@@ -387,22 +433,32 @@ func isBucketAZonalBucket(ctx context.Context, client *storage.Client, bucketNam
 }
 
 func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
-	var err error
-	var storageClient *storage.Client
+	var storageOpts []option.ClientOption
+	var controlOpts []option.ClientOption
+
 	// For workload identity enabled resources we need to create the storage service with default credentials so as to not consume more STS quota.
 	// The token source thus is only shared for host network enabled workload. If token source is nil then create storage client with default credentials else use the tokenSource.
 	// This is needed as the storage API checks calls TokenSource.Token() function (defined above) which leads to increased STS quota since we are directly hitting the STS API.
 	if ts != nil {
 		client := oauth2.NewClient(ctx, ts)
-		storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))
-	} else {
-		storageClient, err = storage.NewClient(ctx)
+		storageOpts = append(storageOpts, option.WithHTTPClient(client))
+		controlOpts = append(controlOpts, option.WithTokenSource(ts))
 	}
-	// Storage client is expected to be created by either path, return the error if storage client creation fails
-	if err != nil || storageClient == nil {
-		klog.Errorf("Errored while creating with tokensource %v, got storage client %v", err, storageClient)
-		return nil, err
+
+	storageClient, err := storage.NewClient(ctx, storageOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
-	klog.Infof("Storage service client created successfully, %v", storageClient)
-	return &gcsService{storageClient: storageClient}, nil
+
+	controlClient, err := control.NewStorageControlClient(ctx, controlOpts...)
+	if err != nil {
+		storageClient.Close()
+		return nil, fmt.Errorf("failed to create control client: %w", err)
+	}
+
+	klog.Infof("Storage client and control client created successfully for sidecar.")
+	return &gcsService{
+		storageClient: storageClient,
+		controlClient: controlClient,
+	}, nil
 }
