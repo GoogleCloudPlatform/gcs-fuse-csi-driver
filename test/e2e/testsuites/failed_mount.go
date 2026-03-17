@@ -449,7 +449,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		testCaseGCSFuseOOM(specs.SkipCSIBucketAccessCheckPrefix)
 	})
 
-	testcaseInvalidMountOptions := func(configPrefix string) {
+	testcaseInvalidMountOptions := func(configPrefix, msg string) {
 		init(configPrefix)
 		defer cleanup()
 
@@ -463,22 +463,26 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error")
 		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
-		tPod.WaitForFailedMountError(ctx, "-invalid-option")
+		tPod.WaitForFailedMountError(ctx, msg)
 	}
 
 	ginkgo.It("should fail when invalid mount options are passed", func() {
-		testcaseInvalidMountOptions(specs.InvalidMountOptionsVolumePrefix)
+		testcaseInvalidMountOptions(specs.InvalidMountOptionsVolumePrefix, "-invalid-option")
+	})
+
+	ginkgo.It("should fail when invalid bool mount options are passed", func() {
+		testcaseInvalidMountOptions(specs.InvalidBoolMountOptionsVolumePrefix, "invalid syntax")
 	})
 
 	ginkgo.It("[metadata prefetch] should fail when invalid mount options are passed", func() {
 		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}
-		testcaseInvalidMountOptions(specs.EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix)
+		testcaseInvalidMountOptions(specs.EnableMetadataPrefetchAndInvalidMountOptionsVolumePrefix, "-invalid-option")
 	})
 
 	ginkgo.It("[csi-skip-bucket-access-check] should fail when invalid mount options are passed", func() {
-		testcaseInvalidMountOptions(specs.SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix)
+		testcaseInvalidMountOptions(specs.SkipCSIBucketAccessCheckAndInvalidMountOptionsVolumePrefix, "-invalid-option")
 	})
 
 	ginkgo.It("should fail when the sidecar container is specified with high resource usage", func() {
