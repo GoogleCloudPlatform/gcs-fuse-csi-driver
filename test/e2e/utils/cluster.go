@@ -34,6 +34,7 @@ var (
 	SaTokenVolInjectionMinimumVersion           = version.MustParseGeneric("1.100.0")
 	skipBucketCheckMinimumVersion               = version.MustParseGeneric("1.29.0")
 	kernelReadAheadMinimumVersion               = version.MustParseGeneric("1.32.0")
+	metricsSupportedMinimumVersion              = version.MustParseGeneric("1.15.2")
 	metadataPrefetchMinimumVersion              = version.MustParseGeneric("1.32.0")
 	longMountOptionsMinimumVersion              = version.MustParseGeneric("1.32.0")
 	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")

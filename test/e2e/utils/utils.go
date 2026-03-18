@@ -19,18 +19,20 @@ package utils
 
 import (
 	"fmt"
-	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 )
 
 const (
-	DefaultNamespace              = "default"
-	MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
+	DefaultNamespace                         = "default"
+	MinGCSFuseKernelParamsVersion            = "v3.7.0-gke.0"
+	MinGCSFuseMetricsCardinalityFixesVersion = "v3.7.2-gke.0"
 )
 
 var (
