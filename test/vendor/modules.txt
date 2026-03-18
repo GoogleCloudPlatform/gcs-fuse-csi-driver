@@ -386,6 +386,7 @@ github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util
+github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util/goclientobjectcommands
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook

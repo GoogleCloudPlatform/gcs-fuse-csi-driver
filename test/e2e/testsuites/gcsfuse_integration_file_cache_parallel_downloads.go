@@ -210,13 +210,17 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GolangImage)
 
-		framework.Logf("Log file path: %v", config.LogFilePath)
-		tPod.SetCommand(fmt.Sprintf("tail -F %v", config.LogFilePath))
+		if config.LogFilePath != "" {
+			framework.Logf("Log file path: %v", config.LogFilePath)
+			tPod.SetCommand(fmt.Sprintf("tail -F %v", config.LogFilePath))
+		}
 
 		tPod.SetResource("1", "1Gi", "5Gi")
 		if strings.HasPrefix(testName, "TestRangeReadTest") {
 			tPod.SetResource("1", "2Gi", "5Gi")
 		}
+
+		sidecarMemoryRequest, sidecarMemoryLimit := configureLargeFileResources(tPod, testPkg, driver)
 
 		// By setting up the cache volume mount here,the sidecar-mounter will automatically populate
 		// the "cache-dir" in its config file map when file cache is enabled.
@@ -225,20 +229,31 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		framework.Logf("Cache file path: %v", config.CacheDir)
 		tPod.SetupCacheVolumeMount(config.CacheDir, ".volumes/"+volumeName)
 
-		// Replaced hardcoded logging:severity:info from testdriver set up with parsed log severity
-		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
-		mo = strings.ReplaceAll(mo, "logging:severity:info", fmt.Sprintf("logging:severity:%v", config.LogSeverity))
-		l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+
+		if config.LogSeverity != "" {
+			// Replaced hardcoded logging:severity:info from testdriver set up with parsed log severity
+			mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
+			mo = strings.ReplaceAll(mo, "logging:severity:info", fmt.Sprintf("logging:severity:%v", config.LogSeverity))
+			l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
+		}
+
+		// Expand variables in mount options so that flags like --file-cache-exclude-regex=^${BUCKET_NAME}/
+		// can be dynamically referenced.
+		vars := map[string]string{"BUCKET_NAME": bucketName}
+		for i, opt := range config.MountOptions {
+			config.MountOptions[i] = utils.ExpandFlagVariables(opt, vars)
+		}
+		framework.Logf("Final parsed arguments: %v", config.MountOptions)
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, config.ReadOnly, config.MountOptions...)
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "1",
-			"gke-gcsfuse/memory-request":          defaultSidecarMemoryRequest,
-			"gke-gcsfuse/memory-limit":            defaultSidecarMemoryLimit,
+			"gke-gcsfuse/memory-request":          sidecarMemoryRequest,
+			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
 			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
 		})
 
-		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
 		onlyDir := utils.ExtractOnlyDirFromMountOptions(l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"])
 
 		ginkgo.By("Deploying the test pod")
@@ -264,20 +279,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 
 		// If testName is not provided in the config, run all tests under the package.
 		// Otherwise, only run the precisely specified test case via the -run flag.
-		goTestCmd := fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v --config-file=../test_config.yaml", testPkg)
-		if testName != "" {
-			goTestCmd = fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v -run ^%v$ --config-file=../test_config.yaml", testPkg, testName)
-		}
-
-		commandArgs := []string{
-			fmt.Sprintf(gcsfuseGoEnvSetupFormat, gcsfuseGoVersionCommand),
-			fmt.Sprintf("export MOUNTED_DIR=%v", mountPath),
-			fmt.Sprintf("export BUCKET_NAME=%v", bucketName),
-			fmt.Sprintf("export ONLY_DIR=%v", onlyDir),
-			fmt.Sprintf("cd %v", gcsfuseIntegrationTestsBasePath),
-			goTestCmd,
-		}
-		baseTestCommand := strings.Join(commandArgs, " && ")
+		baseTestCommand := generateTestCommand(TestCommandConfig{
+			TestPkg:       testPkg,
+			TestName:      testName,
+			GoEnvSetupCmd: gcsfuseGoVersionCommand,
+			MountPath:     mountPath,
+			BucketName:    bucketName,
+			OnlyDir:       onlyDir,
+		})
 		framework.Logf("Executing tests with command:\n%s", baseTestCommand)
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
@@ -298,13 +307,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 			// But there is only one configuration item under each package, so we take the first element.
 			pkg := pkgList[0]
 			for _, config := range pkg.Configs {
-				if !config.RunOnGke {
-					continue
-				}
-				if !config.Compatible.HNS && hnsEnabled(driver) {
-					continue
-				}
-				if !config.Compatible.Zonal && zbEnabled(driver) {
+				if !isConfigCompatible(config, driver) {
 					continue
 				}
 

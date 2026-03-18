@@ -56,6 +56,7 @@ const (
 	testNameInactiveStreamTimeout = "inactive_stream_timeout"
 	testNameBufferedReads         = "buffered_read"
 	testNameRenameSymlink         = "rename_symlink"
+	testNameRapidAppends          = "rapid_appends"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -71,6 +72,15 @@ const (
 
 	gcsfuseGoEnvSetupFormat = "export GO_VERSION=$(%v) && export GOTOOLCHAIN=go$GO_VERSION && export PATH=$PATH:/usr/local/go/bin"
 )
+
+// testPackageTimeoutMap controls the duration of the `-timeout` flag passed to the underlying `go test` executions.
+// If you need to extend the timeout for a specific test package, add or modify its limit in minutes here.
+var testPackageTimeoutMap = map[string]int{
+	testNameListLargeDir:    60,
+	testNameWriteLargeFiles: 60,
+	testNameReadLargeFiles:  60,
+	testNameRapidAppends:    60,
+}
 
 var GCSFuseVersionStr = ""
 
@@ -94,6 +104,31 @@ func zbEnabled(driver storageframework.TestDriver) bool {
 	return gcsfuseCSITestDriver.EnableZB
 }
 
+// flatEnabled checks if the Flat Namespace feature is enabled for the given driver.
+func flatEnabled(driver storageframework.TestDriver) bool {
+	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
+
+	return !gcsfuseCSITestDriver.EnableHierarchicalNamespace && !gcsfuseCSITestDriver.EnableZB
+}
+
+// isConfigCompatible returns true if the parsed config is compatible with the current driver setup.
+func isConfigCompatible(config utils.TestConfig, driver storageframework.TestDriver) bool {
+	if !config.RunOnGke {
+		return false
+	}
+	if !config.Compatible.Flat && flatEnabled(driver) {
+		return false
+	}
+	if !config.Compatible.HNS && hnsEnabled(driver) && !zbEnabled(driver) {
+		return false
+	}
+	if !config.Compatible.Zonal && zbEnabled(driver) {
+		return false
+	}
+	return true
+}
+
 // getGoParsingCommand returns the command to get the go version for the gcsfuse integration tests based on the gcsfuse version and branch.
 // In gcsfuse v3.7.0 the go location was moved to a centralized dir ./gcsfuse/.go-version.
 // If using v3.6.0 or older, we use gcsfuseGoVersionLegacyCommand; otherwise we use gcsfuseCentralizedLocationGoVersionCommand.
@@ -111,6 +146,72 @@ func getClientProtocol(driver storageframework.TestDriver) string {
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to cast storageframework.TestDriver to *specs.GCSFuseCSITestDriver")
 
 	return gcsfuseCSITestDriver.ClientProtocol
+}
+
+type TestCommandConfig struct {
+	TestPkg            string
+	TestName           string
+	GoEnvSetupCmd      string
+	MountPath          string
+	SecondaryMountPath string // Optional
+	BucketName         string
+	OnlyDir            string
+}
+
+// generateTestCommand constructs the test command for validating file cache parameters.
+// This is used dynamically across the file cache logic tests including parallel downloads.
+func generateTestCommand(opts TestCommandConfig) string {
+	timeoutStr := ""
+	if t, ok := testPackageTimeoutMap[opts.TestPkg]; ok {
+		timeoutStr = fmt.Sprintf(" -timeout %dm", t)
+	}
+
+	goTestCmd := fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v --config-file=../test_config.yaml%s", opts.TestPkg, timeoutStr)
+	if opts.TestName != "" {
+		goTestCmd = fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v -run ^%v$ --config-file=../test_config.yaml%s", opts.TestPkg, opts.TestName, timeoutStr)
+	}
+
+	commandArgs := []string{
+		fmt.Sprintf(gcsfuseGoEnvSetupFormat, opts.GoEnvSetupCmd),
+		fmt.Sprintf("export MOUNTED_DIR=%q", opts.MountPath),
+	}
+
+	if opts.SecondaryMountPath != "" {
+		commandArgs = append(commandArgs, fmt.Sprintf("export MOUNTED_DIR_SECONDARY=%q", opts.SecondaryMountPath))
+	}
+
+	commandArgs = append(commandArgs,
+		fmt.Sprintf("export BUCKET_NAME=%q", opts.BucketName),
+		fmt.Sprintf("export ONLY_DIR=%q", opts.OnlyDir),
+		fmt.Sprintf("cd %v", gcsfuseIntegrationTestsBasePath),
+		goTestCmd,
+	)
+
+	return strings.Join(commandArgs, " && ")
+}
+
+// configureLargeFileResources configures the pod and sidecar resources for memory-intensive large file tests.
+// Note: We only increase memory limits for specific tests like testNameWriteLargeFiles, testNameReadLargeFiles
+// and testNameRapidAppends. Other test cases run stable within the default memory for now
+// limits and do not require additional resources.
+func configureLargeFileResources(tPod *specs.TestPod, testNameOrPkg string, driver storageframework.TestDriver) (string, string) {
+	sidecarMemoryLimit := defaultSidecarMemoryLimit
+	sidecarMemoryRequest := defaultSidecarMemoryRequest
+
+	if testNameOrPkg == testNameWriteLargeFiles || testNameOrPkg == testNameReadLargeFiles {
+		tPod.SetResource("1", "8Gi", "5Gi")
+		sidecarMemoryLimit = "1Gi"
+		if zbEnabled(driver) {
+			sidecarMemoryRequest = "1Gi"
+			sidecarMemoryLimit = "2Gi"
+		}
+	}
+	if testNameOrPkg == testNameRapidAppends {
+		sidecarMemoryRequest = "2Gi"
+		sidecarMemoryLimit = "3Gi"
+	}
+
+	return sidecarMemoryRequest, sidecarMemoryLimit
 }
 
 type gcsFuseCSIGCSFuseIntegrationTestSuite struct {
@@ -260,17 +361,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetImage(specs.GolangImage)
 		tPod.SetResource("1", "5Gi", "5Gi")
-		sidecarMemoryLimit := defaultSidecarMemoryLimit
-		sidecarMemoryRequest := defaultSidecarMemoryRequest
 
-		if testName == testNameWriteLargeFiles || testName == testNameReadLargeFiles {
-			tPod.SetResource("1", "6Gi", "5Gi")
-			sidecarMemoryLimit = "1Gi"
-			if zbEnabled(driver) {
-				sidecarMemoryRequest = "1Gi"
-				sidecarMemoryLimit = "2Gi"
-			}
-		}
+		sidecarMemoryRequest, sidecarMemoryLimit := configureLargeFileResources(tPod, testName, driver)
 
 		mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
 		if testName == testNameExplicitDir && strings.Contains(mo, "only-dir") {

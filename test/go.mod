@@ -43,6 +43,7 @@ replace (
 require (
 	cloud.google.com/go/iam v1.5.2
 	cloud.google.com/go/storage v1.56.3
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/googlecloudplatform/gcs-fuse-csi-driver v0.0.0-00010101000000-000000000000
 	github.com/kubernetes-csi/csi-test/v5 v5.3.1
@@ -51,6 +52,7 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	google.golang.org/api v0.247.0
 	google.golang.org/grpc v1.79.3
+	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
 	k8s.io/client-go v0.33.3
@@ -116,7 +118,6 @@ require (
 	github.com/google/cadvisor v0.52.1 // indirect
 	github.com/google/cel-go v0.23.2 // indirect
 	github.com/google/gnostic-models v0.6.9 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20250602020802-c6617b811d0e // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
@@ -205,7 +206,6 @@ require (
 	gopkg.in/ini.v1 v1.62.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.33.0 // indirect
 	k8s.io/apiserver v0.33.3 // indirect
 	k8s.io/cloud-provider v0.0.0 // indirect
