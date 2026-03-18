@@ -64,6 +64,7 @@ const (
 	InvalidVolumePrefix                                        = "gcsfuse-csi-invalid-volume"
 	NonRootVolumePrefix                                        = "gcsfuse-csi-non-root-volume"
 	InvalidMountOptionsVolumePrefix                            = "gcsfuse-csi-invalid-mount-options-volume"
+	InvalidBoolMountOptionsVolumePrefix                        = "gcsfuse-csi-invalid-bool-mount-options-volume"
 	ImplicitDirsVolumePrefix                                   = "gcsfuse-csi-implicit-dirs-volume"
 	ForceNewBucketPrefix                                       = "gcsfuse-csi-force-new-bucket"
 	SubfolderInBucketPrefix                                    = "gcsfuse-csi-subfolder-in-bucket"

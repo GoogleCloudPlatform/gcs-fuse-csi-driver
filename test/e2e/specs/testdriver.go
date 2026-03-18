@@ -257,6 +257,8 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			mountOptions += ",uid=1001"
 		case InvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
+		case InvalidBoolMountOptionsVolumePrefix:
+			mountOptions += ",implicit-dirs=trve"
 		case ImplicitDirsVolumePrefix:
 			n.CreateImplicitDirInBucket(ctx, ImplicitDirsPath, bucketName)
 			mountOptions += ",implicit-dirs"
