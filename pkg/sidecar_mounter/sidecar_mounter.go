@@ -111,10 +111,11 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 	args := []string{}
 	for k, v := range mc.FlagMap {
-		args = append(args, "--"+k)
+		arg := k
 		if v != "" {
-			args = append(args, v)
+			arg = fmt.Sprintf("%s=%s", k, v)
 		}
+		args = append(args, fmt.Sprintf("--%s", arg))
 	}
 
 	args = append(args, mc.BucketName)
