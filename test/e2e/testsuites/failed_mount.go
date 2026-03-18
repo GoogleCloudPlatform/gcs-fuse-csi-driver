@@ -480,7 +480,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	})
 
 	ginkgo.It("should fail when invalid bool mount options are passed", func() {
-		testcaseInvalidMountOptions(specs.InvalidBoolMountOptionsVolumePrefix, "invalid syntax")
+		if gcsfuseVersionStr == "" {
+			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
+		}
+		v, err := version.ParseSemantic(gcsfuseVersionStr)
+		if err == nil && v != nil && v.AtLeast(version.MustParseSemantic("v3.8.0-gke.0")) {
+			testcaseInvalidMountOptions(specs.InvalidBoolMountOptionsVolumePrefix, "invalid syntax")
+		}
 	})
 
 	ginkgo.It("[metadata prefetch] should fail when invalid mount options are passed", func() {
