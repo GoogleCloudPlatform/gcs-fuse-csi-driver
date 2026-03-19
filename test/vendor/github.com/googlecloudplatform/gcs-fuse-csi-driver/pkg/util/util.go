@@ -60,6 +60,7 @@ const (
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
 	GCSFuseNumaNodeArg                  = "gcs-fuse-numa-node"
+	GCSFuseAppNameArg                   = "app-name"
 )
 
 var (

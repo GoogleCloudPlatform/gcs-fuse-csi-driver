@@ -44,10 +44,12 @@ type Interface interface {
 	ConfigurePodLister(ctx context.Context, nodeName string)
 	ConfigureNodeLister(ctx context.Context, nodeName string)
 	ConfigurePVLister(ctx context.Context)
+	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
 	GetPod(namespace, name string) (*corev1.Pod, error)
 	GetNode(name string) (*corev1.Node, error)
 	GetPV(name string) (*corev1.PersistentVolume, error)
+	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
@@ -63,6 +65,7 @@ type Clientset struct {
 	podLister                 listersv1.PodLister
 	nodeLister                listersv1.NodeLister
 	pvLister                  listersv1.PersistentVolumeLister
+	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
 	informerResyncDurationSec int
 }
@@ -145,18 +148,29 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		pvObj, ok := obj.(*corev1.PersistentVolume)
-		if !ok {
+
+		if !ok || pvObj == nil {
 			return obj, nil
 		}
-		return &corev1.PersistentVolume{
+
+		trimmedPV := &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvObj.ObjectMeta.Name,
-				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
+				Annotations: pvObj.ObjectMeta.Annotations,
 			},
 			Spec: corev1.PersistentVolumeSpec{
-				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
+				StorageClassName: pvObj.Spec.StorageClassName,
 			},
-		}, nil
+		}
+
+		if pvObj.Spec.CSI != nil {
+			trimmedPV.Spec.PersistentVolumeSource.CSI = &corev1.CSIPersistentVolumeSource{
+				Driver:       pvObj.Spec.CSI.Driver,
+				VolumeHandle: pvObj.Spec.CSI.VolumeHandle,
+			}
+		}
+
+		return trimmedPV, nil
 	}
 
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
@@ -170,6 +184,37 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 	informerFactory.WaitForCacheSync(ctx.Done())
 
 	c.pvLister = pvLister
+}
+
+func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
+	trim := func(obj any) (any, error) {
+		pvcObj, ok := obj.(*corev1.PersistentVolumeClaim)
+		if !ok {
+			return obj, nil
+		}
+		return &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcObj.ObjectMeta.Name,
+				Namespace: pvcObj.ObjectMeta.Namespace,
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				VolumeName: pvcObj.Spec.VolumeName,
+			},
+		}, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTransform(trim),
+	)
+
+	pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.pvcLister = pvcLister
 }
 
 func (c *Clientset) ConfigureSCLister(ctx context.Context) {
@@ -319,6 +364,14 @@ func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	}
 
 	return c.pvLister.Get(name)
+}
+
+func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
+	if c.pvcLister == nil {
+		return nil, errors.New("pvc informer is not ready")
+	}
+
+	return c.pvcLister.PersistentVolumeClaims(namespace).Get(name)
 }
 
 func (c *Clientset) GetSC(name string) (*storagev1.StorageClass, error) {
