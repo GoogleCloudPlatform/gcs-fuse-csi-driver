@@ -82,7 +82,7 @@ const (
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
-	MultiNICMinVersion                     = "v999.999.999-gke.999" // TODO: update this when a release is cut
+	MultiNICMinVersion                     = "v1.22.2-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
@@ -95,6 +95,9 @@ var (
 	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
+	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
+	// imported by GCSFuse: https://github.com/GoogleCloudPlatform/gcsfuse/blob/fc54ba2287dba1ae4be0888686902f72e2f16f8b/go.mod#L34
+	invalidArgumentPatterns = regexp.MustCompile(`invalid argument .* for .* flag`)
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -471,7 +474,7 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, err
 		errMsgStr := string(errMsg)
 		code := codes.Internal
 		if strings.Contains(errMsgStr, "Incorrect Usage") ||
-			strings.Contains(errMsgStr, "unknown flag") {
+			strings.Contains(errMsgStr, "unknown flag") || invalidArgumentPatterns.MatchString(errMsgStr) {
 			code = codes.InvalidArgument
 		}
 
