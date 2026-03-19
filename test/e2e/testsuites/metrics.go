@@ -288,6 +288,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion)) {
 			if testName == testNamePodThresholdVolumesShouldEmitMetrics || testName == testNamePodExceedsThresholdVolumesShouldNotEmitMetrics {
 				e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testName, gcsfuseVersionStr)
+				return ""
 			}
 		}
 
@@ -359,6 +360,6 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		init(11, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
-		gcsFuseCSIMetricsTest(testNamePodExceedsThresholdVolumesShouldNotEmitMetrics, true)
+		gcsFuseCSIMetricsTest(testNamePodExceedsThresholdVolumesShouldNotEmitMetrics, false)
 	})
 }
