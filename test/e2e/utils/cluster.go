@@ -144,18 +144,23 @@ func clusterUpGKE(testParams *TestParameters) error {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on GKE: %w", err)
 	}
 
-	// Call update because --add-maintenance-exclusion is not an available flag for create-auto.
-	if testParams.UseGKEAutopilot {
-		startExclusionTime := time.Now().UTC()
-		//nolint:gosec
-		cmd = exec.Command("gcloud", "container", "clusters", "update", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion,
-			"--add-maintenance-exclusion-name", "no-upgrades-during-test",
-			"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
-			"--add-maintenance-exclusion-end", startExclusionTime.Add(2*time.Hour).Format(time.RFC3339),
-			"--add-maintenance-exclusion-scope", "no_upgrades")
-		if err := runCommand("Updating Autopilot Cluster with maintenance window", cmd); err != nil {
-			return fmt.Errorf("failed to update autopilot cluster with maintenance window: %w", err)
-		}
+	// Call update because --add-maintenance-exclusion is not an available flag during cluster creation.
+	startExclusionTime := time.Now().UTC()
+
+	exclusionDuration, err := time.ParseDuration(testParams.GinkgoTimeout)
+	if err != nil {
+		klog.Warningf("failed to parse ginkgo timeout %q, using default 4h for maintenance exclusion: %v", testParams.GinkgoTimeout, err)
+		exclusionDuration = 4 * time.Hour
+	}
+
+	//nolint:gosec
+	cmd = exec.Command("gcloud", "container", "clusters", "update", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion,
+		"--add-maintenance-exclusion-name", "no-upgrades-during-test",
+		"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
+		"--add-maintenance-exclusion-end", startExclusionTime.Add(exclusionDuration).Format(time.RFC3339),
+		"--add-maintenance-exclusion-scope", "no_upgrades")
+	if err := runCommand("Updating Cluster with maintenance window", cmd); err != nil {
+		return fmt.Errorf("failed to update cluster with maintenance window: %w", err)
 	}
 
 	return nil
