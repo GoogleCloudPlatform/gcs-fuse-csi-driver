@@ -80,6 +80,9 @@ type sidecarRetryConfig struct {
 
 var prometheusPort = 62990
 
+// disallowedFlags is a map of flags that are not allowed to be passed to gcsfuse directly.
+// Note: If you add more disallowed flags here, you should update the disallowedFlagsMapping
+// in test/e2e/utils/utils.go to ensure they are correctly translated to the config file format.
 var disallowedFlags = map[string]bool{
 	"temp-dir":                 true,
 	"config-file":              true,

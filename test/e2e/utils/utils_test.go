@@ -19,6 +19,7 @@ package utils
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/util/version"
 )
 
@@ -62,6 +63,103 @@ func TestGCSFuseBranch(t *testing.T) {
 				t.Errorf("For version, got %v, but expected %v", v, tc.expectedVersion)
 			} else if v.String() != tc.expectedVersion.String() {
 				t.Errorf("For version, got %q, but expected %q", v.String(), tc.expectedVersion.String())
+			}
+		}
+	})
+}
+
+func TestParseConfigFlags(t *testing.T) {
+	t.Parallel()
+	t.Run("Testing ParseConfigFlags", func(t *testing.T) {
+		t.Parallel()
+		testCases := []struct {
+			name           string
+			flagStr        string
+			expectedParsed ParsedConfig
+		}{
+			{
+				name:    "should parse standard file cache flags correctly",
+				flagStr: "--file-cache-max-size-mb=9,--file-cache-cache-file-for-range-read=true,--metadata-cache-ttl-secs=10,--o=ro,--log-severity=trace",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "9Mi",
+					ReadOnly:          true,
+					LogSeverity:       "trace",
+					MountOptions: []string{
+						"file-cache-cache-file-for-range-read=true",
+						"metadata-cache-ttl-secs=10",
+					},
+				},
+			},
+			{
+				name:    "should fallback to exact default values when flags are empty",
+				flagStr: "",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogSeverity:       "info",
+					MountOptions:      []string{},
+				},
+			},
+			{
+				name:    "should correctly trim space around flags",
+				flagStr: "  --file-cache-max-size-mb=100  ,  --metadata-cache-ttl-secs=0  ",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "100Mi",
+					ReadOnly:          false,
+					LogSeverity:       "info",
+					MountOptions: []string{
+						"metadata-cache-ttl-secs=0",
+					},
+				},
+			},
+			{
+				name:    "should translate configuration flags correctly",
+				flagStr: "--log-file=/tmp/log,--file-cache-enable-parallel-downloads,--file-cache-enable-o-direct=false,--enable-kernel-reader=true,--log-format=text,--cache-dir=/tmp/cache",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogFilePath:       "/tmp/log",
+					LogSeverity:       "info",
+					CacheDir:          "/tmp/cache",
+					MountOptions: []string{
+						"logging:file-path:/tmp/log",
+						"file-cache-enable-parallel-downloads",
+						"file-cache-enable-o-direct=false",
+						"enable-kernel-reader=true",
+						"logging:format:text",
+					},
+				},
+			},
+			{
+				name:    "should swallow disallowed flags with no manual handling via default continue",
+				flagStr: "--temp-dir=/tmp/foo,--prometheus-port=8080,--foreground",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogSeverity:       "info",
+					MountOptions:      []string{},
+				},
+			},
+			{
+				name:    "should correctly translate and pass log-format but swallow others",
+				flagStr: "--log-format=json,--config-file=/etc/gcsfuse.yaml",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogSeverity:       "info",
+					MountOptions: []string{
+						"logging:format:json",
+					},
+				},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Logf("test case: %s", tc.name)
+			got := ParseConfigFlags(tc.flagStr)
+
+			if diff := cmp.Diff(tc.expectedParsed, got); diff != "" {
+				t.Errorf("ParseConfigFlags(%q) mismatch (-want +got):\n%s", tc.flagStr, diff)
 			}
 		}
 	})

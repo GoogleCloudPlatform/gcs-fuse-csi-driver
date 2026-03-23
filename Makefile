@@ -15,6 +15,10 @@
 
 BINDIR ?= $(shell pwd)/bin
 
+ifeq ($(ENABLE_ZB), true)
+    export GCSFUSE_CLIENT_PROTOCOL = grpc
+endif
+
 # The various gcloud and kubectl checks can be slow. Setting SKIP_VAR=true when
 # making only targets like driver, sidecar-mounter and webook will speed up your
 # life.
