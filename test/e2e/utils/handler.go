@@ -390,8 +390,6 @@ func generateTestSkip(testParams *TestParameters) string {
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "metrics") // Skipping as these tests are known to be unstable
 
-		skipTests = append(skipTests, "should.not.pass.profile") // Skipping for managed as changes have not been picked up yet
-
 		skipTests = append(skipTests, "oidc") // OIDC authentication requires non-managed driver features
 
 		supportsKernelReadAhead, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, kernelReadAheadMinimumVersion)
@@ -402,6 +400,11 @@ func generateTestSkip(testParams *TestParameters) string {
 		supportsMetadataPrefetch, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, metadataPrefetchMinimumVersion)
 		if !supportsMetadataPrefetch {
 			skipTests = append(skipTests, "metadata.prefetch")
+		}
+
+		supportsGCSFuseProfiles, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, gcsfuseProfilesMinimumVersion)
+		if !supportsGCSFuseProfiles {
+			skipTests = append(skipTests, "profiles", "pass.profile")
 		}
 
 		supportsSkipBucketAccessCheck, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, skipBucketCheckMinimumVersion)
