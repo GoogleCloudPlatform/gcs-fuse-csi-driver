@@ -151,14 +151,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		if enableSidecarBucketAccessCheck && configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix {
 			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
-		} else if v == nil || v.AtLeast(version.MustParseSemantic("v3.7.3-gke.0")) {
-			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		} else {
-			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		}
 
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.5.0-gke.0"))) {
-			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "bucket does not exist")
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, codes.NotFound.String())
 		} else {
 			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		}
@@ -205,19 +203,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0-gke.0"))) {
 			if enableSidecarBucketAccessCheck {
 				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
-				if v == nil || v.AtLeast(version.MustParseSemantic("v3.7.3-gke.0")) {
-					tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, codes.NotFound.String())
-				} else {
-					tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "storage: bucket doesn't exist")
-				}
+				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, codes.NotFound.String())
 			} else {
-				tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
-				tPod.WaitForFailedMountError(ctx, "name should be a valid bucket resource name")
+				tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 			}
-		} else if v == nil || v.AtLeast(version.MustParseSemantic("v3.7.3-gke.0")) {
-			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		} else {
-			tPod.WaitForFailedMountError(ctx, "storage: bucket doesn't exist")
+			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		}
 	}
 
