@@ -407,6 +407,11 @@ func generateTestSkip(testParams *TestParameters) string {
 			skipTests = append(skipTests, "metadata.prefetch")
 		}
 
+		supportsGCSFuseProfiles, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, gcsfuseProfilesMinimumVersion)
+		if !supportsGCSFuseProfiles {
+			skipTests = append(skipTests, "profiles", "pass.profile")
+		}
+
 		supportsSkipBucketAccessCheck, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, skipBucketCheckMinimumVersion)
 		// Note that for local testing you want to use the dev deployment that sets --assume-good-sidecar-version, for these tests to pass.
 		if !supportsSkipBucketAccessCheck {
