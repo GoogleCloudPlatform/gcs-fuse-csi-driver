@@ -228,6 +228,16 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
+		hasMetricsCardinalityFixes := func() bool {
+			gcsfuseVersionStr := specs.GetGCSFuseVersion(ctx)
+			if gcsfuseVersionStr == "" {
+				return false
+			}
+			gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+
+			return gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion))
+		}
+
 		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
 		for _, metricName := range expectedMetricNames {
 			metricsList := []*dto.Metric{}
@@ -255,7 +265,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 								continue metricLoop
 							}
 						case "pod_uid":
-							if value != "" {
+							if hasMetricsCardinalityFixes() && value != "" {
 								continue metricLoop
 							}
 						}
