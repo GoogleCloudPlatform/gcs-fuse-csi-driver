@@ -44,6 +44,7 @@ const (
 	DefaultNamespace              = "default"
 	MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
 	MinGCSFuseTestConfigVersion   = "v3.7.0-gke.0"
+	MinGCSFuseGrpcMetricsVersion  = "v3.8.0-gke.0"
 
 	GcsfuseVersionVarName = "gcsfuse-version"
 
