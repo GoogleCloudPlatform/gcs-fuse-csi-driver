@@ -45,6 +45,7 @@ const (
 	MinGCSFuseKernelParamsVersion            = "v3.7.0-gke.0"
 	MinGCSFuseTestConfigVersion              = "v3.7.0-gke.0"
 	MinGCSFuseMetricsCardinalityFixesVersion = "v3.7.2-gke.0" // The minimum version where we stop exporting metrics if a pod has more than 10 GCSFuse volumes
+	MinGCSFuseGrpcMetricsVersion             = "v3.8.0-gke.0"
 
 	GcsfuseVersionVarName = "gcsfuse-version"
 
