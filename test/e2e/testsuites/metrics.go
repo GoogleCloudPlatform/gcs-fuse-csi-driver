@@ -229,7 +229,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		podName := tPod.GetPodName()
 
 		hasMetricsCardinalityFixes := func() bool {
-			gcsfuseVersionStr := specs.GetGCSFuseVersion(ctx)
+			gcsfuseVersionStr := specs.GetGCSFuseVersion()
 			if gcsfuseVersionStr == "" {
 				return false
 			}
@@ -307,11 +307,11 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 	gcsFuseCSIMetricsTest := func(testName string, expectMetrics bool) {
 		ginkgo.By("Checking GCSFuse version and skip test if needed")
-		if gcsfuseVersionStr == "" {
-			gcsfuseVersionStr = specs.GetGCSFuseVersion(ctx)
+		if GCSFuseVersionStr == "" {
+			GCSFuseVersionStr = specs.GetGCSFuseVersion()
 		}
-		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, gcsfuseVersionStr))
-		gcsfuseTestBranch := skipTestOrProceedWithBranch(gcsfuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, GCSFuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, testName)
 		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
 
 		ginkgo.By("Configuring the pod")

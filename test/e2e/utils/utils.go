@@ -27,15 +27,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
-)
-
-const (
-	DefaultNamespace                         = "default"
-	MinGCSFuseKernelParamsVersion            = "v3.7.0-gke.0"
-	MinGCSFuseMetricsCardinalityFixesVersion = "v3.7.2-gke.0" // The minimum version where we stop exporting metrics if a pod has more than 10 GCSFuse volumes
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -50,9 +41,10 @@ const (
 )
 
 const (
-	DefaultNamespace              = "default"
-	MinGCSFuseKernelParamsVersion = "v3.7.0-gke.0"
-	MinGCSFuseTestConfigVersion   = "v3.7.0-gke.0"
+	DefaultNamespace                         = "default"
+	MinGCSFuseKernelParamsVersion            = "v3.7.0-gke.0"
+	MinGCSFuseTestConfigVersion              = "v3.7.0-gke.0"
+	MinGCSFuseMetricsCardinalityFixesVersion = "v3.7.2-gke.0" // The minimum version where we stop exporting metrics if a pod has more than 10 GCSFuse volumes
 
 	GcsfuseVersionVarName = "gcsfuse-version"
 
