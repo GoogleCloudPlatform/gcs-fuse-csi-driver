@@ -39,10 +39,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
 
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
@@ -92,11 +90,15 @@ const (
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
 	EnableKernelParamsPrefix                                   = "gcsfuse-csi-enable-kernel-params"
 
+	expectedTrainingProfileFlag   = "--profile=aiml-training"
+	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
+
 	// Read ahead config custom settings to verify testing.
 	ReadAheadCustomReadAheadKb = "15360"
 	ReadAheadCustomMaxRatio    = "100"
 
-	DisableAutoconfig = "disable-autoconfig"
+	DisableAutoconfig           = "disable-autoconfig"
+	PassProfilesToSidecarPrefix = "pass-profiles-to-sidecar"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.7"
@@ -121,8 +123,6 @@ const (
 	driverDaemonsetLabel   = "k8s-app=gcs-fuse-csi-driver"
 
 	IsOSSEnvVar = "IS_OSS"
-
-	GcsfuseVersionVarName = "gcsfuse-version"
 )
 
 var InvalidVolume = fmt.Sprintf("non-existent-test-bucket-%s", rand.String(8))
@@ -1083,107 +1083,14 @@ func (t *TestJob) Cleanup(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-func GetGCSFuseVersion(ctx context.Context) string {
-	config, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
-	framework.ExpectNoError(err)
-
-	cs, err := clientset.NewForConfig(config)
-	framework.ExpectNoError(err)
-
-	versionData := os.Getenv(GcsfuseVersionVarName)
-	if versionData != "" {
-		return versionData
-	}
-	klog.Infof("GCSFuseVersion env var has not been set will retrieve it manually")
-
-	gcsfuseVersion, err := deployGCSFuseVersionFetcherPod(ctx, cs)
-	if err != nil {
-		klog.Errorf("Failed to deploy GCS Fuse version fetcher pod: %v", err)
-		framework.ExpectNoError(err)
-	}
-
-	return gcsfuseVersion
+// GetGCSFuseVersion returns the GCSFuse version to be tested.
+// The env var is set by the handler.go before running the tests.
+func GetGCSFuseVersion() string {
+	return os.Getenv(utils.GcsfuseVersionVarName)
 }
 
-func deployGCSFuseVersionFetcherPod(ctx context.Context, clientset clientset.Interface) (string, error) {
-	configMaps, err := clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{
-		FieldSelector: "metadata.name=gcsfusecsi-image-config",
-	})
-	framework.ExpectNoError(err)
-	if len(configMaps.Items) != 1 {
-		framework.Failf("expected one config map `gcsfusecsi-image-config` but found %d", len(configMaps.Items))
-	}
-
-	sidecarImageConfig := configMaps.Items[0]
-
-	image := sidecarImageConfig.Data["sidecar-image"]
-	if image == "" {
-		framework.Failf("expected data for key `sidecar-image` in the config map `gcsfusecsi-image-config`")
-	}
-
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "gcsfuse-version-fetcher-",
-			Namespace:    utils.DefaultNamespace,
-		},
-		Spec: corev1.PodSpec{
-			TerminationGracePeriodSeconds: ptr.To(int64(0)),
-			Containers: []corev1.Container{
-				{
-					Name:    webhook.GcsFuseSidecarName,
-					Image:   image,
-					Command: []string{"/gcsfuse", "--version"},
-				},
-				{
-					Name:    "sleeper",
-					Image:   "busybox",
-					Command: []string{"sleep", "infinity"},
-				},
-			},
-			RestartPolicy: corev1.RestartPolicyNever,
-			Tolerations: []corev1.Toleration{
-				{Operator: corev1.TolerationOpExists},
-			},
-		},
-	}
-
-	createdPod, err := clientset.CoreV1().Pods(utils.DefaultNamespace).Create(ctx, pod, metav1.CreateOptions{})
-	if createdPod != nil {
-		defer clientset.CoreV1().Pods(utils.DefaultNamespace).Delete(context.Background(), createdPod.Name, metav1.DeleteOptions{})
-	}
-	framework.ExpectNoError(err,
-		"Pods.Create should succeed, but failed with error message: %v", err)
-
-	e2epod.WaitForPodRunningInNamespace(ctx, clientset, createdPod)
-	klog.Infof("Pod %s is running, waiting 60s before fetching GCSFuse version from logs", createdPod.Name)
-	time.Sleep(60 * time.Second)
-
-	var logs []byte
-	req := clientset.CoreV1().Pods(utils.DefaultNamespace).GetLogs(createdPod.Name, &corev1.PodLogOptions{Container: webhook.GcsFuseSidecarName})
-	err = wait.PollUntilContextTimeout(ctx, 30*time.Second, time.Minute*10, true, func(context.Context) (bool, error) {
-		logs, err = req.DoRaw(ctx)
-		if err != nil {
-			framework.Logf("failed to read pod logs, retrying: %v", err)
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to read pod logs: %w", err)
-	}
-
-	output := string(logs)
-
-	// Parse: "gcsfuse version 3.7.1-gke.0 ..."
-	l := strings.Split(strings.TrimSpace(output), " ")
-	if len(l) <= 2 {
-		return "", fmt.Errorf("unexpected version output format: %s", output)
-	}
-	return l[2], nil
-}
-
-func GCSFuseVersionAndBranch(ctx context.Context) (*version.Version, string) {
-	vStr := GetGCSFuseVersion(ctx)
+func GCSFuseVersionAndBranch() (*version.Version, string) {
+	vStr := GetGCSFuseVersion()
 	v, branch := utils.GCSFuseBranch(vStr)
 	if v == nil {
 		// This happens for master branch builds. We still need to parse the version.
@@ -1217,19 +1124,29 @@ func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachi
 		"Should find MachineType flag string %q in stdout", expectedMachineTypeFlagString)
 }
 
-func (t *TestPod) VerifyProfileFlagsAreNotPassed(namespace string) {
+func (t *TestPod) VerifyProfileFlagsArePassed(namespace string, expectedProfileFlag string, expectedProfile bool) {
 	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
 	framework.ExpectNoError(err,
 		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
 		t.pod.Name, err, stdout, stderr)
 
-	// handles profile=aiml-training case
-	gomega.Expect(stdout).To(gomega.Not(gomega.ContainSubstring("--profile aiml-training")),
-		"Should not find profile flag string in stdout")
+	if expectedProfile {
+		// handles profile=<profile> case
+		gomega.Expect(stdout).To(gomega.ContainSubstring(expectedTrainingProfileFlag),
+			"Should find profile flag string in stdout")
 
-	// handles profile:aiml-training case
-	gomega.Expect(stdout).To(gomega.Not(gomega.MatchRegexp(`map\[.*profile:aiml-training.*\]`)),
-		"Should NOT find 'profile:aiml-training' within the gcsfuse config file content map, but it was found.")
+		// handles profile:<profile> case
+		gomega.Expect(stdout).To(gomega.MatchRegexp(expectedTrainingProfileConfig),
+			"Should find 'profile:%s' within the gcsfuse config file content map, but it was not found.", expectedProfileFlag)
+	} else {
+		// handles profile=<profile> case
+		gomega.Expect(stdout).NotTo(gomega.ContainSubstring(expectedTrainingProfileFlag),
+			"Should not find profile flag string in stdout")
+
+		// handles profile:<profile> case
+		gomega.Expect(stdout).NotTo(gomega.MatchRegexp(expectedTrainingProfileConfig),
+			"Should not find 'profile:%s' within the gcsfuse config file content map, but it was found.", expectedProfileFlag)
+	}
 }
 
 func (t *TestPod) VerifyKernelParamsFlagsAreNotPassed(namespace, volumeName string) {

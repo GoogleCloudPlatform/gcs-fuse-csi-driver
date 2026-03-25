@@ -60,7 +60,6 @@ const (
 	gcsFuseCsiDriverName = "gcsfuse.csi.storage.gke.io"
 
 	metadataStatCacheMaxSizeMiBMountOptionKey = "metadata-cache:stat-cache-max-size-mb"
-	metadataTypeCacheMaxSizeMiBMountOptionKey = "metadata-cache:type-cache-max-size-mb"
 	fileCacheSizeMiBMountOptionKey            = "file-cache:max-size-mb"
 	profileMountOptionKey                     = "profile"
 	cacheDirKey                               = "cache-dir"
@@ -332,7 +331,6 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 			tPod.VerifyMountOptionsArePassedWithConfigFormat(f.Namespace.Name, map[string]string{
 				profileMountOptionKey:                     profileMO,
 				metadataStatCacheMaxSizeMiBMountOptionKey: "10",
-				metadataTypeCacheMaxSizeMiBMountOptionKey: "20",
 				fileCacheSizeMiBMountOptionKey:            "30",
 				cacheDirKey:                               fmt.Sprintf("/gcsfuse-cache/.volumes/%s", l.volumeResourceList[i].Pv.Name),
 			})
@@ -345,7 +343,6 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 			expectedSubstrings := []string{
 				fmt.Sprintf(`"podName":"%s/%s"`, f.Namespace.Name, tpod.GetPodName()),
 				fmt.Sprintf(`"metadataStatCacheBytes":%d`, 10*1024*1024),
-				fmt.Sprintf(`"metadataTypeCacheBytes":%d`, 20*1024*1024),
 				fmt.Sprintf(`"fileCacheBytes":%d`, 30*1024*1024),
 				fmt.Sprintf(`"fileCacheMedium":%q`, ""),
 			}
@@ -354,6 +351,11 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 					gomega.ContainSubstring(substr),
 					"Should find %q in recommendation log stdout with overrides", substr)
 			}
+		}
+		isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
+		if isZBEnabled == "true" {
+			// AC is not supported for zb, so we only validate AC for non zb tests.
+			return
 		}
 
 		t.validateAC(l.volumeResourceList, ctx)
@@ -533,7 +535,6 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 
 		// Modify Mount Options.
 		mo = append(mo, fmt.Sprintf("%s:%s", metadataStatCacheMaxSizeMiBMountOptionKey, "10"))
-		mo = append(mo, fmt.Sprintf("%s:%s", metadataTypeCacheMaxSizeMiBMountOptionKey, "20"))
 		mo = append(mo, fmt.Sprintf("%s:%s", fileCacheSizeMiBMountOptionKey, "30"))
 
 		if sc == "gcsfusecsi-serving" {
@@ -541,7 +542,12 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 			// specific zone which has limited quota, we should not make caches in this zone.
 			va[anywhereCacheTTLKey] = "2h"
 			va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
-			va[anywhereCacheZonesKey] = "us-central1-c"
+			isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
+			if isZBEnabled == "false" {
+				// AC is not supported for zb, so we only use AC for non zb tests.
+				va[anywhereCacheZonesKey] = "us-central1-c"
+			}
+
 		}
 	case specs.ProfilesControllerCrashTestPrefix:
 		va[bucketScanResyncPeriodKey] = "5m"

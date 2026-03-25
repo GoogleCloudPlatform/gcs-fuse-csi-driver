@@ -43,7 +43,7 @@ readonly enable_zb=${ENABLE_ZB:-false}
 readonly gke_gcloud_command=${GKE_GCLOUD_COMMAND:-gcloud}
 readonly gke_gcloud_args=${GKE_GCLOUD_ARGS:-}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
-readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-false}
+readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-true}
 readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
 readonly overlay="${OVERLAY:-stable}"
 
