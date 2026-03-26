@@ -264,14 +264,19 @@ GCS Fuse CSI driver queries GKE Metadataserver twice in a mounting lifecycle a. 
 At high scale workloads, this can lead to STS quota exhaustion issues as too many pods are querying the MDS (metadata server) at the same time.
 
 ### Solution
-Starting cluster version 1.34.1-gke.3899001+ the GKE public image for GCS Fuse sidecar provides a way to auto recover pods from temporary permission or other transient errors. The sidecar version and GKE sidecar image 1.21.9+ implements a bucket access check by default before attempting to mount the volume.
+Starting cluster version 1.34.1-gke.3899001+ the GKE public image for GCS Fuse sidecar provides a way to auto recover pods from temporary bucket permission issue. The sidecar version and GKE sidecar image 1.21.9+ implements a bucket access check by default before attempting to mount the volume. This feature reuses the STS token for bucket access check and GCS Fuse process thus reducing the STS quota consumption by 50%
+ 
+### Limitation
+We have noticed a gap in the implementation for the sidecar bucket access check feature specified above due to which the GCS Fuse sidecar container fails to retry if metadata server is not yet up. This means the solution will resolve issues (2) and (3) but not (1). 
 
-#### Benefits
-1. Auto-recovers pods from any temporary issues with bucket access or dependency components.
-2. The sidecar implements a behavior that allows the STS token to be re-used for access check and GCS Fuse process thus reducing teh quota consumption by 50%
+This gap is being fixed in [PR](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/pull/1261) and will soon be released. Meanwhile, please follow the mitigation and deploy the sidecar as a private sidecar container image. Please not the feature will still be enabled if the GKE public image from gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter is used.
 
-1. [Only for cluster version < 1.34.1-gke.3899001]Set `skipCSIBucketAccessCheck:false` through [volume attribute class](https://docs.cloud.google.com/kubernetes-engine/docs/reference/cloud-storage-fuse-csi-driver/volume-attr). This performs bucket access check before attempting to mount the volume, however, at high scale workloads might experience STS quota exhaustion issues due number of access verification calls. The below method is recommended for high scale workloads (it offers 50% reduction in STS quota consumption for GCS Fuse CSI driver)
-2. **[Recommended for high-scale workloads]** Workload identity cluster on GKE version 1.34.1-gke.3899001+ by default performs bucket access check in the sidecar before attempting to mount the volume. This is auto enabled and does not need any further configuration. To see any reduction in STS quota consumption, ensure `skipCSIBucketAccessCheck` is set to `true` in the [volume attribute class](https://docs.cloud.google.com/kubernetes-engine/docs/reference/cloud-storage-fuse-csi-driver/volume-attr). Please note this feature is currently only supported for managed driver. The feature is also enabled if you use a private sidecar with GKE provided public sidecar image from gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter.
+### Recommendation
+
+1. **[Only for cluster version < 1.34.1-gke.3899001]** Set `skipCSIBucketAccessCheck:false` through [volume attribute class](https://docs.cloud.google.com/kubernetes-engine/docs/reference/cloud-storage-fuse-csi-driver/volume-attr). This provides multiple benefits
+* This performs bucket access check before attempting to mount the volume, however, at high scale workloads might experience STS quota exhaustion issues due number of access verification calls. The below method is recommended for high scale workloads (it offers 50% reduction in STS quota consumption for GCS Fuse CSI driver)
+* Bucket access check in GKE node driver connects with metadata service to verify authentication. The node driver pod retries to access the bucket until the metadata service is up and the bucket is reachable.
+2. **[Recommended for high-scale workloads]** Cluster on GKE version 1.34.1-gke.3899001+ by default performs bucket access check in the sidecar before attempting to mount the volume. This is auto enabled and does not need any further configuration. To see any reduction in STS quota consumption, ensure `skipCSIBucketAccessCheck` is set to `true` in the [volume attribute class](https://docs.cloud.google.com/kubernetes-engine/docs/reference/cloud-storage-fuse-csi-driver/volume-attr). Please note this feature is currently only supported for managed driver. The feature is also enabled if you use a private sidecar with GKE provided public sidecar image from gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter. Please refer to [Limitations](#limitation) for more details.
 
 
 ## Performance issues
