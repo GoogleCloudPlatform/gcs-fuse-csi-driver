@@ -35,14 +35,10 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-)
-
-const (
-	testNamePodThresholdVolumesShouldEmitMetrics           = "should emit metrics until a threshold of 10 gcsfuse volumes"
-	testNamePodExceedsThresholdVolumesShouldNotEmitMetrics = "should emit no metrics when more than 10 gcsfuse volumes are mounted"
 )
 
 var expectedMetricNames = []string{
@@ -58,6 +54,13 @@ var expectedMetricNames = []string{
 	"file_cache_read_bytes_count",
 	"file_cache_read_latencies",
 }
+
+const (
+	testNameSinglePodShouldEmitMetrics                     = "single-pod-should-emit-metrics"
+	testNameMultiplePodShouldEmitMetrics                   = "multiple-pod-should-emit-metrics"
+	testNamePodThresholdVolumesShouldEmitMetrics           = "pod-with-threshold-volumes-should-emit-metrics"
+	testNamePodExceedsThresholdVolumesShouldNotEmitMetrics = "pod-exceeds-threshold-volumes-should-not-emit-metrics"
+)
 
 var expectedGrpcMetricNames = []string{
 	"grpc_client_attempt_started",
@@ -137,6 +140,23 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		err := utilerrors.NewAggregate(cleanUpErrs)
 		framework.ExpectNoError(err, "while cleaning up")
 	}
+
+	hasMetricsCardinalityFixes := func() bool {
+		gcsfuseVersionStr := specs.GetGCSFuseVersion()
+		_, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+		if branch == utils.MasterBranchName {
+			return true
+		}
+
+		if gcsfuseVersionStr == "" {
+			return false
+		}
+
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+
+		return gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion))
+	}
+	hasMetricsCardFixes := hasMetricsCardinalityFixes()
 
 	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string, expectMetrics bool) {
 		ginkgo.By("Running file operations on the volume")
@@ -233,6 +253,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
+		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
 		getMetrics := func(metricFamily *dto.MetricFamily) []*dto.Metric {
 			metricsList := []*dto.Metric{}
 			if metricFamily != nil {
@@ -246,7 +267,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 						labels["pod_name"] == podName &&
 						labels["volume_name"] == volume &&
 						labels["namespace_name"] == f.Namespace.Name &&
-						labels["pod_uid"] == "" {
+						(hasMetricsCardFixes == (labels["pod_uid"] == "")) { // cardinality fixes and pod_uid being empty should go hand in hand
 						metricsList = append(metricsList, m)
 					}
 				}
@@ -286,6 +307,52 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 	}
 
+	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
+		_, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+		if branch == utils.MasterBranchName {
+			return branch
+		}
+
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+
+		if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion)) {
+			if testName == testNamePodThresholdVolumesShouldEmitMetrics || testName == testNamePodExceedsThresholdVolumesShouldNotEmitMetrics {
+				e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testName, gcsfuseVersionStr)
+				return ""
+			}
+		}
+
+		return branch
+	}
+
+	gcsFuseCSIMetricsTest := func(testName string, expectMetrics bool) {
+		ginkgo.By("Checking GCSFuse version and skip test if needed")
+		if GCSFuseVersionStr == "" {
+			GCSFuseVersionStr = specs.GetGCSFuseVersion()
+		}
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", testName, GCSFuseVersionStr))
+		gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, testName)
+		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", testName, gcsfuseTestBranch))
+
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		for i, vr := range l.volumeResourceList {
+			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
+		}
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		for i, vr := range l.volumeResourceList {
+			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
+			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), expectMetrics)
+		}
+	}
+
 	// This tests below configuration:
 	//    [pod1]
 	//       |
@@ -296,18 +363,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		init(1, specs.EnableFileCacheAndMetricsPrefix)
 		defer cleanup()
 
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
-
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
-
-		verifyMetrics(tPod, l.volumeResourceList[0], mountPath, volumeName, true)
+		gcsFuseCSIMetricsTest(testNameSinglePodShouldEmitMetrics, true)
 	})
 
 	// This tests below configuration:
@@ -320,68 +376,20 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		init(2, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		for i, vr := range l.volumeResourceList {
-			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
-		}
-
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
-
-		for i, vr := range l.volumeResourceList {
-			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), true)
-		}
+		gcsFuseCSIMetricsTest(testNameMultiplePodShouldEmitMetrics, true)
 	})
 
 	ginkgo.It("should emit metrics until a threshold of 10 gcsfuse volumes", func() {
 		init(10, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		for i, vr := range l.volumeResourceList {
-			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
-		}
-
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
-
-		for i, vr := range l.volumeResourceList {
-			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), true)
-		}
+		gcsFuseCSIMetricsTest(testNamePodThresholdVolumesShouldEmitMetrics, true)
 	})
 
 	ginkgo.It("should emit no metrics when more than 10 gcsfuse volumes are mounted", func() {
 		init(11, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		for i, vr := range l.volumeResourceList {
-			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
-		}
-
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
-
-		for i, vr := range l.volumeResourceList {
-			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), false)
-		}
+		gcsFuseCSIMetricsTest(testNamePodExceedsThresholdVolumesShouldNotEmitMetrics, false)
 	})
 }
