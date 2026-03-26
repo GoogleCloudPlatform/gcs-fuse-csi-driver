@@ -105,8 +105,20 @@ var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "prof
 
 func Handle(testParams *TestParameters) error {
 	setTestEnvVars(testParams)
-	// Validating the test parameters.
 
+	// Always ensure ProjectID is set and PROJECT env var is exported for all test runs.
+	if testParams.ProjectID == "" {
+		output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+		if err != nil {
+			klog.Fatalf("Failed to get gcloud project: %v", err)
+		}
+		testParams.ProjectID = strings.TrimSpace(string(output))
+	}
+	if err := os.Setenv(ProjectEnvVar, testParams.ProjectID); err != nil {
+		klog.Fatalf("failed to set %s env var: %v", ProjectEnvVar, err)
+	}
+
+	// Validating the test parameters.
 	oldMask := syscall.Umask(0o000)
 	defer syscall.Umask(oldMask)
 
@@ -268,14 +280,6 @@ func Handle(testParams *TestParameters) error {
 	// Setting project number and adding compute binding for the driver service account for Storage Profiles.
 	if testParams.EnableGcsFuseProfiles {
 		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
-		// Project id is not already set when using managed driver flow.
-		if testParams.ProjectID == "" {
-			output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
-			if err != nil {
-				klog.Errorf("Failed while prepping env for profiles tests: %v", fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err))
-			}
-			testParams.ProjectID = strings.TrimSpace(string(output))
-		}
 
 		// TODO(fuechr): Reenable custom role once we have a way to create it in boskos projects.
 		_, err := setEnvProjectNumberUsingID(testParams.ProjectID)

@@ -25,10 +25,12 @@ import (
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
 
+	"github.com/google/uuid"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -57,6 +59,9 @@ const (
 	testNameBufferedReads         = "buffered_read"
 	testNameRenameSymlink         = "rename_symlink"
 	testNameRapidAppends          = "rapid_appends"
+	testNameCloudProfiler         = "cloud_profiler"
+	testNameBenchmarking          = "benchmarking"
+	testNameUnsupportedPath       = "unsupported_path"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -76,7 +81,7 @@ const (
 // testPackageTimeoutMap controls the duration of the `-timeout` flag passed to the underlying `go test` executions.
 // If you need to extend the timeout for a specific test package, add or modify its limit in minutes here.
 var testPackageTimeoutMap = map[string]int{
-	testNameListLargeDir:    60,
+	testNameListLargeDir:    120,
 	testNameWriteLargeFiles: 60,
 	testNameReadLargeFiles:  60,
 	testNameRapidAppends:    60,
@@ -156,6 +161,149 @@ type TestCommandConfig struct {
 	SecondaryMountPath string // Optional
 	BucketName         string
 	OnlyDir            string
+	ProfileLabel       string
+	ReadOnly           bool
+}
+
+type IntegrationTestOptions struct {
+	TestPkg         string
+	TestName        string
+	Config          utils.ParsedConfig
+	SecondaryConfig *utils.ParsedConfig
+	EnableFileCache bool
+	EnableZB        bool
+
+	// Tester pod resource overrides
+	TestPodCPU           string
+	TestPodMemoryRequest string
+	TestPodMemoryLimit   string
+}
+
+// runIntegrationTest sets up necessary resources for the test pod and volumes,
+// then executes the GCSFuse integration tests in the pod.
+func runIntegrationTest(ctx context.Context, f *framework.Framework, driver storageframework.TestDriver, volumeResource *storageframework.VolumeResource, opts IntegrationTestOptions, gcsfuseTestBranch string) {
+
+	ginkgo.By("Configuring the test pod")
+	tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+	tPod.SetImage(specs.GolangImage)
+
+	if opts.Config.LogFilePath != "" {
+		framework.Logf("Log file path: %v", opts.Config.LogFilePath)
+		tPod.SetCommand(fmt.Sprintf("tail -F %v", opts.Config.LogFilePath))
+	}
+
+	// Set resources
+	tPod.SetResource(opts.TestPodCPU, opts.TestPodMemoryRequest, opts.TestPodMemoryLimit)
+
+	sidecarMemoryRequest, sidecarMemoryLimit := configureLargeFileResources(tPod, opts.TestPkg, driver)
+
+	tPod.SetupTmpVolumeMount(gkeTempDir)
+
+	if opts.EnableFileCache {
+		volumeResource.VolSource.CSI.VolumeAttributes["fileCacheCapacity"] = opts.Config.FileCacheCapacity
+		framework.Logf("Cache file path: %v", opts.Config.CacheDir)
+		tPod.SetupCacheVolumeMount(opts.Config.CacheDir, ".volumes/"+volumeName)
+	}
+
+	bucketName := volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+
+	if opts.Config.LogSeverity != "" {
+		mo := volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
+		mo = strings.ReplaceAll(mo, "logging:severity:info", fmt.Sprintf("logging:severity:%v", opts.Config.LogSeverity))
+		volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
+	}
+
+	vars := map[string]string{"BUCKET_NAME": bucketName}
+
+	var profileLabel string
+	if opts.TestPkg == testNameCloudProfiler || opts.TestName == testNameCloudProfiler {
+		profileLabel = fmt.Sprintf("ve2e0.0.0-%s", strings.ReplaceAll(uuid.New().String(), "-", "")[:8])
+		vars["PROFILE_LABEL"] = profileLabel
+	}
+
+	if opts.TestPkg == testNameReadonly && !opts.Config.ReadOnly {
+		opts.Config.MountOptions = append(opts.Config.MountOptions, "uid=6666", "gid=6666")
+	}
+
+	for i, opt := range opts.Config.MountOptions {
+		opts.Config.MountOptions[i] = utils.ExpandFlagVariables(opt, vars)
+	}
+
+	if opts.TestPkg == testNameInactiveStreamTimeout && opts.EnableZB {
+		opts.Config.MountOptions = append(opts.Config.MountOptions, "file-system:enable-kernel-reader:false")
+	}
+
+	framework.Logf("Final parsed arguments: %v", opts.Config.MountOptions)
+
+	tPod.SetupVolume(volumeResource, volumeName, mountPath, opts.Config.ReadOnly, opts.Config.MountOptions...)
+
+	if opts.SecondaryConfig != nil {
+		framework.Logf("Setting up secondary volume mount")
+		for i, opt := range opts.SecondaryConfig.MountOptions {
+			opts.SecondaryConfig.MountOptions[i] = utils.ExpandFlagVariables(opt, vars)
+		}
+		framework.Logf("Secondary parsed arguments: %v", opts.SecondaryConfig.MountOptions)
+
+		secondaryVolumeResource := *volumeResource
+		if volumeResource.VolSource != nil {
+			secondaryVolumeResource.VolSource = volumeResource.VolSource.DeepCopy()
+		}
+		tPod.SetupVolume(&secondaryVolumeResource, volumeName2, mountPath2, opts.SecondaryConfig.ReadOnly, opts.SecondaryConfig.MountOptions...)
+	}
+
+	tPod.SetAnnotations(map[string]string{
+		"gke-gcsfuse/cpu-limit":               "1",
+		"gke-gcsfuse/memory-request":          sidecarMemoryRequest,
+		"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
+		"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
+	})
+
+	onlyDir := utils.ExtractOnlyDirFromMountOptions(volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"])
+
+	ginkgo.By("Deploying the test pod")
+	tPod.Create(ctx)
+	defer tPod.Cleanup(ctx)
+
+	ginkgo.By("Checking that the test pod is running")
+	tPod.WaitForRunning(ctx)
+
+	ginkgo.By("Checking that the test pod command exits with no error")
+	if opts.Config.ReadOnly {
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath))
+	} else {
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+	}
+
+	if opts.SecondaryConfig != nil {
+		if opts.SecondaryConfig.ReadOnly {
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath2))
+		} else {
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath2))
+		}
+	}
+
+	installGcsfuseDependencies(tPod, f, gcsfuseTestBranch, true)
+
+	gcsfuseVersion := version.MustParseSemantic(GCSFuseVersionStr)
+	gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
+
+	cmdOpts := TestCommandConfig{
+		TestPkg:       opts.TestPkg,
+		TestName:      opts.TestName,
+		GoEnvSetupCmd: gcsfuseGoVersionCommand,
+		MountPath:     mountPath,
+		BucketName:    bucketName,
+		OnlyDir:       onlyDir,
+		ProfileLabel:  profileLabel,
+		ReadOnly:      opts.Config.ReadOnly,
+	}
+	if opts.SecondaryConfig != nil {
+		cmdOpts.SecondaryMountPath = mountPath2
+	}
+
+	baseTestCommand := generateTestCommand(cmdOpts)
+	framework.Logf("Executing tests with command:\n%s", baseTestCommand)
+	tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 }
 
 // generateTestCommand constructs the test command for validating file cache parameters.
@@ -168,12 +316,23 @@ func generateTestCommand(opts TestCommandConfig) string {
 
 	goTestCmd := fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v --config-file=../test_config.yaml%s", opts.TestPkg, timeoutStr)
 	if opts.TestName != "" {
-		goTestCmd = fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v -run ^%v$ --config-file=../test_config.yaml%s", opts.TestPkg, opts.TestName, timeoutStr)
+		if opts.TestPkg == testNameBenchmarking {
+			// Benchmarking tests are written as true Go Benchmarks (func BenchmarkXxx(b *testing.B)).
+			// We must use -bench to execute them, and -run ^$ to avoid accidentally running standard tests.
+			// See: https://github.com/GoogleCloudPlatform/gcsfuse/blob/29c57be8b671a7f009b0cd1f194b76df3e5fe8b3/tools/integration_tests/benchmarking/benchmark_stat_test.go#L40
+			goTestCmd = fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v -bench ^%v$ -run ^$ --config-file=../test_config.yaml%s", opts.TestPkg, opts.TestName, timeoutStr)
+		} else {
+			goTestCmd = fmt.Sprintf("GODEBUG=asyncpreemptoff=1 go test ./%v/... -p 1 --integrationTest -v -run ^%v$ --config-file=../test_config.yaml%s", opts.TestPkg, opts.TestName, timeoutStr)
+		}
 	}
 
 	commandArgs := []string{
 		fmt.Sprintf(gcsfuseGoEnvSetupFormat, opts.GoEnvSetupCmd),
 		fmt.Sprintf("export MOUNTED_DIR=%q", opts.MountPath),
+	}
+
+	if opts.ProfileLabel != "" {
+		commandArgs = append(commandArgs, fmt.Sprintf("export PROFILE_LABEL=%s", opts.ProfileLabel))
 	}
 
 	if opts.SecondaryMountPath != "" {
@@ -187,7 +346,16 @@ func generateTestCommand(opts TestCommandConfig) string {
 		goTestCmd,
 	)
 
-	return strings.Join(commandArgs, " && ")
+	finalCommand := strings.Join(commandArgs, " && ")
+
+	// When testing file-mode/dir-mode=544 (o=rw), the test pod runs as root and bypasses
+	// standard DAC permissions. We must drop privileges to a non-root user (test-user)
+	// so the kernel correctly enforces "Permission denied" during test executions.
+	if opts.TestPkg == testNameReadonly && !opts.ReadOnly {
+		finalCommand = fmt.Sprintf("chmod 777 %v/%v && (id -u test-user >/dev/null 2>&1 || useradd -u 6666 -m test-user) && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, opts.TestPkg, finalCommand)
+	}
+
+	return finalCommand
 }
 
 // configureLargeFileResources configures the pod and sidecar resources for memory-intensive large file tests.
@@ -432,13 +600,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		}
 
-		ginkgo.By("Installing dependencies")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "apt-get install -y apt-transport-https ca-certificates gnupg curl")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
-		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install -y google-cloud-cli")
+		installGcsfuseDependencies(tPod, f, gcsfuseTestBranch, true)
 
 		ginkgo.By("Getting gcsfuse testsuite go version")
 
@@ -493,453 +655,578 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, finalTestCommand)
 	}
 
+	generateDynamicTests := func(configVersion string) {
+		framework.Logf("Generating dynamic tests for gcsfuse integration with config version: %s", configVersion)
+		if utils.IsReadFromTestConfig(configVersion) && len(utils.LoadedTestPackages) == 0 {
+			framework.Logf("Loading test config for GCSFuse version %v", configVersion)
+			err := utils.LoadTestConfig(configVersion)
+			if err != nil {
+				framework.Failf("Failed to load test config: %v", err)
+			}
+		}
+		// Dynamically generate tests from test_config.yaml in GCSFuse
+		for pkgName, pkgList := range utils.LoadedTestPackages {
+			// TODO(yaozile123): delete after b/496956438 got fixed
+			if pkgName == testNameBenchmarking {
+				continue
+			}
+			// TODO(yaozile123): delete after b/496966414 got fixed
+			if pkgName == testNameUnsupportedPath {
+				continue
+			}
+			pkg := pkgList[0]
+			for _, config := range pkg.Configs {
+				if !isConfigCompatible(config, driver) {
+					continue
+				}
+
+				for i, flagStr := range config.Flags {
+
+					// Filter out file cache and parallel download testcases
+					// Since they will be picked up by other testsuites
+					if utils.IsFileCacheEnabled(flagStr) || utils.IsParallelDownloadsEnabled(flagStr) {
+						continue
+					}
+
+					testName := config.Run
+					fullTestName := pkgName
+					if testName != "" {
+						fullTestName = fmt.Sprintf("%s/%s", pkgName, testName)
+					}
+
+					ginkgo.It(fmt.Sprintf("should succeed in %s with flags %s", fullTestName, flagStr), func() {
+						ginkgo.By(fmt.Sprintf("Starting integration test: %s", fullTestName))
+						framework.Logf("Original flag string from config: %s", flagStr)
+
+						if utils.IsOnlyDirEnabled(pkg) {
+							ginkgo.By("Configuring test with only_dir enabled")
+							init(specs.SubfolderInBucketPrefix)
+						} else {
+							init()
+						}
+						defer cleanup()
+
+						parsedFlags := utils.ParseConfigFlags(flagStr)
+
+						var secondaryParsedFlags *utils.ParsedConfig
+						if i < len(config.SecondaryFlags) {
+							secFlags := utils.ParseConfigFlags(config.SecondaryFlags[i])
+							secondaryParsedFlags = &secFlags
+						}
+
+						// change default logging secverity to trace
+						// some of the test packages in flat test suite need logging severity trace
+						parsedFlags.LogSeverity = "trace"
+
+						// TODO(yaozile123): Remove this once b/494320769 got fixed.
+						if parsedFlags.CacheDir == "${CACHE_DIR_PATH}" {
+							dirName := pkgName
+							if testName != "" {
+								dirName = testName
+							}
+							parsedFlags.CacheDir = "/gcsfuse-tmp/" + dirName
+						}
+
+						framework.Logf("Parsed arguments: %+v", parsedFlags)
+
+						fullTestName := pkgName
+						if testName != "" {
+							fullTestName = fmt.Sprintf("%s/%s", pkgName, testName)
+						}
+						ginkgo.By("Checking GCSFuse version and skip test if needed")
+						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", fullTestName, GCSFuseVersionStr))
+						gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, fullTestName)
+						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", fullTestName, gcsfuseTestBranch))
+
+						opts := IntegrationTestOptions{
+							TestPkg:              pkgName,
+							TestName:             testName,
+							Config:               parsedFlags,
+							SecondaryConfig:      secondaryParsedFlags,
+							EnableZB:             zbEnabled(driver),
+							TestPodCPU:           "1",
+							TestPodMemoryRequest: "5Gi",
+							TestPodMemoryLimit:   "5Gi",
+						}
+						runIntegrationTest(ctx, f, driver, l.volumeResource, opts, gcsfuseTestBranch)
+					})
+				}
+			}
+		}
+	}
+
 	testNameSuffix := func(i int) string {
 		return fmt.Sprintf(" test %v", i)
 	}
 
-	// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
+	generateStaticTests := func() {
+		// The following test cases are derived from https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/tools/integration_tests/run_tests_mounted_directory.sh
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(1), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
-		}
+		ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(1), func() {
+			if hnsEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+			}
 
-		init()
-		defer cleanup()
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
-	})
+			gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(3), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
-		}
+		ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(3), func() {
+			if hnsEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameOperations)
+			}
 
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(4), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(4), func() {
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
-	})
+			gcsfuseIntegrationTest(testNameOperations, false, "implicit-dirs=false")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(5), func() {
-		init()
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameOperations+testNameSuffix(5), func() {
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameOperations, false, "write:create-empty-file:true")
-	})
+			gcsfuseIntegrationTest(testNameOperations, false, "write:create-empty-file:true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(3), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(3), func() {
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameReadonly, true, "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(4), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameReadonly+testNameSuffix(4), func() {
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameReadonly, false, "file-mode=544", "dir-mode=544", "uid=6666", "gid=6666", "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(1), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
-		}
+		ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(1), func() {
+			if hnsEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
+			}
 
-		init()
-		defer cleanup()
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
-	})
+			gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
+		ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
 
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
-	})
+			gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
+		})
 
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(3), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
-		}
-
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(4), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(2), func() {
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(1), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
-		}
-
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(2), func() {
-		if hnsEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
-		}
-
-		// passing only-dir flags
-		init(specs.SubfolderInBucketPrefix)
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameListLargeDir+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameListLargeDir, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(2), func() {
-		if !zbEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with file-system:enable-kernel-reader:false as it requires zonal buckets", testNameReadLargeFiles)
-		}
-		init()
-		defer cleanup()
-		mountOptions := []string{"implicit-dirs=true"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameReadLargeFiles, false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-
-		v, err := version.ParseSemantic(GCSFuseVersionStr)
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if (err != nil || v.AtLeast(version.MustParseSemantic("2.9.0-gke.0"))) && getClientProtocol(driver) != "grpc" {
-			gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "enable-streaming-writes", "implicit-dirs=true")
-		} else {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with enable-streaming-writes", testNameWriteLargeFiles)
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameGzip+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameGzip, false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameLocalFile+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		v, err := version.ParseSemantic(GCSFuseVersionStr)
-
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if err != nil || v.AtLeast(version.MustParseSemantic("3.0.0-gke.0")) {
-			ginkgo.By("Running test supported for gcsfuse v3.0.0+")
-			// I needed to disable streaming writes the config file method, to
-			// avoid gcsfuse exiting with Error: accepts between 2 and 3 arg(s), received 4.
-			gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3", "write:enable-streaming-writes:false")
-		} else {
-			ginkgo.By("Running test supported before gcsfuse v3.0.0")
-			gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(2), func() {
-		if !zbEnabled(driver) {
-			e2eskipper.Skipf("skip gcsfuse integration test %v with file-system:enable-kernel-reader:false as it requires zonal buckets", testNameConcurrentOperations)
-		}
-		init()
-		defer cleanup()
-
-		mountOptions := []string{"implicit-dirs=true", "kernel-list-cache-ttl-secs=-1"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameConcurrentOperations, false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_AlwaysCacheHit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(3), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(4), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnFileRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(5), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_EvictCacheEntryOfOnlyDirectParent", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(6), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(7), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(8), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDirectoryRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(9), func() {
-		init()
-		defer cleanup()
-
-		v, err := version.ParseSemantic(GCSFuseVersionStr)
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
-			ginkgo.By("Running test supported for gcsfuse v2.7.0+")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
-		} else {
-			ginkgo.By("Running test supported before gcsfuse v2.7.0")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
-		init()
-		defer cleanup()
-
-		v, err := version.ParseSemantic(GCSFuseVersionStr)
-		// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
-		// Otherise, we have a valid tag, and we compare against the supported release.
-		if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
-			ginkgo.By("Running test supported for gcsfuse v2.7.0+")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
-		} else {
-			ginkgo.By("Running test supported before gcsfuse v2.7.0-gke.0")
-			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(12), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameKernelListCache+":TestDisabledKernelListCacheTest/TestKernelListCache_AlwaysCacheMiss", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=0")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameManagedFolders+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-
-		gcsfuseIntegrationTest(testNameManagedFolders+":TestEnableEmptyManagedFoldersTrue", false, "implicit-dirs=true")
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameEnableStreamingWrites+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		if getClientProtocol(driver) == "grpc" {
-			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-streaming-writes", testNameEnableStreamingWrites)
-		} else {
-			gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
-		}
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
-		init()
-		defer cleanup()
-		mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
-		if isKernelParamSupported() {
-			mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
-		}
-		gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, mountOptions...)
-	})
-
-	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
-		init()
-		defer cleanup()
-		if getClientProtocol(driver) == "grpc" {
-			e2eskipper.Skipf("skip gcsfuse integration grpc test %v with rename-symlink", testNameRenameSymlink)
-		} else {
-			gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
-		}
-	})
+		ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(3), func() {
+			if hnsEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with flag implicit-dirs when HNS is enabled", testNameRenameDirLimit)
+			}
+
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameRenameDirLimit+testNameSuffix(4), func() {
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameRenameDirLimit, false, "rename-dir-limit=3", "implicit-dirs=false")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameImplicitDir+testNameSuffix(2), func() {
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameImplicitDir, false, "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(1), func() {
+			if hnsEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
+			}
+
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameExplicitDir+testNameSuffix(2), func() {
+			if hnsEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v when HNS is enabled", testNameExplicitDir)
+			}
+
+			// passing only-dir flags
+			init(specs.SubfolderInBucketPrefix)
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameExplicitDir, false, "implicit-dirs=false")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameListLargeDir+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameListLargeDir, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameReadLargeFiles, false, "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameReadLargeFiles+testNameSuffix(2), func() {
+			if !zbEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with file-system:enable-kernel-reader:false as it requires zonal buckets", testNameReadLargeFiles)
+			}
+			init()
+			defer cleanup()
+			mountOptions := []string{"implicit-dirs=true"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameReadLargeFiles, false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameWriteLargeFiles+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
+
+			v, err := version.ParseSemantic(GCSFuseVersionStr)
+			// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+			// Otherise, we have a valid tag, and we compare against the supported release.
+			if (err != nil || v.AtLeast(version.MustParseSemantic("2.9.0-gke.0"))) && getClientProtocol(driver) != "grpc" {
+				gcsfuseIntegrationTest(testNameWriteLargeFiles, false, "enable-streaming-writes", "implicit-dirs=true")
+			} else {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with enable-streaming-writes", testNameWriteLargeFiles)
+			}
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameGzip+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameGzip, false, "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameLocalFile+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+			v, err := version.ParseSemantic(GCSFuseVersionStr)
+
+			// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+			// Otherise, we have a valid tag, and we compare against the supported release.
+			if err != nil || v.AtLeast(version.MustParseSemantic("3.0.0-gke.0")) {
+				ginkgo.By("Running test supported for gcsfuse v3.0.0+")
+				// I needed to disable streaming writes the config file method, to
+				// avoid gcsfuse exiting with Error: accepts between 2 and 3 arg(s), received 4.
+				gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3", "write:enable-streaming-writes:false")
+			} else {
+				ginkgo.By("Running test supported before gcsfuse v3.0.0")
+				gcsfuseIntegrationTest(testNameLocalFile, false, "implicit-dirs=true", "rename-dir-limit=3")
+			}
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameConcurrentOperations, false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameConcurrentOperations+testNameSuffix(2), func() {
+			if !zbEnabled(driver) {
+				e2eskipper.Skipf("skip gcsfuse integration test %v with file-system:enable-kernel-reader:false as it requires zonal buckets", testNameConcurrentOperations)
+			}
+			init()
+			defer cleanup()
+
+			mountOptions := []string{"implicit-dirs=true", "kernel-list-cache-ttl-secs=-1"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameConcurrentOperations, false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_AlwaysCacheHit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(3), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfFile", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(4), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnFileRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(5), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_EvictCacheEntryOfOnlyDirectParent", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(6), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnAdditionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(7), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDeletionOfDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(8), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_CacheMissOnDirectoryRename", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(9), func() {
+			init()
+			defer cleanup()
+
+			v, err := version.ParseSemantic(GCSFuseVersionStr)
+			// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+			// Otherise, we have a valid tag, and we compare against the supported release.
+			if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
+				ginkgo.By("Running test supported for gcsfuse v2.7.0+")
+				gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
+			} else {
+				ginkgo.By("Running test supported before gcsfuse v2.7.0")
+				gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_ListAndDeleteDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+			}
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(10), func() {
+			init()
+			defer cleanup()
+
+			v, err := version.ParseSemantic(GCSFuseVersionStr)
+			// If error != nil, this means we've autogenerated a tag (meaning we run from HEAD)
+			// Otherise, we have a valid tag, and we compare against the supported release.
+			if err != nil || v.AtLeast(version.MustParseSemantic("2.7.0-gke.0")) {
+				ginkgo.By("Running test supported for gcsfuse v2.7.0+")
+				gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheDeleteDirTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1", "metadata-cache-ttl-secs=0")
+			} else {
+				ginkgo.By("Running test supported before gcsfuse v2.7.0-gke.0")
+				gcsfuseIntegrationTest(testNameKernelListCache+":TestInfiniteKernelListCacheTest/TestKernelListCache_DeleteAndListDirectory", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=-1")
+			}
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(11), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestFiniteKernelListCacheTest/TestKernelListCache_CacheHitWithinLimit_CacheMissAfterLimit", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=5")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameKernelListCache+testNameSuffix(12), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameKernelListCache+":TestDisabledKernelListCacheTest/TestKernelListCache_AlwaysCacheMiss", false, "implicit-dirs=true", "kernel-list-cache-ttl-secs=0")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameManagedFolders+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+
+			gcsfuseIntegrationTest(testNameManagedFolders+":TestEnableEmptyManagedFoldersTrue", false, "implicit-dirs=true")
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameEnableStreamingWrites+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+			if getClientProtocol(driver) == "grpc" {
+				e2eskipper.Skipf("skip gcsfuse integration grpc test %v with enable-streaming-writes", testNameEnableStreamingWrites)
+			} else {
+				gcsfuseIntegrationTest(testNameEnableStreamingWrites, false, "rename-dir-limit=3", "implicit-dirs=true", "enable-streaming-writes", "write-block-size-mb=1", "write-max-blocks-per-file=2", "write-global-max-blocks=-1")
+			}
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"read-inactive-stream-timeout=0s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutDisabledSuite", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderCloses", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameInactiveStreamTimeout+testNameSuffix(3), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=1", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameBufferedReads+":TestSequentialReadSuite", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(2), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_LargeFile_Fallback", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(3), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=20", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestRandomRead_SmallFile_NoFallback", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameBufferedReads+testNameSuffix(4), func() {
+			init()
+			defer cleanup()
+			mountOptions := []string{"enable-buffered-read", "read-block-size-mb=8", "read-max-blocks-per-handle=10", "read-start-blocks-per-handle=2", "read-min-blocks-per-handle=2", "read-global-max-blocks=1", "logging:format:json", fmt.Sprintf("logging:file-path:%s", buffered_reads_log_file), "log-severity=trace"}
+			if isKernelParamSupported() {
+				mountOptions = append(mountOptions, "file-system:enable-kernel-reader:false")
+			}
+			gcsfuseIntegrationTest(testNameBufferedReads+":TestFallbackSuites/TestNewBufferedReader_InsufficientGlobalPool_NoReaderAdded", false, mountOptions...)
+		})
+
+		ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
+			init()
+			defer cleanup()
+			if getClientProtocol(driver) == "grpc" {
+				e2eskipper.Skipf("skip gcsfuse integration grpc test %v with rename-symlink", testNameRenameSymlink)
+			} else {
+				gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
+			}
+		})
+	}
+
+	framework.Logf("Generating tests based on test config")
+
+	if utils.IsReadFromTestConfig(GCSFuseVersionStr) {
+		klog.Info("Generating tests based on test config")
+		generateDynamicTests(GCSFuseVersionStr)
+	} else {
+		klog.Info("Generating static tests")
+		generateStaticTests()
+	}
+}
+
+func installGcsfuseDependencies(tPod *specs.TestPod, f *framework.Framework, gcsfuseTestBranch string, installGcloud bool) {
+	ginkgo.By("Installing dependencies")
+	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
+	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
+
+	if installGcloud {
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "apt-get install -y apt-transport-https ca-certificates gnupg curl")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list")
+		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "apt-get update && apt-get install -y google-cloud-cli")
+	}
 }
