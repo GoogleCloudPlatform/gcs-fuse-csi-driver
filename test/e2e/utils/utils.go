@@ -241,12 +241,16 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 		FileCacheCapacity: "-1Mi",
 		ReadOnly:          false,
 		LogFilePath:       "",
-		LogSeverity:       "info",
+		LogSeverity:       "trace",
 		CacheDir:          "",
 		MountOptions:      []string{},
 	}
 
-	for _, f := range strings.Split(flagStr, ",") {
+	// Replace commas with spaces to handle both comma-separated (used in tests)
+	// and space-separated flag strings.
+	// See: https://github.com/GoogleCloudPlatform/gcsfuse/blob/376c8c1638cd62fcefb3e614c02ae9901f59f3c1/tools/integration_tests/test_config.yaml#L511
+	flagStr = strings.ReplaceAll(flagStr, ",", " ")
+	for _, f := range strings.Fields(flagStr) {
 		// Trim spaces and all leading '-' characters
 		f = strings.TrimLeft(strings.TrimSpace(f), "-")
 		if f == "" {
@@ -272,6 +276,14 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 		if found && flagName == flagLogSeverity {
 			parsed.LogSeverity = flagValue
 			continue
+		}
+
+		if found && flagName == "billing-project" {
+			// Override the hardcoded billing project from gcsfuse test_config.yaml
+			// with the actual project where the CSI driver tests are running.
+			// See: https://github.com/GoogleCloudPlatform/gcsfuse/blob/376c8c1638cd62fcefb3e614c02ae9901f59f3c1/tools/integration_tests/test_config.yaml#L228
+			flagValue = os.Getenv(ProjectEnvVar)
+			f = "billing-project=" + flagValue
 		}
 
 		// The following flags are disallowed in the CSI driver's mountOptions.
