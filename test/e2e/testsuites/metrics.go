@@ -141,6 +141,23 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
+	hasMetricsCardinalityFixes := func() bool {
+		gcsfuseVersionStr := specs.GetGCSFuseVersion()
+		_, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+		if branch == utils.MasterBranchName {
+			return true
+		}
+
+		if gcsfuseVersionStr == "" {
+			return false
+		}
+
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+
+		return gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion))
+	}
+	hasMetricsCardFixes := hasMetricsCardinalityFixes()
+
 	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string, expectMetrics bool) {
 		ginkgo.By("Running file operations on the volume")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -236,16 +253,6 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		podName := tPod.GetPodName()
 
-		hasMetricsCardinalityFixes := func() bool {
-			gcsfuseVersionStr := specs.GetGCSFuseVersion()
-			if gcsfuseVersionStr == "" {
-				return false
-			}
-			gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
-
-			return gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion))
-		}
-
 		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
 		getMetrics := func(metricFamily *dto.MetricFamily) []*dto.Metric {
 			metricsList := []*dto.Metric{}
@@ -260,7 +267,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 						labels["pod_name"] == podName &&
 						labels["volume_name"] == volume &&
 						labels["namespace_name"] == f.Namespace.Name &&
-						(hasMetricsCardinalityFixes() == (labels["pod_uid"] == "")) { // cardinality fixes and pod_uid being empty should go hand in hand
+						(hasMetricsCardFixes == (labels["pod_uid"] == "")) { // cardinality fixes and pod_uid being empty should go hand in hand
 						metricsList = append(metricsList, m)
 					}
 				}
@@ -302,10 +309,11 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
 		_, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
-		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
 		if branch == utils.MasterBranchName {
 			return branch
 		}
+
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
 
 		if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseMetricsCardinalityFixesVersion)) {
 			if testName == testNamePodThresholdVolumesShouldEmitMetrics || testName == testNamePodExceedsThresholdVolumesShouldNotEmitMetrics {
