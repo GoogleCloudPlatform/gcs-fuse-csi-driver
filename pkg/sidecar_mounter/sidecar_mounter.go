@@ -520,7 +520,6 @@ func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset cli
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("Failed to set up metadata service: %v for identity pool %s and identity provider %s, retrying....", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider))
 				return false, nil
 			}
-			mc.ErrWriter.WriteMsg(fmt.Sprintf("Sneha: Did not get any error; created metadata service successfully"))
 
 			tm = auth.NewTokenManager(meta, clientset)
 			ssm, err = storage.NewGCSServiceManager()
@@ -528,7 +527,6 @@ func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset cli
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("Failed to set up storage service manager, got error: %v for identity pool %s and identity provider %s, retrying...", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider))
 				return false, nil
 			}
-			mc.ErrWriter.WriteMsg(fmt.Sprintf("Sneha: Did not get any error; token manager and SSM created successfully %v and %v", tm, ssm))
 			m.TokenManager = tm
 			m.StorageServiceManager = ssm
 			return true, nil
@@ -536,8 +534,7 @@ func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset cli
 		if err := m.executeFuncWithRetry(ctx, mc, setupTokenAndStorageManagerFunc); err != nil {
 			return err
 		}
-		//TODO: Sneha to update this log info to V6
-		klog.Infof("Setup complete for token manager and storage service manager %v and %v", m.TokenManager, m.StorageServiceManager)
+		klog.V(6).Infof("Setup complete for token manager and storage service manager %v and %v", m.TokenManager, m.StorageServiceManager)
 		return nil
 	}
 	return fmt.Errorf("Either of identity-pool %s or identity-provider %s were not provided", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
