@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -84,27 +85,6 @@ var (
 
 	// Test packages loaded from test_config.yaml in gcsfuse repository.
 	LoadedTestPackages TestPackages
-
-	// disallowedFlagsMapping maps the disallowed flags to their config file representation.
-	// See: https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/585b8addb42335e0742be7059fd6570c78b62bc6/pkg/sidecar_mounter/sidecar_mounter_config.go#L83
-	// Note: If you add more disallowed flags in sidecar_mounter_config.go or use new ones in gcsfuse tests,
-	// you should update this mapping accordingly to ensure they are correctly translated to the config file format.
-	disallowedFlagsMapping = map[string]string{
-		"log-format": "logging:format",
-		"log-file":   "logging:file-path",
-		"o":          "o",
-		"cache-dir":  "cache-dir",
-
-		// The following flags are currently unused in the gcsfuse e2e tests.
-		"temp-dir":             "temp-dir",
-		"config-file":          "config-file",
-		"foreground":           "foreground",
-		"prometheus-port":      "prometheus-port",
-		"key-file":             "gcs-auth:key-file",
-		"token-url":            "gcs-auth:token-url",
-		"reuse-token-from-url": "gcs-auth:reuse-token-from-url",
-		"kernel-params-file":   "file-system:kernel-params-file",
-	}
 )
 
 func EnsureVariable(v *string, set bool, msgOnError string) {
@@ -299,7 +279,7 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 		// the config file format flags, we work around this in the test suite by using
 		// the config file format (x:y) instead.
 		// See: https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/585b8addb42335e0742be7059fd6570c78b62bc6/pkg/sidecar_mounter/sidecar_mounter_config.go#L83
-		if configPrefix, ok := disallowedFlagsMapping[flagName]; ok {
+		if configPrefix, ok := sidecarmounter.DisallowedFlags[flagName]; ok {
 			switch flagName {
 			case flagOptions:
 				// "o" is disallowed and will be used in SetupVolume to set the readOnly flag for test pod.
@@ -461,4 +441,17 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 		return "", fmt.Errorf("unexpected version output format: %s", output)
 	}
 	return l[2], nil
+}
+
+// ExpandFlagVariables allows for the expansion of custom parameterized fields
+// (e.g., ${BUCKET_NAME}) in a flag string based on the provided vars map.
+// It is used to dynamically populate flags parsed from the gcsfuse test_config.yaml file.
+// See: https://github.com/GoogleCloudPlatform/gcsfuse/blob/6ed3eeadfdbe6fdc59fc297520e1c311388068bf/tools/integration_tests/test_config.yaml#L402
+func ExpandFlagVariables(flag string, vars map[string]string) string {
+	return os.Expand(flag, func(envVar string) string {
+		if val, ok := vars[envVar]; ok {
+			return val
+		}
+		return os.Getenv(envVar)
+	})
 }
