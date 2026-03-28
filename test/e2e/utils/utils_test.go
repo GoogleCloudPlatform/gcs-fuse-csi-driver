@@ -96,7 +96,7 @@ func TestParseConfigFlags(t *testing.T) {
 				expectedParsed: ParsedConfig{
 					FileCacheCapacity: "-1Mi",
 					ReadOnly:          false,
-					LogSeverity:       "info",
+					LogSeverity:       "trace",
 					MountOptions:      []string{},
 				},
 			},
@@ -106,7 +106,7 @@ func TestParseConfigFlags(t *testing.T) {
 				expectedParsed: ParsedConfig{
 					FileCacheCapacity: "100Mi",
 					ReadOnly:          false,
-					LogSeverity:       "info",
+					LogSeverity:       "trace",
 					MountOptions: []string{
 						"metadata-cache-ttl-secs=0",
 					},
@@ -119,7 +119,7 @@ func TestParseConfigFlags(t *testing.T) {
 					FileCacheCapacity: "-1Mi",
 					ReadOnly:          false,
 					LogFilePath:       "/tmp/log",
-					LogSeverity:       "info",
+					LogSeverity:       "trace",
 					CacheDir:          "/tmp/cache",
 					MountOptions: []string{
 						"logging:file-path:/tmp/log",
@@ -136,7 +136,7 @@ func TestParseConfigFlags(t *testing.T) {
 				expectedParsed: ParsedConfig{
 					FileCacheCapacity: "-1Mi",
 					ReadOnly:          false,
-					LogSeverity:       "info",
+					LogSeverity:       "trace",
 					MountOptions:      []string{},
 				},
 			},
@@ -146,9 +146,22 @@ func TestParseConfigFlags(t *testing.T) {
 				expectedParsed: ParsedConfig{
 					FileCacheCapacity: "-1Mi",
 					ReadOnly:          false,
-					LogSeverity:       "info",
+					LogSeverity:       "trace",
 					MountOptions: []string{
 						"logging:format:json",
+					},
+				},
+			},
+			{
+				name:    "should correctly parse multiple space-separated flags",
+				flagStr: "--stat-cache-ttl=0 --client-protocol=grpc",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogSeverity:       "trace",
+					MountOptions: []string{
+						"stat-cache-ttl=0",
+						"client-protocol=grpc",
 					},
 				},
 			},

@@ -143,6 +143,23 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 	}
 	testK8sSA.Create(ctx)
 
+	// Grant the required consumer permission on the test project to the active identity.
+	// This ensures that tests using the `--billing-project` flag (like requester_pays_bucket)
+	// can successfully authenticate and pass the consumer quota check (403 Forbidden).
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), f.Namespace.Name, K8sServiceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v", testGcpSA.GetEmail())
+	}
+	billingBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/serviceusage.serviceUsageConsumer", "")
+	billingBinding.Create(ctx)
+
+	// This is required to run the cloud profiler tests. See requirements here:
+	// https://cloud.google.com/profiler/docs/profiling-go#permissions
+	profilerAgentBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/cloudprofiler.agent", "")
+	profilerAgentBinding.Create(ctx)
+	profilerUserBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/cloudprofiler.user", "")
+	profilerUserBinding.Create(ctx)
+
 	config := &storageframework.PerTestConfig{
 		Driver:    n,
 		Framework: f,
@@ -161,6 +178,9 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 		n.volumeStore = []*gcsVolume{}
 
 		testK8sSA.Cleanup(ctx)
+		profilerUserBinding.Cleanup(ctx)
+		profilerAgentBinding.Cleanup(ctx)
+		billingBinding.Cleanup(ctx)
 		if !n.skipGcpSaTest {
 			testGcpSA.Cleanup(ctx)
 		}

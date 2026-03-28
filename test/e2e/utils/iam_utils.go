@@ -284,14 +284,10 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 	}
 	klog.Infof("Current policy: %+v", policy)
 
-	// Find the policy binding for role. Only one binding can have the role.
 	var binding *cloudresourcemanager.Binding
-	var bindingIndex int
-	for i, b := range policy.Bindings {
+	for _, b := range policy.Bindings {
 		if b.Role == role {
 			binding = b
-			bindingIndex = i
-
 			break
 		}
 	}
@@ -300,24 +296,31 @@ func removeMember(crmService *cloudresourcemanager.Service, projectID, member, r
 		return nil
 	}
 
-	// Order doesn't matter for bindings or members, so to remove, move the last item
-	// into the removed spot and shrink the slice.
-	if len(binding.Members) == 1 {
-		// If the member is the only member in the binding, removes the binding
-		last := len(policy.Bindings) - 1
-		policy.Bindings[bindingIndex] = policy.Bindings[last]
-		policy.Bindings = policy.Bindings[:last]
-	} else {
-		// If there is more than one member in the binding, removes the member
-		var memberIndex int
-		for i, mm := range binding.Members {
-			if mm == member {
-				memberIndex = i
+	// Find all members that need to be kept
+	var updatedMembers []string
+	for _, mm := range binding.Members {
+		if mm != member {
+			updatedMembers = append(updatedMembers, mm)
+		}
+	}
+
+	if len(updatedMembers) == len(binding.Members) {
+		klog.Warningf("Member %s not found in role %s for removal, skipping setPolicy", member, role)
+		return nil
+	}
+
+	// If no members are left, remove the entire binding for this role from the policy.
+	if len(updatedMembers) == 0 {
+		var updatedBindings []*cloudresourcemanager.Binding
+		for _, b := range policy.Bindings {
+			if b.Role != role {
+				updatedBindings = append(updatedBindings, b)
 			}
 		}
-		last := len(policy.Bindings[bindingIndex].Members) - 1
-		binding.Members[memberIndex] = binding.Members[last]
-		binding.Members = binding.Members[:last]
+		policy.Bindings = updatedBindings
+	} else {
+		// If members are still left, just update the members list for this binding.
+		binding.Members = updatedMembers
 	}
 
 	return setPolicy(crmService, projectID, policy)

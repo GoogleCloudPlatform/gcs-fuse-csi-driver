@@ -182,8 +182,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		}
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
+		installGcsfuseDependencies(tPod, f, gcsfuseTestBranch, false)
 
 		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
@@ -194,7 +193,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
 
-	gcsfuseIntegrationFileCacheTestNew := func(testPkg string, testName string, config utils.ParsedConfig) {
+	gcsfuseIntegrationFileCacheTestNew := func(testPkg string, testName string, config utils.ParsedConfig, secondaryConfig *utils.ParsedConfig) {
 
 		fullTestName := testPkg
 		if testName != "" {
@@ -247,6 +246,22 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		framework.Logf("Final parsed arguments: %v", config.MountOptions)
 
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, config.ReadOnly, config.MountOptions...)
+
+		if secondaryConfig != nil {
+			framework.Logf("Setting up secondary volume mount")
+			for i, opt := range secondaryConfig.MountOptions {
+				secondaryConfig.MountOptions[i] = utils.ExpandFlagVariables(opt, vars)
+			}
+			framework.Logf("Secondary parsed arguments: %v", secondaryConfig.MountOptions)
+
+			// Deep copy the volume resource for dual mounting. We cannot pass l.volumeResource directly
+			// into SetupVolumeWithSubPath, as modifying it later could lead to shared state issues.
+			secondaryVolumeResource := *l.volumeResource
+			if l.volumeResource.VolSource != nil {
+				secondaryVolumeResource.VolSource = l.volumeResource.VolSource.DeepCopy()
+			}
+			tPod.SetupVolumeWithSubPath(&secondaryVolumeResource, volumeName+"-secondary", mountPath2, secondaryConfig.ReadOnly, "", true, secondaryConfig.MountOptions...)
+		}
 		tPod.SetAnnotations(map[string]string{
 			"gke-gcsfuse/cpu-limit":               "1",
 			"gke-gcsfuse/memory-request":          sidecarMemoryRequest,
@@ -270,23 +285,35 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		}
 
+		if secondaryConfig != nil {
+			if secondaryConfig.ReadOnly {
+				tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath2))
+			} else {
+				tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath2))
+			}
+		}
+
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
+		installGcsfuseDependencies(tPod, f, gcsfuseTestBranch, false)
 
 		gcsfuseVersion := version.MustParseSemantic(GCSFuseVersionStr)
 		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
 		// If testName is not provided in the config, run all tests under the package.
 		// Otherwise, only run the precisely specified test case via the -run flag.
-		baseTestCommand := generateTestCommand(TestCommandConfig{
+		cmdOpts := TestCommandConfig{
 			TestPkg:       testPkg,
 			TestName:      testName,
 			GoEnvSetupCmd: gcsfuseGoVersionCommand,
 			MountPath:     mountPath,
 			BucketName:    bucketName,
 			OnlyDir:       onlyDir,
-		})
+		}
+		if secondaryConfig != nil {
+			cmdOpts.SecondaryMountPath = mountPath2
+		}
+
+		baseTestCommand := generateTestCommand(cmdOpts)
 		framework.Logf("Executing tests with command:\n%s", baseTestCommand)
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
@@ -311,7 +338,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 					continue
 				}
 
-				for _, flagStr := range config.Flags {
+				for i, flagStr := range config.Flags {
 					if !utils.IsFileCacheEnabled(flagStr) {
 						continue
 					}
@@ -341,7 +368,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 						parsedFlags := utils.ParseConfigFlags(flagStr)
 						framework.Logf("Parsed arguments: %+v", parsedFlags)
 
-						gcsfuseIntegrationFileCacheTestNew(pkgName, testName, parsedFlags)
+						var secondaryParsedFlags *utils.ParsedConfig
+						if i < len(config.SecondaryFlags) {
+							secFlags := utils.ParseConfigFlags(config.SecondaryFlags[i])
+							secondaryParsedFlags = &secFlags
+						}
+
+						gcsfuseIntegrationFileCacheTestNew(pkgName, testName, parsedFlags, secondaryParsedFlags)
 					})
 				}
 			}
