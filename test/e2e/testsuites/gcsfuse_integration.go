@@ -207,6 +207,7 @@ func configureLargeFileResources(tPod *specs.TestPod, testNameOrPkg string, driv
 		}
 	}
 	if testNameOrPkg == testNameRapidAppends {
+		tPod.SetResource("1", "3Gi", "5Gi")
 		sidecarMemoryRequest = "2Gi"
 		sidecarMemoryLimit = "3Gi"
 	}
