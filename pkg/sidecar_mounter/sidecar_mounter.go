@@ -97,7 +97,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 	}
 	if mc.EnableSidecarBucketAccessCheck {
-		err := m.checkBucketAccessWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager, mc.BucketName, mc.TokenServerIdentityProvider, mc)
+		err := m.checkBucketAccessWithRetry(ctx, tokenSource, mc.BucketName, mc.TokenServerIdentityProvider, mc)
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service or check bucket access, failed with error: %v", err)
 		}
@@ -439,8 +439,7 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 	}
 }
 
-// checkBucketAccessWithRetry prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext and validates bucket access.
-func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager, bucketName string, tokenProvider string, mc *MountConfig) error {
+func (m *Mounter) executeFuncWithRetry(ctx context.Context, mc *MountConfig, f func(ctx context.Context) (bool, error)) error {
 	backoff := wait.Backoff{
 		Duration: mc.SidecarRetryConfig.Duration,
 		Factor:   mc.SidecarRetryConfig.Factor,
@@ -448,9 +447,17 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 		Steps:    mc.SidecarRetryConfig.Steps,
 		Jitter:   mc.SidecarRetryConfig.Jitter, // Adds randomness, this will give +/- 10% of the current delay
 	}
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, f)
+	if err != nil {
+		return fmt.Errorf("operation failed after retries: %w", err)
+	}
+	return nil
+}
 
-	var ss storage.Service
+// checkBucketAccessWithRetry prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext and validates bucket access.
+func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, tokenSource oauth2.TokenSource, bucketName string, tokenProvider string, mc *MountConfig) error {
 	var err error
+	var ss storage.Service
 	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
 		if ss == nil {
 			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
@@ -476,11 +483,9 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, storageService
 		}
 	}
 
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, ssCreateAndBucketCheckFunc)
-	if err != nil {
-		return fmt.Errorf("bucket access check failed after retries: %w", err)
+	if err := m.executeFuncWithRetry(ctx, mc, ssCreateAndBucketCheckFunc); err != nil {
+		return err
 	}
-	klog.V(4).Infof("Completed access check for bucket %s", bucketName)
 	return nil
 }
 
@@ -504,21 +509,34 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 	return identityProvider, nil
 }
 
-func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {
+func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset clientset.Interface, mc *MountConfig) error {
 	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
-		meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
-		if err != nil {
-			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
-		}
+		var tm auth.TokenManager
+		var ssm storage.ServiceManager
+		setupTokenAndStorageManagerFunc := func(ctx context.Context) (bool, error) {
+			meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+			if err != nil {
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("Failed to setup metadata service: %v for identity pool %s and identity provider %s, retrying....", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider))
+				return false, nil
+			}
 
-		tm := auth.NewTokenManager(meta, clientset)
-		ssm, err := storage.NewGCSServiceManager()
-		if err != nil {
-			return nil, nil, fmt.Errorf("Failed to set up storage service manager, got error: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+			tm = auth.NewTokenManager(meta, clientset)
+			ssm, err = storage.NewGCSServiceManager()
+			if err != nil {
+				mc.ErrWriter.WriteMsg(fmt.Sprintf("Failed to setup storage service manager, got error: %v for identity pool %s and identity provider %s, retrying...", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider))
+				return false, nil
+			}
+			m.TokenManager = tm
+			m.StorageServiceManager = ssm
+			return true, nil
 		}
-		return tm, ssm, nil
+		if err := m.executeFuncWithRetry(ctx, mc, setupTokenAndStorageManagerFunc); err != nil {
+			return err
+		}
+		klog.V(4).Infof("Setup complete for token manager and storage service manager %v and %v", m.TokenManager, m.StorageServiceManager)
+		return nil
 	}
-	return nil, nil, fmt.Errorf("Either of identity-pool %s or identity-provider %s were not provided", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+	return fmt.Errorf("Verify both identity pool and identity provider are provided, got: %s and %s respectively", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 }
 
 func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
