@@ -462,7 +462,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, tokenSource oa
 		if ss == nil {
 			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 			if err != nil {
-				mc.ErrWriter.WriteMsg(fmt.Sprintf("%q: %q: %v %v, retrying...", util.SidecarBucketAccessCheckErrorPrefix, util.StorageServiceErrorStr, storage.ParseErrCode(err), err))
+				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("%q: %v %v, retrying...", util.StorageServiceErrorStr, storage.ParseErrCode(err), err)))
 				return false, nil
 			}
 			klog.V(4).Infof("Created storage service %v", ss)
@@ -470,7 +470,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, tokenSource oa
 
 		if bucketName != "_" {
 			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
-				mc.ErrWriter.WriteMsg(fmt.Sprintf("%q: failed to get GCS bucket %q: %v %v", util.SidecarBucketAccessCheckErrorPrefix, bucketName, storage.ParseErrCode(err), err))
+				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("failed to get GCS bucket %q: %v %v", bucketName, storage.ParseErrCode(err), err)))
 				return false, nil
 			}
 			klog.V(4).Infof("Bucket access check passed for %s", bucketName)
@@ -516,14 +516,14 @@ func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset cli
 		setupTokenAndStorageManagerFunc := func(ctx context.Context) (bool, error) {
 			meta, err := cpmeta.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 			if err != nil {
-				mc.ErrWriter.WriteMsg(fmt.Sprintf("Failed to setup metadata service: %v for identity pool %s and identity provider %s, retrying....", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider))
+				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("failed to setup metadata service, got error: %v for identity pool %q and identity provider %q, retrying....", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)))
 				return false, nil
 			}
 
 			tm = auth.NewTokenManager(meta, clientset)
 			ssm, err = storage.NewGCSServiceManager()
 			if err != nil {
-				mc.ErrWriter.WriteMsg(fmt.Sprintf("Failed to setup storage service manager, got error: %v for identity pool %s and identity provider %s, retrying...", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider))
+				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("failed to setup storage service manager, got error: %v for identity pool %q and identity provider %q, retrying...", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)))
 				return false, nil
 			}
 			m.TokenManager = tm
@@ -536,7 +536,7 @@ func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset cli
 		klog.V(4).Infof("Setup complete for token manager and storage service manager %v and %v", m.TokenManager, m.StorageServiceManager)
 		return nil
 	}
-	return fmt.Errorf("Verify both identity pool and identity provider are provided, got: %s and %s respectively", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
+	return errors.New(retryableError(fmt.Sprintf("both identity pool and identity provider must be provided, got: %q and %q respectively", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)))
 }
 
 func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
@@ -569,4 +569,8 @@ func fetchIdentityBindingToken(ctx context.Context, k8sSAToken string, identityP
 		TokenType:   stsResponse.TokenType,
 		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
 	}, nil
+}
+
+func retryableError(inputErr string) string {
+	return fmt.Sprintf("%s: %v", util.SidecarBucketAccessCheckErrorPrefix, inputErr)
 }
