@@ -83,6 +83,10 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
+		if mc == nil {
+			klog.Errorf("failed to create mount config for %s", sp)
+			continue
+		}
 		if mc.EnableCloudProfilerForSidecar {
 			cfg := profiler.Config{
 				Service: "gke-gcsfuse-sidecar",
