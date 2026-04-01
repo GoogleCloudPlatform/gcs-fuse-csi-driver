@@ -510,7 +510,7 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, err
 		}
 		if strings.Contains(errMsgStr, util.SidecarBucketAccessCheckErrorPrefix) {
 			if code == codes.Internal {
-				code = codes.Unavailable // Sidecar bucket access check retries on any failure to connect to the bucket so mark these as Unavailable to avoid SLO false triggers.
+				code = codes.Unavailable // Sidecar bucket access check retries on any failure to connect to the bucket or metadata service setup retries on any failure, so mark these as Unavailable to avoid SLO false triggers.
 			}
 			return code, fmt.Errorf("%v", errMsgStr) // Remember the error string already contains SidecarBucketAccessCheckErrorPrefix
 		}
