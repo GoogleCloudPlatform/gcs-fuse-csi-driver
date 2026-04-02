@@ -141,7 +141,7 @@ type fakeScanBucketImplFunc struct {
 
 // Scan is the mock implementation of the scanBucketImpl function.
 // It checks for context cancellation (like timeouts) before returning the predefined info and error.
-func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
+func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume) error {
 	f.wasCalled = true
 	select {
 	case <-ctx.Done():
@@ -352,10 +352,7 @@ func createPod(name, namespace string, volumes []v1.Volume, labels map[string]st
 
 func TestCheckPVRelevance(t *testing.T) {
 	now := time.Date(2025, time.August, 27, 0, 0, 0, 0, time.UTC)
-	resyncPeriod, err := time.ParseDuration(defaultScanResyncPeriodVal)
-	if err != nil {
-		t.Fatalf("parse duration error: %v", err)
-	}
+	resyncPeriod := defaultScanResyncPeriodDuration
 	lastUpdateTimeWithinResyncPeriod := now.Add(-resyncPeriod / 2).Format(time.RFC3339)
 	lastUpdateTimeOutsideResyncPeriod := now.Add(-resyncPeriod * 2).Format(time.RFC3339)
 
@@ -486,6 +483,22 @@ func TestCheckPVRelevance(t *testing.T) {
 			}},
 		},
 		{
+			name: "Relevant scan is pending - Zonal bucket by storageClass - Should return relevant, pending scan, and isZonalBucket field should be true",
+			pv: createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, map[string]string{
+				putil.AnnotationLastUpdatedTime: lastUpdateTimeOutsideResyncPeriod,
+			}, nil),
+			scs:               []*storagev1.StorageClass{validSC},
+			wantRelevant:      true,
+			wantBucket:        testBucketName,
+			wantIsPendingScan: true,
+			wantIsZonalBucket: true,
+			fakeGetAttrs: fakebucketAttrsFunc{attrs: &storage.BucketAttrs{
+				Name:          testBucketName,
+				ProjectNumber: projectNumber,
+				StorageClass:  "rapid",
+			}},
+		},
+		{
 			name:              "Relevant - Override mode - Should return relevant and override",
 			pv:                createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, validOverrideAnnotations, nil),
 			scs:               []*storagev1.StorageClass{validSC},
@@ -585,8 +598,8 @@ func TestCheckPVRelevance(t *testing.T) {
 				if bucketI.isOverride != tc.wantIsOverride {
 					t.Errorf("checkPVRelevance(%v) isOverride = %v, want %v", tc.pv.Name, bucketI.isOverride, tc.wantIsOverride)
 				}
-				if isZonalBucket(bucketI.locationType) != tc.wantIsZonalBucket {
-					t.Errorf("checkPVRelevance(%v) locationType = %s, want %t", tc.pv.Name, bucketI.locationType, tc.wantIsZonalBucket)
+				if bucketI.isZonalBucket != tc.wantIsZonalBucket {
+					t.Errorf("checkPVRelevance(%v) bucket = %t, want %t", tc.pv.Name, bucketI.isZonalBucket, tc.wantIsZonalBucket)
 				}
 			}
 			if isPendingScan != tc.wantIsPendingScan {
@@ -617,7 +630,6 @@ func TestSyncPV(t *testing.T) {
 	attrs := &storage.BucketAttrs{
 		Name:          testBucketName,
 		ProjectNumber: 111,
-		LocationType:  "region",
 	}
 	attrsFunc := fakebucketAttrsFunc{attrs: attrs}
 	bucketAttrs = attrsFunc.getBucketAttributes
@@ -646,10 +658,9 @@ func TestSyncPV(t *testing.T) {
 			bucketI:        scanResult,
 			wantErr:        false,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects:   "1234",
-				putil.AnnotationTotalSize:    "567890",
-				putil.AnnotationStatus:       "completed",
-				putil.AnnotationLocationType: "region",
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
 			},
 			expectScanCall: true,
 		},
@@ -659,10 +670,9 @@ func TestSyncPV(t *testing.T) {
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects:   "1234",
-				putil.AnnotationTotalSize:    "567890",
-				putil.AnnotationStatus:       "completed",
-				putil.AnnotationLocationType: "region",
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
 			},
 			wantErr:        false,
 			expectScanCall: true,
@@ -674,10 +684,9 @@ func TestSyncPV(t *testing.T) {
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects:   "1234",
-				putil.AnnotationTotalSize:    "567890",
-				putil.AnnotationStatus:       "completed",
-				putil.AnnotationLocationType: "region",
+				putil.AnnotationNumObjects: "1234",
+				putil.AnnotationTotalSize:  "567890",
+				putil.AnnotationStatus:     "completed",
 			},
 			wantErr:         false,
 			expectScanCall:  true,
@@ -700,10 +709,9 @@ func TestSyncPV(t *testing.T) {
 			scanErr:        context.DeadlineExceeded,
 			wantErr:        false,
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects:   "0",
-				putil.AnnotationTotalSize:    "0",
-				putil.AnnotationStatus:       "timeout",
-				putil.AnnotationLocationType: "region",
+				putil.AnnotationNumObjects: "0",
+				putil.AnnotationTotalSize:  "0",
+				putil.AnnotationStatus:     "timeout",
 			},
 			expectScanCall: true,
 		},
@@ -744,10 +752,9 @@ func TestSyncPV(t *testing.T) {
 			wantErr:        false,
 			expectScanCall: false, // Scan should be bypassed
 			expectedAnnots: map[string]string{
-				putil.AnnotationNumObjects:   "111",
-				putil.AnnotationTotalSize:    "2222",
-				putil.AnnotationStatus:       "override",
-				putil.AnnotationLocationType: "region",
+				putil.AnnotationNumObjects: "111",
+				putil.AnnotationTotalSize:  "2222",
+				putil.AnnotationStatus:     "override",
 			},
 		},
 	}
@@ -802,12 +809,8 @@ func TestSyncPV(t *testing.T) {
 					// Simulate controller losing the in-memory state because of a crash.
 					f.scanner.trackedPVs = make(map[string]syncInfo)
 				}
-				scanResyncPeriod, err := time.ParseDuration(defaultScanResyncPeriodVal)
-				if err != nil {
-					t.Fatalf("parse duration error: %v", err)
-				}
-				f.mockTimeImpl.currentTime = f.mockTimeImpl.currentTime.Add(scanResyncPeriod * 2)
-				err = f.scanner.syncPV(context.Background(), tc.key)
+				f.mockTimeImpl.currentTime = f.mockTimeImpl.currentTime.Add(defaultScanResyncPeriodDuration * 2)
+				err := f.scanner.syncPV(context.Background(), tc.key)
 				if tc.wantErr != (err != nil) {
 					t.Errorf("syncPV(%q) returned error: %v, wantErr: %v", tc.key, err, tc.wantErr)
 				}
@@ -1226,58 +1229,58 @@ func TestDeletePod(t *testing.T) {
 
 // TestGetScanTimeout tests the getDurationAttribute function.
 func TestGetDurationAttribute(t *testing.T) {
-	customScanTimeoutVal := "42m"
-	customScanResyncPeriodVal := "5m"
+	customScanTimeoutDuration := time.Duration(42 * time.Minute)
+	customScanResyncPeriodDuration := time.Duration(5 * time.Minute)
 	testCases := []struct {
 		name            string
 		attributeKey    string
 		attributes      map[string]string
-		defaultDuration string
-		wantTimeout     string
+		defaultDuration time.Duration
+		wantTimeout     time.Duration
 		wantErr         bool
 	}{
 		{
 			name:            "No bucket scan timeout attribute - Use default",
 			attributeKey:    scanTimeoutKey,
-			defaultDuration: defaultScanTimeoutVal,
-			wantTimeout:     defaultScanTimeoutVal,
+			defaultDuration: defaultScanTimeoutDuration,
+			wantTimeout:     defaultScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "No bucket scan resync period attribute - Use default",
 			attributeKey:    scanResyncPeriodKey,
-			defaultDuration: defaultScanResyncPeriodVal,
-			wantTimeout:     defaultScanResyncPeriodVal,
+			defaultDuration: defaultScanResyncPeriodDuration,
+			wantTimeout:     defaultScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan timeout attribute - Override",
 			attributes:      map[string]string{scanTimeoutKey: "42m"},
-			defaultDuration: defaultScanTimeoutVal,
+			defaultDuration: defaultScanTimeoutDuration,
 			attributeKey:    scanTimeoutKey,
-			wantTimeout:     customScanTimeoutVal,
+			wantTimeout:     customScanTimeoutDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Valid bucket scan resync period attribute - Override",
 			attributes:      map[string]string{scanResyncPeriodKey: "5m"},
-			defaultDuration: defaultScanResyncPeriodVal,
+			defaultDuration: defaultScanResyncPeriodDuration,
 			attributeKey:    scanResyncPeriodKey,
-			wantTimeout:     customScanResyncPeriodVal,
+			wantTimeout:     customScanResyncPeriodDuration,
 			wantErr:         false,
 		},
 		{
 			name:            "Invalid duration - Error",
 			attributes:      map[string]string{scanTimeoutKey: "5min"},
 			attributeKey:    scanTimeoutKey,
-			defaultDuration: defaultScanTimeoutVal,
+			defaultDuration: defaultScanTimeoutDuration,
 			wantErr:         true,
 		},
 		{
 			name:            "Non-positive duration - Error",
 			attributes:      map[string]string{scanTimeoutKey: "0s"},
 			attributeKey:    scanTimeoutKey,
-			defaultDuration: defaultScanTimeoutVal,
+			defaultDuration: defaultScanTimeoutDuration,
 			wantErr:         true,
 		},
 	}
@@ -1293,11 +1296,7 @@ func TestGetDurationAttribute(t *testing.T) {
 					t.Errorf("getDurationAttribute() error = %v, wantErr %v", err, tc.wantErr)
 				}
 			} else {
-				wantTimeout, err := time.ParseDuration(tc.wantTimeout)
-				if err != nil {
-					t.Fatalf("parse duration error: %v", err)
-				}
-				if timeout != wantTimeout {
+				if timeout != tc.wantTimeout {
 					t.Errorf("getDurationAttribute() = %v, want %v", timeout, tc.wantTimeout)
 				}
 			}
@@ -1311,11 +1310,7 @@ func TestUpdatePVScanResult(t *testing.T) {
 	pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
 	f := newTestFixture(t, pv)
 	now := time.Date(2025, 9, 1, 10, 0, 0, 0, time.UTC)
-	scanResyncPeriod, err := time.ParseDuration(defaultScanResyncPeriodVal)
-	if err != nil {
-		t.Fatalf("parse duration error: %v", err)
-	}
-	future := now.Add(scanResyncPeriod)
+	future := now.Add(defaultScanResyncPeriodDuration)
 	f.mockTimeImpl.currentTime = now
 
 	bucketI := &bucketInfo{
@@ -1390,9 +1385,9 @@ func TestPatchPVAnnotations(t *testing.T) {
 	}
 }
 
-// TestOnlyDirValue tests the onlyDirValue function.
+// TestGetOnlyDirValue tests the getOnlyDirValue function.
 // This function extracts the directory name from a mount option string.
-func TestOnlyDirValue(t *testing.T) {
+func TestGetOnlyDirValue(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -1400,26 +1395,14 @@ func TestOnlyDirValue(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "Valid mount option in key:val format with dir name",
-			input: fmt.Sprintf("x:y,%s:%s,a:b", onlyDirMountOptPrefix, testDirName),
+			name:  "Valid mount option in key:val format with dir name surrounded by '/'",
+			input: onlyDirMountOptPrefix + ":/" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
 		{
-			name:  "Valid mount option in key=val format with dir name",
-			input: fmt.Sprintf("x=y,%s=%s,a=b", onlyDirMountOptPrefix, testDirName),
-			want:  testDirName,
-			ok:    true,
-		},
-		{
-			name:  "Valid mount option in key:val format with dir name ends with '/'",
-			input: fmt.Sprintf("x:y,%s:%s/,a:b", onlyDirMountOptPrefix, testDirName),
-			want:  testDirName,
-			ok:    true,
-		},
-		{
-			name:  "Valid mount option in key=val format with dir name ends by '/'",
-			input: fmt.Sprintf("x=y,%s=%s/,a=b", onlyDirMountOptPrefix, testDirName),
+			name:  "Valid mount option in key=val format with dir name surrounded by '/'",
+			input: onlyDirMountOptPrefix + "=/" + testDirName + "/",
 			want:  testDirName,
 			ok:    true,
 		},
@@ -1448,9 +1431,6 @@ func TestOnlyDirValue(t *testing.T) {
 
 func TestDefaultScanBucket(t *testing.T) {
 	testPV := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
-	testPVRequestBucketMetrics := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, map[string]string{useBucketMetricsKey: "true"})
-	testSC := createStorageClass(testSCName, nil)
-	testSCRequestBucketMetrics := createStorageClass(testSCName, map[string]string{useBucketMetricsKey: "true"})
 	datafluxConfig := &DatafluxConfig{Parallelism: 1, BatchSize: 10}
 
 	tests := []struct {
@@ -1465,49 +1445,31 @@ func TestDefaultScanBucket(t *testing.T) {
 		wantErr            bool
 		expectMetricsCall  bool
 		expectDatafluxCall bool
-		useBucketMetrics   bool
-		scFallback         bool
 	}{
 		{
-			name:         "Directory specified - Dataflux success",
-			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName},
+			name:         "onlyDir - Dataflux success",
+			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
 			fakeDataflux: fakeScanFunc{
 				numObjects:     200,
 				totalSizeBytes: 2000,
 			},
 			wantBucketI: &bucketInfo{
-				name: testBucketName, dir: testDirName,
+				name: testBucketName, dir: testDirName, onlyDirSpecified: true,
 				numObjects: 200, totalSizeBytes: 2000,
 			},
 			expectMetricsCall:  false,
 			expectDatafluxCall: true,
 		},
 		{
-			name:               "Directory specified - Dataflux error",
-			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName},
+			name:               "onlyDir - Dataflux error",
+			inputBucketI:       &bucketInfo{name: testBucketName, dir: testDirName, onlyDirSpecified: true},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  false,
 			expectDatafluxCall: true,
 		},
 		{
-			name:         "Directory specified - useBucketMetrics true - Skip bucket metrics and use Dataflux",
-			inputBucketI: &bucketInfo{name: testBucketName, dir: testDirName},
-			fakeDataflux: fakeScanFunc{
-				numObjects:     200,
-				totalSizeBytes: 2000,
-			},
-			wantBucketI: &bucketInfo{
-				name: testBucketName, dir: testDirName,
-				numObjects: 200, totalSizeBytes: 2000,
-			},
-			wantErr:            false,
-			expectMetricsCall:  false,
-			expectDatafluxCall: true,
-			useBucketMetrics:   true,
-		},
-		{
-			name:         "No directory specified - useBucketMetrics true - Metrics success",
+			name:         "no onlyDir - Metrics success",
 			inputBucketI: &bucketInfo{name: testBucketName},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
@@ -1518,25 +1480,9 @@ func TestDefaultScanBucket(t *testing.T) {
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: false,
-			useBucketMetrics:   true,
 		},
 		{
-			name:         "No directory specified - SC useBucketMetrics fallback - Metrics success",
-			inputBucketI: &bucketInfo{name: testBucketName},
-			fakeMetrics: fakeScanFunc{
-				numObjects:     100,
-				totalSizeBytes: 1000,
-			},
-			wantBucketI: &bucketInfo{
-				name: testBucketName, numObjects: 100, totalSizeBytes: 1000,
-			},
-			expectMetricsCall:  true,
-			expectDatafluxCall: false,
-			useBucketMetrics:   true,
-			scFallback:         true,
-		},
-		{
-			name:         "No directory specified - useBucketMetrics true - Metrics error, Dataflux success (Fallback)",
+			name:         "no onlyDir - Metrics error, Dataflux success (Fallback)",
 			inputBucketI: &bucketInfo{name: testBucketName},
 			fakeMetrics: fakeScanFunc{
 				numObjects:     100,
@@ -1552,29 +1498,14 @@ func TestDefaultScanBucket(t *testing.T) {
 			},
 			expectMetricsCall:  true,
 			expectDatafluxCall: true,
-			useBucketMetrics:   true,
 		},
 		{
-			name:               "No directory specified - useBucketMetrics true - Metrics error, Dataflux error (Fallback Fails)",
+			name:               "no onlyDir - Metrics error, Dataflux error (Fallback Fails)",
 			inputBucketI:       &bucketInfo{name: testBucketName},
 			fakeMetrics:        fakeScanFunc{err: errors.New("metrics failed")},
 			fakeDataflux:       fakeScanFunc{err: errors.New("dataflux failed")},
 			wantErr:            true,
 			expectMetricsCall:  true,
-			expectDatafluxCall: true,
-			useBucketMetrics:   true,
-		},
-		{
-			name: "No directory specified - useBucketMetrics false - Dataflux success",
-			fakeDataflux: fakeScanFunc{
-				numObjects:     200,
-				totalSizeBytes: 2000,
-			},
-			inputBucketI: &bucketInfo{name: testBucketName},
-			wantBucketI: &bucketInfo{
-				name: testBucketName, numObjects: 200, totalSizeBytes: 2000,
-			},
-			expectMetricsCall:  false,
 			expectDatafluxCall: true,
 		},
 	}
@@ -1595,24 +1526,14 @@ func TestDefaultScanBucket(t *testing.T) {
 
 			bucketICopy := *tc.inputBucketI
 			gotBucketI := &bucketICopy
-			pv := testPV
-			sc := testSC
-			if tc.useBucketMetrics {
-				if tc.scFallback {
-					sc = testSCRequestBucketMetrics
-				} else {
-					pv = testPVRequestBucketMetrics
-				}
-			}
-
-			err := defaultScanBucket(f.scanner, context.Background(), gotBucketI, time.Minute, pv, sc)
+			err := defaultScanBucket(f.scanner, context.Background(), gotBucketI, time.Minute, testPV)
 
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("defaultScanBucket() error = %v, wantErr %v", err, tc.wantErr)
 			}
 
 			if !tc.wantErr {
-				if diff := cmp.Diff(*tc.wantBucketI, *gotBucketI, cmp.AllowUnexported(bucketInfo{})); diff != "" {
+				if diff := cmp.Diff(tc.wantBucketI, gotBucketI, cmp.AllowUnexported(bucketInfo{})); diff != "" {
 					t.Errorf("defaultScanBucket() info diff (-want +got):\n%q", diff)
 				}
 			}
@@ -1882,7 +1803,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 		storageControlClient storageControlClient
 	}{
 		{
-			name: "AnyC not found - create it - done false",
+			name: "AnyC not found - create it - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-aib"}, nil
@@ -1890,10 +1811,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 			},
 			wantErr: false,
@@ -1907,7 +1828,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC not found - user provided zones - create it - done false",
+			name: "AnyC not found - user provided zones - create it - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -1915,10 +1836,10 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -1949,7 +1870,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC not found - user provided zones wildcard - create all - done false",
+			name: "AnyC not found - user provided zones wildcard - create all - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -1957,16 +1878,16 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-c": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-d": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -1997,7 +1918,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC not found - user provided zones empty string - create all - done false",
+			name: "AnyC not found - user provided zones empty string - create all - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -2005,16 +1926,16 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-c": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 				"zone-d": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -2156,10 +2077,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "creating",
+					state: "creating",
+					err:   errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "creating",
+					state: "creating",
+					err:   errRequeueNeeded,
 				},
 			},
 			wantErr: false,
@@ -2172,7 +2095,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC found - state PAUSED - requeue not needed",
+			name: "AnyC found - state PAUSED - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b"}, nil
@@ -2180,12 +2103,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "paused",
-					done:    true,
+					state: "paused",
+					err:   nil,
 				},
 				"zone-b": {
-					message: "paused",
-					done:    true,
+					state: "paused",
+					err:   nil,
 				},
 			},
 			wantErr: false,
@@ -2206,12 +2129,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "disabled",
-					done:    true,
+					state: "disabled",
+					err:   nil,
 				},
 				"zone-b": {
-					message: "disabled",
-					done:    true,
+					state: "disabled",
+					err:   nil,
 				},
 			},
 			wantErr: false,
@@ -2232,10 +2155,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "updating",
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "updating",
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 			},
 			wantErr: false,
@@ -2257,12 +2182,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "running",
-					done:    true,
+					state: "running",
+					err:   nil,
 				},
 				"zone-b": {
-					message: "running",
-					done:    true,
+					state: "running",
+					err:   nil,
 				},
 			},
 			wantErr: false,
@@ -2333,7 +2258,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 					err: fmt.Errorf("failed"),
 				},
 				"zone-b": {
-					message: "creating",
+					err: errRequeueNeeded,
 				},
 			},
 			storageControlClient: &mockStorageControlClient{
@@ -2349,7 +2274,7 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "One zone fails - already exists with different TTL - should update - done false",
+			name: "One zone fails - already exists with different TTL - should update - requeue needed",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
 					return []string{"zone-a", "zone-b", "zone-c", "zone-d"}, nil
@@ -2357,10 +2282,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "updating",
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "updating",
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 			},
 			wantErr: false,
@@ -2409,10 +2336,12 @@ func TestCreateAnywhereCache(t *testing.T) {
 			wantErr: false,
 			wantResults: map[string]*anywhereCacheSyncResult{
 				"zone-a": {
-					message: "updating",
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 				"zone-b": {
-					message: "updating",
+					state: "running",
+					err:   errRequeueNeeded,
 				},
 			},
 			pv: &v1.PersistentVolume{
@@ -2487,8 +2416,8 @@ func TestCreateAnywhereCache(t *testing.T) {
 				if !ok {
 					t.Fatalf("zone %q not found in gotResults", zone)
 				}
-				if wantResult.message != gotResult.message {
-					t.Fatalf("zone %q want state: %q, got state: %q", zone, wantResult.message, gotResult.message)
+				if wantResult.state != gotResult.state {
+					t.Fatalf("zone %q want state: %q, got state: %q", zone, wantResult.state, gotResult.state)
 				}
 				if errors.Is(wantResult.err, errRequeueNeeded) != errors.Is(gotResult.err, errRequeueNeeded) {
 					t.Fatalf("zone %q want requeueNeeded: %t, got requeueNeeded: %t", zone, errors.Is(wantResult.err, errRequeueNeeded), errors.Is(gotResult.err, errRequeueNeeded))

@@ -656,38 +656,13 @@ func TestBuildSCDetails(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "TestBuildSCDetails - Missing fuseFileCacheMediumPriority - Should use default value",
+			name: "TestBuildSCDetails - Missing fuseFileCacheMediumPriority",
 			sc: &storagev1.StorageClass{
 				ObjectMeta:   metav1.ObjectMeta{Name: "missing-priority-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseFileCacheMediumPriority").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
-			want: &scDetails{
-				fileCacheMediumPriority: map[string][]string{
-					"general_purpose": {"ram", "lssd"},
-					"gpu":             {"ram", "lssd"},
-					"tpu":             {"ram"},
-				},
-				fuseMemoryAllocatableFactor:           0.7,
-				fuseEphemeralStorageAllocatableFactor: 0.85,
-				volumeAttributes: map[string]string{
-					"mountOptions":                   "1",
-					"fileCacheCapacity":              "2",
-					"fileCacheForRangeRead":          "3",
-					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
-				},
-				mountOptions: defaultMountOptions,
-			},
+			wantErr: true,
 		},
 		{
 			name: "TestBuildSCDetails - Invalid fuseFileCacheMediumPriority",
@@ -699,38 +674,13 @@ func TestBuildSCDetails(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "TestBuildSCDetails - Missing fuseMemoryAllocatableFactor - Should use default value",
+			name: "TestBuildSCDetails - Missing fuseMemoryAllocatableFactor",
 			sc: &storagev1.StorageClass{
 				ObjectMeta:   metav1.ObjectMeta{Name: "missing-mem-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseMemoryAllocatableFactor").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
-			want: &scDetails{
-				fileCacheMediumPriority: map[string][]string{
-					"general_purpose": {"ram", "lssd"},
-					"gpu":             {"ram", "lssd"},
-					"tpu":             {"ram"},
-				},
-				fuseMemoryAllocatableFactor:           0.7,
-				fuseEphemeralStorageAllocatableFactor: 0.85,
-				volumeAttributes: map[string]string{
-					"mountOptions":                   "1",
-					"fileCacheCapacity":              "2",
-					"fileCacheForRangeRead":          "3",
-					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
-				},
-				mountOptions: defaultMountOptions,
-			},
+			wantErr: true,
 		},
 		{
 			name: "TestBuildSCDetails - PV override",
@@ -794,38 +744,13 @@ func TestBuildSCDetails(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "TestBuildSCDetails - Missing fuseEphemeralStorageAllocatableFactor - Should use default value",
+			name: "TestBuildSCDetails - Missing fuseEphemeralStorageAllocatableFactor",
 			sc: &storagev1.StorageClass{
 				ObjectMeta:   metav1.ObjectMeta{Name: "missing-storage-factor-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
 				Parameters:   NewSCConfigBuilder().WithoutParameter("fuseEphemeralStorageAllocatableFactor").Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
-			want: &scDetails{
-				fileCacheMediumPriority: map[string][]string{
-					"general_purpose": {"ram", "lssd"},
-					"gpu":             {"ram", "lssd"},
-					"tpu":             {"ram"},
-				},
-				fuseMemoryAllocatableFactor:           0.7,
-				fuseEphemeralStorageAllocatableFactor: 0.85,
-				volumeAttributes: map[string]string{
-					"mountOptions":                   "1",
-					"fileCacheCapacity":              "2",
-					"fileCacheForRangeRead":          "3",
-					"metadataStatCacheCapacity":      "4",
-					"metadataTypeCacheCapacity":      "5",
-					"metadataCacheTTLSeconds":        "6",
-					"gcsfuseLoggingSeverity":         "7",
-					"skipCSIBucketAccessCheck":       "8",
-					"hostNetworkPodKSA":              "9",
-					"identityProvider":               "10",
-					"disableMetrics":                 "11",
-					"identityPool":                   "12",
-					"enableCloudProfilerForSidecar":  "13",
-					"gcsfuseMetadataPrefetchOnMount": "14",
-				},
-				mountOptions: defaultMountOptions,
-			},
+			wantErr: true,
 		},
 		{
 			name: "TestBuildSCDetails - Invalid fuseEphemeralStorageAllocatableFactor",
@@ -971,11 +896,10 @@ func TestBuildPVDetails(t *testing.T) {
 		{
 			name: "TestBuildPVDetails - Should parse valid annotations",
 			annotations: map[string]string{
-				putil.AnnotationNumObjects:   "12345",
-				putil.AnnotationTotalSize:    "67890",
-				putil.AnnotationLocationType: "zone",
+				putil.AnnotationNumObjects: "12345",
+				putil.AnnotationTotalSize:  "67890",
 			},
-			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890, locationType: "zone"},
+			want:    &pvDetails{name: "test-pv", numObjects: 12345, totalSizeBytes: 67890},
 			wantErr: false,
 		},
 		{
@@ -1346,32 +1270,6 @@ func TestBuildCacheRequirements(t *testing.T) {
 				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
 				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
 				fileCacheBytes:         10 * mib,
-			},
-		},
-		{
-			name: "Zonal bucket - Should disable file cache",
-			pv: &pvDetails{
-				numObjects:     1000,
-				totalSizeBytes: 10 * mib,
-				locationType:   "zone",
-			},
-			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
-				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
-				fileCacheBytes:         0,
-			},
-		},
-		{
-			name: "Zonal bucket case insensitive - Should disable file cache",
-			pv: &pvDetails{
-				numObjects:     1000,
-				totalSizeBytes: 10 * mib,
-				locationType:   "ZoNe",
-			},
-			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObject,
-				metadataTypeCacheBytes: 1000 * metadataTypeCacheBytesPerObject,
-				fileCacheBytes:         0,
 			},
 		},
 		{
@@ -2127,7 +2025,6 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 				podDetails: basePod,
 			},
 			wantOptions: []string{
-				"file-cache:max-size-mb:0",
 				"implicit-dirs",
 				"metadata-cache:stat-cache-max-size-mb:2",
 				"metadata-cache:type-cache-max-size-mb:1",
@@ -2150,53 +2047,8 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"file-cache:max-size-mb:0",
 				"metadata-cache:stat-cache-max-size-mb:2",
 				"metadata-cache:type-cache-max-size-mb:1",
-			},
-		},
-		{
-			name: "Zero stat cache required - Should disable stat cache",
-			config: &ProfileConfig{
-				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
-				scDetails: baseSC,
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           0,
-						ephemeralStorageBytes: 0,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"implicit-dirs",
-				"file-cache:max-size-mb:0",
-				"metadata-cache:stat-cache-max-size-mb:0",
-				"metadata-cache:type-cache-max-size-mb:0",
-			},
-		},
-		{
-			name: "Zero type cache required - Should disable type cache",
-			config: &ProfileConfig{
-				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
-				scDetails: baseSC,
-				nodeDetails: &nodeDetails{
-					nodeType: nodeTypeGPU,
-					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           reqStat,
-						ephemeralStorageBytes: 0,
-					},
-					name: "test-gpu-node",
-				},
-				podDetails: basePod,
-			},
-			wantOptions: []string{
-				"implicit-dirs",
-				"file-cache:max-size-mb:0",
-				"metadata-cache:stat-cache-max-size-mb:2",
-				"metadata-cache:type-cache-max-size-mb:0",
 			},
 		},
 		{
