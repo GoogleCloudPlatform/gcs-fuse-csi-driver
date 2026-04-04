@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"net/http"
 	"os"
@@ -61,18 +62,20 @@ type manager struct {
 	metricsEndpoint string
 	fuseSocketDir   string
 	clientset       clientset.Interface
+	streamMetrics   bool
 
 	maximumNumberOfCollectors   int
 	volumePublishPathRegistered sets.Set[string]
 	mutex                       sync.Mutex
 }
 
-func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics bool) Manager {
 	mm := &manager{
 		registry:                    prometheus.NewRegistry(),
 		metricsEndpoint:             metricsEndpoint,
 		fuseSocketDir:               fuseSocketDir,
 		clientset:                   clientset,
+		streamMetrics:               streamMetrics,
 		volumePublishPathRegistered: sets.Set[string]{},
 		maximumNumberOfCollectors:   maximumNumberOfCollectors,
 		mutex:                       sync.Mutex{},
@@ -124,7 +127,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
 		"pod_uid":        "", // podUID is emptied to avoid infinite cardinality in the metric labels
-	}, mm.clientset)
+	}, mm.clientset, mm.streamMetrics)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
 	mm.mutex.Lock()
@@ -168,7 +171,7 @@ func (mm *manager) UnregisterMetricsCollector(targetPath, nodeName string) {
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
 
 	// metricsCollector uses a hash of pod UID and volume name as an identifier.
-	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil)
+	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, mm.streamMetrics)
 
 	// Lock the number of registered collectors while we attempt to unregister a collector.
 	mm.mutex.Lock()
@@ -191,10 +194,11 @@ type metricsCollector struct {
 	volumeName       string
 	httpClient       *http.Client
 	clientset        clientset.Interface
+	streamMetrics    bool
 }
 
 // NewMetricsCollector returns a new Collector exposing metrics read from the give path.
-func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface) prometheus.Collector {
+func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool) prometheus.Collector {
 	c := &metricsCollector{
 		emptyDirBasePath: emptyDirBasePath,
 		constLabels:      labels,
@@ -203,6 +207,7 @@ func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, p
 		podUID:           podUID,
 		volumeName:       volumeName,
 		clientset:        clientset,
+		streamMetrics:    streamMetrics,
 	}
 
 	// Creating a new HTTP client that is configured to make HTTP requests over a unix domain socket.
@@ -258,15 +263,47 @@ func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 
-	families, err := ProcessMetricsData(resp.Body)
-	if err != nil {
-		klog.Errorf("failed to process metrics data: %v", err)
+	if c.streamMetrics {
+		for mf, err := range ProcessMetricsDataAsStream(resp.Body) {
+			if err != nil {
+				klog.Errorf("failed to decode metrics data: %v", err)
+				return
+			}
+			c.emitMetricFamily(mf, ch)
+		}
+	} else {
+		families, err := ProcessMetricsData(resp.Body)
+		if err != nil {
+			klog.Errorf("failed to process metrics data: %v", err)
 
-		return
+			return
+		}
+
+		for _, mf := range families {
+			c.emitMetricFamily(mf, ch)
+		}
 	}
+}
 
-	for _, mf := range families {
-		c.emitMetricFamily(mf, ch)
+// ProcessMetricsDataAsStream processes metrics that follow Prometheus text format,
+// returning an iterator of MetricFamily.
+func ProcessMetricsDataAsStream(metricsReader io.Reader) iter.Seq2[*dto.MetricFamily, error] {
+	return func(yield func(*dto.MetricFamily, error) bool) {
+		decoder := expfmt.NewDecoder(metricsReader, expfmt.FmtText)
+		for {
+			var mf dto.MetricFamily
+			err := decoder.Decode(&mf)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if !yield(&mf, nil) {
+				return
+			}
+		}
 	}
 }
 
