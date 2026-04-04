@@ -19,6 +19,7 @@ package metrics
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -54,7 +55,7 @@ func TestNewMetricsManager(t *testing.T) {
 			t.Logf("test case: %s", tc.name)
 
 			clientset := clientset.NewFakeClientset()
-			manager := NewMetricsManager(tc.endpoint, tc.socketDir, tc.maxCollectors, clientset).(*manager)
+			manager := NewMetricsManager(tc.endpoint, tc.socketDir, tc.maxCollectors, clientset, false).(*manager)
 
 			if manager.metricsEndpoint != tc.endpoint {
 				t.Errorf("NewMetricsManager did not set metricsEndpoint correctly. Got %q, want %q", manager.metricsEndpoint, tc.endpoint)
@@ -162,5 +163,32 @@ func validatePrometheusMetric(t *testing.T, metric prometheus.Counter, expectedC
 	}
 	if count != expectedCount {
 		t.Fatalf("failed validating metric count, expected %v, got %v", expectedCount, count)
+	}
+}
+
+func TestProcessMetricsDataAsStream(t *testing.T) {
+	metricsData := `
+# HELP fs_ops_count The cumulative number of ops processed by the file system.
+# TYPE fs_ops_count counter
+fs_ops_count{fs_op="GetInodeAttributes"} 26
+fs_ops_count{fs_op="LookUpInode"} 6
+# HELP gcs_request_count The cumulative number of GCS requests processed along with the GCS method.
+# TYPE gcs_request_count counter
+gcs_request_count{gcs_method="ListObjects"} 32
+gcs_request_count{gcs_method="StatObject"} 6
+`
+	reader := strings.NewReader(metricsData)
+	count := 0
+	for mf, err := range ProcessMetricsDataAsStream(reader) {
+		if err != nil {
+			t.Fatalf("unexpected error parsing stream: %v", err)
+		}
+		if *mf.Name != "fs_ops_count" && *mf.Name != "gcs_request_count" {
+			t.Errorf("unexpected metric name: %s", *mf.Name)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Errorf("expected 2 metric families, got %d", count)
 	}
 }
