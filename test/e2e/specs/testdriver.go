@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"local/test/e2e/utils"
 
@@ -143,6 +144,34 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 	}
 	testK8sSA.Create(ctx)
 
+	// Grant the required consumer permission on the test project to the active identity.
+	// This ensures that tests using the `--billing-project` flag (like requester_pays_bucket)
+	// can successfully authenticate and pass the consumer quota check (403 Forbidden).
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), f.Namespace.Name, K8sServiceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v", testGcpSA.GetEmail())
+	}
+	billingBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/serviceusage.serviceUsageConsumer", "")
+	if isBillingTest() {
+		e2eframework.Logf("Creating Project IAM Policy Binding for Billing Test (Service Usage Consumer)...")
+		billingBinding.Create(ctx)
+		e2eframework.Logf("Waiting 5 minutes for Billing IAM policy propagation to prevent 403 flakiness...")
+		time.Sleep(5 * time.Minute)
+	}
+
+	// This is required to run the cloud profiler tests. See requirements here:
+	// https://cloud.google.com/profiler/docs/profiling-go#permissions
+	profilerAgentBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/cloudprofiler.agent", "")
+	profilerUserBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/cloudprofiler.user", "")
+
+	if isProfilerTest() {
+		e2eframework.Logf("Creating Project IAM Policy Bindings for Cloud Profiler (Agent and User)...")
+		profilerAgentBinding.Create(ctx)
+		profilerUserBinding.Create(ctx)
+		e2eframework.Logf("Waiting 5 minutes for Profiler IAM policy propagation to prevent 403 flakiness...")
+		time.Sleep(5 * time.Minute)
+	}
+
 	config := &storageframework.PerTestConfig{
 		Driver:    n,
 		Framework: f,
@@ -161,6 +190,13 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 		n.volumeStore = []*gcsVolume{}
 
 		testK8sSA.Cleanup(ctx)
+		if isProfilerTest() {
+			profilerUserBinding.Cleanup(ctx)
+			profilerAgentBinding.Cleanup(ctx)
+		}
+		if isBillingTest() {
+			billingBinding.Cleanup(ctx)
+		}
 		if !n.skipGcpSaTest {
 			testGcpSA.Cleanup(ctx)
 		}
@@ -657,4 +693,14 @@ func (n *GCSFuseCSITestDriver) giveDriverAccessToBucketForProfiles(ctx context.C
 	}
 
 	return nil
+}
+
+func isProfilerTest() bool {
+	report := ginkgo.CurrentSpecReport()
+	return strings.Contains(report.FullText(), "cloud_profiler")
+}
+
+func isBillingTest() bool {
+	report := ginkgo.CurrentSpecReport()
+	return strings.Contains(report.FullText(), "billing-project")
 }

@@ -176,8 +176,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		}
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
+		installGcsfuseDependencies(tPod, f, gcsfuseTestBranch, false)
 
 		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
@@ -185,131 +184,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 		if zbEnabled(driver) {
 			baseTestCommand += " --zonal=true"
 		}
-		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
-	}
-
-	gcsfuseIntegrationFileCacheTestNew := func(testPkg string, testName string, config utils.ParsedConfig, secondaryConfig *utils.ParsedConfig) {
-		fullTestName := testPkg
-		if testName != "" {
-			fullTestName = fmt.Sprintf("%s/%s", testPkg, testName)
-		}
-
-		ginkgo.By("Checking GCSFuse version and skip test if needed")
-		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", fullTestName, GCSFuseVersionStr))
-		gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, fullTestName)
-		ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", fullTestName, gcsfuseTestBranch))
-
-		ginkgo.By("Configuring the test pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetImage(specs.GolangImage)
-
-		if config.LogFilePath != "" {
-			framework.Logf("Log file path: %v", config.LogFilePath)
-			tPod.SetCommand(fmt.Sprintf("tail -F %v", config.LogFilePath))
-		}
-
-		tPod.SetResource("1", "1Gi", "5Gi")
-		if strings.HasPrefix(testName, "TestRangeReadTest") {
-			tPod.SetResource("1", "2Gi", "5Gi")
-		}
-
-		sidecarMemoryRequest, sidecarMemoryLimit := configureLargeFileResources(tPod, testPkg, driver)
-
-		// By setting up the cache volume mount here,the sidecar-mounter will automatically populate
-		// the "cache-dir" in its config file map when file cache is enabled.
-		l.volumeResource.VolSource.CSI.VolumeAttributes["fileCacheCapacity"] = config.FileCacheCapacity
-		tPod.SetupTmpVolumeMount(gkeTempDir)
-		framework.Logf("Cache file path: %v", config.CacheDir)
-		tPod.SetupCacheVolumeMount(config.CacheDir, ".volumes/"+volumeName)
-
-		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
-
-		if config.LogSeverity != "" {
-			// Replaced hardcoded logging:severity:info from testdriver set up with parsed log severity
-			mo := l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"]
-			mo = strings.ReplaceAll(mo, "logging:severity:info", fmt.Sprintf("logging:severity:%v", config.LogSeverity))
-			l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = mo
-		}
-
-		// Expand variables in mount options so that flags like --file-cache-exclude-regex=^${BUCKET_NAME}/
-		// can be dynamically referenced.
-		vars := map[string]string{"BUCKET_NAME": bucketName}
-		for i, opt := range config.MountOptions {
-			config.MountOptions[i] = utils.ExpandFlagVariables(opt, vars)
-		}
-		framework.Logf("Final parsed arguments: %v", config.MountOptions)
-
-		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, config.ReadOnly, config.MountOptions...)
-
-		if secondaryConfig != nil {
-			framework.Logf("Setting up secondary volume mount")
-			for i, opt := range secondaryConfig.MountOptions {
-				secondaryConfig.MountOptions[i] = utils.ExpandFlagVariables(opt, vars)
-			}
-			framework.Logf("Secondary parsed arguments: %v", secondaryConfig.MountOptions)
-
-			// Deep copy the volume resource for dual mounting. We cannot pass l.volumeResource directly
-			// because modifying its underlying dictionary (VolumeAttributes) with secondary configuration
-			// would inadvertently overwrite the mount options of the primary volume.
-			secondaryVolumeResource := *l.volumeResource
-			if l.volumeResource.VolSource != nil {
-				secondaryVolumeResource.VolSource = l.volumeResource.VolSource.DeepCopy()
-			}
-			tPod.SetupVolume(&secondaryVolumeResource, volumeName2, mountPath2, secondaryConfig.ReadOnly, secondaryConfig.MountOptions...)
-		}
-
-		tPod.SetAnnotations(map[string]string{
-			"gke-gcsfuse/cpu-limit":               "1",
-			"gke-gcsfuse/memory-request":          sidecarMemoryRequest,
-			"gke-gcsfuse/memory-limit":            sidecarMemoryLimit,
-			"gke-gcsfuse/ephemeral-storage-limit": "2Gi",
-		})
-
-		onlyDir := utils.ExtractOnlyDirFromMountOptions(l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"])
-
-		ginkgo.By("Deploying the test pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
-
-		ginkgo.By("Checking that the test pod is running")
-		tPod.WaitForRunning(ctx)
-
-		ginkgo.By("Checking that the test pod command exits with no error")
-		if config.ReadOnly {
-			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath))
-		} else {
-			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
-		}
-
-		if secondaryConfig != nil {
-			if secondaryConfig.ReadOnly {
-				tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath2))
-			} else {
-				tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath2))
-			}
-		}
-
-		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
-
-		gcsfuseVersion := version.MustParseSemantic(GCSFuseVersionStr)
-		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
-
-		cmdOpts := TestCommandConfig{
-			TestPkg:       testPkg,
-			TestName:      testName,
-			GoEnvSetupCmd: gcsfuseGoVersionCommand,
-			MountPath:     mountPath,
-			BucketName:    bucketName,
-			OnlyDir:       onlyDir,
-		}
-		if secondaryConfig != nil {
-			cmdOpts.SecondaryMountPath = mountPath2
-		}
-
-		baseTestCommand := generateTestCommand(cmdOpts)
-		framework.Logf("Executing tests with command:\n%s", baseTestCommand)
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
 
@@ -333,10 +207,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 				}
 
 				for i, flagStr := range config.Flags {
-					// TODO: Remove this once b/494403195 got fixed
-					if strings.Contains(flagStr, "prometheus-port") {
-						continue
-					}
+
 					if !utils.IsFileCacheEnabled(flagStr) {
 						continue
 					}
@@ -363,7 +234,6 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 						}
 						defer cleanup()
 
-						// TODO: Remove this once b/494320769 got fixed.
 						parsedFlags := utils.ParseConfigFlags(flagStr)
 
 						var secondaryParsedFlags *utils.ParsedConfig
@@ -372,6 +242,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 							secondaryParsedFlags = &secFlags
 						}
 
+						// TODO(yaozile123): Remove this once b/494320769 got fixed.
 						if parsedFlags.CacheDir == "${CACHE_DIR_PATH}" {
 							dirName := pkgName
 							if testName != "" {
@@ -380,21 +251,36 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheTestSuite) DefineTests(driver stor
 							parsedFlags.CacheDir = "/gcsfuse-tmp/" + dirName
 						}
 
-						//TODO: Remove this once b/494350392 got fixed.
-						if pkgName == "monitoring" && testName != "" {
-							logFileName := "/gcsfuse-tmp/" + testName + ".log"
-							parsedFlags.LogFilePath = logFileName
-							for j, opt := range parsedFlags.MountOptions {
-								if strings.HasPrefix(opt, "logging:file-path:") {
-									parsedFlags.MountOptions[j] = "logging:file-path:" + logFileName
-									break
-								}
-							}
-						}
-
 						framework.Logf("Parsed arguments: %+v", parsedFlags)
 
-						gcsfuseIntegrationFileCacheTestNew(pkgName, testName, parsedFlags, secondaryParsedFlags)
+						fullTestName := pkgName
+						if testName != "" {
+							fullTestName = fmt.Sprintf("%s/%s", pkgName, testName)
+						}
+						ginkgo.By("Checking GCSFuse version and skip test if needed")
+						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse version %v", fullTestName, GCSFuseVersionStr))
+						gcsfuseTestBranch := skipTestOrProceedWithBranch(GCSFuseVersionStr, fullTestName)
+						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", fullTestName, gcsfuseTestBranch))
+
+						cpu := "1"
+						memReq := "1Gi"
+						memLim := "5Gi"
+						if strings.HasPrefix(testName, "TestRangeReadTest") {
+							memReq = "2Gi"
+						}
+
+						opts := IntegrationTestOptions{
+							TestPkg:              pkgName,
+							TestName:             testName,
+							Config:               parsedFlags,
+							SecondaryConfig:      secondaryParsedFlags,
+							EnableFileCache:      true,
+							EnableZB:             zbEnabled(driver),
+							TestPodCPU:           cpu,
+							TestPodMemoryRequest: memReq,
+							TestPodMemoryLimit:   memLim,
+						}
+						runIntegrationTest(ctx, f, driver, l.volumeResource, opts, gcsfuseTestBranch)
 					})
 				}
 			}

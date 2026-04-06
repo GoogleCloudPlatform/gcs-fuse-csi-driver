@@ -17,6 +17,7 @@ limitations under the License.
 package utils
 
 import (
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -70,8 +71,13 @@ func TestGCSFuseBranch(t *testing.T) {
 
 func TestParseConfigFlags(t *testing.T) {
 	t.Parallel()
+
 	t.Run("Testing ParseConfigFlags", func(t *testing.T) {
 		t.Parallel()
+
+		const testProject = "test-project-id"
+		os.Setenv(ProjectEnvVar, testProject)
+
 		testCases := []struct {
 			name           string
 			flagStr        string
@@ -149,6 +155,31 @@ func TestParseConfigFlags(t *testing.T) {
 					LogSeverity:       "info",
 					MountOptions: []string{
 						"logging:format:json",
+					},
+				},
+			},
+			{
+				name:    "should correctly parse multiple space-separated flags",
+				flagStr: "--stat-cache-ttl=0 --client-protocol=grpc",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogSeverity:       "info",
+					MountOptions: []string{
+						"stat-cache-ttl=0",
+						"client-protocol=grpc",
+					},
+				},
+			},
+			{
+				name:    "should override billing-project with env var",
+				flagStr: "--billing-project=hardcoded-project",
+				expectedParsed: ParsedConfig{
+					FileCacheCapacity: "-1Mi",
+					ReadOnly:          false,
+					LogSeverity:       "info",
+					MountOptions: []string{
+						"billing-project=" + testProject,
 					},
 				},
 			},
