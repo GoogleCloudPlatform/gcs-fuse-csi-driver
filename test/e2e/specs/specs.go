@@ -590,6 +590,23 @@ func (t *TestPod) SetupTmpVolumeMount(mountPath string) {
 	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, volumeMount)
 }
 
+func (t *TestPod) SetupSecretVolume(name, mountPath, secretName string) {
+	t.pod.Spec.Volumes = append(t.pod.Spec.Volumes, corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: secretName,
+			},
+		},
+	})
+
+	t.pod.Spec.Containers[0].VolumeMounts = append(t.pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+		Name:      name,
+		MountPath: mountPath,
+		ReadOnly:  true,
+	})
+}
+
 func (t *TestPod) SetName(name string) {
 	t.pod.Name = name
 }

@@ -20,9 +20,12 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"local/test/e2e/specs"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"local/test/e2e/utils"
 
 	"github.com/google/uuid"
@@ -188,6 +191,34 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	ginkgo.By("Configuring the test pod")
 	tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 	tPod.SetImage(specs.GolangImage)
+
+	if opts.TestPkg == "requester_pays_bucket" {
+		ginkgo.By("Fetching requester-pays secret from Secret Manager")
+		cmd := exec.Command("gcloud", "secrets", "versions", "access", "latest", "--secret=requester-pays-tester", "--project=gcs-fuse-test")
+		secretData, err := cmd.Output()
+		if err != nil {
+			framework.Failf("Failed to fetch secret from Secret Manager: %v", err)
+		}
+
+		ginkgo.By("Creating Kubernetes Secret for requester-pays")
+		k8sSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "requester-pays-creds",
+			},
+			Data: map[string][]byte{
+				"key.json": secretData,
+			},
+		}
+		_, err = f.ClientSet.CoreV1().Secrets(f.Namespace.Name).Create(ctx, k8sSecret, metav1.CreateOptions{})
+		if err != nil {
+			framework.Failf("Failed to create Kubernetes Secret: %v", err)
+		}
+
+		// Mount the secret in the test pod
+		tPod.SetupSecretVolume("requester-pays-secret-vol", "/etc/creds", "requester-pays-creds")
+
+		opts.Config.KeyFile = "/etc/creds/key.json"
+	}
 
 	if opts.Config.LogFilePath != "" {
 		framework.Logf("Log file path: %v", opts.Config.LogFilePath)
