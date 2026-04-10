@@ -371,6 +371,7 @@ func generateTestCommand(opts TestCommandConfig) string {
 	}
 	if opts.KeyFile != "" {
 		commandArgs = append(commandArgs, fmt.Sprintf("export KEY_FILE=%q", opts.KeyFile))
+		commandArgs = append(commandArgs, fmt.Sprintf("export GOOGLE_APPLICATION_CREDENTIALS=%q", opts.KeyFile))
 	}
 
 	if opts.ProfileLabel != "" {
