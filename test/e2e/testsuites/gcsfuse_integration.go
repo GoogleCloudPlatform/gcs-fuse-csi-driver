@@ -163,6 +163,7 @@ type TestCommandConfig struct {
 	OnlyDir            string
 	ProfileLabel       string
 	ReadOnly           bool
+	BillingProject     string
 }
 
 type IntegrationTestOptions struct {
@@ -296,6 +297,7 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 		OnlyDir:       onlyDir,
 		ProfileLabel:  profileLabel,
 		ReadOnly:      opts.Config.ReadOnly,
+		BillingProject: opts.Config.BillingProject,
 	}
 	if opts.SecondaryConfig != nil {
 		cmdOpts.SecondaryMountPath = mountPath2
@@ -329,6 +331,10 @@ func generateTestCommand(opts TestCommandConfig) string {
 	commandArgs := []string{
 		fmt.Sprintf(gcsfuseGoEnvSetupFormat, opts.GoEnvSetupCmd),
 		fmt.Sprintf("export MOUNTED_DIR=%q", opts.MountPath),
+	}
+
+	if opts.BillingProject != "" {
+		commandArgs = append(commandArgs, fmt.Sprintf("export BILLING_PROJECT=%q", opts.BillingProject))
 	}
 
 	if opts.ProfileLabel != "" {
@@ -450,6 +456,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 	// qualifies the non-managed driver to run all the tests.
 	skipTestOrProceedWithBranch := func(gcsfuseVersionStr, testName string) string {
 		v, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+
+		if strings.HasPrefix(testName, "requester_pays_bucket") {
+			return "mohit-requester-pays-fix"
+		}
 
 		// Rename_symlink tests are in separat test package only of v2.11.4 for now
 		if testName == testNameRenameSymlink && (branch == utils.MasterBranchName || (v.AtLeast(version.MustParseSemantic("v3.0.0-gke.0")) || v.LessThan(version.MustParseSemantic("v2.11.4-gke.0")))) {
