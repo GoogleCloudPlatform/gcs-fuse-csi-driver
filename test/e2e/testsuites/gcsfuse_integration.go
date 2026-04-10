@@ -164,6 +164,7 @@ type TestCommandConfig struct {
 	ProfileLabel       string
 	ReadOnly           bool
 	BillingProject     string
+	KeyFile            string
 }
 
 type IntegrationTestOptions struct {
@@ -298,6 +299,7 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 		ProfileLabel:  profileLabel,
 		ReadOnly:      opts.Config.ReadOnly,
 		BillingProject: opts.Config.BillingProject,
+		KeyFile:        opts.Config.KeyFile,
 	}
 	if opts.SecondaryConfig != nil {
 		cmdOpts.SecondaryMountPath = mountPath2
@@ -335,6 +337,9 @@ func generateTestCommand(opts TestCommandConfig) string {
 
 	if opts.BillingProject != "" {
 		commandArgs = append(commandArgs, fmt.Sprintf("export BILLING_PROJECT=%q", opts.BillingProject))
+	}
+	if opts.KeyFile != "" {
+		commandArgs = append(commandArgs, fmt.Sprintf("export KEY_FILE=%q", opts.KeyFile))
 	}
 
 	if opts.ProfileLabel != "" {

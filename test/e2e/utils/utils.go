@@ -228,6 +228,7 @@ type ParsedConfig struct {
 	LogSeverity       string
 	CacheDir          string
 	BillingProject    string
+	KeyFile           string
 	MountOptions      []string
 }
 
@@ -282,6 +283,17 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 			flagValue = os.Getenv(ProjectEnvVar)
 			parsed.BillingProject = flagValue
 			f = "billing-project=" + flagValue
+		}
+
+		if found && flagName == "key-file" {
+			// Override the hardcoded key file from gcsfuse test_config.yaml
+			// with the actual key file path from environment variable if set.
+			envKeyFile := os.Getenv("KEY_FILE")
+			if envKeyFile != "" {
+				flagValue = envKeyFile
+			}
+			parsed.KeyFile = flagValue
+			f = "key-file=" + flagValue
 		}
 
 		// The following flags are disallowed in the CSI driver's mountOptions.
