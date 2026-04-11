@@ -60,6 +60,7 @@ spec:
             - --enable-gcsfuse-kernel-params=true
             - --enable-gcsfuse-profiles=true
             - --enable-gcsfuse-profiles-internal=true
+            - --stream-metrics-export=true
           ports:
           - containerPort: 9920
             name: metrics
