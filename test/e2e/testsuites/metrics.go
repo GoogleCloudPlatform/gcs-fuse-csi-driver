@@ -244,8 +244,11 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 		defer metricsFile.Close()
 
-		families, err := metricspkg.ProcessMetricsData(metricsFile)
-		framework.ExpectNoError(err)
+		families := map[string]*dto.MetricFamily{}
+		for mf, err := range metricspkg.ProcessMetricsDataAsStream(metricsFile) {
+			framework.ExpectNoError(err)
+			families[*mf.Name] = mf
+		}
 
 		volume := volumeName
 		if volumeResource.Pv != nil {
