@@ -80,6 +80,10 @@ spec:
               value: ""
             - name: IDENTITY_POOL
               value: ""
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                resource: limits.memory
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet/pods
