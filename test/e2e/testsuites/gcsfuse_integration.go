@@ -295,7 +295,7 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 
 	ginkgo.By("Deploying the test pod")
 	tPod.Create(ctx)
-	defer tPod.Cleanup(ctx)
+	// defer tPod.Cleanup(ctx)
 
 	ginkgo.By("Checking that the test pod is running")
 	tPod.WaitForRunning(ctx)
@@ -337,6 +337,9 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	}
 
 	baseTestCommand := generateTestCommand(cmdOpts)
+	framework.Logf("Checking whoami in pod...")
+	tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, "whoami")
+
 	framework.Logf("Executing tests with command:\n%s", baseTestCommand)
 	tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 }
