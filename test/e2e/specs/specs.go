@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"local/test/e2e/utils"
@@ -268,11 +269,48 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 		fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
 }
 
+var (
+	logDir     string
+	logDirOnce sync.Once
+	logMutex   sync.Mutex
+)
+
+func getLogDir() string {
+	logDirOnce.Do(func() {
+		logDir = fmt.Sprintf("/tmp/csi_execs_%d", time.Now().UnixNano())
+		os.MkdirAll(logDir, 0755)
+		fmt.Printf("Created log directory for this execution: %s\n", logDir)
+	})
+	return logDir
+}
+
 // execCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
 func execCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podName, containerName string, cmd ...string) (string, string, error) {
-	return RetryWithBackoffTwoReturnValues(func() (string, string, error) {
+	stdout, stderr, err := RetryWithBackoffTwoReturnValues(func() (string, string, error) {
 		return e2epod.ExecCommandInContainerWithFullOutput(f, podName, containerName, cmd...)
 	})
+
+	// Log the complete output to a single file in the unique folder.
+	dir := getLogDir()
+	filename := fmt.Sprintf("%s/all_commands.log", dir)
+
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	logFile, logErr := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if logErr == nil {
+		defer logFile.Close()
+		fmt.Fprintf(logFile, "=== TIME: %s ===\n", time.Now().Format(time.RFC3339))
+		fmt.Fprintf(logFile, "=== COMMAND: %v ===\n", cmd)
+		fmt.Fprintf(logFile, "STDOUT:\n%s\n", stdout)
+		fmt.Fprintf(logFile, "STDERR:\n%s\n", stderr)
+		if err != nil {
+			fmt.Fprintf(logFile, "ERROR: %v\n", err)
+		}
+		fmt.Fprintf(logFile, "=====================================\n\n")
+	}
+
+	return stdout, stderr, err
 }
 
 // Retry executes a generic operation (op) with exponential backoff.
