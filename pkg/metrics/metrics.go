@@ -321,9 +321,6 @@ func ProcessMetricsData(metricsReader io.Reader) (map[string]*dto.MetricFamily, 
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
 func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
-	var valType prometheus.ValueType
-	var val float64
-
 	for _, metric := range metricFamily.GetMetric() {
 		var LabelNames []string
 		var LabelValues []string
@@ -337,33 +334,37 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 			LabelValues = append(LabelValues, v)
 		}
 
-		emitNewConstMetric := func() {
+		metricType := metricFamily.GetType()
+		switch metricType {
+		case dto.MetricType_COUNTER:
 			ch <- prometheus.MustNewConstMetric(
 				prometheus.NewDesc(
 					metricFamily.GetName(),
 					metricFamily.GetHelp(),
 					LabelNames, nil,
 				),
-				valType, val, LabelValues...,
+				prometheus.CounterValue, metric.GetCounter().GetValue(), LabelValues...,
 			)
-		}
-
-		metricType := metricFamily.GetType()
-		switch metricType {
-		case dto.MetricType_COUNTER:
-			valType = prometheus.CounterValue
-			val = metric.GetCounter().GetValue()
-			emitNewConstMetric()
 
 		case dto.MetricType_GAUGE:
-			valType = prometheus.GaugeValue
-			val = metric.GetGauge().GetValue()
-			emitNewConstMetric()
+			ch <- prometheus.MustNewConstMetric(
+				prometheus.NewDesc(
+					metricFamily.GetName(),
+					metricFamily.GetHelp(),
+					LabelNames, nil,
+				),
+				prometheus.GaugeValue, metric.GetGauge().GetValue(), LabelValues...,
+			)
 
 		case dto.MetricType_UNTYPED:
-			valType = prometheus.UntypedValue
-			val = metric.GetUntyped().GetValue()
-			emitNewConstMetric()
+			ch <- prometheus.MustNewConstMetric(
+				prometheus.NewDesc(
+					metricFamily.GetName(),
+					metricFamily.GetHelp(),
+					LabelNames, nil,
+				),
+				prometheus.UntypedValue, metric.GetUntyped().GetValue(), LabelValues...,
+			)
 
 		case dto.MetricType_SUMMARY:
 			quantiles := map[float64]float64{}
