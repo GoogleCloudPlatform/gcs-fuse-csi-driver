@@ -80,6 +80,10 @@ var (
 	clusterLocation               = flag.String("cluster-location", "", "The location (region/zone) in which the cluster is deployed")
 	enableGcsfuseProfilesInternal = flag.Bool("enable-gcsfuse-profiles-internal", false, "Allow the temporarily disallowed gcsfuse profiles flag ('profile') to be passed for internal use only")
 	projectNumber                 = flag.String("project-number", "", "The GKE Project Number for which the cluster is deployed")
+
+	// Stream metrics export
+	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Stream metrics export instead of downloading the entire content")
+
 	// Leader election flags.
 	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
 	leaderElectionNamespace          = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
@@ -237,7 +241,7 @@ func main() {
 		}
 
 		if addr != "" {
-			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset)
+			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport)
 			mm.InitializeHTTPHandler()
 		}
 	}
