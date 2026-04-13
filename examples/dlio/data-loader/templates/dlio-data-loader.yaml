@@ -57,7 +57,7 @@ spec:
         ++workload.dataset.record_length_stdev=0 \
         ++workload.dataset.record_length_resize=0
 
-        gsutil -m cp -R /data/train gs://{{ .Values.bucketName }}
+        gcloud storage cp --recursive /data/train gs://{{ .Values.bucketName }}
         mkdir -p /bucket/valid
     volumeMounts:
     - name: local-dir
