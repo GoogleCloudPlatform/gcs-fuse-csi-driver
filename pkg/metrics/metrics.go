@@ -329,11 +329,6 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 			LabelValues = append(LabelValues, label.GetValue())
 		}
 
-		for n, v := range c.constLabels {
-			LabelNames = append(LabelNames, n)
-			LabelValues = append(LabelValues, v)
-		}
-
 		metricType := metricFamily.GetType()
 		switch metricType {
 		case dto.MetricType_COUNTER:
@@ -341,7 +336,7 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 				prometheus.NewDesc(
 					metricFamily.GetName(),
 					metricFamily.GetHelp(),
-					LabelNames, nil,
+					LabelNames, prometheus.Labels(c.constLabels),
 				),
 				prometheus.CounterValue, metric.GetCounter().GetValue(), LabelValues...,
 			)
@@ -351,7 +346,7 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 				prometheus.NewDesc(
 					metricFamily.GetName(),
 					metricFamily.GetHelp(),
-					LabelNames, nil,
+					LabelNames, prometheus.Labels(c.constLabels),
 				),
 				prometheus.GaugeValue, metric.GetGauge().GetValue(), LabelValues...,
 			)
@@ -361,7 +356,7 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 				prometheus.NewDesc(
 					metricFamily.GetName(),
 					metricFamily.GetHelp(),
-					LabelNames, nil,
+					LabelNames, prometheus.Labels(c.constLabels),
 				),
 				prometheus.UntypedValue, metric.GetUntyped().GetValue(), LabelValues...,
 			)
@@ -375,7 +370,7 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 				prometheus.NewDesc(
 					metricFamily.GetName(),
 					metricFamily.GetHelp(),
-					LabelNames, nil,
+					LabelNames, prometheus.Labels(c.constLabels),
 				),
 				metric.GetSummary().GetSampleCount(),
 				metric.GetSummary().GetSampleSum(),
@@ -391,7 +386,7 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 				prometheus.NewDesc(
 					metricFamily.GetName(),
 					metricFamily.GetHelp(),
-					LabelNames, nil,
+					LabelNames, prometheus.Labels(c.constLabels),
 				),
 				metric.GetHistogram().GetSampleCount(),
 				metric.GetHistogram().GetSampleSum(),
