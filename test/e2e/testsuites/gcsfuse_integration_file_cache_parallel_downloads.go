@@ -190,6 +190,10 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 		if zbEnabled(driver) {
 			baseTestCommand += " --zonal=true"
 		}
+
+		logFetchCmd := "echo '=== GCSFuse Logs ==='; find /gcsfuse-tmp /tmp/inactive_stream_timeout_logs /tmp/gcsfuse_buffered_read_test_logs -type f \\( -name '*.log' -o -name '*.json' \\) -exec tail -v -n +1 {} + 2>/dev/null || true"
+		baseTestCommand = fmt.Sprintf("if %s; then ret=0; else ret=$?; fi; %s; exit $ret", baseTestCommand, logFetchCmd)
+
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, baseTestCommand)
 	}
 

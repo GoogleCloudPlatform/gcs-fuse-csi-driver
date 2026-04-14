@@ -355,6 +355,9 @@ func generateTestCommand(opts TestCommandConfig) string {
 		finalCommand = fmt.Sprintf("chmod 777 %v/%v && (id -u test-user >/dev/null 2>&1 || useradd -u 6666 -m test-user) && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, opts.TestPkg, finalCommand)
 	}
 
+	logFetchCmd := "echo '=== GCSFuse Logs ==='; find /gcsfuse-tmp /tmp/inactive_stream_timeout_logs /tmp/gcsfuse_buffered_read_test_logs -type f \\( -name '*.log' -o -name '*.json' \\) -exec tail -v -n +1 {} + 2>/dev/null || true"
+	finalCommand = fmt.Sprintf("if %s; then ret=0; else ret=$?; fi; %s; exit $ret", finalCommand, logFetchCmd)
+
 	return finalCommand
 }
 
@@ -651,6 +654,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		default:
 			finalTestCommand = baseTestCommand
 		}
+
+		logFetchCmd := "echo '=== GCSFuse Logs ==='; find /gcsfuse-tmp /tmp/inactive_stream_timeout_logs /tmp/gcsfuse_buffered_read_test_logs -type f \\( -name '*.log' -o -name '*.json' \\) -exec tail -v -n +1 {} + 2>/dev/null || true"
+		finalTestCommand = fmt.Sprintf("if %s; then ret=0; else ret=$?; fi; %s; exit $ret", finalTestCommand, logFetchCmd)
 
 		tPod.VerifyExecInPodSucceedWithFullOutput(f, specs.TesterContainerName, finalTestCommand)
 	}
