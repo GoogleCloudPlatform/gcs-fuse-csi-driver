@@ -128,13 +128,15 @@ func main() {
 	}()
 
 	if *enableCloudProfilerForDriver {
+		// Use Pod Name as ServiceVersion for Cloud Profiler
 		cfg := profiler.Config{
-			Service: "gcs-fuse-csi-driver",
+			Service:        "gcs-fuse-csi-driver",
+			ServiceVersion: os.Getenv("POD_NAME"),
 		}
 		if err := profiler.Start(cfg); err != nil {
 			klog.Errorf("Errored while starting cloud profiler, got %v", err)
 		} else {
-			klog.Infof("Running cloud profiler on %s", cfg.Service)
+			klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
 		}
 
 	}

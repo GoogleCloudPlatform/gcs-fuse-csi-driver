@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/profiler"
+	"github.com/google/uuid"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -84,13 +85,17 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc.EnableCloudProfilerForSidecar {
+			hostname, _ := os.Hostname()
+			// In hostNetwork mode, hostname is the node name, otherwise it is the pod name.
+			// Appending a 4-character suffix ensures uniqueness for Cloud Profiler.
 			cfg := profiler.Config{
-				Service: "gke-gcsfuse-sidecar",
+				Service:        "gke-gcsfuse-sidecar",
+				ServiceVersion: hostname + "-" + uuid.New().String()[:4],
 			}
 			if err := profiler.Start(cfg); err != nil {
 				klog.Errorf("Errored while starting cloud profiler, got %v", err)
 			} else {
-				klog.Infof("Running cloud profiler on %s", cfg.Service)
+				klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
 			}
 		}
 		if mc != nil {
