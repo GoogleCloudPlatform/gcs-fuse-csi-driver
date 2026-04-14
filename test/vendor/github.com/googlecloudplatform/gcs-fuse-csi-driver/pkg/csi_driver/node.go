@@ -210,7 +210,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	if args.enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(args.enableCloudProfilerForSidecar)})
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
+			util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(args.enableCloudProfilerForSidecar),
+			util.PodNameConst + "=" + vc[VolumeContextKeyPodName],
+			util.PodUIDConst + "=" + string(pod.UID),
+		})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)

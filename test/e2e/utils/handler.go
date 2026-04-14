@@ -390,6 +390,11 @@ func generateTestSkip(testParams *TestParameters) string {
 	if testParams.UseGKEManagedDriver {
 		skipTests = append(skipTests, "should.not.pass.profile") // Skipping for managed as changes have not been picked up yet
 
+		supportsCloudProfiler, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, cloudProfilerMinimumVersion)
+		if !supportsCloudProfiler {
+			skipTests = append(skipTests, "cloudProfiler")
+		}
+
 		skipTests = append(skipTests, "oidc") // OIDC authentication requires non-managed driver features
 
 		supportsKernelReadAhead, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, kernelReadAheadMinimumVersion)

@@ -574,6 +574,10 @@ func isManagedSidecarImage(imageName string) bool {
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+	if imageName == "" {
+		return false
+	}
+
 	if d.config.AssumeGoodSidecarVersion {
 		klog.V(4).Infof("Assuming good sidecar version from flag")
 		return true

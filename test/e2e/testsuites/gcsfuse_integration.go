@@ -80,6 +80,7 @@ var testPackageTimeoutMap = map[string]int{
 	testNameWriteLargeFiles: 60,
 	testNameReadLargeFiles:  60,
 	testNameRapidAppends:    60,
+	testNameCloudProfiler:   30,
 }
 
 var GCSFuseVersionStr = ""
