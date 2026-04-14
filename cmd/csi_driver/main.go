@@ -36,6 +36,7 @@ import (
 	csimounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -132,15 +133,20 @@ func main() {
 	}()
 
 	if *enableCloudProfilerForDriver {
-		cfg := profiler.Config{
-			Service: "gcs-fuse-csi-driver",
-		}
-		if err := profiler.Start(cfg); err != nil {
-			klog.Errorf("Errored while starting cloud profiler, got %v", err)
+		serviceVersion := util.GetCloudProfilerServiceVersion(os.Getenv("POD_NAME"), os.Getenv("POD_UID"))
+		if serviceVersion == "" {
+			klog.Warning("Cloud Profiler is disabled because both POD_NAME and POD_UID are empty.")
 		} else {
-			klog.Infof("Running cloud profiler on %s", cfg.Service)
+			cfg := profiler.Config{
+				Service:        "gcs-fuse-csi-driver",
+				ServiceVersion: serviceVersion,
+			}
+			if err := profiler.Start(cfg); err != nil {
+				klog.Errorf("Errored while starting cloud profiler, got %v", err)
+			} else {
+				klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
+			}
 		}
-
 	}
 
 	if *enableProfiling {

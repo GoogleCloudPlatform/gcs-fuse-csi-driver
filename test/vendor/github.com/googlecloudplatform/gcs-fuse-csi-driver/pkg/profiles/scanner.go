@@ -220,6 +220,7 @@ type bucketInfo struct {
 	totalSizeBytes int64
 	isOverride     bool
 	locationType   string
+	hnsEnabled     bool
 }
 
 // syncInfo holds information relevant to the PV resync.
@@ -1581,6 +1582,7 @@ func (s *Scanner) updatePVScanResult(ctx context.Context, pv *v1.PersistentVolum
 		profilesutil.AnnotationTotalSize:       int64Ptr(bucketI.totalSizeBytes),
 		profilesutil.AnnotationLastUpdatedTime: stringPtr(currentTime.UTC().Format(time.RFC3339)),
 		profilesutil.AnnotationLocationType:    stringPtr(bucketI.locationType),
+		profilesutil.AnnotationHNSEnabled:      stringPtr(fmt.Sprintf("%t", bucketI.hnsEnabled)),
 	}
 	klog.Infof("Updating PV %q with scan result: %+v, status: %q", pv.Name, bucketI, scanStatus)
 	err := s.patchPVAnnotations(ctx, pv.Name, annotationsToUpdate)
@@ -1659,6 +1661,7 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 		dir:           dir,
 		projectNumber: fmt.Sprint(bucketAttrs.ProjectNumber),
 		locationType:  bucketAttrs.LocationType,
+		hnsEnabled:    bucketAttrs.HierarchicalNamespace != nil && bucketAttrs.HierarchicalNamespace.Enabled,
 	}
 
 	// Handle the override annotation, if set.
