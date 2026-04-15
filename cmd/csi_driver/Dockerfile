@@ -1,4 +1,5 @@
-# Copyright 2024 Google LLC
+# Copyright 2018 The Kubernetes Authors.
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build metadata-prefetch go binary
-FROM --platform=$BUILDPLATFORM golang:1.25.8@sha256:3ac2864710f25e84381bf5d4272261c7ba73ada0339d62034df4de20dabb33ca AS metadata-prefetch-builder
+# Build driver go binary
+FROM --platform=$BUILDPLATFORM golang:1.25.8@sha256:3ac2864710f25e84381bf5d4272261c7ba73ada0339d62034df4de20dabb33ca AS driver-builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
 
 WORKDIR /gcs-fuse-csi-driver
 ADD . .
-RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make metadata-prefetch BINDIR=/bin
+RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
 FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
 # Install necessary dependencies
-RUN clean-install bash
+RUN clean-install mount bash
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
@@ -44,31 +45,27 @@ ENV LD_LINUX_FILE /lib/ld-linux-aarch64.so.1
 ENV LIB_DIR /lib/
 
 FROM distroless-$TARGETARCH AS output-image
-# Copy existing binaries
-COPY --from=debian /bin/ls /bin/ls
+
+# Copy the mount/umount binaries
+COPY --from=debian /bin/mount /bin/mount
+COPY --from=debian /bin/umount /bin/umount
+COPY --from=debian /bin/mountpoint /bin/mountpoint
 
 # Copy shared libraries into distroless base.
 COPY --from=debian ${LD_LINUX_FILE} ${LIB_DIR}
 
 COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libselinux.so.1 \
                    /lib/${LIB_DIR_PREFIX}-linux-gnu/libc.so.6 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libblkid.so.1 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libmount.so.1 \
                    /lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre2-8.so.0 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 
-# Validate dependencies
-FROM output-image AS validator-image
+# Build stage used for validation of the output-image
+FROM output-image AS validation-image
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libtinfo.so.6 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 COPY --from=debian /bin/bash /bin/bash
 COPY --from=debian /bin/grep /bin/grep
 COPY --from=debian /usr/bin/ldd /usr/bin/ldd
-SHELL ["/bin/bash", "-c"]
-RUN if ldd /bin/ls | grep "not found"; then echo "!!! Missing deps for ls command !!!" && exit 1; fi
-
-# Final build stage, create the real Docker image with ENTRYPOINT
-FROM output-image
-
-COPY --from=metadata-prefetch-builder /bin/gcs-fuse-csi-driver-metadata-prefetch /gcs-fuse-csi-driver-metadata-prefetch
-
-ENTRYPOINT ["/gcs-fuse-csi-driver-metadata-prefetch"]
-d
 SHELL ["/bin/bash", "-c"]
 RUN if ldd /bin/mount | grep "not found"; then echo "!!! Missing deps for mount command !!!" && exit 1; fi
 RUN if ldd /bin/umount | grep "not found"; then echo "!!! Missing deps for umount command !!!" && exit 1; fi
