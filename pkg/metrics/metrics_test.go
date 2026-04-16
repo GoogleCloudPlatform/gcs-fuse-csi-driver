@@ -24,6 +24,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -191,4 +192,56 @@ gcs_request_count{gcs_method="StatObject"} 6
 	if count != 2 {
 		t.Errorf("expected 2 metric families, got %d", count)
 	}
+}
+
+func BenchmarkEmitMetricFamily(b *testing.B) {
+	name := "test_metric"
+	help := "test help"
+	metricType := dto.MetricType_COUNTER
+	val := float64(42.0)
+
+	var metrics []*dto.Metric
+	for i := 0; i < 100; i++ {
+		labelName := "foo"
+		labelVal := fmt.Sprintf("bar_%d", i)
+		metrics = append(metrics, &dto.Metric{
+			Label: []*dto.LabelPair{
+				{Name: &labelName, Value: &labelVal},
+			},
+			Counter: &dto.Counter{Value: &val},
+		})
+	}
+
+	mf := &dto.MetricFamily{
+		Name:   &name,
+		Help:   &help,
+		Type:   &metricType,
+		Metric: metrics,
+	}
+
+	c := &metricsCollector{
+		constLabels: map[string]string{
+			"const_foo": "const_bar",
+		},
+	}
+
+	ch := make(chan prometheus.Metric, 1000)
+	done := make(chan struct{})
+
+	go func() {
+		for range ch {
+		}
+		close(done)
+	}()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		c.emitMetricFamily(mf, ch)
+	}
+
+	b.StopTimer()
+	close(ch)
+	<-done
 }
