@@ -238,7 +238,8 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	}
 
 	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, serviceAccountName, "", "" /*audience*/, false)
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	// TODO(urielguzman): Dynamically fetch the Google Universe if custom endpoint isn't provided.
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts, "")
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}

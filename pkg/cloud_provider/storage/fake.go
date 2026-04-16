@@ -42,7 +42,7 @@ type fakeServiceManager struct {
 	createdBuckets map[string]*ServiceBucket
 }
 
-func (manager *fakeServiceManager) SetupService(_ context.Context, _ oauth2.TokenSource) (Service, error) {
+func (manager *fakeServiceManager) SetupService(_ context.Context, _ oauth2.TokenSource, _ string) (Service, error) {
 	return &fakeService{sm: *manager}, nil
 }
 
@@ -50,7 +50,7 @@ func (manager *fakeServiceManager) SetupServiceWithDefaultCredential(_ context.C
 	return &fakeService{sm: *manager}, nil
 }
 
-func (manager *fakeServiceManager) SetupStorageServiceForSidecar(_ context.Context, _ oauth2.TokenSource) (Service, error) {
+func (manager *fakeServiceManager) SetupStorageServiceForSidecar(_ context.Context, _ oauth2.TokenSource, _ string) (Service, error) {
 	return &fakeService{sm: *manager}, nil
 }
 

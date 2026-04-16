@@ -166,7 +166,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// skip check if it has ever succeeded
 	if vs != nil && !args.skipCSIBucketAccessCheck {
 		if !vs.BucketAccessCheckPassed {
-			storageService, err := s.prepareStorageService(ctx, vc)
+			storageService, err := s.prepareStorageService(ctx, vc, args.customEndpoint)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 			}
@@ -489,9 +489,9 @@ func (s *nodeServer) setupMultiNIC(args *requestArgs, pod *corev1.Pod, sidecarSu
 }
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
-func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
+func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string, customEndpoint string) (storage.Service, error) {
 	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], "" /*audience*/, false)
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts, customEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}

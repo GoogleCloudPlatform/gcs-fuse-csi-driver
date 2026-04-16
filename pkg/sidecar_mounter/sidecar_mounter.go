@@ -460,7 +460,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, tokenSource oa
 	var ss storage.Service
 	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
 		if ss == nil {
-			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
+			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource, mc.CustomEndpoint)
 			if err != nil {
 				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("%q: %v %v, retrying...", util.StorageServiceErrorStr, storage.ParseErrCode(err), err)))
 				return false, nil

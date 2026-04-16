@@ -549,3 +549,61 @@ func TestIsGKEIdentityProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomEndpointFromOpts(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		opts     []string
+		expected string
+	}{
+		{
+			name:     "should return empty string when no relevant options are present",
+			opts:     []string{"other-option=foo", "read-only"},
+			expected: "",
+		},
+		{
+			name:     "should parse config file format correctly",
+			opts:     []string{"gcs-connection:custom-endpoint:storage.example.com:443"},
+			expected: "storage.example.com:443",
+		},
+		{
+			name:     "should parse CLI flag format correctly",
+			opts:     []string{"custom-endpoint=storage.googleapis.com"},
+			expected: "storage.googleapis.com",
+		},
+		{
+			name: "should prioritize CLI flag over config file format",
+			opts: []string{
+				"gcs-connection:custom-endpoint:old.endpoint.com",
+				"custom-endpoint=new.endpoint.com",
+			},
+			expected: "new.endpoint.com",
+		},
+		{
+			name: "should work when relevant flag is among other flags",
+			opts: []string{
+				"uid=1000",
+				"gid=1000",
+				"custom-endpoint=storage.example.com",
+				"debug_gcs",
+			},
+			expected: "storage.example.com",
+		},
+		{
+			name:     "should handle empty opts slice",
+			opts:     []string{},
+			expected: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := CustomEndpointFromOpts(tc.opts)
+			if actual != tc.expected {
+				t.Errorf("CustomEndpointFromOpts(%v) = %q, want %q", tc.opts, actual, tc.expected)
+			}
+		})
+	}
+}
