@@ -321,80 +321,86 @@ func ProcessMetricsData(metricsReader io.Reader) (map[string]*dto.MetricFamily, 
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
 func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
-	var valType prometheus.ValueType
-	var val float64
+	name := metricFamily.GetName()
+	help := metricFamily.GetHelp()
+	metricType := metricFamily.GetType()
+
+	var cachedDesc *prometheus.Desc
+
+	var cachedLabelNames []string
 
 	for _, metric := range metricFamily.GetMetric() {
-		var LabelNames []string
-		var LabelValues []string
-		for _, label := range metric.GetLabel() {
-			LabelNames = append(LabelNames, label.GetName())
-			LabelValues = append(LabelValues, label.GetValue())
+		labels := metric.GetLabel()
+
+		var desc *prometheus.Desc
+		// Reuse cached prometheus.Desc assuming identical label ordering.
+		if cachedDesc != nil && len(cachedLabelNames) == len(labels) {
+			desc = cachedDesc
+			for i, label := range labels {
+				if cachedLabelNames[i] != label.GetName() {
+					// Cache new prometheus.Desc to reduce garbage collection overhead and expensive string formatting.
+					desc = nil
+					break
+				}
+			}
 		}
 
-		for n, v := range c.constLabels {
-			LabelNames = append(LabelNames, n)
-			LabelValues = append(LabelValues, v)
+		if desc == nil {
+			labelNames := make([]string, len(labels))
+			for i, label := range labels {
+				labelNames[i] = label.GetName()
+			}
+			desc = prometheus.NewDesc(name, help, labelNames, prometheus.Labels(c.constLabels))
+			cachedDesc = desc
+			cachedLabelNames = labelNames
 		}
 
-		emitNewConstMetric := func() {
-			ch <- prometheus.MustNewConstMetric(
-				prometheus.NewDesc(
-					metricFamily.GetName(),
-					metricFamily.GetHelp(),
-					LabelNames, nil,
-				),
-				valType, val, LabelValues...,
-			)
+		labelValues := make([]string, len(labels))
+		for i, label := range labels {
+			labelValues[i] = label.GetValue()
 		}
 
-		metricType := metricFamily.GetType()
 		switch metricType {
 		case dto.MetricType_COUNTER:
-			valType = prometheus.CounterValue
-			val = metric.GetCounter().GetValue()
-			emitNewConstMetric()
+			ch <- prometheus.MustNewConstMetric(
+				desc,
+				prometheus.CounterValue, metric.GetCounter().GetValue(), labelValues...,
+			)
 
 		case dto.MetricType_GAUGE:
-			valType = prometheus.GaugeValue
-			val = metric.GetGauge().GetValue()
-			emitNewConstMetric()
+			ch <- prometheus.MustNewConstMetric(
+				desc,
+				prometheus.GaugeValue, metric.GetGauge().GetValue(), labelValues...,
+			)
 
 		case dto.MetricType_UNTYPED:
-			valType = prometheus.UntypedValue
-			val = metric.GetUntyped().GetValue()
-			emitNewConstMetric()
+			ch <- prometheus.MustNewConstMetric(
+				desc,
+				prometheus.UntypedValue, metric.GetUntyped().GetValue(), labelValues...,
+			)
 
 		case dto.MetricType_SUMMARY:
-			quantiles := map[float64]float64{}
+			quantiles := make(map[float64]float64, len(metric.GetSummary().GetQuantile()))
 			for _, q := range metric.GetSummary().GetQuantile() {
 				quantiles[q.GetQuantile()] = q.GetValue()
 			}
 			ch <- prometheus.MustNewConstSummary(
-				prometheus.NewDesc(
-					metricFamily.GetName(),
-					metricFamily.GetHelp(),
-					LabelNames, nil,
-				),
+				desc,
 				metric.GetSummary().GetSampleCount(),
 				metric.GetSummary().GetSampleSum(),
-				quantiles, LabelValues...,
+				quantiles, labelValues...,
 			)
 
 		case dto.MetricType_HISTOGRAM, dto.MetricType_GAUGE_HISTOGRAM:
-			buckets := map[float64]uint64{}
+			buckets := make(map[float64]uint64, len(metric.GetHistogram().GetBucket()))
 			for _, b := range metric.GetHistogram().GetBucket() {
 				buckets[b.GetUpperBound()] = b.GetCumulativeCount()
 			}
 			ch <- prometheus.MustNewConstHistogram(
-				prometheus.NewDesc(
-					metricFamily.GetName(),
-					metricFamily.GetHelp(),
-					LabelNames, nil,
-				),
+				desc,
 				metric.GetHistogram().GetSampleCount(),
 				metric.GetHistogram().GetSampleSum(),
-				buckets, LabelValues...,
+				buckets, labelValues...,
 			)
 
 		default:
