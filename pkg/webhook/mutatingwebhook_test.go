@@ -595,6 +595,13 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantResponse(t, false, false, true),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:         "pod certificate injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithPodCertificate("test-credentials", true),
+			wantResponse: wantPodCertificateResponse(t, "test-credentials"),
+			nodes:        nativeSupportNodes(),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1624,6 +1631,66 @@ func modifySpecWithWorkloadIdentity(newPod corev1.Pod, configMapName string) *co
 	}
 
 	// Add native sidecar container
+	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
+
+	return &newPod
+}
+
+func validInputPodWithPodCertificate(configMapName string, usePodCert bool) *corev1.Pod {
+	pod := validInputPod()
+	pod.ObjectMeta.Namespace = testNamespace
+	if configMapName != "" {
+		pod.ObjectMeta.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] = configMapName
+	}
+	if usePodCert {
+		pod.ObjectMeta.Annotations[GcsFuseUsePodCertificateAnnotation] = "true"
+	}
+	return pod
+}
+
+func wantPodCertificateResponse(t *testing.T, configMapName string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithPodCertificate(configMapName, true)
+	newPod := *modifySpecWithPodCertificate(*originalPod, configMapName)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func modifySpecWithPodCertificate(newPod corev1.Pod, configMapName string) *corev1.Pod {
+	config := FakeConfig()
+	sidecarCredentialConfig := &SidecarContainerCredentialConfiguration{
+		GacEnv: &corev1.EnvVar{
+			Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+			Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "credential-configuration.json"),
+		},
+		CredentialVolumeMounts: []corev1.VolumeMount{
+			{Name: SidecarContainerWITokenVolumeName, MountPath: "/var/run/service-account"},
+			{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+		},
+	}
+
+	newPod.Spec.Volumes = append(newPod.Spec.Volumes,
+		corev1.Volume{
+			Name: SidecarContainerWITokenVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: "pod-certs",
+				},
+			},
+		},
+		corev1.Volume{
+			Name: SidecarContainerWICredentialConfigMapVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
+					DefaultMode: &defaultMode,
+				},
+			},
+		},
+	)
+
 	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 

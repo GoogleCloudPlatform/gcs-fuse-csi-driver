@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-cli-source
+data:
+  mock_cli.go: |
+    package main
+    import "fmt"
+    func main() {
+      fmt.Println(`{
+        "version": 1,
+        "success": true,
+        "token_type": "urn:ietf:params:oauth:token-type:id_token",
+        "id_token": "DUMMY_TOKEN_FROM_MOCK_CLI"
+      }`)
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-cred-config
+data:
+  cred_config.json: |
+    {
+      "type": "external_account",
+      "audience": "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/mock-pool/providers/mock-provider",
+      "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+      "token_url": "https://sts.googleapis.com/v1/token",
+      "credential_source": {
+        "executable": {
+          "command": "/scripts/mock_cli.sh",
+          "timeout_millis": 5000,
+          "output_files": []
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gcsfuse-poc-option1
+spec:
+  initContainers:
+  - name: build-cli
+    image: golang:1.24-alpine
+    command: ["sh", "-c", "CGO_ENABLED=0 go build -o /out/mock_cli.sh /src/mock_cli.go"]
+    volumeMounts:
+    - name: source-volume
+      mountPath: /src
+    - name: binary-volume
+      mountPath: /out
+  containers:
+  - name: main-app
+    image: busybox
+    command: ["sleep", "3600"]
+  - name: gcsfuse-sidecar
+    image: us-docker.pkg.dev/yangspirit-joonix/main/gcs-fuse-csi-driver-sidecar-mounter:test-x509_linux_amd64
+    command: ["/gcsfuse"]
+    args: ["--foreground", "--debug_fuse", "--debug_gcs", "--custom-endpoint", "https://storage.mtls.googleapis.com:443", "yangspirit-gcsfuse-profiles-bug-bash-bucket", "/mnt/gcs"]
+    securityContext:
+      privileged: true
+    env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /config/cred_config.json
+    - name: GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES
+      value: "1"
+    volumeMounts:
+    - name: config-volume
+      mountPath: /config
+    - name: binary-volume
+      mountPath: /scripts
+    - name: gcs-volume
+      mountPath: /mnt/gcs
+      mountPropagation: Bidirectional
+  volumes:
+  - name: config-volume
+    configMap:
+      name: mock-cred-config
+  - name: source-volume
+    configMap:
+      name: mock-cli-source
+  - name: binary-volume
+    emptyDir: {}
+  - name: gcs-volume
+    emptyDir: {}

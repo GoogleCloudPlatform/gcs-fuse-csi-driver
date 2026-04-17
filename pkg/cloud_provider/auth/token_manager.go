@@ -31,6 +31,7 @@ const (
 
 type TokenManager interface {
 	GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken, audience string, fetchFromFile bool) oauth2.TokenSource
+	GetTokenSourceFromCertificate(certData, keyData []byte, audience string, tokenURL string) oauth2.TokenSource
 	GetIdentityProvider() string
 	GetIdentityPool() string
 }
@@ -66,5 +67,16 @@ func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName,
 		k8sClients:         tm.k8sClients,
 		audience:           audience,
 		fetchTokenfromFile: fetchFromFile,
+	}
+}
+
+func (tm *tokenManager) GetTokenSourceFromCertificate(certData, keyData []byte, audience string, tokenURL string) oauth2.TokenSource {
+	return &GCPTokenSource{
+		meta:       tm.meta,
+		k8sClients: tm.k8sClients,
+		certData:   certData,
+		keyData:    keyData,
+		audience:   audience,
+		tokenURL:   tokenURL,
 	}
 }

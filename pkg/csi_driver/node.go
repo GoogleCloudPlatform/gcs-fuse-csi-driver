@@ -31,11 +31,13 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -489,7 +491,24 @@ func (s *nodeServer) setupMultiNIC(args *requestArgs, pod *corev1.Pod, sidecarSu
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], "" /*audience*/, false)
+	klog.Infof("prepareStorageService called, VolumeContext: %+v", vc)
+	var ts oauth2.TokenSource
+	if secretName, ok := vc["podCertificateSecret"]; ok && secretName != "" {
+		klog.V(4).Infof("prepareStorageService using podCertificateSecret %s", secretName)
+		secret, err := s.k8sClients.K8sClient().CoreV1().Secrets(vc[VolumeContextKeyPodNamespace]).Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get secret %s: %w", secretName, err)
+		}
+		certData := secret.Data["tls.crt"]
+		keyData := secret.Data["tls.key"]
+		audience := vc["podCertificateAudience"]
+		tokenURL := vc["podCertificateTokenURL"]
+
+		ts = s.driver.config.TokenManager.GetTokenSourceFromCertificate(certData, keyData, audience, tokenURL)
+	} else {
+		ts = s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], "" /*audience*/, false)
+	}
+
 	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
