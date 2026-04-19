@@ -163,6 +163,7 @@ type TestCommandConfig struct {
 	OnlyDir            string
 	ProfileLabel       string
 	ReadOnly           bool
+	BillingProject     string
 }
 
 type IntegrationTestOptions struct {
@@ -288,14 +289,15 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
 	cmdOpts := TestCommandConfig{
-		TestPkg:       opts.TestPkg,
-		TestName:      opts.TestName,
-		GoEnvSetupCmd: gcsfuseGoVersionCommand,
-		MountPath:     mountPath,
-		BucketName:    bucketName,
-		OnlyDir:       onlyDir,
-		ProfileLabel:  profileLabel,
-		ReadOnly:      opts.Config.ReadOnly,
+		TestPkg:        opts.TestPkg,
+		TestName:       opts.TestName,
+		GoEnvSetupCmd:  gcsfuseGoVersionCommand,
+		MountPath:      mountPath,
+		BucketName:     bucketName,
+		OnlyDir:        onlyDir,
+		ProfileLabel:   profileLabel,
+		ReadOnly:       opts.Config.ReadOnly,
+		BillingProject: opts.Config.BillingProject,
 	}
 	if opts.SecondaryConfig != nil {
 		cmdOpts.SecondaryMountPath = mountPath2
@@ -329,6 +331,10 @@ func generateTestCommand(opts TestCommandConfig) string {
 	commandArgs := []string{
 		fmt.Sprintf(gcsfuseGoEnvSetupFormat, opts.GoEnvSetupCmd),
 		fmt.Sprintf("export MOUNTED_DIR=%q", opts.MountPath),
+	}
+
+	if opts.BillingProject != "" {
+		commandArgs = append(commandArgs, fmt.Sprintf("export BILLING_PROJECT=%q", opts.BillingProject))
 	}
 
 	if opts.ProfileLabel != "" {

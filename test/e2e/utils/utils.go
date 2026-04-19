@@ -227,6 +227,7 @@ type ParsedConfig struct {
 	LogFilePath       string
 	LogSeverity       string
 	CacheDir          string
+	BillingProject    string
 	MountOptions      []string
 }
 
@@ -279,6 +280,7 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 			// with the actual project where the CSI driver tests are running.
 			// See: https://github.com/GoogleCloudPlatform/gcsfuse/blob/376c8c1638cd62fcefb3e614c02ae9901f59f3c1/tools/integration_tests/test_config.yaml#L228
 			flagValue = os.Getenv(ProjectEnvVar)
+			parsed.BillingProject = flagValue
 			f = "billing-project=" + flagValue
 		}
 
