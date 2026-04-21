@@ -1,4 +1,4 @@
-# Option 1 POC: Meta CLI in Sidecar
+# Option 1 POC: CLI in Sidecar
 
 This directory contains the resources to run a Proof of Concept for integrating a custom token-fetching CLI into the GCS Fuse sidecar using Google Cloud Workload Identity Federation's executable-sourced credentials.
 
