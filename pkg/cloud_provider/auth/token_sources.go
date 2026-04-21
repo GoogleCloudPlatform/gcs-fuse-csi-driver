@@ -19,9 +19,13 @@ package auth
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -58,12 +62,20 @@ type GCPTokenSource struct {
 	k8sClients         clientset.Interface
 	audience           string
 	fetchTokenfromFile bool // This is set for sidecar where pod doesn't have access to get service account details
+	certData           []byte
+	keyData            []byte
+	tokenURL           string
 }
 
 // Token exchanges a GCP IAM SA Token with a Kubernetes Service Account token.
 func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
+
+	if len(ts.certData) > 0 && len(ts.keyData) > 0 {
+		return ts.fetchTokenViaCertificate(ctx)
+	}
+
 	var k8sSAToken string
 	var err error
 	// If fetchTokenfromFile is set we assume the request is coming from sidecar, as the sidecar (user pod) doesn't have access to get service account details we fetch the service account from file.
@@ -96,6 +108,73 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("GCP service account token fetch error: %w", err)
 	}
 	return token, nil
+}
+
+func (ts *GCPTokenSource) fetchTokenViaCertificate(ctx context.Context) (*oauth2.Token, error) {
+	klog.Infof("fetchTokenViaCertificate called with audience: %s", ts.audience)
+	cert, err := tls.X509KeyPair(ts.certData, ts.keyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load X509 key pair: %w", err)
+	}
+	klog.Infof("Successfully loaded X509 key pair")
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+
+	tr := &http.Transport{TLSClientConfig: tlsConfig}
+	client := &http.Client{Transport: tr}
+
+	u, err := url.Parse(ts.tokenURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token URL %q: %w", ts.tokenURL, err)
+	}
+	baseURL := fmt.Sprintf("%s://%s/", u.Scheme, u.Host)
+
+	// Use the custom client with the STS service
+	stsService, err := sts.NewService(ctx, option.WithHTTPClient(client), option.WithEndpoint(baseURL))
+	if err != nil {
+		return nil, fmt.Errorf("new STS service error: %w", err)
+	}
+
+	var convertedChain []string
+	rest := ts.certData
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		derBase64 := base64.StdEncoding.EncodeToString(block.Bytes)
+		convertedChain = append(convertedChain, derBase64)
+	}
+
+	convertedChainBytes, err := json.Marshal(convertedChain)
+	if err != nil {
+		return nil, fmt.Errorf("while marshaling converted chain: %w", err)
+	}
+
+	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
+		Audience:           ts.audience,
+		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
+		Scope:              credentials.DefaultAuthScopes()[0],
+		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+		SubjectTokenType:   "urn:ietf:params:oauth:token-type:mtls",
+		SubjectToken:       string(convertedChainBytes),
+	}
+
+	stsResponse, err := stsService.V1.Token(stsRequest).Do()
+	if err != nil {
+		return nil, fmt.Errorf("STS exchange failed: %w", err)
+	}
+
+	klog.Infof("Successfully obtained token from STS")
+
+	return &oauth2.Token{
+		AccessToken: stsResponse.AccessToken,
+		TokenType:   stsResponse.TokenType,
+		Expiry:      time.Now().Add(time.Second * time.Duration(stsResponse.ExpiresIn)),
+	}, nil
 }
 
 // fetch Kubernetes Service Account token by calling Kubernetes API.

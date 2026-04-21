@@ -56,6 +56,8 @@ const (
 	metadataPrefetchMemoryRequestAnnotation          = "gke-gcsfuse/metadata-prefetch-memory-request"
 	GCPWorkloadIdentityCredentialConfigMapAnnotation = "gke-gcsfuse/workload-identity-credential-configmap"
 	NumaPinningAnnotation                            = "gke-gcsfuse/enable-numa-pinning"
+	GcsFuseUsePodCertificateAnnotation               = "gke-gcsfuse/use-pod-certificate"
+	GcsFusePodCertificateSecretAnnotation            = "gke-gcsfuse/pod-certificate-secret"
 )
 
 var (
@@ -134,7 +136,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	}
 
 	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
-	// Inject GCP workload identity credential config configmap and token.
+	// Inject GCP workload identity credential config configmap and token/certificate.
+	usePodCertificate := false
+	if usePodCertStr, ok := pod.Annotations[GcsFuseUsePodCertificateAnnotation]; ok {
+		usePodCertificate, _ = ParseBool(usePodCertStr)
+	}
+
 	if configMapName, ok := pod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" && si.K8SClient != nil {
 		// Validate that OIDC authentication is not used with hostNetwork pods
 		if pod.Spec.HostNetwork {
@@ -145,16 +152,34 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 					GCPWorkloadIdentityCredentialConfigMapAnnotation))
 		}
 
-		filename, credentialConfig, err := appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, configMapName)
+		var filename string
+		var credentialConfig *CredentialConfig
+		var err error
+
+		if usePodCertificate {
+			signerName := "kubernetes.io/kube-apiserver-client" // Default signer
+			filename, credentialConfig, err = appendPodCertificateVolumes(si.K8SClient, pod, configMapName, signerName)
+		} else {
+			filename, credentialConfig, err = appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, configMapName)
+		}
+
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
 		}
+		mountPath := "/var/run/secrets/pod-certs"
+		if !usePodCertificate {
+			mountPath = filepath.Dir(credentialConfig.CredentialSource.File)
+		}
+
 		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
 			GacEnv: &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
 			CredentialVolumeMounts: []corev1.VolumeMount{
-				{Name: SidecarContainerWITokenVolumeName, MountPath: filepath.Dir(credentialConfig.CredentialSource.File)},
+				{Name: SidecarContainerWITokenVolumeName, MountPath: mountPath},
 				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
 			},
+		}
+		if usePodCertificate {
+			sidecarCredentialConfig.GaccEnv = &corev1.EnvVar{Name: "GOOGLE_API_CERTIFICATE_CONFIG", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "certificate_config.json")}
 		}
 		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
 	}
@@ -452,6 +477,60 @@ func appendWorkloadCredentialConfigurationVolumes(client kubernetes.Interface, p
 	return filename, credConfig, nil
 }
 
+func appendPodCertificateVolumes(client kubernetes.Interface, pod *corev1.Pod, configMapName string, signerName string) (string, *CredentialConfig, error) {
+	klog.Infof("appendPodCertificateVolumes called, pod volumes: %+v", pod.Spec.Volumes)
+	filename, credConfig, err := parseCredentialConfigurationConfigMap(client, pod, configMapName)
+	if err != nil {
+		klog.Errorf("failed to parse the workload identity credential configuration configMap %s in namespace %s: %v", configMapName, pod.Namespace, err)
+		return "", nil, err
+	}
+	klog.Infof("Parsed the workload identity credential configuration configMap %s in namespace %s %+v", configMapName, pod.Namespace, credConfig)
+
+	secretName := "pod-certs" // Default
+	if val, ok := pod.Annotations[GcsFusePodCertificateSecretAnnotation]; ok && val != "" {
+		secretName = val
+	}
+
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: SidecarContainerWITokenVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: secretName,
+			},
+		},
+	})
+
+	// Inject secret name, audience and token URL into VolumeAttributes of the CSI volume
+	for i, v := range pod.Spec.Volumes {
+		klog.Infof("Checking volume %s for CSI driver, CSI: %+v", v.Name, v.CSI)
+		if v.CSI != nil && (v.CSI.Driver == "gcsfuse.csi.storage.gke.io" || v.CSI.Driver == util.GCSFuseCsiDriverName) {
+			if v.CSI.VolumeAttributes == nil {
+				pod.Spec.Volumes[i].CSI.VolumeAttributes = make(map[string]string)
+			}
+			pod.Spec.Volumes[i].CSI.VolumeAttributes["podCertificateSecret"] = secretName
+			pod.Spec.Volumes[i].CSI.VolumeAttributes["podCertificateAudience"] = credConfig.Audience
+			pod.Spec.Volumes[i].CSI.VolumeAttributes["podCertificateTokenURL"] = credConfig.TokenURL
+			klog.Infof("Injected podCertificateSecret=%s, podCertificateAudience=%s, podCertificateTokenURL=%s into VolumeAttributes for volume %s", secretName, credConfig.Audience, credConfig.TokenURL, v.Name)
+			break
+		}
+	}
+
+	if !checkConfigMapVolumeExists(pod) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: SidecarContainerWICredentialConfigMapVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
+					DefaultMode: &defaultMode,
+				},
+			},
+		})
+	}
+	return filename, credConfig, nil
+}
+
 // checkConfigMapVolumeExists checks if the configMap volume already exists in the pod volumes.
 // pod: the pod to log information for.
 func checkConfigMapVolumeExists(pod *corev1.Pod) bool {
@@ -466,6 +545,7 @@ func checkConfigMapVolumeExists(pod *corev1.Pod) bool {
 
 type CredentialConfig struct {
 	Audience         string `json:"audience"`
+	TokenURL         string `json:"token_url"`
 	CredentialSource struct {
 		File string `json:"file"`
 	} `json:"credential_source"`
@@ -480,18 +560,19 @@ func parseCredentialConfigurationConfigMap(client kubernetes.Interface, pod *cor
 		return "", nil, fmt.Errorf("failed to get configMap %s in namespace %s: %v", configMapName, pod.Namespace, err)
 	}
 
-	if len(configMap.Data) != 1 {
-		return "", nil, fmt.Errorf("ConfigMap %s in namespace %s must contain exactly one data entry, but found %d", configMapName, pod.Namespace, len(configMap.Data))
-	}
-
-	// Find the file name for the credential configuration. Typically it is credential-configuration.json
 	var filename string
-	for key := range configMap.Data {
-		filename = key
-	}
-
-	if len(filename) == 0 {
-		return "", nil, fmt.Errorf("ill-formatted workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
+	if len(configMap.Data) == 1 {
+		for key := range configMap.Data {
+			filename = key
+		}
+	} else if len(configMap.Data) > 1 {
+		if _, ok := configMap.Data["credential-configuration.json"]; ok {
+			filename = "credential-configuration.json"
+		} else {
+			return "", nil, fmt.Errorf("ConfigMap %s in namespace %s contains multiple entries but not 'credential-configuration.json'", configMapName, pod.Namespace)
+		}
+	} else {
+		return "", nil, fmt.Errorf("ConfigMap %s in namespace %s contains no data", configMapName, pod.Namespace)
 	}
 
 	// Parse the JSON content

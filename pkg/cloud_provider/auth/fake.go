@@ -31,6 +31,10 @@ func (tm *fakeTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saN
 	return &FakeGCPTokenSource{k8sSAName: saName, k8sSANamespace: saNamespace}
 }
 
+func (tm *fakeTokenManager) GetTokenSourceFromCertificate(certData, keyData []byte, audience string, tokenURL string) oauth2.TokenSource {
+	return &FakeGCPTokenSource{}
+}
+
 func (tm *fakeTokenManager) GetIdentityProvider() string {
 	return "fake.identity.provider"
 }

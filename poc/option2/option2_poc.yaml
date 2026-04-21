@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-token-server-script
+data:
+  token_server.py: |
+    import socket
+    import os
+    import json
+    import time
+    
+    socket_path = "/tmp/token.sock"
+    
+    if os.path.exists(socket_path):
+        os.remove(socket_path)
+    
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(socket_path)
+    server.listen(1)
+    
+    while True:
+        conn, addr = server.accept()
+        try:
+            data = conn.recv(1024)
+            if data:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Received request from GCS Fuse")
+                token_data = {
+                    "access_token": "DUMMY_TOKEN_FROM_SERVER",
+                    "expires_in": 10,
+                    "token_type": "Bearer"
+                }
+                response_body = json.dumps(token_data)
+                response = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{response_body}".encode('utf-8')
+                conn.sendall(response)
+        finally:
+            conn.close()
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gcsfuse-poc-option2
+spec:
+  containers:
+  - name: main-app
+    image: busybox
+    command: ["sleep", "3600"]
+  - name: token-server
+    image: python:3.9-slim
+    command: ["python", "-u", "/scripts/token_server.py"] # Added -u for unbuffered output
+    volumeMounts:
+    - name: shared-socket
+      mountPath: /tmp
+    - name: script-volume
+      mountPath: /scripts
+  - name: gcsfuse-sidecar
+    image: us-docker.pkg.dev/yangspirit-joonix/main/gcs-fuse-csi-driver-sidecar-mounter:test-x509_linux_amd64
+    command: ["/gcsfuse"]
+    args: ["--foreground", "--debug_fuse", "--debug_gcs", "--custom-endpoint", "https://storage.mtls.googleapis.com:443", "--token-url=unix:///tmp/token.sock", "yangspirit-gcsfuse-profiles-bug-bash-bucket", "/mnt/gcs"]
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: shared-socket
+      mountPath: /tmp
+    - name: gcs-volume
+      mountPath: /mnt/gcs
+      mountPropagation: Bidirectional
+  volumes:
+  - name: shared-socket
+    emptyDir: {}
+  - name: script-volume
+    configMap:
+      name: mock-token-server-script
+  - name: gcs-volume
+    emptyDir: {}
