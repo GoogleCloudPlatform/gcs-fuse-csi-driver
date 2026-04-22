@@ -67,6 +67,7 @@ type MountConfig struct {
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
 	FileCacheMedium                string                `json:"-"`
 	GcsFuseNumaNode                int                   `json:"-"`
+	CustomEndpoint                 string                `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -198,6 +199,10 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	invalidArgs := []string{}
+
+	if customEndpointVal := util.CustomEndpointFromOpts(mc.Options); customEndpointVal != "" {
+		mc.CustomEndpoint = customEndpointVal
+	}
 
 	mc.GcsFuseNumaNode = -1
 	for _, arg := range mc.Options {
