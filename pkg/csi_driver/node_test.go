@@ -59,7 +59,7 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriver(t, mounter)
-	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
 	}
@@ -75,7 +75,7 @@ func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.Fa
 	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
 	driver := initTestDriverWithCustomNodeServer(t, mounter, clientSet, wiNodeLabelCheck)
-	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
 			driver := initTestDriver(t, fakeMounter)
-			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 				t.Fatalf("failed to create the fake bucket: %v", err)
 			}

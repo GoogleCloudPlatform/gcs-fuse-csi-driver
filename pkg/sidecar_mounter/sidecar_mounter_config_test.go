@@ -64,12 +64,13 @@ func TestPrepareMountArgs(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name                  string
-		mc                    *MountConfig
-		expectedArgs          map[string]string
-		expectedConfigMapArgs map[string]string
-		expectNumaNode        bool
-		expectedNumaNode      int
+		name                   string
+		mc                     *MountConfig
+		expectedArgs           map[string]string
+		expectedConfigMapArgs  map[string]string
+		expectNumaNode         bool
+		expectedNumaNode       int
+		expectedCustomEndpoint string
 	}{
 		{
 			name: "should return valid args correctly",
@@ -317,6 +318,7 @@ func TestPrepareMountArgs(t *testing.T) {
 				"cache-dir":                      "",
 				"gcs-connection:custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
 			},
+			expectedCustomEndpoint: "custom-service.my-system.svc.cluster.local:8080",
 		},
 		{
 			name: "should correctly parse custom-endpoint with a port in CLI format",
@@ -336,7 +338,35 @@ func TestPrepareMountArgs(t *testing.T) {
 				"gid":             "0",
 				"custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
 			},
-			expectedConfigMapArgs: defaultConfigFileFlagMap,
+			expectedConfigMapArgs:  defaultConfigFileFlagMap,
+			expectedCustomEndpoint: "custom-service.my-system.svc.cluster.local:8080",
+		},
+		{
+			name: "should correctly prioritize custom-endpoint with a port in CLI format over config-file format when both exist",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"custom-endpoint=custom-service.my-system.svc.cluster.local:8080", "gcs-connection:custom-endpoint:custom-service.my-system.svc.cluster.local:1234"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":        GCSFuseAppName,
+				"temp-dir":        "test-buffer-dir/temp-dir",
+				"config-file":     "test-config-file",
+				"foreground":      "",
+				"uid":             "0",
+				"gid":             "0",
+				"custom-endpoint": "custom-service.my-system.svc.cluster.local:8080",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
+				// Config-file option is also passed to GCSFuse, but GCSFuse will prioritze the CLI flag format
+				"gcs-connection:custom-endpoint": "custom-service.my-system.svc.cluster.local:1234",
+			},
+			expectedCustomEndpoint: "custom-service.my-system.svc.cluster.local:8080", // CLI flag format prioritzed by sidecar mounter
 		},
 		{
 			name: "should return valid args with newly allowed flags",
@@ -494,6 +524,9 @@ func TestPrepareMountArgs(t *testing.T) {
 				if tc.mc.GcsFuseNumaNode != -1 {
 					t.Errorf("Got numa node %d, but expected none (-1)", tc.mc.GcsFuseNumaNode)
 				}
+			}
+			if tc.expectedCustomEndpoint != "" && tc.expectedCustomEndpoint != tc.mc.CustomEndpoint {
+				t.Errorf("Got custom endpoint %s, but expected %s", tc.mc.CustomEndpoint, tc.expectedCustomEndpoint)
 			}
 		})
 	}
