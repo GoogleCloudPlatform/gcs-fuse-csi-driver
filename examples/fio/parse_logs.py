@@ -53,7 +53,7 @@ if __name__ == "__main__":
         except FileExistsError:
             pass
         print(f"Download FIO output from the folder {folder}...")
-        result = subprocess.run(["gsutil", "-m", "cp", "-r", f"gs://{folder}/fio-output", LOCAL_LOGS_LOCATION+"/"+fileSize], capture_output=False, text=True)
+        result = subprocess.run(["gcloud", "storage", "cp", "--recursive", f"gs://{folder}/fio-output", LOCAL_LOGS_LOCATION+"/"+fileSize], capture_output=False, text=True)
         if result.returncode < 0:
             print(f"failed to fetch FIO output, error: {result.stderr}")
     

@@ -86,7 +86,7 @@ spec:
         ++workload.reader.read_threads={{ .Values.dlio.readThreads }} \
         ++workload.output.folder=/logs/{{ .Values.dlio.numFilesTrain }}-{{ .Values.dlio.recordLength }}-{{ .Values.dlio.batchSize }}/{{ .Values.scenario }}
 
-        gsutil -m cp -R /logs gs://{{ .Values.bucketName }}/logs/$(date +"%Y-%m-%d-%H-%M")
+        gcloud storage cp --recursive /logs gs://{{ .Values.bucketName }}/logs/$(date +"%Y-%m-%d-%H-%M")
     volumeMounts:
     - name: dshm
       mountPath: /dev/shm
