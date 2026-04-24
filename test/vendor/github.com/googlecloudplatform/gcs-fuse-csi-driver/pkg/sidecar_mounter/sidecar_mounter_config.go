@@ -67,6 +67,7 @@ type MountConfig struct {
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
 	FileCacheMedium                string                `json:"-"`
 	GcsFuseNumaNode                int                   `json:"-"`
+	CustomEndpoint                 string                `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -80,19 +81,25 @@ type sidecarRetryConfig struct {
 
 var prometheusPort = 62990
 
-// DisallowedFlags is a map of flags that are not allowed to be passed to gcsfuse directly.
-// They are mapped to their config file representation.
+// DisallowedFlags is a map of flags that are disallowed to be passed to sidecar mounter directly.
+// They are mapped to their config file style representation so that they can be passed in config file format
+// as a workaround to bypass the disallowed flags validation.
+// Note: If you add a new disallowed flag here that is needed for integration testing,
+// you should also update the ParseConfigFlags() logic in test/e2e/utils/utils.go to handle it.
 var DisallowedFlags = map[string]string{
+	// The following flags are explicitly handled in test/e2e/utils/utils.go
+	"log-file":   "logging:file-path",
+	"log-format": "logging:format",
+	"o":          "o",
+	"cache-dir":  "cache-dir",
+
+	// --- Unused in test/e2e/utils/utils.go ---
 	"temp-dir":                 "temp-dir",
 	"config-file":              "config-file",
 	"foreground":               "foreground",
-	"log-file":                 "logging:file-path",
-	"log-format":               "logging:format",
 	"key-file":                 "gcs-auth:key-file",
 	"token-url":                "gcs-auth:token-url",
 	"reuse-token-from-url":     "gcs-auth:reuse-token-from-url",
-	"o":                        "o",
-	"cache-dir":                "cache-dir",
 	"prometheus-port":          "prometheus-port",
 	"kernel-params-file":       "file-system:kernel-params-file",
 	KernelParamsFileConfigFlag: KernelParamsFileConfigFlag,
@@ -192,6 +199,10 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	invalidArgs := []string{}
+
+	if customEndpointVal := util.CustomEndpointFromOpts(mc.Options); customEndpointVal != "" {
+		mc.CustomEndpoint = customEndpointVal
+	}
 
 	mc.GcsFuseNumaNode = -1
 	for _, arg := range mc.Options {

@@ -61,6 +61,8 @@ const (
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
 	GCSFuseNumaNodeArg                  = "gcs-fuse-numa-node"
 	GCSFuseAppNameArg                   = "app-name"
+	CustomEndpointConfigFileFlag        = "gcs-connection:custom-endpoint"
+	CustomEndpointCLIFlag               = "custom-endpoint"
 )
 
 var (
@@ -299,4 +301,33 @@ func ParseBool(str string) (bool, error) {
 	default:
 		return false, fmt.Errorf("could not parse string to bool: the acceptable values for %q are 'True', 'true', 'false' or 'False'", str)
 	}
+}
+
+// CustomEndpointFromOpts parses a list of mount options to extract the custom endpoint value.
+// It looks for options in two formats:
+// 1. Config file format (e.g., "gcs-connection:custom-endpoint:storage.example.com:443")
+// 2. CLI flag format (e.g., "custom-endpoint=storage.example.com:443")
+// If both formats are present, the CLI flag value is prioritized, and a warning is logged.
+func CustomEndpointFromOpts(opts []string) string {
+	var configFileVal string
+	var cliFlagVal string
+	for _, arg := range opts {
+		if strings.HasPrefix(arg, CustomEndpointConfigFileFlag+":") {
+			if parts := strings.SplitN(arg, ":", 3); len(parts) == 3 {
+				configFileVal = parts[2]
+			}
+		} else if strings.HasPrefix(arg, CustomEndpointCLIFlag+"=") {
+			if parts := strings.SplitN(arg, "=", 2); len(parts) == 2 {
+				cliFlagVal = parts[1]
+			}
+		}
+	}
+	if configFileVal != "" && cliFlagVal != "" {
+		klog.Warningf("found conflicting mountOptions: config-file: %s:%s, CLI flag: %s=%s, prioritizing CLI flag value", CustomEndpointConfigFileFlag, configFileVal, CustomEndpointCLIFlag, cliFlagVal)
+		return cliFlagVal
+	}
+	if cliFlagVal != "" {
+		return cliFlagVal
+	}
+	return configFileVal
 }
