@@ -47,6 +47,8 @@ const (
 	TokenServerIdentityPoolConst        = "token-server-identity-pool"
 	ServiceAccountNameConst             = "service-account-name"
 	PodNamespaceConst                   = "pod-namespace"
+	PodNameConst                        = "pod-name"
+	PodUIDConst                         = "pod-uid"
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	FileCacheMediumConst                = "file-cache-medium"
 	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
@@ -330,4 +332,14 @@ func CustomEndpointFromOpts(opts []string) string {
 		return cliFlagVal
 	}
 	return configFileVal
+}
+
+// GetCloudProfilerServiceVersion returns the service version for Cloud Profiler.
+// It returns the provided podName and podUID joined by an underscore.
+// If both podName and podUID are empty, it returns an empty string.
+func GetCloudProfilerServiceVersion(podName, podUID string) string {
+	if podName == "" && podUID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s_%s", podName, podUID)
 }

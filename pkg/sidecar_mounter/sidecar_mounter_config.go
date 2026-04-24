@@ -62,6 +62,8 @@ type MountConfig struct {
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
+	PodName                        string                `json:"-"`
+	PodUID                         string                `json:"-"`
 	EnableSidecarBucketAccessCheck bool                  `json:"-"`
 	TokenServerIdentityPool        string                `json:"-"`
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
@@ -285,6 +287,14 @@ func (mc *MountConfig) prepareMountArgs() {
 			mc.ServiceAccountName = value
 			continue
 
+		case util.PodNameConst:
+			mc.PodName = value
+			continue
+
+		case util.PodUIDConst:
+			mc.PodUID = value
+			continue
+
 		case util.EnableCloudProfilerForSidecarConst:
 			mc.EnableCloudProfilerForSidecar = value == util.TrueStr
 			continue
@@ -343,6 +353,14 @@ func (mc *MountConfig) prepareMountArgs() {
 	if mc.EnableGCSFuseKernelParams {
 		// This kernel params config file is created by GCSFuse only.
 		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
+	}
+
+	if mc.EnableCloudProfilerForSidecar {
+		// Inject Cloud Profiler flags supported by gcsfuse.
+		flagMap["enable-cloud-profiler"] = ""
+		customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
+		flagMap["cloud-profiler-label"] = customLabel
+		klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)
 	}
 
 	mc.FlagMap = flagMap

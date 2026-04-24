@@ -26,12 +26,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"cloud.google.com/go/profiler"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
@@ -76,6 +78,7 @@ func main() {
 		fileContent := string(machineTypeBytes)
 		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
 	}
+	var startProfilerOnce sync.Once
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
@@ -83,17 +86,26 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
-		if mc.EnableCloudProfilerForSidecar {
-			cfg := profiler.Config{
-				Service: "gke-gcsfuse-sidecar",
-			}
-			if err := profiler.Start(cfg); err != nil {
-				klog.Errorf("Errored while starting cloud profiler, got %v", err)
-			} else {
-				klog.Infof("Running cloud profiler on %s", cfg.Service)
-			}
-		}
 		if mc != nil {
+			if mc.EnableCloudProfilerForSidecar {
+				serviceVersion := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
+				if serviceVersion == "" {
+					klog.Warning("Cloud Profiler is disabled because both PodName and PodUID are empty.")
+				} else {
+					// Use sync.Once to ensure Cloud Profiler only start once per process.
+					startProfilerOnce.Do(func() {
+						cfg := profiler.Config{
+							Service:        "gke-gcsfuse-sidecar",
+							ServiceVersion: serviceVersion,
+						}
+						if err := profiler.Start(cfg); err != nil {
+							klog.Errorf("Errored while starting cloud profiler, got %v", err)
+						} else {
+							klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
+						}
+					})
+				}
+			}
 			if mc.EnableSidecarBucketAccessCheck {
 				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap
 				mc.SidecarRetryConfig.Steps = *storageServiceAndBucketAccessSteps

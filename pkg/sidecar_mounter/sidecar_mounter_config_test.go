@@ -494,6 +494,32 @@ func TestPrepareMountArgs(t *testing.T) {
 				"cache-dir":         "",
 			},
 		},
+		{
+			name: "should parse pod name and pod uid when cloud profiler is enabled",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				TempDir:    "test-temp-dir",
+				Options:    []string{util.EnableCloudProfilerForSidecarConst + "=true", util.PodNameConst + "=my-pod", util.PodUIDConst + "=my-uid"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":              GCSFuseAppName,
+				"temp-dir":              "test-buffer-dir/temp-dir",
+				"config-file":           "test-config-file",
+				"foreground":            "",
+				"uid":                   "0",
+				"gid":                   "0",
+				"enable-cloud-profiler": "",
+				"cloud-profiler-label":  "my-pod_my-uid",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
+			},
+		},
 	}
 
 	testPrometheusPort := prometheusPort
