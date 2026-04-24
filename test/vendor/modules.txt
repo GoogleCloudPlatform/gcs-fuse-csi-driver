@@ -438,7 +438,7 @@ github.com/kubernetes-csi/csi-test/v5/utils
 # github.com/magiconair/properties v1.8.5
 ## explicit; go 1.13
 github.com/magiconair/properties
-# github.com/mailru/easyjson v0.9.1
+# github.com/mailru/easyjson v0.9.2
 ## explicit; go 1.20
 github.com/mailru/easyjson/buffer
 github.com/mailru/easyjson/jlexer
@@ -449,7 +449,7 @@ github.com/mistifyio/go-zfs
 # github.com/mitchellh/mapstructure v1.5.0
 ## explicit; go 1.14
 github.com/mitchellh/mapstructure
-# github.com/moby/spdystream v0.5.0
+# github.com/moby/spdystream v0.5.1
 ## explicit; go 1.13
 github.com/moby/spdystream
 github.com/moby/spdystream/spdy
@@ -605,7 +605,7 @@ github.com/spiffe/go-spiffe/v2/internal/jwtutil
 github.com/spiffe/go-spiffe/v2/internal/pemutil
 github.com/spiffe/go-spiffe/v2/internal/x509util
 github.com/spiffe/go-spiffe/v2/spiffeid
-# github.com/stoewer/go-strcase v1.3.0
+# github.com/stoewer/go-strcase v1.3.1
 ## explicit; go 1.11
 github.com/stoewer/go-strcase
 # github.com/subosito/gotenv v1.2.0
