@@ -114,6 +114,7 @@ type requestArgs struct {
 	optInHostnetworkKSA           bool
 	enableCloudProfilerForSidecar bool
 	multiNICIndex                 int
+	customEndpoint                string
 }
 
 func NewControllerServiceCapability(c csi.ControllerServiceCapability_RPC_Type) *csi.ControllerServiceCapability {
@@ -369,6 +370,9 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]stri
 
 	args, err := parseVolumeAttributes(fuseMountOptions, vc)
 	args.bucketName = bucketName
+	if customEndpointVal := util.CustomEndpointFromOpts(args.fuseMountOptions); customEndpointVal != "" {
+		args.customEndpoint = customEndpointVal
+	}
 	return args, err
 }
 
@@ -509,6 +513,9 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, err
 			code = codes.Unauthenticated
 		}
 		if strings.Contains(errMsgStr, util.SidecarBucketAccessCheckErrorPrefix) {
+			if code == codes.Internal {
+				code = codes.Unavailable // Sidecar bucket access check retries on any failure to connect to the bucket or metadata service setup retries on any failure, so mark these as Unavailable to avoid SLO false triggers.
+			}
 			return code, fmt.Errorf("%v", errMsgStr) // Remember the error string already contains SidecarBucketAccessCheckErrorPrefix
 		}
 		return code, fmt.Errorf("gcsfuse failed with error: %v", errMsgStr)

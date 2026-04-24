@@ -66,9 +66,9 @@ type Service interface {
 }
 
 type ServiceManager interface {
-	SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error)
+	SetupService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (Service, error)
 	SetupServiceWithDefaultCredential(ctx context.Context, enableZB bool) (Service, error)
-	SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error)
+	SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (Service, error)
 }
 
 type gcsService struct {
@@ -83,7 +83,7 @@ func NewGCSServiceManager() (ServiceManager, error) {
 	return &gcsServiceManager{}, nil
 }
 
-func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
+func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (Service, error) {
 	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
 		if _, err := ts.Token(); err != nil {
 			klog.Errorf("error fetching initial token: %v", err)
@@ -97,12 +97,12 @@ func (manager *gcsServiceManager) SetupService(ctx context.Context, ts oauth2.To
 	}
 
 	client := oauth2.NewClient(ctx, ts)
-	storageClient, err := storage.NewClient(ctx, option.WithHTTPClient(client))
+	storageClient, err := storage.NewClient(ctx, withCustomEndpoint([]option.ClientOption{option.WithHTTPClient(client)}, customEndpoint)...)
 	if err != nil {
 		return nil, err
 	}
 
-	controlClient, err := control.NewStorageControlClient(ctx, option.WithTokenSource(ts))
+	controlClient, err := control.NewStorageControlClient(ctx, withCustomEndpoint([]option.ClientOption{option.WithTokenSource(ts)}, customEndpoint)...)
 	if err != nil {
 		storageClient.Close()
 		return nil, err
@@ -432,7 +432,16 @@ func isBucketAZonalBucket(ctx context.Context, client *storage.Client, bucketNam
 	return attrs.StorageClass == "RAPID", nil
 }
 
-func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
+func withCustomEndpoint(opts []option.ClientOption, customEndpoint string) []option.ClientOption {
+	// Use a custom endpoint, if provided.
+	// TODO(urielguzman): Dynamically fetch the Google Universe if custom endpoint isn't provided.
+	if customEndpoint != "" {
+		return append(opts, option.WithEndpoint(customEndpoint))
+	}
+	return opts
+}
+
+func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (Service, error) {
 	var storageOpts []option.ClientOption
 	var controlOpts []option.ClientOption
 
@@ -445,12 +454,12 @@ func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Cont
 		controlOpts = append(controlOpts, option.WithTokenSource(ts))
 	}
 
-	storageClient, err := storage.NewClient(ctx, storageOpts...)
+	storageClient, err := storage.NewClient(ctx, withCustomEndpoint(storageOpts, customEndpoint)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
 
-	controlClient, err := control.NewStorageControlClient(ctx, controlOpts...)
+	controlClient, err := control.NewStorageControlClient(ctx, withCustomEndpoint(controlOpts, customEndpoint)...)
 	if err != nil {
 		storageClient.Close()
 		return nil, fmt.Errorf("failed to create control client: %w", err)
