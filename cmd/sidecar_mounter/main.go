@@ -83,6 +83,10 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
+		if mc == nil {
+			klog.Errorf("failed to create mount config for %s", sp)
+			continue
+		}
 		if mc.EnableCloudProfilerForSidecar {
 			cfg := profiler.Config{
 				Service: "gke-gcsfuse-sidecar",
@@ -93,21 +97,19 @@ func main() {
 				klog.Infof("Running cloud profiler on %s", cfg.Service)
 			}
 		}
-		if mc != nil {
-			if mc.EnableSidecarBucketAccessCheck {
-				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap
-				mc.SidecarRetryConfig.Steps = *storageServiceAndBucketAccessSteps
-				mc.SidecarRetryConfig.Factor = *storageServiceAndBucketAccessFactor
-				mc.SidecarRetryConfig.Duration = *storageServiceAndBucketAccessDuration
-				mc.SidecarRetryConfig.Jitter = *storageServiceAndBucketAccessJitter
-				err := mounter.SetupTokenAndStorageManager(ctx, nil /*k8sClientset*/, mc)
-				if err != nil {
-					klog.Fatalf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %v", err)
-				}
+		if mc.EnableSidecarBucketAccessCheck {
+			mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap
+			mc.SidecarRetryConfig.Steps = *storageServiceAndBucketAccessSteps
+			mc.SidecarRetryConfig.Factor = *storageServiceAndBucketAccessFactor
+			mc.SidecarRetryConfig.Duration = *storageServiceAndBucketAccessDuration
+			mc.SidecarRetryConfig.Jitter = *storageServiceAndBucketAccessJitter
+			err := mounter.SetupTokenAndStorageManager(ctx, nil /*k8sClientset*/, mc)
+			if err != nil {
+				klog.Fatalf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %v", err)
 			}
-			if err := mounter.Mount(ctx, mc); err != nil {
-				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
-			}
+		}
+		if err := mounter.Mount(ctx, mc); err != nil {
+			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 		}
 	}
 
