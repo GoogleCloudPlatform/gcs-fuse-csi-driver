@@ -29,8 +29,17 @@ export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
 export GCSFUSE_TAG ?= master
+export GCSFUSE_REPO ?=
 export BUILD_ARM ?= false
 export SELF_MANAGED_K8S ?= false
+export GCSFUSE_PR_NUMBER ?=
+export E2E_TEST_BUILD_DRIVER ?= false
+
+# When GCSFUSE_PR_NUMBER is set, force building gcsfuse from source and building the driver image.
+ifneq ($(GCSFUSE_PR_NUMBER),)
+  BUILD_GCSFUSE_FROM_SOURCE := true
+  E2E_TEST_BUILD_DRIVER := true
+endif
 
 # Self-Managed / OSS K8s Logic. These match the defaults in cloudbuild-install.yaml for self-managed k8s.
 ifeq ($(SELF_MANAGED_K8S), true)
@@ -113,9 +122,26 @@ webhook:
 download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
+# When building from a PR, resolve GCSFUSE_REPO and GCSFUSE_TAG from the
+# GitHub API.  $(eval) defers execution to recipe time so that `make e2e-test`
+# (which triggers a nested `make build-image-and-push-multi-arch` via
+# test/e2e/utils/image.go) does not pay for these curl calls at parse time.
+ifneq ($(GCSFUSE_PR_NUMBER),)
+ifeq ($(GCSFUSE_REPO),)
+	$(eval GCSFUSE_REPO := $(shell curl -sf -H "User-Agent: gcs-fuse-csi-driver" \
+	  "https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/pulls/$(GCSFUSE_PR_NUMBER)" \
+	  | jq -r '.head.repo.clone_url'))
+	$(eval GCSFUSE_TAG := $(shell curl -sf -H "User-Agent: gcs-fuse-csi-driver" \
+	  "https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/pulls/$(GCSFUSE_PR_NUMBER)" \
+	  | jq -r '.head.ref'))
+	$(info Resolved from PR $(GCSFUSE_PR_NUMBER): GCSFUSE_REPO=$(GCSFUSE_REPO) GCSFUSE_TAG=$(GCSFUSE_TAG))
+endif
+endif
 	rm -f ${BINDIR}/Dockerfile.gcsfuse
 	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/${GCSFUSE_TAG}/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
-ifeq ($(GCSFUSE_TAG), master)
+ifneq ($(GCSFUSE_PR_NUMBER),)
+	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-pr-$(GCSFUSE_PR_NUMBER))
+else ifeq ($(GCSFUSE_TAG), master)
 	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
 else
 	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
@@ -126,6 +152,7 @@ endif
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
 		--build-arg BRANCH_NAME=${GCSFUSE_TAG} \
+		$(if $(GCSFUSE_REPO),--build-arg GCSFUSE_REPO=${GCSFUSE_REPO}) \
 		--build-arg ARCHITECTURE=amd64 \
 		--platform=linux/amd64 .
 
@@ -140,6 +167,7 @@ ifeq (${BUILD_ARM}, true)
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
 		--build-arg BRANCH_NAME=${GCSFUSE_TAG} \
+		$(if $(GCSFUSE_REPO),--build-arg GCSFUSE_REPO=${GCSFUSE_REPO}) \
 		--build-arg ARCHITECTURE=arm64 \
 		--platform=linux/arm64 .
 	docker run \

@@ -19,6 +19,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,6 +63,7 @@ const (
 
 var (
 	MasterBranchName = "master"
+	GCSFusePRNumber  = os.Getenv("GCSFUSE_PR_NUMBER")
 
 	// Use release branch for corresponding gcsfuse version. This ensures we
 	// can pick up test fixes without requiring a new gcsfuse release.
@@ -157,11 +159,89 @@ type TestBucketType struct {
 
 type TestPackages map[string][]TestPackage
 
+// LoadTestConfig loads the test_config.yaml from the gcsfuse repository.
+// If GCSFUSE_PR_NUMBER is set, it fetches the config from the PR's head commit.
+// Otherwise, it resolves the release branch from the gcsfuse version string.
 func LoadTestConfig(gcsfuseVersion string) error {
+	if GCSFusePRNumber != "" {
+		return loadTestConfigFromPR(GCSFusePRNumber)
+	}
 	_, branch := GCSFuseBranch(gcsfuseVersion)
 	klog.Infof("LoadTestConfig: Loading test config for GCSFuse branch %v", branch)
 	url := fmt.Sprintf(testConfigUrlFormat, branch)
-	klog.Infof("LoadTestConfig: Fetching test config from %v", url)
+	return fetchAndParseTestConfig(url)
+}
+
+// loadTestConfigFromPR queries the GitHub API to resolve the head commit SHA for the given PR Number.
+// It then fetches the raw test_config.yaml from that specific commit via raw.githubusercontent.com.
+// Finally, it parses the YAML content to populate LoadedTestPackages for dynamic test generation.
+func loadTestConfigFromPR(prNumber string) error {
+	klog.Infof("loadTestConfigFromPR: Fetching PR info for PR %v", prNumber)
+	apiURL := fmt.Sprintf("https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/pulls/%s", prNumber)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	// GitHub API requires a User-Agent header.
+	req.Header.Set("User-Agent", "gcs-fuse-csi-driver-e2e")
+
+	// Fetch PR info from GitHub API with exponential backoff.
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	var resp *http.Response
+	err = wait.ExponentialBackoff(httpRetryBackoff, func() (bool, error) {
+		var httpErr error
+		resp, httpErr = httpClient.Do(req)
+		if httpErr != nil {
+			klog.Warningf("Failed to fetch PR info, retrying: %v", httpErr)
+			return false, nil
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			klog.Warningf("Failed to fetch PR info (status %d), retrying", resp.StatusCode)
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to fetch PR info after %d retries: %w", httpRetryBackoff.Steps, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read PR info body: %w", err)
+	}
+
+	// Define a minimal struct to extract only the head commit SHA from the PR response.
+	var pr struct {
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	}
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return fmt.Errorf("failed to unmarshal PR info: %w", err)
+	}
+
+	// Extract the resolved SHA.
+	sha := pr.Head.SHA
+	if sha == "" {
+		return fmt.Errorf("failed to resolve head SHA for PR %s", prNumber)
+	}
+	klog.Infof("loadTestConfigFromPR: Found PR head SHA %v", sha)
+
+	configURL := fmt.Sprintf(testConfigUrlFormat, sha)
+	return fetchAndParseTestConfig(configURL)
+}
+
+// fetchAndParseTestConfig fetches the test_config.yaml from the given URL,
+// parses it, and stores the result in LoadedTestPackages.
+func fetchAndParseTestConfig(url string) error {
+	klog.Infof("fetchAndParseTestConfig: Fetching test config from %v", url)
 	var resp *http.Response
 	err := wait.ExponentialBackoff(httpRetryBackoff, func() (bool, error) {
 		var httpErr error
@@ -191,11 +271,10 @@ func LoadTestConfig(gcsfuseVersion string) error {
 
 	config, err := ParseTestConfig(body)
 	if err != nil {
-		klog.Errorf("LoadTestConfig: failed to parse test config: %v", err)
 		return fmt.Errorf("failed to parse test config: %w", err)
 	}
 
-	klog.Infof("LoadTestConfig: Successfully loaded and parsed %d test packages", len(config))
+	klog.Infof("fetchAndParseTestConfig: Successfully loaded and parsed %d test packages", len(config))
 	LoadedTestPackages = config
 	return nil
 }
@@ -329,8 +408,13 @@ func ParseConfigFlags(flagStr string) ParsedConfig {
 	return parsed
 }
 
-// Checks if the gcsfuse version supports test_config.yaml for integration tests.
+// IsReadFromTestConfig checks if the gcsfuse version supports test_config.yaml for integration tests.
+// It also returns true when GCSFUSE_PR_NUMBER is set, since the PR is assumed to have a test_config.yaml.
 func IsReadFromTestConfig(gcsfuseVersionStr string) bool {
+	if GCSFusePRNumber != "" {
+		return true
+	}
+
 	if gcsfuseVersionStr == "" {
 		return false
 	}
@@ -383,9 +467,10 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 			TerminationGracePeriodSeconds: ptr.To(int64(0)),
 			Containers: []corev1.Container{
 				{
-					Name:    webhook.GcsFuseSidecarName,
-					Image:   image,
-					Command: []string{"/gcsfuse", "--version"},
+					Name:            webhook.GcsFuseSidecarName,
+					Image:           image,
+					ImagePullPolicy: corev1.PullAlways,
+					Command:         []string{"/gcsfuse", "--version"},
 				},
 				{
 					Name:    "sleeper",

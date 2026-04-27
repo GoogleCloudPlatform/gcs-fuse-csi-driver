@@ -1227,7 +1227,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 func installGcsfuseDependencies(tPod *specs.TestPod, f *framework.Framework, gcsfuseTestBranch string, installGcloud bool) {
 	ginkgo.By("Installing dependencies")
-	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
+	if utils.GCSFusePRNumber != "" {
+		framework.Logf("Running tests against GCSFuse PR %s", utils.GCSFusePRNumber)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone https://github.com/GoogleCloudPlatform/gcsfuse.git && cd gcsfuse && git fetch origin pull/%s/head:pr-branch && git checkout pr-branch", utils.GCSFusePRNumber))
+	} else {
+		framework.Logf("Running tests against GCSFuse branch %s", gcsfuseTestBranch)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
+	}
 	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 
 	if installGcloud {
