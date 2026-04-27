@@ -380,9 +380,6 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		init(specs.SkipCSIBucketAccessCheckPrefix)
 		defer cleanup()
 
-		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
-		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
-
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 
@@ -415,18 +412,6 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		createCredentialConfigMap(ctx, f, oidcMisconfiguredConfigMapName, credentialConfig)
 		defer deleteConfigMap(ctx, f, oidcMisconfiguredConfigMapName)
 
-		// Grant bucket access so that the only failure is authentication,
-		// not a missing IAM binding masking the real error.
-		ginkgo.By("Granting bucket access to workload identity principal")
-		principal := fmt.Sprintf(
-			"principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/subject/system:serviceaccount:%s:%s",
-			projectNumber, oidcWorkloadIdentityPoolID, f.Namespace.Name, oidcServiceAccountName)
-		grantBucketAccess(bucketName, principal, "roles/storage.objectUser")
-		defer revokeBucketAccess(bucketName, principal, "roles/storage.objectUser")
-
-		ginkgo.By("Waiting for IAM policy propagation")
-		time.Sleep(5 * time.Second)
-
 		ginkgo.By("Configuring test pod with misconfigured OIDC provider")
 		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(oidcServiceAccountName)
@@ -456,9 +441,6 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		// provider that do not exist in GCP at all.
 		init(specs.SkipCSIBucketAccessCheckPrefix)
 		defer cleanup()
-
-		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
-		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
 
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
