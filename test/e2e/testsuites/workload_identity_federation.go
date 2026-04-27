@@ -168,7 +168,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		// Fix corrupted gcloud output
 		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
-		projectID = lines[len(lines)-1]
+		projectID := lines[len(lines)-1]
 
 		// Safety check
 		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
@@ -300,7 +300,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		var countStable bool
 
-		_ = wait.PollUntilContextTimeout(ctx, 2*time.Minute, 10*time.Second, true,
+		_ = wait.PollUntilContextTimeout(ctx, 10*time.Second, 2*time.Minute, true,
 			func(ctx context.Context) (bool, error) {
 				out1 := tPod.VerifyExecInPodSucceedWithOutput(
 					f, specs.TesterContainerName,
@@ -354,10 +354,26 @@ func addWorkloadIdentityBinding(ctx context.Context, gcpSAEmail, projectID, name
 			klog.Warningf("GetIamPolicy for %s not ready yet: %v — retrying", gcpSAEmail, e)
 			return false, nil
 		}
-		policy.Bindings = append(policy.Bindings, &iam.Binding{
-			Role:    "roles/iam.workloadIdentityUser",
-			Members: []string{member},
-		})
+		alreadyBound := false
+		for _, b := range policy.Bindings {
+			if b.Role == "roles/iam.workloadIdentityUser" {
+				for _, m := range b.Members {
+					if m == member {
+						alreadyBound = true
+						break
+					}
+				}
+			}
+			if alreadyBound {
+				break
+			}
+		}
+		if !alreadyBound {
+			policy.Bindings = append(policy.Bindings, &iam.Binding{
+				Role:    "roles/iam.workloadIdentityUser",
+				Members: []string{member},
+			})
+		}
 		if _, e = iamService.Projects.ServiceAccounts.SetIamPolicy(saResourceName, &iam.SetIamPolicyRequest{Policy: policy}).Do(); e != nil {
 			klog.Warningf("SetIamPolicy for %s failed: %v — retrying", gcpSAEmail, e)
 			return false, nil
