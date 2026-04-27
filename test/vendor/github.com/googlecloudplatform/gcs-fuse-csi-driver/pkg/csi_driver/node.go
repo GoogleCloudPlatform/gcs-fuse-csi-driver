@@ -166,7 +166,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// skip check if it has ever succeeded
 	if vs != nil && !args.skipCSIBucketAccessCheck {
 		if !vs.BucketAccessCheckPassed {
-			storageService, err := s.prepareStorageService(ctx, vc)
+			storageService, err := s.prepareStorageService(ctx, vc, args.customEndpoint)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 			}
@@ -180,7 +180,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, args.userSpecifiedIdentityProvider != "") {
 		if args.userSpecifiedIdentityProvider != "" {
@@ -209,7 +209,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			util.TokenServerIdentityPoolConst + "=" + identityPool})
 	}
 
-	if args.enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
+	if args.enableCloudProfilerForSidecar && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
 			util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(args.enableCloudProfilerForSidecar),
 			util.PodNameConst + "=" + vc[VolumeContextKeyPodName],
@@ -267,7 +267,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
-	if gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
+	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
 		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
 		machineType, ok := node.Labels[clientset.MachineTypeKey]
 		if ok {
@@ -380,7 +380,6 @@ func (s *nodeServer) startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidec
 func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage string, vs *util.VolumeState) bool {
 	return vs != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
-		gcsFuseSidecarImage != "" &&
 		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
 }
 
@@ -493,9 +492,9 @@ func (s *nodeServer) setupMultiNIC(args *requestArgs, pod *corev1.Pod, sidecarSu
 }
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
-func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
+func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string, customEndpoint string) (storage.Service, error) {
 	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], "" /*audience*/, false)
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts, customEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
