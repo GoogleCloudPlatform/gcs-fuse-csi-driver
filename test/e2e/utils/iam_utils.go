@@ -199,16 +199,27 @@ func (t *TestGCPProjectIAMPolicyBinding) Create(ctx context.Context) {
 	crmService, err := cloudresourcemanager.NewService(ctx)
 	ExpectNoError(err)
 
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+	backoff := wait.Backoff{
+		Duration: 10 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.5,
+		Steps:    10,
+		Cap:      5 * time.Minute,
+	}
+
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
 		bindErr := addBinding(crmService, t.projectID, t.member, t.role)
 		if bindErr != nil {
 			klog.Warningf("error occured while binding member %s with role %s, condition %q to project %s: %v", t.member, t.role, t.condition, t.projectID, bindErr)
-			//nolint:nilerr
+			// Return false, nil to retry
 			return false, nil
 		}
 
 		return true, nil
 	})
+	if err != nil {
+		klog.Errorf("failed to create IAM policy binding: %v", err)
+	}
 }
 
 func (t *TestGCPProjectIAMPolicyBinding) Cleanup(ctx context.Context) {
