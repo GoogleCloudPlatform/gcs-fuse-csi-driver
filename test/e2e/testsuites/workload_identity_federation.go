@@ -197,7 +197,17 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	}
 
 	ginkgo.It("should fail GCS access after workload identity federation principal permissions are removed while pod is running", func() {
-		initWithCSIBucketAccessCheckSkipped()
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+
+		// OSS: credential ConfigMap doesn't exist at mount time, so the CSI pre-mount
+		// bucket access check would fail — skip it and let authz errors surface on I/O.
+		// GKE: WI binding and bucket access are both ready before the pod starts, so the
+		// pre-mount check can run normally.
+		if isOSS {
+			initWithCSIBucketAccessCheckSkipped()
+		} else {
+			init()
+		}
 		defer cleanup()
 
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
@@ -208,8 +218,6 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			volumeName = "gcs-volume"
 			mountPath  = "/mnt/gcs"
 		)
-
-		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 
 		var (
 			principal               string
