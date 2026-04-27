@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC.
+// Copyright 2026 Google LLC.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -339,8 +339,8 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	GrantType string `json:"grantType,omitempty"`
 	// Options: A set of features that Security Token Service supports, in addition
 	// to the standard OAuth 2.0 token exchange, formatted as a serialized JSON
-	// object of Options. The size of the parameter value must not exceed 4096
-	// characters.
+	// object of Options. The size of the parameter value must not exceed 4 * 1024
+	// * 1024 characters (4 MB).
 	Options string `json:"options,omitempty"`
 	// RequestedTokenType: Required. An identifier for the type of requested
 	// security token. Can be `urn:ietf:params:oauth:token-type:access_token` or
@@ -369,14 +369,16 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	// this field. The document must be formatted according to section 4.2 of the
 	// OIDC 1.0 Discovery specification
 	// (https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationResponse).
-	// - `iat`: The issue time, in seconds, since the Unix epoch. Must be in the
-	// past. - `exp`: The expiration time, in seconds, since the Unix epoch. Must
-	// be less than 48 hours after `iat`. Shorter expiration times are more secure.
-	// If possible, we recommend setting an expiration time less than 6 hours. -
-	// `sub`: The identity asserted in the JWT. - `aud`: For workload identity
-	// pools, this must be a value specified in the allowed audiences for the
-	// workload identity pool provider, or one of the audiences allowed by default
-	// if no audiences were specified. See
+	// - `iat`: The issue time, in seconds, since the Unix epoch. This timestamp
+	// must be in the past and no more than 24 hours in the past, or the token will
+	// be rejected. Note that this implies the token is only acceptable within a
+	// time window of at most 24 hours. - `exp`: The expiration time, in seconds,
+	// since the Unix epoch. Shorter expiration times are more secure. If possible,
+	// we recommend setting an expiration time less than 6 hours. - `sub`: The
+	// identity asserted in the JWT. - `aud`: For workload identity pools, this
+	// must be a value specified in the allowed audiences for the workload identity
+	// pool provider, or one of the audiences allowed by default if no audiences
+	// were specified. See
 	// https://cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers#oidc.
 	// For workforce pools, this must match the client ID specified in the provider
 	// configuration. See
@@ -438,14 +440,21 @@ type GoogleIdentityStsV1ExchangeTokenRequest struct {
 	// Credential Access Boundary. In this case, set `subject_token_type` to
 	// `urn:ietf:params:oauth:token-type:access_token`. If an access token already
 	// contains security attributes, you cannot apply additional security
-	// attributes.
+	// attributes. If the request is for X.509 certificate-based authentication,
+	// the `subject_token` must be a JSON-formatted list of X.509 certificates in
+	// DER format, as defined in RFC 7515
+	// (https://www.rfc-editor.org/rfc/rfc7515#section-4.1.6). `subject_token_type`
+	// must be `urn:ietf:params:oauth:token-type:mtls`. The following example shows
+	// a JSON-formatted list of X.509 certificate in DER format: ```
+	// [\"MIIEYDCCA0i...\", \"MCIFFGAGTT0...\"] ```
 	SubjectToken string `json:"subjectToken,omitempty"`
 	// SubjectTokenType: Required. An identifier that indicates the type of the
 	// security token in the `subject_token` parameter. Supported values are
 	// `urn:ietf:params:oauth:token-type:jwt`,
 	// `urn:ietf:params:oauth:token-type:id_token`,
 	// `urn:ietf:params:aws:token-type:aws4_request`,
-	// `urn:ietf:params:oauth:token-type:access_token`, and
+	// `urn:ietf:params:oauth:token-type:access_token`,
+	// `urn:ietf:params:oauth:token-type:mtls`, and
 	// `urn:ietf:params:oauth:token-type:saml2`.
 	SubjectTokenType string `json:"subjectTokenType,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "Audience") to
@@ -523,6 +532,10 @@ type GoogleIdentityStsV1Options struct {
 	// AccessBoundary. The access boundary can include up to 10 rules. The size of
 	// the parameter value should not exceed 2048 characters.
 	AccessBoundary *GoogleIdentityStsV1AccessBoundary `json:"accessBoundary,omitempty"`
+	// BindCertFingerprint: The unpadded, url-escaped, base64-encoded SHA-256 hash
+	// of the certificate's DER encoding. It must be 43 characters long. The
+	// resulting token will be bound to this value.
+	BindCertFingerprint string `json:"bindCertFingerprint,omitempty"`
 	// UserProject: A Google project used for quota and billing purposes when the
 	// credential is used to access Google APIs. The provided project overrides the
 	// project bound to the credential. The value must be a project number or a
