@@ -86,6 +86,7 @@ type TestParameters struct {
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
+	GCSFusePRNumber  string
 }
 
 const (
@@ -99,6 +100,7 @@ const (
 	TestEnvEnvVar                          = "TEST_ENV"
 	IsOSSEnvVar                            = "IS_OSS"
 	IsZBEnabledEnvVar                      = "IS_ZB_ENABLED"
+	GCSFusePRNumberEnvVar                  = "GCSFUSE_PR_NUMBER"
 )
 
 var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
@@ -201,7 +203,10 @@ func Handle(testParams *TestParameters) error {
 		os.Setenv(IsOSSEnvVar, "true")
 		if testParams.BuildGcsFuseCsiDriver {
 			klog.Infof("Building GCS FUSE CSI Driver")
-			if err := buildAndPushImage(testParams.PkgDir, testParams.ImageRegistry, testParams.BuildGcsFuseFromSource, testParams.BuildArm); err != nil {
+			if testParams.GCSFusePRNumber != "" {
+				klog.Infof("GCSFUSE_PR_NUMBER=%s is provided, building GCSFuse from this PR source", testParams.GCSFusePRNumber)
+			}
+			if err := buildAndPushImage(testParams.PkgDir, testParams.ImageRegistry, testParams.BuildGcsFuseFromSource, testParams.BuildArm, testParams.GCSFusePRNumber); err != nil {
 				return fmt.Errorf("failed pushing GCS FUSE CSI Driver images: %w", err)
 			}
 
@@ -344,6 +349,11 @@ func Handle(testParams *TestParameters) error {
 func setTestEnvVars(testParams *TestParameters) {
 	if err := os.Setenv(IsZBEnabledEnvVar, strconv.FormatBool(testParams.EnableZB)); err != nil {
 		klog.Errorf(`env variable "%s" could not be set: %v`, IsZBEnabledEnvVar, err)
+	}
+	if testParams.GCSFusePRNumber != "" {
+		if err := os.Setenv(GCSFusePRNumberEnvVar, testParams.GCSFusePRNumber); err != nil {
+			klog.Errorf(`env variable "%s" could not be set: %v`, GCSFusePRNumberEnvVar, err)
+		}
 	}
 }
 

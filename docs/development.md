@@ -100,10 +100,24 @@ echo "latest GCSFuse CSI driver release is $LATEST_TAG, which uses GCSFuse versi
 ```bash
 # REGISTRY=<your-container-registry>: Required. Define your container registry. Make sure you have logged in your registry so that you have image pull/push permissions.
 # STAGINGVERSION=<staging-version>: Optional. Define a build version. If not defined, a staging version will be generated based on the commit hash.
-# BUILD_GCSFUSE_FROM_SOURCE=<true|false>: Optional, default: false. Indicate if you want to build the gcsfuse binary from source. This is required for building images from non-google internal projects OR if you want to test any CSI change depend on an unreleased GCSFuse enhancement. If BUILD_GCSFUSE_FROM_SOURCE is true, by default it builts GCSFuse from head of the master branch. If you want to build GCSFuse from a particular tag, then set GCSFUSE_TAG as explained in cloudbuild sections above.
+# BUILD_GCSFUSE_FROM_SOURCE=<true|false>: Optional, default: false. Indicate if you want to build the gcsfuse binary from source. This is required for building images from non-google internal projects OR if you want to test any CSI change depend on an unreleased GCSFuse enhancement. If BUILD_GCSFUSE_FROM_SOURCE is true, by default it builds GCSFuse from head of the master branch. If you want to build GCSFuse from a particular tag, then set GCSFUSE_TAG as explained in cloudbuild sections above. This flag is also automatically set by GCSFUSE_PR_NUMBER.
 # GCSFUSE_TAG=<gcsfuse-tag>: Optional. The GCSFuse tag you would like to build GCSFuse from. This is only used if BUILD_GCSFUSE_FROM_SOURCE is set to true.
 make build-image-and-push-multi-arch REGISTRY=$REGISTRY STAGINGVERSION=v999.999.999
 ```
+
+#### Building GCSFuse from a specific GCSFuse PR (Optional)
+
+To test the CSI driver against a specific GCSFuse PR, pass `GCSFUSE_PR_NUMBER`. This automatically implies `BUILD_GCSFUSE_FROM_SOURCE=true` and resolves the PR's fork repo URL and branch name from the GitHub API. Works for both main-repo and fork PRs.
+
+```bash
+make build-image-and-push-multi-arch \
+  REGISTRY=$REGISTRY STAGINGVERSION=v999.999.999 \
+  GCSFUSE_PR_NUMBER=4651
+```
+
+> **Note**: `BUILD_GCSFUSE_FROM_SOURCE` and `GCSFUSE_PR_NUMBER` serve related but distinct purposes:
+> - `BUILD_GCSFUSE_FROM_SOURCE=true` alone builds GCSFuse from `master` (or the branch/tag specified by `GCSFUSE_TAG`).
+> - `GCSFUSE_PR_NUMBER=<N>` implies `BUILD_GCSFUSE_FROM_SOURCE=true` and also fetches the test configuration from that PR.
 
 ## Manual installation
 
