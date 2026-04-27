@@ -30,6 +30,11 @@
                 "DeleteFolder"
               ]
             },
+            "DeleteFolderRecursive": {
+              "methods": [
+                "DeleteFolderRecursive"
+              ]
+            },
             "DeleteManagedFolder": {
               "methods": [
                 "DeleteManagedFolder"
@@ -53,6 +58,11 @@
             "GetFolderIntelligenceConfig": {
               "methods": [
                 "GetFolderIntelligenceConfig"
+              ]
+            },
+            "GetIamPolicy": {
+              "methods": [
+                "GetIamPolicy"
               ]
             },
             "GetManagedFolder": {
@@ -103,6 +113,16 @@
             "ResumeAnywhereCache": {
               "methods": [
                 "ResumeAnywhereCache"
+              ]
+            },
+            "SetIamPolicy": {
+              "methods": [
+                "SetIamPolicy"
+              ]
+            },
+            "TestIamPermissions": {
+              "methods": [
+                "TestIamPermissions"
               ]
             },
             "UpdateAnywhereCache": {
@@ -150,6 +170,11 @@
                 "DeleteFolder"
               ]
             },
+            "DeleteFolderRecursive": {
+              "methods": [
+                "DeleteFolderRecursive"
+              ]
+            },
             "DeleteManagedFolder": {
               "methods": [
                 "DeleteManagedFolder"
@@ -173,6 +198,11 @@
             "GetFolderIntelligenceConfig": {
               "methods": [
                 "GetFolderIntelligenceConfig"
+              ]
+            },
+            "GetIamPolicy": {
+              "methods": [
+                "GetIamPolicy"
               ]
             },
             "GetManagedFolder": {
@@ -223,6 +253,16 @@
             "ResumeAnywhereCache": {
               "methods": [
                 "ResumeAnywhereCache"
+              ]
+            },
+            "SetIamPolicy": {
+              "methods": [
+                "SetIamPolicy"
+              ]
+            },
+            "TestIamPermissions": {
+              "methods": [
+                "TestIamPermissions"
               ]
             },
             "UpdateAnywhereCache": {
