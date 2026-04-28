@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"local/test/e2e/utils"
 
@@ -107,6 +108,7 @@ const (
 	gcsfuseCSIProfilesStaticBucket       = "gcsfusecsi-list-storm-hns-bucket"
 	gcsfuseCSIProfilesStaticBucketRegion = "us-central1"
 	gkeScalabilityImagesProjectID        = "gke-scalability-images"
+	iamPropagationWaitTime               = 10 * time.Minute
 )
 
 var (
@@ -142,6 +144,34 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 		testK8sSA = utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, testGcpSA.GetEmail())
 	}
 	testK8sSA.Create(ctx)
+
+	// Grant the required consumer permission on the test project to the active identity.
+	// This ensures that tests using the `--billing-project` flag (like requester_pays_bucket)
+	// can successfully authenticate and pass the consumer quota check (403 Forbidden).
+	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), f.Namespace.Name, K8sServiceAccountName)
+	if !n.skipGcpSaTest {
+		member = fmt.Sprintf("serviceAccount:%v", testGcpSA.GetEmail())
+	}
+	billingBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/serviceusage.serviceUsageConsumer", "")
+	if isBillingTest() {
+		e2eframework.Logf("Creating Project IAM Policy Binding for Billing Test (Service Usage Consumer)...")
+		billingBinding.Create(ctx)
+		e2eframework.Logf("Waiting for Billing IAM policy propagation to prevent 403 flakiness...")
+		time.Sleep(iamPropagationWaitTime)
+	}
+
+	// This is required to run the cloud profiler tests. See requirements here:
+	// https://cloud.google.com/profiler/docs/profiling-go#permissions
+	profilerAgentBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/cloudprofiler.agent", "")
+	profilerUserBinding := utils.NewTestGCPProjectIAMPolicyBinding(n.meta.GetProjectID(), member, "roles/cloudprofiler.user", "")
+
+	if isProfilerTest() {
+		e2eframework.Logf("Creating Project IAM Policy Bindings for Cloud Profiler (Agent and User)...")
+		profilerAgentBinding.Create(ctx)
+		profilerUserBinding.Create(ctx)
+		e2eframework.Logf("Waiting for Profiler IAM policy propagation to prevent 403 flakiness...")
+		time.Sleep(iamPropagationWaitTime)
+	}
 
 	config := &storageframework.PerTestConfig{
 		Driver:    n,
