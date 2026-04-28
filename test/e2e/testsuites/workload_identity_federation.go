@@ -48,12 +48,6 @@ import (
 const (
 	wifWorkloadIdentityPoolID     = "gcs-fuse-oidc-pool"
 	wifWorkloadIdentityProviderID = "gcs-fuse-oidc-provider"
-	// wifFakeProviderID is a WIF provider configured with a deliberately wrong
-	// issuer URI. Any STS token exchange against it will always fail with an
-	// "invalid_token" error, giving a guaranteed authentication failure that
-	// does not depend on the node service account's GCS permissions.
-	wifFakeProviderID = "wif-fake-provider"
-	wifFakeIssuerURI  = "https://fake-oidc-issuer.example.com"
 )
 
 type gcsFuseCSIWorkloadIdentityFederationTestSuite struct {
@@ -233,10 +227,10 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		}
 
 		ginkgo.By("Granting bucket access to workload identity principal")
-		grantBucketAccess(bucketName, principal, "roles/storage.objectUser")
+		grantBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
 		defer func() {
 			if !permissionRevoked {
-				revokeBucketAccess(bucketName, principal, "roles/storage.objectUser")
+				revokeBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
 			}
 		}()
 
@@ -290,7 +284,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			"expected pod to write at least one chunk to GCS before permission revocation")
 
 		ginkgo.By("Revoking bucket access while pod is actively writing")
-		revokeBucketAccess(bucketName, principal, "roles/storage.objectUser")
+		revokeBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
 		permissionRevoked = true
 
 		ginkgo.By("Waiting for IAM revocation to propagate")
