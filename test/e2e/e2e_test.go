@@ -125,7 +125,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseCSIMetadataPrefetchTestSuite,
 			testsuites.InitGcsFuseMountTestSuite,
 			testsuites.InitGcsFuseCSIOIDCTestSuite,
-			testsuites.InitGcsFuseCSICloudProfilerTestSuite,
+			testsuites.InitGcsFuseCSIWorkloadIdentityFederationTestSuite,
 		}
 
 		if *profilesFlag {
