@@ -624,6 +624,99 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		ginkgo.By("Verifying no-access KSA cannot mount the bucket (expects FailedMount event with PermissionDenied)")
 		noAccessPod.WaitForFailedMountError(ctx, "PermissionDenied")
 	})
+
+	ginkgo.It("should successfully authenticate multiple pods using same federation configuration", func() {
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+
+		if isOSS {
+			init(specs.SkipCSIBucketAccessCheckPrefix)
+		} else {
+			init()
+		}
+		ginkgo.DeferCleanup(cleanup)
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		const (
+			wifKSA     = "wif-multi-pod-ksa"
+			volumeName = "gcs-volume"
+			mountPath  = "/mnt/gcs"
+			podCount   = 3
+		)
+
+		var (
+			principal               string
+			credentialConfigMapName string
+		)
+
+		if isOSS {
+			credentialConfigMapName = "wif-multi-pod-credentials"
+			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+		} else {
+			principal = setupGKEWIPrincipal(wifKSA)
+		}
+
+		ginkgo.By("Granting bucket access to workload identity principal")
+		grantBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
+		ginkgo.DeferCleanup(func() { revokeBucketAccess(bucketName, principal, "roles/storage.objectAdmin") })
+
+		ginkgo.By("Waiting for IAM policy propagation")
+		time.Sleep(2 * time.Minute)
+
+		tPods := make([]*specs.TestPod, podCount)
+
+		for i := 0; i < podCount; i++ {
+			ginkgo.By(fmt.Sprintf("Configuring test pod %d with same federation config", i))
+			tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+			tPod.SetServiceAccount(wifKSA)
+			tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+			if credentialConfigMapName != "" {
+				tPod.SetAnnotations(map[string]string{
+					webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: credentialConfigMapName,
+				})
+			}
+			tPods[i] = tPod
+		}
+
+		// Create all pods before waiting so they authenticate concurrently
+		for i, tPod := range tPods {
+			ginkgo.By(fmt.Sprintf("Deploying pod %d", i))
+			tPod := tPod
+			tPod.Create(ctx)
+			ginkgo.DeferCleanup(func() { tPod.Cleanup(ctx) })
+		}
+
+		// Verify all pods reach Running
+		for i, tPod := range tPods {
+			ginkgo.By(fmt.Sprintf("Checking pod %d is running", i))
+			tPod.WaitForRunning(ctx)
+		}
+
+		// Verify each pod can write and read on the GCS mount
+		for i, tPod := range tPods {
+			ginkgo.By(fmt.Sprintf("Verifying pod %d volume is mounted", i))
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+				fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+
+			ginkgo.By(fmt.Sprintf("Writing a test file from pod %d", i))
+			testFileName := fmt.Sprintf("multi-pod-test-file-%d.txt", i)
+			testContent := fmt.Sprintf("Hello from pod %d with same federation config!", i)
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+				fmt.Sprintf("echo '%s' > %s/%s", testContent, mountPath, testFileName))
+
+			ginkgo.By(fmt.Sprintf("Reading the test file from pod %d", i))
+			readOutput := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName,
+				fmt.Sprintf("cat %s/%s", mountPath, testFileName))
+			gomega.Expect(strings.TrimSpace(readOutput)).To(gomega.Equal(testContent))
+
+			ginkgo.By(fmt.Sprintf("Cleaning up test file from pod %d", i))
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+				fmt.Sprintf("rm %s/%s", mountPath, testFileName))
+		}
+
+		ginkgo.By("All pods successfully authenticated using the same federation configuration")
+	})
 }
 
 // addWorkloadIdentityBinding grants roles/iam.workloadIdentityUser on the given GCP service
