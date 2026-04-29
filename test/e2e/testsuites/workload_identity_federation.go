@@ -102,19 +102,6 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	initWithCSIBucketAccessCheckSkipped := func() {
-		// Mount should succeed; authz failures surface on I/O, matching the OIDC test flow.
-		init(specs.SkipCSIBucketAccessCheckPrefix)
-
-		if l.volumeResource == nil || l.volumeResource.VolSource == nil || l.volumeResource.VolSource.CSI == nil {
-			framework.Failf("volume resource not initialized properly")
-		}
-		if l.volumeResource.VolSource.CSI.VolumeAttributes == nil {
-			l.volumeResource.VolSource.CSI.VolumeAttributes = map[string]string{}
-		}
-		l.volumeResource.VolSource.CSI.VolumeAttributes["skipCSIBucketAccessCheck"] = "true"
-	}
-
 	// setupOSSWIFPrincipal creates all OSS Workload Identity Federation infrastructure
 	// (WIF pool, provider, KSA, credential ConfigMap) for ksaName and returns the
 	// WIF principal string. Cleanup is registered via ginkgo.DeferCleanup.
@@ -198,7 +185,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		// GKE: WI binding and bucket access are both ready before the pod starts, so the
 		// pre-mount check can run normally.
 		if isOSS {
-			initWithCSIBucketAccessCheckSkipped()
+			init(specs.SkipCSIBucketAccessCheckPrefix)
 		} else {
 			init()
 		}
