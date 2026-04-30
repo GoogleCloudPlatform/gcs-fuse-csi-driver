@@ -776,6 +776,60 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		ginkgo.By("All pods successfully authenticated using the same federation configuration")
 	})
+
+	ginkgo.It("should re-authenticate successfully after pod restart using federation", func() {
+		init(specs.SkipCSIBucketAccessCheckPrefix)
+		defer cleanup()
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		const (
+			wifKSA        = "wif-restart-ksa"
+			configMapName = "wif-credentials-restart"
+			volumeName    = "gcs-wif-volume"
+			mountPath     = "/mnt/gcs"
+		)
+
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+		var principal string
+		if isOSS {
+			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, configMapName)
+		} else {
+			principal = setupGKEWIPrincipal(wifKSA)
+		}
+
+		ginkgo.By("Granting objectViewer access to bucket")
+		grantBucketAccess(bucketName, principal, "roles/storage.objectViewer")
+		defer revokeBucketAccess(bucketName, principal, "roles/storage.objectViewer")
+
+		ginkgo.By("Waiting for IAM policy propagation")
+		time.Sleep(2 * time.Minute)
+
+		credMap := ""
+		if isOSS {
+			credMap = configMapName
+		}
+
+		ginkgo.By("Deploying first pod and verifying GCS access via WIF")
+		tPod1 := deployWIFPod(wifKSA, credMap, volumeName, mountPath)
+		tPod1.WaitForRunning(ctx)
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("ls %v", mountPath))
+
+		ginkgo.By("Deleting first pod to simulate a pod restart")
+		tPod1.Cleanup(ctx)
+
+		ginkgo.By("Deploying second pod with same WIF KSA to verify re-authentication")
+		tPod2 := deployWIFPod(wifKSA, credMap, volumeName, mountPath)
+		defer tPod2.Cleanup(ctx)
+
+		tPod2.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying GCS access succeeds after re-authentication on pod restart")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("ls %v", mountPath))
+	})
 }
 
 // addWorkloadIdentityBinding grants roles/iam.workloadIdentityUser on the given GCP service
