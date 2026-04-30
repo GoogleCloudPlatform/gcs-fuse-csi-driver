@@ -23,13 +23,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
 
+	gostorage "cloud.google.com/go/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -150,6 +150,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA principal string. Cleanup is registered via ginkgo.DeferCleanup.
 	setupGKEWIPrincipal := func(ksaName string) string {
+<<<<<<< HEAD
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 		// Use ksaName as base + namespace numeric suffix to keep names unique per
@@ -157,6 +158,15 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		nsIdx := strings.LastIndex(f.Namespace.Name, "-")
 		nsSuffix := f.Namespace.Name[nsIdx+1:]
 		saName := fmt.Sprintf("%s-%s", ksaName, nsSuffix)
+=======
+		rawProjectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(rawProjectID).NotTo(gomega.BeEmpty(), "PROJECT must be set")
+		projectID := sanitizeProjectID(rawProjectID)
+		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
+			fmt.Sprintf("invalid projectID detected: %q", projectID))
+
+		saName := f.Namespace.Name
+>>>>>>> d2e87503 (e2e/wif: replace gcloud CLI with GCS Go client, add sanitizeProjectID helper, and deduplicate pool ID constant)
 		if len(saName) > 30 {
 			saName = strings.TrimRight(saName[:30], "-")
 		}
@@ -173,7 +183,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		testK8sSA.Create(ctx)
 		ginkgo.DeferCleanup(func() { testK8sSA.Cleanup(ctx) })
 
-		ginkgo.By("Waiting for Workload Identity binding to propagate globally (~60s)")
+		ginkgo.By("Waiting for Workload Identity binding to propagate globally (~2 minutes)")
 		time.Sleep(2 * time.Minute)
 
 		return "serviceAccount:" + testGcpSA.GetEmail()
@@ -946,9 +956,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			mountPath     = "/mnt/gcs"
 		)
 
-		rawProjectID := os.Getenv(utils.ProjectEnvVar)
-		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
-		projectID := lines[len(lines)-1]
+		projectID := sanitizeProjectID(os.Getenv(utils.ProjectEnvVar))
 
 		var principal string
 		if isOSS {
@@ -959,12 +967,15 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		altBucket := fmt.Sprintf("gcs-fuse-wif-alt-%s", f.Namespace.Name)
 		ginkgo.By(fmt.Sprintf("Creating alternate bucket: %s", altBucket))
-		if out, err := exec.Command("gcloud", "storage", "buckets", "create", "gs://"+altBucket, "--project="+projectID).CombinedOutput(); err != nil {
-			klog.Warningf("Failed to create alternate bucket %s: %v, output: %s", altBucket, err, string(out))
+		storageClient, err := gostorage.NewClient(ctx)
+		framework.ExpectNoError(err, "creating GCS storage client for alternate bucket")
+		defer storageClient.Close()
+		if err := storageClient.Bucket(altBucket).Create(ctx, projectID, nil); err != nil {
+			framework.Failf("Failed to create alternate bucket %s: %v", altBucket, err)
 		}
 		defer func() {
-			if out, err := exec.Command("gcloud", "storage", "buckets", "delete", "gs://"+altBucket, "--project="+projectID, "--quiet").CombinedOutput(); err != nil {
-				klog.Warningf("Failed to delete alternate bucket %s: %v, output: %s", altBucket, err, string(out))
+			if err := storageClient.Bucket(altBucket).Delete(ctx); err != nil {
+				klog.Warningf("Failed to delete alternate bucket %s: %v", altBucket, err)
 			}
 		}()
 
@@ -1068,3 +1079,13 @@ func getOSSClusterOIDCIssuer(ctx context.Context, f *framework.Framework) string
 	gomega.Expect(claims.Issuer).NotTo(gomega.BeEmpty(), "cluster OIDC issuer must not be empty")
 	return claims.Issuer
 }
+<<<<<<< HEAD
+=======
+
+// sanitizeProjectID strips any Cloud Shell "Your active configuration is: [...]"
+// warning that gcloud can prepend to stdout, returning only the actual project ID.
+func sanitizeProjectID(raw string) string {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	return lines[len(lines)-1]
+}
+>>>>>>> d2e87503 (e2e/wif: replace gcloud CLI with GCS Go client, add sanitizeProjectID helper, and deduplicate pool ID constant)
