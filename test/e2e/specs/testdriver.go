@@ -502,6 +502,21 @@ func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (stora
 	return storageService, nil
 }
 
+// bucketIAMMember returns the IAM member string for the given KSA.
+// When OSS_WIF_POOL_ID is set, uses the WIF principal format for self-managed clusters.
+// Otherwise falls back to the GKE Workload Identity format.
+func (n *GCSFuseCSITestDriver) bucketIAMMember(serviceAccountNamespace, serviceAccountName string) string {
+	if !n.skipGcpSaTest {
+		return fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
+	}
+	if wifPoolID := os.Getenv("OSS_WIF_POOL_ID"); wifPoolID != "" {
+		projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
+		return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/subject/system:serviceaccount:%s:%s",
+			projectNumber, wifPoolID, serviceAccountNamespace, serviceAccountName)
+	}
+	return fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
+}
+
 // SetIAMPolicy sets IAM policy for the GCS bucket.
 func (n *GCSFuseCSITestDriver) SetIAMPolicy(ctx context.Context, bucket *storage.ServiceBucket, serviceAccountNamespace, serviceAccountName string) {
 	storageService, err := n.prepareStorageService(ctx)
@@ -509,10 +524,7 @@ func (n *GCSFuseCSITestDriver) SetIAMPolicy(ctx context.Context, bucket *storage
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
 	}
 
-	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
-	if !n.skipGcpSaTest {
-		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
-	}
+	member := n.bucketIAMMember(serviceAccountNamespace, serviceAccountName)
 	if err := storageService.SetIAMPolicy(ctx, bucket, member, "roles/storage.admin"); err != nil {
 		e2eframework.Failf("Failed to set the IAM policy for the new GCS bucket: %v", err)
 	}
@@ -525,10 +537,7 @@ func (n *GCSFuseCSITestDriver) RemoveIAMPolicy(ctx context.Context, bucket *stor
 		e2eframework.Failf("Failed to prepare storage service: %v", err)
 	}
 
-	member := fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
-	if !n.skipGcpSaTest {
-		member = fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
-	}
+	member := n.bucketIAMMember(serviceAccountNamespace, serviceAccountName)
 	if err := storageService.RemoveIAMPolicy(ctx, bucket, member, "roles/storage.admin"); err != nil {
 		e2eframework.Failf("Failed to remove the IAM policy from the GCS bucket: %v", err)
 	}
