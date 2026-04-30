@@ -107,7 +107,11 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// given namespace: WIF pool and provider (idempotent — safe to call for multiple namespaces),
 	// a KSA, and a credential ConfigMap. Returns the WIF principal and credential config JSON.
 	// Cleanup is registered via ginkgo.DeferCleanup.
+	// If namespace is empty, f.Namespace.Name is used.
 	setupOSSWIFPrincipal := func(ksaName, poolID, providerID, configMapName, namespace string, c clientset.Interface) (string, string) {
+		if namespace == "" {
+			namespace = f.Namespace.Name
+		}
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 
@@ -147,7 +151,11 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA member string. Cleanup is registered via ginkgo.DeferCleanup.
 	// The caller is responsible for waiting for the WI binding to propagate.
+	// If ns is nil, f.Namespace is used.
 	setupGKEWIPrincipal := func(ksaName, projectID string, ns *corev1.Namespace) string {
+		if ns == nil {
+			ns = f.Namespace
+		}
 		saName := ns.Name
 		if len(saName) > 30 {
 			saName = saName[:30]
