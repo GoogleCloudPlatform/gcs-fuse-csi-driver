@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"cloud.google.com/go/compute/metadata"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
@@ -56,6 +57,9 @@ const (
 	metadataPrefetchMemoryRequestAnnotation          = "gke-gcsfuse/metadata-prefetch-memory-request"
 	GCPWorkloadIdentityCredentialConfigMapAnnotation = "gke-gcsfuse/workload-identity-credential-configmap"
 	NumaPinningAnnotation                            = "gke-gcsfuse/enable-numa-pinning"
+	// AdditionalVolumeMountsAnnotation is used to specify additional volumes to mount into the GCS Fuse sidecar.
+	// The expected format is a comma-separated list of volumeName:mountPath (e.g., "vol1:/path1,vol2:/path2").
+	AdditionalVolumeMountsAnnotation                 = "gke-gcsfuse/additional-volume-mounts"
 )
 
 var (
@@ -167,6 +171,32 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 			EnvVars:                envVars,
 		}
 		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
+	}
+
+	if additionalMounts, ok := pod.Annotations[AdditionalVolumeMountsAnnotation]; ok && additionalMounts != "" {
+		if sidecarCredentialConfig == nil {
+			sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{}
+		}
+		mounts := strings.Split(additionalMounts, ",")
+		for _, mount := range mounts {
+			parts := strings.Split(mount, ":")
+			if len(parts) == 2 {
+				volName := parts[0]
+				mountPath := parts[1]
+
+				if !volumeExists(pod.Spec.Volumes, volName) {
+					klog.Warningf("Volume %q specified in %s not found in pod spec", volName, AdditionalVolumeMountsAnnotation)
+				}
+
+				sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
+					Name:      volName,
+					MountPath: mountPath,
+					ReadOnly:  true,
+				})
+			} else {
+				klog.Warningf("Invalid format for %s: %s", AdditionalVolumeMountsAnnotation, mount)
+			}
+		}
 	}
 
 	// Inject Fuse Side Car container.
