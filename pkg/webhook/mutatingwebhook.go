@@ -149,12 +149,22 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
 		}
+		mountPath := filepath.Dir(credentialConfig.CredentialSource.File)
+
+		credentialVolumeMounts := []corev1.VolumeMount{
+			{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+		}
+		var envVars []corev1.EnvVar
+		if credentialConfig.CredentialSource.Executable == nil {
+			credentialVolumeMounts = append(credentialVolumeMounts, corev1.VolumeMount{Name: SidecarContainerWITokenVolumeName, MountPath: mountPath})
+		} else {
+			envVars = append(envVars, corev1.EnvVar{Name: "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES", Value: "1"})
+		}
+
 		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
 			GacEnv: &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
-			CredentialVolumeMounts: []corev1.VolumeMount{
-				{Name: SidecarContainerWITokenVolumeName, MountPath: filepath.Dir(credentialConfig.CredentialSource.File)},
-				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
-			},
+			CredentialVolumeMounts: credentialVolumeMounts,
+			EnvVars:                envVars,
 		}
 		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
 	}
@@ -417,23 +427,25 @@ func appendWorkloadCredentialConfigurationVolumes(client kubernetes.Interface, p
 	}
 	klog.Infof("Parsed the workload identity credential configuration configMap %s in namespace %s %+v", configMapName, pod.Namespace, credConfig)
 
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name: SidecarContainerWITokenVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			Projected: &corev1.ProjectedVolumeSource{
-				Sources: []corev1.VolumeProjection{
-					{
-						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-							Audience:          fmt.Sprintf("https:%s", credConfig.Audience), // Add the "https:" prefix to the audience.
-							ExpirationSeconds: &tokenExpirationSeconds,
-							Path:              filepath.Base(credConfig.CredentialSource.File),
+	if credConfig.CredentialSource.Executable == nil {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: SidecarContainerWITokenVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: []corev1.VolumeProjection{
+						{
+							ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+								Audience:          fmt.Sprintf("https:%s", credConfig.Audience), // Add the "https:" prefix to the audience.
+								ExpirationSeconds: &tokenExpirationSeconds,
+								Path:              filepath.Base(credConfig.CredentialSource.File),
+							},
 						},
 					},
+					DefaultMode: &defaultMode,
 				},
-				DefaultMode: &defaultMode,
 			},
-		},
-	})
+		})
+	}
 
 	// Secondly try to add workload identity credential configuration configMap as volume.
 	if !checkConfigMapVolumeExists(pod) {
@@ -467,7 +479,10 @@ func checkConfigMapVolumeExists(pod *corev1.Pod) bool {
 type CredentialConfig struct {
 	Audience         string `json:"audience"`
 	CredentialSource struct {
-		File string `json:"file"`
+		File       string `json:"file,omitempty"`
+		Executable *struct {
+			Command string `json:"command"`
+		} `json:"executable,omitempty"`
 	} `json:"credential_source"`
 }
 
