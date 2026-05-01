@@ -68,6 +68,7 @@ Refer to the [Google Cloud Storage FUSE CSI Driver Release Notes](./docs/release
 * [Release Notes](./docs/releases.md)
 * [Example Applications](./examples/README.md)
 * [Troubleshooting](./docs/troubleshooting.md)
+* [Cloud Profiler Integration](./docs/cloud-profiler.md)
 * [Known Issues](./docs/known-issues.md)
 * [Istio Compatibility](./docs/istio.md)
 
