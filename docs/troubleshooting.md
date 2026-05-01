@@ -147,7 +147,7 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
 - Solutions:
 
-  The gcsfuse process was killed, which is usually caused by OOM. Consider increasing the sidecar container memory limit by using the annotation `gke-gcsfuse/memory-limit`.
+  The gcsfuse process was killed, which is usually caused by OOM. Consider increasing the sidecar container memory limit by using the annotation `gke-gcsfuse/memory-limit`. To debug memory issues and identify memory leaks, see [Cloud Profiler Integration](./cloud-profiler.md).
 
 #### Aborted
 

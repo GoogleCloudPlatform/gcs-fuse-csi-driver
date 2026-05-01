@@ -25,7 +25,7 @@ You can use [GCP Metrics Explorer](https://cloud.google.com/monitoring/charts/me
 
 ### Memory usage
 
-Insufficient memory will cause Cloud Storage FUSE out-of-memory errors and crash the workload application. Ensure the sidecar container memory limit is large enough, or leave the memory limit unset to allow the Cloud Storage FUSE to consume all the available resources on a node.
+Insufficient memory will cause Cloud Storage FUSE out-of-memory errors and crash the workload application. Ensure the sidecar container memory limit is large enough, or leave the memory limit unset to allow the Cloud Storage FUSE to consume all the available resources on a node. For advanced memory analysis and debugging OOMs, see [Cloud Profiler Integration](./cloud-profiler.md).
 
 - Metric: Kubernetes Container - Memory usage (kubernetes.io/container/memory/used_bytes)
 
