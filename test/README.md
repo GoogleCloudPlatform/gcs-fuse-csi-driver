@@ -89,7 +89,10 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER`: default value is `https://container.googleapis.com/`. **Only works for Google GKE developers.** Valid values are `https://staging-container.sandbox.googleapis.com/`, `https://staging2-container.sandbox.googleapis.com/`, and `https://test-container.sandbox.googleapis.com/`.
 - `E2E_TEST_USE_GKE_MANAGED_DRIVER`: default value is `true`. Change it to `false` if you want to manually install the CSI driver.
 - `E2E_TEST_BUILD_DRIVER`: default value is `false`. Change it to `true` if you want to build the CSI images from source code.
-- `BUILD_GCSFUSE_FROM_SOURCE`: default value is `false`. Change it to `true` if you want to build the GCS FUSE binary from source code.
+- `BUILD_GCSFUSE_FROM_SOURCE`: default value is `false`. Change it to `true` if you want to build the GCS FUSE binary from source code. This will automatically set to `true` when `GCSFUSE_PR_NUMBER` is set.
+- `GCSFUSE_PR_NUMBER`: default value is empty. Pass the Pull Request Number of `gcsfuse` (e.g., `4651` from `https://github.com/GoogleCloudPlatform/gcsfuse/pull/4651`) to enable two behaviors simultaneously:
+  1. **Test config**: Fetches `test_config.yaml` from the PR's head commit, so integration tests use the test definitions from that PR.
+  2. **Build from source**: Automatically sets `BUILD_GCSFUSE_FROM_SOURCE=true` and resolves the PR's fork repo URL and branch name, so the GCSFuse binary (and sidecar image) is built from that PR's code. Works for both main-repo and fork PRs.
 - `E2E_TEST_FOCUS`: default value is an empty string. The value will be passed to `ginkgo run --focus` flag.
 - `E2E_TEST_SKIP`: default value is `should.succeed.in.performance.test`. The value will be passed to `ginkgo run --skip` flag.
 - `E2E_TEST_GINKGO_PROCS`: default value is `5`. The value will be passed to `ginkgo run --procs` flag.
@@ -104,6 +107,10 @@ make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=true E2E_TEST_USE_GKE_AUTOPILOT=tr
 # Build the CSI driver and install it before the test. The GCS FUSE binary will be built from source code. The images will be using the version "v999.999.999", and will be pushed to your own container registry.
 make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=false E2E_TEST_BUILD_DRIVER=true BUILD_GCSFUSE_FROM_SOURCE=true STAGINGVERSION=v999.999.999 REGISTRY=my-registry
 
+
+# Build and test against a specific GCSFuse PR.
+make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=false E2E_TEST_BUILD_DRIVER=true \
+  GCSFUSE_PR_NUMBER=4651 STAGINGVERSION=v999.999.999 REGISTRY=my-registry
 # Run the test with customized Ginkgo flags.
 make e2e-test E2E_TEST_FOCUS=gcsfuseIntegration E2E_TEST_SKIP=failedMount E2E_TEST_GINKGO_PROCS=3 E2E_TEST_GINKGO_TIMEOUT=20m E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
 ```
