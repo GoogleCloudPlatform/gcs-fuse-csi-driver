@@ -60,6 +60,8 @@ const (
 	// AdditionalVolumeMountsAnnotation is used to specify additional volumes to mount into the GCS Fuse sidecar.
 	// The expected format is a comma-separated list of volumeName:mountPath (e.g., "vol1:/path1,vol2:/path2").
 	AdditionalVolumeMountsAnnotation                 = "gke-gcsfuse/additional-volume-mounts"
+	// GcsFuseInjectAfterAnnotation is used to specify which init container the GCS Fuse sidecar should be injected after.
+	GcsFuseInjectAfterAnnotation                     = "gke-gcsfuse/inject-after"
 )
 
 var (
