@@ -1,0 +1,4 @@
+FROM alpine:latest
+COPY mock-service /usr/bin/mock-service
+RUN chmod +x /usr/bin/mock-service
+ENTRYPOINT ["/usr/bin/mock-service"]
