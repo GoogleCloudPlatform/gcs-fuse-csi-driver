@@ -62,6 +62,7 @@ const (
 	testNameCloudProfiler         = "cloud_profiler"
 	testNameBenchmarking          = "benchmarking"
 	testNameUnsupportedPath       = "unsupported_path"
+	testNameRequesterPaysBucket   = "requester_pays_bucket"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -176,9 +177,9 @@ type IntegrationTestOptions struct {
 	EnableZB        bool
 
 	// Tester pod resource overrides
-	TestPodCPU           string
-	TestPodMemoryRequest string
-	TestPodMemoryLimit   string
+	TestPodCPU          string
+	TestPodMemoryLimit  string
+	TestPodStorageLimit string
 }
 
 // runIntegrationTest sets up necessary resources for the test pod and volumes,
@@ -195,7 +196,7 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	}
 
 	// Set resources
-	tPod.SetResource(opts.TestPodCPU, opts.TestPodMemoryRequest, opts.TestPodMemoryLimit)
+	tPod.SetResource(opts.TestPodCPU, opts.TestPodMemoryLimit, opts.TestPodStorageLimit)
 
 	sidecarMemoryRequest, sidecarMemoryLimit := configureLargeFileResources(tPod, opts.TestPkg, driver)
 
@@ -510,6 +511,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameBufferedReads, v.String())
 		}
 
+		// GCSFuse requester_pays_bucket tests are supported after v3.9.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.9.0-gke.0")) && testName == testNameRequesterPaysBucket {
+			e2eskipper.Skipf("skip gcsfuse integration test %v on gcsfuse version %v", testNameRequesterPaysBucket, v.String())
+		}
+
 		return branch
 	}
 
@@ -746,14 +752,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", fullTestName, gcsfuseTestBranch))
 
 						opts := IntegrationTestOptions{
-							TestPkg:              pkgName,
-							TestName:             testName,
-							Config:               parsedFlags,
-							SecondaryConfig:      secondaryParsedFlags,
-							EnableZB:             zbEnabled(driver),
-							TestPodCPU:           "1",
-							TestPodMemoryRequest: "5Gi",
-							TestPodMemoryLimit:   "5Gi",
+							TestPkg:             pkgName,
+							TestName:            testName,
+							Config:              parsedFlags,
+							SecondaryConfig:     secondaryParsedFlags,
+							EnableZB:            zbEnabled(driver),
+							TestPodCPU:          "1",
+							TestPodMemoryLimit:  "5Gi",
+							TestPodStorageLimit: "5Gi",
 						}
 						runIntegrationTest(ctx, f, driver, l.volumeResource, opts, gcsfuseTestBranch)
 					})
