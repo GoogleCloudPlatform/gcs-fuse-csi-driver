@@ -37,6 +37,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -384,6 +385,53 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 
 	ginkgo.It("should fail when CSI bucket access check is enabled with OIDC authentication", func() {
 		testCaseOIDCWithCSIBucketAccessCheck()
+	})
+
+	// Security scenario: node SA has bucket access but the pod has no WIF credentials.
+	// The admission webhook must reject pod creation when the WIF credential ConfigMap
+	// annotation is empty, preventing any fallback to the node's identity.
+	//
+	// TODO: Remove the skip below once the node-identity-fallback security bug is fixed.
+	ginkgo.It("should fail GCS mount when WIF credential config is absent and node SA has bucket access", func() {
+		e2eskipper.Skipf("skipping until node-identity-fallback security bug is fixed")
+
+		init(specs.SkipCSIBucketAccessCheckPrefix)
+		defer cleanup()
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
+		gomega.Expect(projectNumber).NotTo(gomega.BeEmpty(),
+			fmt.Sprintf("%s environment variable must be set", utils.ProjectNumberEnvVar))
+
+		nodeComputeSA := fmt.Sprintf("%s-compute@developer.gserviceaccount.com", projectNumber)
+		nodeComputePrincipal := "serviceAccount:" + nodeComputeSA
+
+		ginkgo.By(fmt.Sprintf("Granting objectUser on bucket %s to node compute SA %s", bucketName, nodeComputeSA))
+		grantBucketAccess(bucketName, nodeComputePrincipal, "roles/storage.objectUser")
+		defer revokeBucketAccess(bucketName, nodeComputePrincipal, "roles/storage.objectUser")
+
+		ginkgo.By("Waiting for IAM policy propagation")
+		time.Sleep(5 * time.Second)
+
+		const wifKSA = "wif-no-creds-ksa"
+
+		ginkgo.By(fmt.Sprintf("Creating Kubernetes service account: %s", wifKSA))
+		createServiceAccount(ctx, f, wifKSA)
+		defer deleteServiceAccount(ctx, f, wifKSA)
+
+		// Deploy pod with the credential ConfigMap annotation explicitly set to empty.
+		// The admission webhook must reject the pod when the annotation is empty,
+		// preventing any fallback to the node's identity.
+		ginkgo.By("Verifying pod creation is rejected by the admission webhook when WIF credential annotation is empty")
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPod.SetServiceAccount(wifKSA)
+		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
+		tPod.SetAnnotations(map[string]string{
+			webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: "",
+		})
+		tPod.CreateExpectError(ctx)
 	})
 }
 
