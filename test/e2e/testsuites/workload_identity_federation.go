@@ -19,6 +19,8 @@ package testsuites
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -31,6 +33,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	iam "google.golang.org/api/iam/v1"
+	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -241,6 +244,35 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		// triggers a GCS upload which is IAM-checked. When permission is revoked the next
 		// upload returns 403 and dd exits non-zero, stopping the loop.
 		ginkgo.By("Creating and deploying test pod with continuous write loop")
+	ginkgo.It("should successfully mount when pod KSA has WIF bucket access but node SA does not", func() {
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+		init(specs.SkipCSIBucketAccessCheckPrefix)
+		ginkgo.DeferCleanup(cleanup)
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+		const (
+			wifKSA     = "wif-pod-access-node-no-access-ksa"
+			volumeName = "gcs-volume"
+			mountPath  = "/mnt/gcs"
+		)
+		var (
+			principal               string
+			credentialConfigMapName string
+		)
+		if isOSS {
+			credentialConfigMapName = "wif-pod-access-credentials"
+			principal = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+		} else {
+			principal = setupGKEWIPrincipal(wifKSA)
+		}
+		ginkgo.By("Granting bucket access to pod WIF principal only (node SA gets no access)")
+		grantBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
+		ginkgo.DeferCleanup(func() { revokeBucketAccess(bucketName, principal, "roles/storage.objectAdmin") })
+
+		ginkgo.By("Waiting for IAM policy propagation")
+		time.Sleep(2 * time.Minute)
+
+		ginkgo.By(fmt.Sprintf("Configuring test pod with KSA %q (node SA has no bucket access)", wifKSA))
 		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
 		tPod.SetServiceAccount(wifKSA)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
@@ -669,4 +701,35 @@ func addWorkloadIdentityBinding(ctx context.Context, gcpSAEmail, projectID, name
 		return true, nil
 	})
 	framework.ExpectNoError(err, "setting workload identity binding for %s", gcpSAEmail)
+}
+
+// getOSSClusterOIDCIssuer discovers the cluster OIDC issuer URL by decoding a live
+// ServiceAccount token issued by the cluster. Unlike getClusterOIDCIssuer, this works
+// on any Kubernetes cluster (GKE or self-managed) without requiring cluster-name or
+// location environment variables.
+func getOSSClusterOIDCIssuer(ctx context.Context, f *framework.Framework) string {
+	expirationSecs := int64(600)
+	tok, err := f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).CreateToken(
+		ctx,
+		"default",
+		&authv1.TokenRequest{
+			Spec: authv1.TokenRequestSpec{ExpirationSeconds: &expirationSecs},
+		},
+		metav1.CreateOptions{},
+	)
+	framework.ExpectNoError(err, "creating service account token to discover cluster OIDC issuer")
+
+	parts := strings.Split(tok.Status.Token, ".")
+	if len(parts) != 3 {
+		framework.Failf("unexpected JWT format: want 3 parts, got %d", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	framework.ExpectNoError(err, "base64-decoding JWT payload")
+
+	var claims struct {
+		Issuer string `json:"iss"`
+	}
+	framework.ExpectNoError(json.Unmarshal(payload, &claims), "unmarshalling JWT claims")
+	gomega.Expect(claims.Issuer).NotTo(gomega.BeEmpty(), "cluster OIDC issuer must not be empty")
+	return claims.Issuer
 }
