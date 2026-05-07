@@ -120,6 +120,7 @@ ifeq ($(GCSFUSE_TAG), master)
 else
 	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
 endif
+	@echo "Building GCSFuse from GCSFUSE_TAG ${GCSFUSE_TAG} commit id: $$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | head -n 1 | cut -f1)"
 	docker buildx build \
 		--load \
 		--file ${BINDIR}/Dockerfile.gcsfuse \

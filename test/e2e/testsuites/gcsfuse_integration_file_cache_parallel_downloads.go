@@ -259,22 +259,26 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", fullTestName, gcsfuseTestBranch))
 
 						cpu := "1"
-						memReq := "1Gi"
-						memLim := "5Gi"
+						memoryLimit := "1Gi"
+						storageLimit := "5Gi"
 						if strings.HasPrefix(testName, "TestRangeReadTest") {
-							memReq = "2Gi"
+							memoryLimit = "2Gi"
+						}
+
+						if pkgName == testNameConcurrentOperations {
+							memoryLimit = "3Gi"
 						}
 
 						opts := IntegrationTestOptions{
-							TestPkg:              pkgName,
-							TestName:             testName,
-							Config:               parsedFlags,
-							SecondaryConfig:      secondaryParsedFlags,
-							EnableFileCache:      true,
-							EnableZB:             zbEnabled(driver),
-							TestPodCPU:           cpu,
-							TestPodMemoryRequest: memReq,
-							TestPodMemoryLimit:   memLim,
+							TestPkg:             pkgName,
+							TestName:            testName,
+							Config:              parsedFlags,
+							SecondaryConfig:     secondaryParsedFlags,
+							EnableFileCache:     true,
+							EnableZB:            zbEnabled(driver),
+							TestPodCPU:          cpu,
+							TestPodMemoryLimit:  memoryLimit,
+							TestPodStorageLimit: storageLimit,
 						}
 						runIntegrationTest(ctx, f, driver, l.volumeResource, opts, gcsfuseTestBranch)
 					})
