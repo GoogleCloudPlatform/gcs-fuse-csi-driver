@@ -109,9 +109,6 @@ const (
 	gcsfuseCSIProfilesStaticBucketRegion = "us-central1"
 	gkeScalabilityImagesProjectID        = "gke-scalability-images"
 	iamPropagationWaitTime               = 10 * time.Minute
-	// ossWIFOIDCPoolID is the WIF pool ID used for OSS cluster bucket IAM in e2e tests.
-	// Must stay in sync with wifWorkloadIdentityPoolID in workload_identity_federation.go.
-	ossWIFOIDCPoolID = "gcs-fuse-oidc-pool"
 )
 
 var (
@@ -507,11 +504,15 @@ func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (stora
 
 // bucketIAMMember returns the IAM member string for the given KSA.
 <<<<<<< HEAD
+<<<<<<< HEAD
 // When OSS_WIF_POOL_ID is set, uses the WIF principal format for self-managed clusters.
 =======
 // On OSS clusters (IS_OSS=true), uses the external WIF principal format with ossWIFOIDCPoolID
 // since the GKE Workload Identity pool (<project>.svc.id.goog) does not exist on non-GKE projects.
 >>>>>>> d2e87503 (e2e/wif: replace gcloud CLI with GCS Go client, add sanitizeProjectID helper, and deduplicate pool ID constant)
+=======
+// When OSS_WIF_POOL_ID is set, uses the WIF principal format for self-managed clusters.
+>>>>>>> fa4a1622 (remove ossWIFOIDCPoolID constant, use OSS_WIF_POOL_ID env var in bucketIAMMember)
 // Otherwise falls back to the GKE Workload Identity format.
 func (n *GCSFuseCSITestDriver) bucketIAMMember(serviceAccountNamespace, serviceAccountName string) string {
 	if !n.skipGcpSaTest {
@@ -521,10 +522,14 @@ func (n *GCSFuseCSITestDriver) bucketIAMMember(serviceAccountNamespace, serviceA
 		projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
 		return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/subject/system:serviceaccount:%s:%s",
 <<<<<<< HEAD
+<<<<<<< HEAD
 			projectNumber, wifPoolID, serviceAccountNamespace, serviceAccountName)
 =======
 			projectNumber, ossWIFOIDCPoolID, serviceAccountNamespace, serviceAccountName)
 >>>>>>> d2e87503 (e2e/wif: replace gcloud CLI with GCS Go client, add sanitizeProjectID helper, and deduplicate pool ID constant)
+=======
+			projectNumber, wifPoolID, serviceAccountNamespace, serviceAccountName)
+>>>>>>> fa4a1622 (remove ossWIFOIDCPoolID constant, use OSS_WIF_POOL_ID env var in bucketIAMMember)
 	}
 	return fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
 }

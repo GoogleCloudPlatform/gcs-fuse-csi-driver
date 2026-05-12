@@ -150,7 +150,6 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA principal string. Cleanup is registered via ginkgo.DeferCleanup.
 	setupGKEWIPrincipal := func(ksaName string) string {
-<<<<<<< HEAD
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 		// Use ksaName as base + namespace numeric suffix to keep names unique per
@@ -158,15 +157,6 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		nsIdx := strings.LastIndex(f.Namespace.Name, "-")
 		nsSuffix := f.Namespace.Name[nsIdx+1:]
 		saName := fmt.Sprintf("%s-%s", ksaName, nsSuffix)
-=======
-		rawProjectID := os.Getenv(utils.ProjectEnvVar)
-		gomega.Expect(rawProjectID).NotTo(gomega.BeEmpty(), "PROJECT must be set")
-		projectID := sanitizeProjectID(rawProjectID)
-		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
-			fmt.Sprintf("invalid projectID detected: %q", projectID))
-
-		saName := f.Namespace.Name
->>>>>>> d2e87503 (e2e/wif: replace gcloud CLI with GCS Go client, add sanitizeProjectID helper, and deduplicate pool ID constant)
 		if len(saName) > 30 {
 			saName = strings.TrimRight(saName[:30], "-")
 		}
@@ -1079,13 +1069,3 @@ func getOSSClusterOIDCIssuer(ctx context.Context, f *framework.Framework) string
 	gomega.Expect(claims.Issuer).NotTo(gomega.BeEmpty(), "cluster OIDC issuer must not be empty")
 	return claims.Issuer
 }
-<<<<<<< HEAD
-=======
-
-// sanitizeProjectID strips any Cloud Shell "Your active configuration is: [...]"
-// warning that gcloud can prepend to stdout, returning only the actual project ID.
-func sanitizeProjectID(raw string) string {
-	lines := strings.Split(strings.TrimSpace(raw), "\n")
-	return lines[len(lines)-1]
-}
->>>>>>> d2e87503 (e2e/wif: replace gcloud CLI with GCS Go client, add sanitizeProjectID helper, and deduplicate pool ID constant)
