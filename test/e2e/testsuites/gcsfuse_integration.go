@@ -191,7 +191,7 @@ const fixedLength = 13 // math.MaxInt64 in base 36 fits in 13 characters.
 // getDecreasingString generates a string that decreases lexicographically as time increases, making newer items appear earlier in sorted results.
 func getDecreasingString() string {
 	// Calculate the decreasing value
-	val := uint64(math.MaxInt64 - time.Now().UnixNano()) 
+	val := uint64(math.MaxInt64 - time.Now().UnixNano())
 
 	// Map the value to our 36-character alphabet
 	res := make([]byte, fixedLength)
