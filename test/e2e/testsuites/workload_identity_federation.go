@@ -19,8 +19,6 @@ package testsuites
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -33,9 +31,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	iam "google.golang.org/api/iam/v1"
-	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	klog "k8s.io/klog/v2"
@@ -104,8 +100,8 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 	// setupOSSWIFPrincipal creates all OSS Workload Identity Federation infrastructure
 	// (WIF pool, provider, KSA, credential ConfigMap) for ksaName and returns the
-	// WIF principal string. Cleanup is registered via ginkgo.DeferCleanup.
-	setupOSSWIFPrincipal := func(ksaName, poolID, providerID, configMapName string) string {
+	// WIF principal string and the credential config JSON. Cleanup is registered via ginkgo.DeferCleanup.
+	setupOSSWIFPrincipal := func(ksaName, poolID, providerID, configMapName string) (string, string) {
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 
@@ -116,9 +112,13 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		ginkgo.By(fmt.Sprintf("Creating workload identity pool: %s", poolID))
 		createWorkloadIdentityPool(projectID, poolID)
 
-		ginkgo.By("Discovering cluster OIDC issuer from cluster service account token")
-		clusterIssuer := getOSSClusterOIDCIssuer(ctx, f)
-		gomega.Expect(clusterIssuer).NotTo(gomega.BeEmpty(), "failed to discover cluster OIDC issuer")
+		ginkgo.By("Getting cluster OIDC issuer URL")
+		clusterName := os.Getenv(utils.ClusterNameEnvVar)
+		clusterLocation := os.Getenv(utils.ClusterLocationEnvVar)
+		gomega.Expect(clusterName).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterNameEnvVar))
+		gomega.Expect(clusterLocation).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterLocationEnvVar))
+		clusterIssuer := getClusterOIDCIssuer(clusterName, clusterLocation, projectID)
+		gomega.Expect(clusterIssuer).NotTo(gomega.BeEmpty(), "failed to get cluster OIDC issuer")
 
 		ginkgo.By(fmt.Sprintf("Creating workload identity provider: %s", providerID))
 		createWorkloadIdentityProvider(projectID, poolID, providerID, clusterIssuer)
@@ -134,10 +134,11 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		createCredentialConfigMap(ctx, f, configMapName, credentialConfig)
 		ginkgo.DeferCleanup(func() { deleteConfigMap(ctx, f, configMapName) })
 
-		return fmt.Sprintf(
+		principal := fmt.Sprintf(
 			"principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/subject/system:serviceaccount:%s:%s",
 			projectNumber, poolID, f.Namespace.Name, ksaName,
 		)
+		return principal, credentialConfig
 	}
 
 	// setupGKEWIPrincipal creates a GCP service account, binds it to ksaName via
@@ -208,7 +209,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		if isOSS {
 			credentialConfigMapName = "wif-revoke-credentials"
-			principal = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
 		} else {
 			principal = setupGKEWIPrincipal(wifKSA)
 		}
@@ -362,35 +363,4 @@ func addWorkloadIdentityBinding(ctx context.Context, gcpSAEmail, projectID, name
 		return true, nil
 	})
 	framework.ExpectNoError(err, "setting workload identity binding for %s", gcpSAEmail)
-}
-
-// getOSSClusterOIDCIssuer discovers the cluster OIDC issuer URL by decoding a live
-// ServiceAccount token issued by the cluster. Unlike getClusterOIDCIssuer, this works
-// on any Kubernetes cluster (GKE or self-managed) without requiring cluster-name or
-// location environment variables.
-func getOSSClusterOIDCIssuer(ctx context.Context, f *framework.Framework) string {
-	expirationSecs := int64(600)
-	tok, err := f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).CreateToken(
-		ctx,
-		"default",
-		&authv1.TokenRequest{
-			Spec: authv1.TokenRequestSpec{ExpirationSeconds: &expirationSecs},
-		},
-		metav1.CreateOptions{},
-	)
-	framework.ExpectNoError(err, "creating service account token to discover cluster OIDC issuer")
-
-	parts := strings.Split(tok.Status.Token, ".")
-	if len(parts) != 3 {
-		framework.Failf("unexpected JWT format: want 3 parts, got %d", len(parts))
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	framework.ExpectNoError(err, "base64-decoding JWT payload")
-
-	var claims struct {
-		Issuer string `json:"iss"`
-	}
-	framework.ExpectNoError(json.Unmarshal(payload, &claims), "unmarshalling JWT claims")
-	gomega.Expect(claims.Issuer).NotTo(gomega.BeEmpty(), "cluster OIDC issuer must not be empty")
-	return claims.Issuer
 }
