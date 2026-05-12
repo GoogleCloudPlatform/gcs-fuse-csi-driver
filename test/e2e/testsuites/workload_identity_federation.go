@@ -19,8 +19,6 @@ package testsuites
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -34,9 +32,12 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	iam "google.golang.org/api/iam/v1"
+<<<<<<< HEAD
 	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+=======
+>>>>>>> 3727096f (replace getOSSClusterOIDCIssuer with getClusterOIDCIssuer, inline sanitizeProjectID, return credentialConfig from setupOSSWIFPrincipal)
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	klog "k8s.io/klog/v2"
@@ -946,7 +947,9 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			mountPath     = "/mnt/gcs"
 		)
 
-		projectID := sanitizeProjectID(os.Getenv(utils.ProjectEnvVar))
+		rawProjectID := os.Getenv(utils.ProjectEnvVar)
+		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
+		projectID := lines[len(lines)-1]
 
 		var principal string
 		if isOSS {
