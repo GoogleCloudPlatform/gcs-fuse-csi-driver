@@ -36,7 +36,7 @@ readonly overlay="${OVERLAY:-dev}"
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
 # TODO(amacaskill): Remove oidc from default skip when the test can be run without additional configuration.
 readonly ginkgo_skip="${E2E_TEST_SKIP:-'should.succeed.in.performance.test|oidc'}"
-readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-10}"
+readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-20}"
 readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
 readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"
 readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
@@ -44,6 +44,7 @@ readonly enable_zb=${ENABLE_ZB:-false}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-true}
 readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
+readonly gcsfuse_pr_number=${GCSFUSE_PR_NUMBER:-}
 
 if [ "${skip_csi_driver_install}" = true ]; then
   use_gke_managed_driver=false
@@ -89,5 +90,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gcsfuse-enable-zb=${enable_zb} \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
-            --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params}"
+            --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params} \
+            --gcsfuse-pr-number=${gcsfuse_pr_number}"
 eval "$base_cmd"

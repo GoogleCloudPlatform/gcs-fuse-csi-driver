@@ -48,6 +48,7 @@ var (
 	enableGcsFuseProfiles          = flag.Bool("enable-gcsfuse-profiles", false, "enables gcsfuse profiles for e2e tests")
 	enableGCSFuseKernelParams      = flag.Bool("enable-gcsfuse-kernel-params", false, "enables kernel params for e2e tests")
 	skipCSIDriverInstall           = flag.Bool("skip-csi-driver-install", false, "skips the install of the driver. You must have manually deployed the driver and webhook.")
+	gcsFusePrNumber                = flag.String("gcsfuse-pr-number", "", "PR number for gcsfuse to test against")
 
 	// Test infrastructure flags.
 	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -123,6 +124,7 @@ func main() {
 		EnableGcsFuseProfiles:          *enableGcsFuseProfiles,
 		EnableGCSFuseKernelParams:      *enableGCSFuseKernelParams,
 		SkipCSIDriverInstall:           *skipCSIDriverInstall,
+		GCSFusePRNumber:                *gcsFusePrNumber,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {
