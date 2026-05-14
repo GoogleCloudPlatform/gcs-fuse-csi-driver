@@ -315,7 +315,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		framework.ExpectNoError(err, "fetching GCS FUSE sidecar logs")
 		sidecarLogs := strings.ToLower(string(sidecarLogBytes))
 		gomega.Expect(
-			strings.Contains(sidecarLogs, "403") || strings.Contains(sidecarLogs, "forbidden"),
+			strings.Contains(sidecarLogs, "403") || strings.Contains(sidecarLogs, "PermissionDenied"),
 		).To(gomega.BeTrue(),
 			"expected GCS FUSE sidecar logs to contain '403' or 'forbidden' after permission revocation;\nsidecar logs: %s", string(sidecarLogBytes))
 	})
