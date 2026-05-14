@@ -35,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -431,6 +432,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		// error. The sidecar logs "IdentityBindingToken exchange error" and
 		// retries with exponential backoff until the context deadline.
 		ginkgo.By("Checking that gcsfuse logs an STS authentication error due to misconfigured provider")
+		waitForSidecarContainerStarted(ctx, f, f.Namespace.Name, tPod.GetPodName(), webhook.GcsFuseSidecarName)
 		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "Error connecting to the given credential's issuer.")
 	}
 
@@ -484,6 +486,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		// "IdentityBindingToken exchange error" and retries with exponential
 		// backoff until the context deadline.
 		ginkgo.By("Checking that gcsfuse logs an STS authentication error due to non-existent pool or provider")
+		waitForSidecarContainerStarted(ctx, f, f.Namespace.Name, tPod.GetPodName(), webhook.GcsFuseSidecarName)
 		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "invalid_target")
 	}
 
@@ -564,6 +567,24 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 }
 
 // Helper functions for GCP operations
+
+// waitForSidecarContainerStarted polls until the named sidecar container has been
+// started by the kubelet. This must be called before WaitForLog to avoid a 400
+// from the log API when the container is still in ContainerCreating state.
+func waitForSidecarContainerStarted(ctx context.Context, f *framework.Framework, namespace, podName, containerName string) {
+	_ = wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		pod, err := f.ClientSet.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.Name == containerName {
+				return cs.Started != nil && *cs.Started, nil
+			}
+		}
+		return false, nil
+	})
+}
 
 func getProjectNumber(projectID string) string {
 	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)")
