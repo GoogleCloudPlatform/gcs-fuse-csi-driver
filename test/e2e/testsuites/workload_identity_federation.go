@@ -146,16 +146,8 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA principal string. Cleanup is registered via ginkgo.DeferCleanup.
 	setupGKEWIPrincipal := func(ksaName string) string {
-		rawProjectID := os.Getenv(utils.ProjectEnvVar)
-		gomega.Expect(rawProjectID).NotTo(gomega.BeEmpty(), "PROJECT must be set")
-
-		// Fix corrupted gcloud output
-		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
-		projectID := lines[len(lines)-1]
-
-		// Safety check
-		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
-			fmt.Sprintf("invalid projectID detected: %q", projectID))
+		projectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 		saName := f.Namespace.Name
 		if len(saName) > 30 {
 			saName = saName[:30]
@@ -246,11 +238,8 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			// Only ns-1's GSA receives a GCS bucket IAM binding.
 			// ns-2's GSA is created first so both WI bindings propagate during the
 			// same 2-minute window inside setupGKEWIPrincipal.
-			rawProjectID := os.Getenv(utils.ProjectEnvVar)
-			lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
-			projectID := lines[len(lines)-1]
-			gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
-				fmt.Sprintf("invalid projectID detected: %q", projectID))
+			projectID := os.Getenv(utils.ProjectEnvVar)
+			gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 
 			ns2SAName := ns2.Name
 			if len(ns2SAName) > 30 {
@@ -359,7 +348,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		// retries on fetch errors until the container is ready or the timeout expires.
 		ginkgo.By("Polling ns-2 GCS FUSE sidecar logs for 403 Forbidden (confirms IAM denial, not a mount issue)")
 		var ns2AccessDenied bool
-		_ = wait.PollUntilContextTimeout(ctx, 10*time.Second, 3*time.Minute, true,
+		err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 3*time.Minute, true,
 			func(pollCtx context.Context) (bool, error) {
 				sidecarLogReq := f.ClientSet.CoreV1().Pods(ns2.Name).GetLogs(tPodNs2.GetPodName(), &corev1.PodLogOptions{
 					Container: webhook.GcsFuseSidecarName,
@@ -378,6 +367,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 				return false, nil
 			},
 		)
+		framework.ExpectNoError(err, "polling ns-2 sidecar logs for access denial indicator")
 		gomega.Expect(ns2AccessDenied).To(gomega.BeTrue(),
 			"expected ns-2 GCS FUSE sidecar logs to contain an access-denial indicator "+
 				"('403', 'forbidden', 'permission denied', or 'permissiondenied'), "+
