@@ -243,7 +243,10 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	if opts.TestPkg == testNameCloudProfiler || opts.TestName == testNameCloudProfiler {
 		prefix := getDecreasingString()
 		profileLabel = fmt.Sprintf("%s-cloud-profiler-test", prefix)
-		serviceName = profileLabel
+		// serviceName and profileLabel can be identical or different. They must follow 
+		// a decreasing lexicographical order per run to avoid excessive pagination 
+		// and potential timeouts when retrieving profiles from the GCP project.
+		serviceName = profileLabel 
 
 		vars["PROFILE_LABEL"] = profileLabel
 		vars["PROFILE_SERVICE_NAME"] = serviceName
