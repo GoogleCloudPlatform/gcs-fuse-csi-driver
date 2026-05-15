@@ -243,7 +243,7 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	if opts.TestPkg == testNameCloudProfiler || opts.TestName == testNameCloudProfiler {
 		prefix := getDecreasingString()
 		profileLabel = fmt.Sprintf("%s-cloud-profiler-test", prefix)
-		serviceName = profileLabel // kept identical
+		serviceName = profileLabel
 
 		vars["PROFILE_LABEL"] = profileLabel
 		vars["PROFILE_SERVICE_NAME"] = serviceName
@@ -546,8 +546,8 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			e2eskipper.Skipf("skip gcsfuse integration test %v on gcsfuse version %v", testNameRequesterPaysBucket, v.String())
 		}
 
-		// GCSFuse cloud_profiler tests are supported after v3.9.0.
-		if !v.AtLeast(version.MustParseSemantic("v3.9.0-gke.0")) && testName == testNameCloudProfiler {
+		// GCSFuse cloud_profiler tests are supported after v3.10.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.10.0-gke.0")) && testName == testNameCloudProfiler {
 			e2eskipper.Skipf("skip gcsfuse integration test %v on gcsfuse version %v", testNameCloudProfiler, v.String())
 		}
 
