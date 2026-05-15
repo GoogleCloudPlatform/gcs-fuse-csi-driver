@@ -71,8 +71,6 @@ func TestGetDeviceMajorMinor_NonExistentPath(t *testing.T) {
 func TestCheckAndApplyKernelParams(t *testing.T) {
 	t.Parallel()
 
-	const MaxReadAheadKb = ParamName("max-read-ahead-kb")
-
 	// Helper to create a temp file with content
 	createTempFile := func(dir, name, content string) string {
 		path := filepath.Join(dir, name)
@@ -109,6 +107,109 @@ func TestCheckAndApplyKernelParams(t *testing.T) {
 				}
 			},
 			expectedSysfsValue: "256\n",
+			expectError:        false,
+		},
+		{
+			name: "Success_SkipInvalidParameterValue",
+			setup: func(t *testing.T, tempDir string) (string, map[ParamName]string) {
+				// Create dummy sysfs file
+				sysfsPath := createTempFile(tempDir, "read_ahead_kb", "128")
+
+				// Create config file
+				configContent := `{
+					"request_id": "req-1",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "max-read-ahead-kb", "value": "2000000"}
+					]
+				}`
+				configPath := createTempFile(tempDir, "kernel_params.json", configContent)
+
+				return configPath, map[ParamName]string{
+					MaxReadAheadKb: sysfsPath,
+				}
+			},
+			expectedSysfsValue: "128",
+			expectError:        false,
+		},
+		{
+			name: "Success_UpdateMaxBackgroundRequests",
+			setup: func(t *testing.T, tempDir string) (string, map[ParamName]string) {
+				sysfsPath := createTempFile(tempDir, "max_background", "12")
+				configContent := `{
+					"request_id": "req-2",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "fuse-max-background-requests", "value": "16"}
+					]
+				}`
+				configPath := createTempFile(tempDir, "kernel_params.json", configContent)
+
+				return configPath, map[ParamName]string{
+					MaxBackgroundRequests: sysfsPath,
+				}
+			},
+			expectedSysfsValue: "16\n",
+			expectError:        false,
+		},
+		{
+			name: "Success_UpdateCongestionWindowThreshold",
+			setup: func(t *testing.T, tempDir string) (string, map[ParamName]string) {
+				sysfsPath := createTempFile(tempDir, "congestion_threshold", "10")
+				configContent := `{
+					"request_id": "req-3",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "fuse-congestion-window-threshold", "value": "12"}
+					]
+				}`
+				configPath := createTempFile(tempDir, "kernel_params.json", configContent)
+
+				return configPath, map[ParamName]string{
+					CongestionWindowThreshold: sysfsPath,
+				}
+			},
+			expectedSysfsValue: "12\n",
+			expectError:        false,
+		},
+		{
+			name: "Success_SkipInvalidMaxBackgroundRequests",
+			setup: func(t *testing.T, tempDir string) (string, map[ParamName]string) {
+				sysfsPath := createTempFile(tempDir, "max_background", "12")
+				configContent := `{
+					"request_id": "req-skip-2",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "fuse-max-background-requests", "value": "1001"}
+					]
+				}`
+				configPath := createTempFile(tempDir, "kernel_params.json", configContent)
+
+				return configPath, map[ParamName]string{
+					MaxBackgroundRequests: sysfsPath,
+				}
+			},
+			expectedSysfsValue: "12",
+			expectError:        false,
+		},
+		{
+			name: "Success_SkipInvalidCongestionWindowThreshold",
+			setup: func(t *testing.T, tempDir string) (string, map[ParamName]string) {
+				sysfsPath := createTempFile(tempDir, "congestion_threshold", "10")
+				configContent := `{
+					"request_id": "req-skip-3",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "fuse-congestion-window-threshold", "value": "-1"}
+					]
+				}`
+				configPath := createTempFile(tempDir, "kernel_params.json", configContent)
+
+				return configPath, map[ParamName]string{
+					CongestionWindowThreshold: sysfsPath,
+				}
+			},
+			expectedSysfsValue: "10",
 			expectError:        false,
 		},
 		{
@@ -216,16 +317,66 @@ func TestCheckAndApplyKernelParams(t *testing.T) {
 			}
 
 			// Verify sysfs file content if it exists and was part of the test
-			if sysfsPath, ok := pathMap[MaxReadAheadKb]; ok {
+			for _, sysfsPath := range pathMap {
 				if _, err := os.Stat(sysfsPath); err == nil {
 					content, err := os.ReadFile(sysfsPath)
 					if err != nil {
 						t.Fatalf("failed to read sysfs file: %v", err)
 					}
 					if string(content) != tc.expectedSysfsValue {
-						t.Errorf("sysfs value mismatch: got %q, want %q", string(content), tc.expectedSysfsValue)
+						t.Errorf("sysfs value mismatch for %q: got %q, want %q", sysfsPath, string(content), tc.expectedSysfsValue)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestValidateParamValue(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name        string
+		paramName   ParamName
+		paramValue  string
+		expectError bool
+	}{
+		// MaxReadAheadKb tests (0 to 1048576)
+		{"MaxReadAheadKb_Valid_Min", MaxReadAheadKb, "0", false},
+		{"MaxReadAheadKb_Valid_Max", MaxReadAheadKb, "1048576", false},
+		{"MaxReadAheadKb_Valid_Mid", MaxReadAheadKb, "512", false},
+		{"MaxReadAheadKb_Invalid_Low", MaxReadAheadKb, "-1", true},
+		{"MaxReadAheadKb_Invalid_High", MaxReadAheadKb, "1048577", true},
+
+		// MaxBackgroundRequests tests (1 to 1000)
+		{"MaxBackgroundRequests_Valid_Min", MaxBackgroundRequests, "1", false},
+		{"MaxBackgroundRequests_Valid_Max", MaxBackgroundRequests, "1000", false},
+		{"MaxBackgroundRequests_Valid_Mid", MaxBackgroundRequests, "16", false},
+		{"MaxBackgroundRequests_Invalid_Low", MaxBackgroundRequests, "0", true},
+		{"MaxBackgroundRequests_Invalid_High", MaxBackgroundRequests, "1001", true},
+
+		// CongestionWindowThreshold tests (0 to 1000)
+		{"CongestionWindowThreshold_Valid_Min", CongestionWindowThreshold, "0", false},
+		{"CongestionWindowThreshold_Valid_Max", CongestionWindowThreshold, "1000", false},
+		{"CongestionWindowThreshold_Valid_Mid", CongestionWindowThreshold, "12", false},
+		{"CongestionWindowThreshold_Invalid_Low", CongestionWindowThreshold, "-1", true},
+		{"CongestionWindowThreshold_Invalid_High", CongestionWindowThreshold, "1001", true},
+
+		// Unknown parameter
+		{"UnknownParam", ParamName("unknown-param"), "10", true},
+
+		// Invalid data types
+		{"NotAnInteger", MaxReadAheadKb, "abc", true},
+		{"FloatValue", MaxBackgroundRequests, "10.5", true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateParamValue(tc.paramName, tc.paramValue)
+			if tc.expectError && err == nil {
+				t.Errorf("validateParamValue(%q, %q): expected error, got nil", tc.paramName, tc.paramValue)
+			} else if !tc.expectError && err != nil {
+				t.Errorf("validateParamValue(%q, %q): unexpected error: %v", tc.paramName, tc.paramValue, err)
 			}
 		})
 	}
