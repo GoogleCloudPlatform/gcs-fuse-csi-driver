@@ -145,16 +145,8 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA principal string. Cleanup is registered via ginkgo.DeferCleanup.
 	setupGKEWIPrincipal := func(ksaName string) string {
-		rawProjectID := os.Getenv(utils.ProjectEnvVar)
-		gomega.Expect(rawProjectID).NotTo(gomega.BeEmpty(), "PROJECT must be set")
-
-		// Fix corrupted gcloud output
-		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
-		projectID := lines[len(lines)-1]
-
-		// Safety check
-		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
-			fmt.Sprintf("invalid projectID detected: %q", projectID))
+		projectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
 		saName := f.Namespace.Name
 		if len(saName) > 30 {
 			saName = saName[:30]
@@ -259,7 +251,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		preRevokeCtx, cancelPreRevoke := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancelPreRevoke()
 		chunkWritten := false
-		_ = wait.PollUntilContextCancel(preRevokeCtx, 5*time.Second, true, func(_ context.Context) (bool, error) {
+		err := wait.PollUntilContextCancel(preRevokeCtx, 5*time.Second, true, func(_ context.Context) (bool, error) {
 			output := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName,
 				fmt.Sprintf("test -f %s/chunk-1.bin && echo WRITTEN || echo PENDING", mountPath))
 			if strings.Contains(output, "WRITTEN") {
@@ -268,6 +260,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			}
 			return false, nil
 		})
+		framework.ExpectNoError(err, "polling for first chunk to be written before permission revocation")
 		gomega.Expect(chunkWritten).To(gomega.BeTrue(),
 			"expected pod to write at least one chunk to GCS before permission revocation")
 
@@ -282,7 +275,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		var countStable bool
 
-		_ = wait.PollUntilContextTimeout(ctx, 10*time.Second, 2*time.Minute, true,
+		err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 2*time.Minute, true,
 			func(ctx context.Context) (bool, error) {
 				out1 := tPod.VerifyExecInPodSucceedWithOutput(
 					f, specs.TesterContainerName,
@@ -303,6 +296,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 				return false, nil
 			},
 		)
+		framework.ExpectNoError(err, "polling for writes to stop after permission revocation")
 
 		gomega.Expect(countStable).To(gomega.BeTrue(),
 			"expected writes to stop after permission revocation")
@@ -311,7 +305,8 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		sidecarLogReq := f.ClientSet.CoreV1().Pods(f.Namespace.Name).GetLogs(tPod.GetPodName(), &corev1.PodLogOptions{
 			Container: webhook.GcsFuseSidecarName,
 		})
-		sidecarLogBytes, err := sidecarLogReq.DoRaw(ctx)
+		var sidecarLogBytes []byte
+		sidecarLogBytes, err = sidecarLogReq.DoRaw(ctx)
 		framework.ExpectNoError(err, "fetching GCS FUSE sidecar logs")
 		sidecarLogs := strings.ToLower(string(sidecarLogBytes))
 		gomega.Expect(
