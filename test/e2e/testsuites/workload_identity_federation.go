@@ -499,25 +499,26 @@ func addWorkloadIdentityBinding(ctx context.Context, gcpSAEmail, projectID, name
 			klog.Warningf("GetIamPolicy for %s not ready yet: %v — retrying", gcpSAEmail, e)
 			return false, nil
 		}
-		alreadyBound := false
+		var binding *iam.Binding
 		for _, b := range policy.Bindings {
 			if b.Role == "roles/iam.workloadIdentityUser" {
-				for _, m := range b.Members {
-					if m == member {
-						alreadyBound = true
-						break
-					}
-				}
+				binding = b
+				break
 			}
-			if alreadyBound {
+		}
+		if binding == nil {
+			binding = &iam.Binding{Role: "roles/iam.workloadIdentityUser"}
+			policy.Bindings = append(policy.Bindings, binding)
+		}
+		alreadyBound := false
+		for _, m := range binding.Members {
+			if m == member {
+				alreadyBound = true
 				break
 			}
 		}
 		if !alreadyBound {
-			policy.Bindings = append(policy.Bindings, &iam.Binding{
-				Role:    "roles/iam.workloadIdentityUser",
-				Members: []string{member},
-			})
+			binding.Members = append(binding.Members, member)
 		}
 		if _, e = iamService.Projects.ServiceAccounts.SetIamPolicy(saResourceName, &iam.SetIamPolicyRequest{Policy: policy}).Do(); e != nil {
 			klog.Warningf("SetIamPolicy for %s failed: %v — retrying", gcpSAEmail, e)
