@@ -47,11 +47,6 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
-const (
-	wifWorkloadIdentityPoolID     = "gcs-fuse-oidc-pool"
-	wifWorkloadIdentityProviderID = "gcs-fuse-oidc-provider"
-)
-
 type gcsFuseCSIWorkloadIdentityFederationTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
@@ -854,7 +849,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		var principal string
 		if isOSS {
-			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, configMapName)
+			principal, _ = setupOSSWIFPrincipal(wifKSA, oidcWorkloadIdentityPoolID, oidcWorkloadIdentityProviderID, configMapName)
 		} else {
 			principal = setupGKEWIPrincipal(wifKSA)
 		}
@@ -898,7 +893,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		var principal string
 		if isOSS {
-			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, configMapName)
+			principal, _ = setupOSSWIFPrincipal(wifKSA, oidcWorkloadIdentityPoolID, oidcWorkloadIdentityProviderID, configMapName)
 		} else {
 			principal = setupGKEWIPrincipal(wifKSA)
 		}
@@ -953,7 +948,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		var principal string
 		if isOSS {
-			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, configMapName)
+			principal, _ = setupOSSWIFPrincipal(wifKSA, oidcWorkloadIdentityPoolID, oidcWorkloadIdentityProviderID, configMapName)
 		} else {
 			principal = setupGKEWIPrincipal(wifKSA)
 		}
