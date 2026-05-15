@@ -392,7 +392,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 	// annotation is empty, preventing any fallback to the node's identity.
 	//
 	// TODO: Remove the skip below once the node-identity-fallback security bug is fixed.
-	ginkgo.It("should fail GCS mount when WIF credential config is absent and node SA has bucket access", func() {
+	ginkgo.It("should fail to start pod when WIF credential config is absent and node SA has bucket access", func() {
 		e2eskipper.Skipf("skipping until node-identity-fallback security bug is fixed")
 
 		init(specs.SkipCSIBucketAccessCheckPrefix)
