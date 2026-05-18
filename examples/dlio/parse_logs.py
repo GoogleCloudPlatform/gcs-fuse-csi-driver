@@ -50,7 +50,7 @@ if __name__ == "__main__":
     
     for bucketName in bucketNames:
         print(f"Download DLIO logs from the bucket {bucketName}...")
-        result = subprocess.run(["gsutil", "-m", "cp", "-r", f"gs://{bucketName}/logs", LOCAL_LOGS_LOCATION], capture_output=False, text=True)
+        result = subprocess.run(["gcloud", "storage", "cp", "--recursive", f"gs://{bucketName}/logs", LOCAL_LOGS_LOCATION], capture_output=False, text=True)
         if result.returncode < 0:
             print(f"failed to fetch DLIO logs, error: {result.stderr}")
     

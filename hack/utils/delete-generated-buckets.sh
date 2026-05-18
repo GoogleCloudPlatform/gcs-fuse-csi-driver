@@ -20,7 +20,7 @@
 BUCKET_PREFIX="gcsfusecsi-testsuite-gen-"
 
 # List all buckets
-BUCKETS=$(gsutil ls)
+BUCKETS=$(gcloud storage ls)
 
 # Array to store buckets to be deleted
 DELETE_BUCKETS=()
@@ -51,7 +51,7 @@ read -p "Are you sure you want to delete ALL the listed buckets? (y/n): " CONFIR
 if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
   echo "Deleting buckets..."
   for BUCKET_NAME in "${DELETE_BUCKETS[@]}"; do
-    gsutil -m rm -r "gs://$BUCKET_NAME"
+    gcloud storage rm --recursive "gs://$BUCKET_NAME"
     echo "Deleted: $BUCKET_NAME"
   done
   echo "All specified buckets have been deleted."

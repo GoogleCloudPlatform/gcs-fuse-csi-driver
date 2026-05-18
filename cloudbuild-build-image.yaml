@@ -143,7 +143,11 @@ steps:
         docker run --rm -v $(pwd)/bin/linux/amd64:/release gcsfuse-release-amd cp /gcsfuse_$${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
       else
         # Download pre-built binary
-        gsutil cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
+        if [ ! -d "/tmp/google-cloud-sdk" ]; then
+          curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz -o /tmp/gcloud.tar.gz
+          tar -xf /tmp/gcloud.tar.gz -C /tmp
+        fi
+        /tmp/google-cloud-sdk/bin/gcloud storage cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/amd64/gcsfuse" ./bin/linux/amd64/gcsfuse
       fi
       chmod 0555 ./bin/linux/amd64/gcsfuse
 
@@ -157,7 +161,11 @@ steps:
           docker run --rm -v $(pwd)/bin/linux/arm64:/release gcsfuse-release-arm cp /gcsfuse_$${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
         else
           # Download pre-built ARM binary
-          gsutil cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
+          if [ ! -d "/tmp/google-cloud-sdk" ]; then
+            curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz -o /tmp/gcloud.tar.gz
+            tar -xf /tmp/gcloud.tar.gz -C /tmp
+          fi
+          /tmp/google-cloud-sdk/bin/gcloud storage cp "${_GCSFUSE_BINARY_GCS_PATH}/linux/arm64/gcsfuse" ./bin/linux/arm64/gcsfuse
         fi
         chmod 0555 ./bin/linux/arm64/gcsfuse
       fi
