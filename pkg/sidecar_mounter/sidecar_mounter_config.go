@@ -70,6 +70,8 @@ type MountConfig struct {
 	FileCacheMedium                string                `json:"-"`
 	GcsFuseNumaNode                int                   `json:"-"`
 	CustomEndpoint                 string                `json:"-"`
+	EnableAutoGoMemLimit           bool                  `json:"-"`
+	AutoGoMemLimitRatio            float64               `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -117,12 +119,13 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 	tempDir := filepath.Dir(sp)
 	volumeName := filepath.Base(tempDir)
 	mc := MountConfig{
-		VolumeName: volumeName,
-		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
-		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
-		TempDir:    tempDir,
-		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-		ErrWriter:  NewErrorWriter(filepath.Join(tempDir, "error")),
+		VolumeName:          volumeName,
+		BufferDir:           filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		CacheDir:            filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		TempDir:             tempDir,
+		ConfigFile:          filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+		ErrWriter:           NewErrorWriter(filepath.Join(tempDir, "error")),
+		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
 	klog.Infof("connecting to socket %q", sp)
@@ -314,6 +317,19 @@ func (mc *MountConfig) prepareMountArgs() {
 
 		case util.EnableGCSFuseKernelParams:
 			mc.EnableGCSFuseKernelParams = value == util.TrueStr
+			continue
+
+		case util.EnableAutoGoMemLimitConst:
+			mc.EnableAutoGoMemLimit = value == util.TrueStr
+			continue
+
+		case util.AutoGoMemLimitRatioConst:
+			ratio, err := strconv.ParseFloat(value, 64)
+			if err != nil || ratio <= 0 || ratio > 1 {
+				invalidArgs = append(invalidArgs, arg)
+			} else {
+				mc.AutoGoMemLimitRatio = ratio
+			}
 			continue
 		}
 

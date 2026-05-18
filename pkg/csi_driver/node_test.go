@@ -396,6 +396,167 @@ func TestNodePublishVolumeMultiNIC(t *testing.T) {
 		})
 	}
 }
+func TestNodePublishVolumeEnableAutoGoMemLimit(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                     string
+		enableAutoGoMemLimit     bool
+		autoGoMemLimitRatio      float64
+		assumeGoodSidecarVersion bool
+		userMountOptions         string
+		expectedOptions          []string
+	}{
+		{
+			name:                     "feature flag enabled, sidecar version supported, no user overrides, expect all driver defaults",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.95"},
+		},
+		{
+			name:                     "feature flag disabled, sidecar version supported, no user overrides, expect no driver defaults injected",
+			enableAutoGoMemLimit:     false,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version not supported, no user overrides, expect no driver defaults injected",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: false,
+			expectedOptions:          []string{},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user overrides enable flag, expect user enable flag and driver default ratio",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-auto-gomemlimit=false",
+			expectedOptions:          []string{"enable-auto-gomemlimit=false", "auto-gomemlimit-ratio=0.95"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user overrides ratio flag, expect driver default enable flag and user ratio",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "auto-gomemlimit-ratio=0.8",
+			expectedOptions:          []string{"auto-gomemlimit-ratio=0.8", "enable-auto-gomemlimit=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user overrides both flags, expect no driver defaults injected",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-auto-gomemlimit=false,auto-gomemlimit-ratio=0.8",
+			expectedOptions:          []string{"enable-auto-gomemlimit=false", "auto-gomemlimit-ratio=0.8"},
+		},
+		{
+			// In this case, the sidecar will pass the flag to the gcsfuse binary, which will crash because it doesn't recognize it.
+			// This is the correct behavior and how it works with all other flags today.
+			name:                     "feature flag enabled, sidecar version not supported, user overrides enable flag, expect user enable flag and no driver defaults",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: false,
+			userMountOptions:         "enable-auto-gomemlimit=false",
+			expectedOptions:          []string{"enable-auto-gomemlimit=false"},
+		},
+		{
+			// In this case, the sidecar will pass the flag to the gcsfuse binary, which will crash because it doesn't recognize it.
+			// This is the correct behavior and how it works with all other flags today.
+			name:                     "feature flag enabled, sidecar version not supported, user overrides ratio flag, expect user ratio flag and no driver defaults",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: false,
+			userMountOptions:         "auto-gomemlimit-ratio=0.8",
+			expectedOptions:          []string{"auto-gomemlimit-ratio=0.8"},
+		},
+		{
+			name:                     "feature flag disabled, sidecar version supported, user overrides enable flag, expect user enable flag and driver default ratio",
+			enableAutoGoMemLimit:     false,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-auto-gomemlimit=true",
+			expectedOptions:          []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.95"},
+		},
+		{
+			name:                     "feature flag disabled, sidecar version supported, user overrides ratio flag, expect user ratio flag and no driver enable flag",
+			enableAutoGoMemLimit:     false,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "auto-gomemlimit-ratio=0.8",
+			expectedOptions:          []string{"auto-gomemlimit-ratio=0.8"},
+		},
+		{
+			name:                     "feature flag disabled, sidecar version supported, user overrides both flags, expect user flags and no driver defaults",
+			enableAutoGoMemLimit:     false,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-auto-gomemlimit=true,auto-gomemlimit-ratio=0.8",
+			expectedOptions:          []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.8"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testTargetPath, cleanup := setupMountTarget(t)
+			defer cleanup()
+
+			volumeContext := map[string]string{
+				VolumeContextKeyPodName:      "test-pod",
+				VolumeContextKeyPodNamespace: "test-ns",
+			}
+			if tc.userMountOptions != "" {
+				volumeContext[VolumeContextKeyMountOptions] = tc.userMountOptions
+			}
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    volumeContext,
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+
+			driver.config.FeatureOptions.GoMemLimitOptions = &GoMemLimitOptions{
+				EnableAutoGoMemLimit: tc.enableAutoGoMemLimit,
+				AutoGoMemLimitRatio:  tc.autoGoMemLimitRatio,
+			}
+			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns := newNodeServer(driver, fakeMounter)
+
+			_, err := ns.NodePublishVolume(context.Background(), req)
+
+			if err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+
+			// 1. Use the existing helper to ensure all expected options are present
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOptions,
+			}, nil)
+
+			// 2. Exact match check: ensure no extra options were injected
+			if len(fakeMounter.MountPoints) == 1 {
+				actualOpts := fakeMounter.MountPoints[0].Opts
+				if len(actualOpts) != len(tc.expectedOptions) {
+					t.Errorf("expected exactly %d options %v, but got %d options %v",
+						len(tc.expectedOptions), tc.expectedOptions, len(actualOpts), actualOpts)
+				}
+			}
+		})
+	}
+}
 
 func TestNodeUnpublishVolume(t *testing.T) {
 	t.Parallel()

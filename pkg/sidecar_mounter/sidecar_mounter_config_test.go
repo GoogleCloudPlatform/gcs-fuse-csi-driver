@@ -777,3 +777,60 @@ func TestPrepareConfigFile(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name           string
+		options        []string
+		expectedEnable bool
+		expectedRatio  float64
+	}{
+		{
+			name:           "enable and ratio flags provided, expect both fields parsed correctly",
+			options:        []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.85"},
+			expectedEnable: true,
+			expectedRatio:  0.85,
+		},
+		{
+			name:           "enable flag set to false, expect enable field false and ratio parsed correctly",
+			options:        []string{"enable-auto-gomemlimit=false", "auto-gomemlimit-ratio=0.9"},
+			expectedEnable: false,
+			expectedRatio:  0.9,
+		},
+		{
+			name:           "no gomemlimit flags provided, expect default ratio retained",
+			options:        []string{"some-other-flag=true"},
+			expectedEnable: false,
+			expectedRatio:  0.95, // 0.95 is the default we set prior to calling prepareMountArgs
+		},
+		{
+			name:           "invalid ratio string provided, expect default ratio retained",
+			options:        []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=not-a-number"},
+			expectedEnable: true,
+			expectedRatio:  0.95,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mc := &MountConfig{
+				Options: tc.options,
+				// Simulate the default value set by NewMountConfig
+				AutoGoMemLimitRatio: 0.95,
+			}
+
+			// Execute the parsing logic
+			mc.prepareMountArgs()
+
+			if mc.EnableAutoGoMemLimit != tc.expectedEnable {
+				t.Errorf("Got EnableAutoGoMemLimit %v, expected %v", mc.EnableAutoGoMemLimit, tc.expectedEnable)
+			}
+
+			if mc.AutoGoMemLimitRatio != tc.expectedRatio {
+				t.Errorf("Got AutoGoMemLimitRatio %v, expected %v", mc.AutoGoMemLimitRatio, tc.expectedRatio)
+			}
+		})
+	}
+}
