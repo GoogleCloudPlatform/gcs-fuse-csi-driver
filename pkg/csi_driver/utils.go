@@ -430,7 +430,10 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 		}
 		f.Close()
 
-		err = os.Chown(exitFilePath, webhook.NobodyUID, webhook.NobodyGID)
+		if err := util.CheckNotSymlink(exitFilePath); err != nil {
+			return fmt.Errorf("failed to verify exit file before changing ownership: %w", err)
+		}
+		err = os.Lchown(exitFilePath, webhook.NobodyUID, webhook.NobodyGID)
 		if err != nil {
 			return fmt.Errorf("failed to change ownership on the exit file: %w", err)
 		}
