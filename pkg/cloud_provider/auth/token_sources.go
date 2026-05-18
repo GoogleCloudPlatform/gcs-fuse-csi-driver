@@ -177,7 +177,9 @@ func (ts *GCPTokenSource) FetchIdentityBindingToken(ctx context.Context, k8sSATo
 
 	stsResponse, err := stsService.V1.Token(stsRequest).Do()
 	if err != nil {
-		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: and request %v: error %w", audience, stsRequest, err)
+		// Redact the SubjectToken (k8s service account token) from logs to prevent leakage.
+		stsRequest.SubjectToken = "<REDACTED>"
+		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: request=%+v: error %w", audience, stsRequest, err)
 	}
 
 	return &oauth2.Token{
