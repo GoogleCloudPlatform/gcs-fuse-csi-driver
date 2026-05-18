@@ -300,3 +300,15 @@ func ParseBool(str string) (bool, error) {
 		return false, fmt.Errorf("could not parse string to bool: the acceptable values for %q are 'True', 'true', 'false' or 'False'", str)
 	}
 }
+// CheckNotSymlink verifies that the given path is not a symbolic link.
+// This is used to prevent TOCTOU symlink takeover attacks.
+func CheckNotSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("failed to stat path %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("security error: path %q is a symlink", path)
+	}
+	return nil
+}
