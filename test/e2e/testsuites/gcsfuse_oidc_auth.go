@@ -460,46 +460,67 @@ func generateCredentialConfig(projectNumber, poolID, providerID string) string {
 	return string(configJSON)
 }
 
-func createServiceAccount(ctx context.Context, f *framework.Framework, name string) {
+// createServiceAccount creates a Kubernetes ServiceAccount. If namespace is provided it overrides
+// f.Namespace.Name, allowing reuse across namespaces without a separate helper.
+func createServiceAccount(ctx context.Context, f *framework.Framework, name string, namespace ...string) {
+	ns := f.Namespace.Name
+	if len(namespace) > 0 && namespace[0] != "" {
+		ns = namespace[0]
+	}
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: f.Namespace.Name,
+			Namespace: ns,
 		},
 	}
-	_, err := f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).Create(ctx, sa, metav1.CreateOptions{})
+	_, err := f.ClientSet.CoreV1().ServiceAccounts(ns).Create(ctx, sa, metav1.CreateOptions{})
 	if err != nil {
 		framework.Failf("Failed to create service account: %v", err)
 	}
-	klog.Infof("Created service account: %s", name)
+	klog.Infof("Created service account: %s in namespace %s", name, ns)
 }
 
-func deleteServiceAccount(ctx context.Context, f *framework.Framework, name string) {
-	err := f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).Delete(ctx, name, metav1.DeleteOptions{})
+// deleteServiceAccount deletes a Kubernetes ServiceAccount. If namespace is provided it overrides f.Namespace.Name.
+func deleteServiceAccount(ctx context.Context, f *framework.Framework, name string, namespace ...string) {
+	ns := f.Namespace.Name
+	if len(namespace) > 0 && namespace[0] != "" {
+		ns = namespace[0]
+	}
+	err := f.ClientSet.CoreV1().ServiceAccounts(ns).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
 		klog.Warningf("Failed to delete service account: %v", err)
 	}
 }
 
-func createCredentialConfigMap(ctx context.Context, f *framework.Framework, name, credentialConfig string) {
+// createCredentialConfigMap creates a credential ConfigMap. If namespace is provided it overrides f.Namespace.Name.
+func createCredentialConfigMap(ctx context.Context, f *framework.Framework, name, credentialConfig string, namespace ...string) {
+	ns := f.Namespace.Name
+	if len(namespace) > 0 && namespace[0] != "" {
+		ns = namespace[0]
+	}
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: f.Namespace.Name,
+			Namespace: ns,
 		},
 		Data: map[string]string{
 			oidcCredentialConfigFileName: credentialConfig,
 		},
 	}
-	_, err := f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(ctx, cm, metav1.CreateOptions{})
+	_, err := f.ClientSet.CoreV1().ConfigMaps(ns).Create(ctx, cm, metav1.CreateOptions{})
 	if err != nil {
 		framework.Failf("Failed to create ConfigMap: %v", err)
 	}
-	klog.Infof("Created ConfigMap: %s", name)
+	klog.Infof("Created ConfigMap: %s in namespace %s", name, ns)
 }
 
-func deleteConfigMap(ctx context.Context, f *framework.Framework, name string) {
-	err := f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Delete(ctx, name, metav1.DeleteOptions{})
+// deleteConfigMap deletes a ConfigMap. If namespace is provided it overrides f.Namespace.Name.
+func deleteConfigMap(ctx context.Context, f *framework.Framework, name string, namespace ...string) {
+	ns := f.Namespace.Name
+	if len(namespace) > 0 && namespace[0] != "" {
+		ns = namespace[0]
+	}
+	err := f.ClientSet.CoreV1().ConfigMaps(ns).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
 		klog.Warningf("Failed to delete ConfigMap: %v", err)
 	}
