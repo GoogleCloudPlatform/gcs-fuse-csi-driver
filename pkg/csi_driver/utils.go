@@ -86,9 +86,11 @@ const (
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
-	FlagFileForDefaultingPath              = "flags-for-defaulting"
-	GCSFuseProfileFlag                     = "profile"
-	LocalSocketAddressArg                  = "experimental-local-socket-address"
+	// TODO(amacaskill): update with actual 1.23.X patch version once the first PR is merged.
+	SidecarAutoGoMemLimitMinVersion = "v1.24.0-gke.0"
+	FlagFileForDefaultingPath       = "flags-for-defaulting"
+	GCSFuseProfileFlag              = "profile"
+	LocalSocketAddressArg           = "experimental-local-socket-address"
 )
 
 var (
