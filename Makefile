@@ -72,6 +72,7 @@ endif
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 PROJECT_NUMBER ?= $(shell gcloud projects describe $(PROJECT) --format="value(projectNumber)")
+UNIVERSE_DOMAIN ?= $(shell gcloud config get universe_domain)
 
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
@@ -93,6 +94,7 @@ DOCKER_BUILDX_ARGS += --quiet
 $(info PROJECT is ${PROJECT})
 $(info CLUSTER_LOCATION is ${CLUSTER_LOCATION})
 $(info CLUSTER_NAME is ${CLUSTER_NAME})
+$(info UNIVERSE_DOMAIN is ${UNIVERSE_DOMAIN})
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
@@ -309,6 +311,7 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER};
+	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-node-config --behavior=merge --disableNameSuffixHash --from-literal=universe-domain=${UNIVERSE_DOMAIN};
 # Must be unindented. When Make sees indented text, it attempts to pass it to the shell (/bin/sh) to execute. The shell doesn't know what ifeq is, so it crashes.
 ifeq ($(SELF_MANAGED_K8S), true)
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json

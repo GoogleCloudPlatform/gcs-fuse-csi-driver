@@ -778,7 +778,6 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	})
 }
 
-
 // addWorkloadIdentityBinding grants roles/iam.workloadIdentityUser on the given GCP service
 // account to the Workload Identity principal for ksaName, enabling GKE token exchange.
 // Retries with backoff to handle IAM eventual consistency after SA creation.
