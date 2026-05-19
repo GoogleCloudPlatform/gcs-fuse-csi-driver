@@ -96,7 +96,7 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	testCaseCloudProfilerProfileCreation := func(configPrefix string) {
+	testCaseCloudProfilerProfileCreation := func(configPrefix string, disableGcsfuseProfiler bool) {
 		init(configPrefix)
 		defer cleanup()
 
@@ -104,6 +104,9 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetName("gcsfuse-cloud-profiler-tester")
 		l.volumeResource.VolSource.CSI.VolumeAttributes["enableCloudProfilerForSidecar"] = "true"
+		if disableGcsfuseProfiler {
+			l.volumeResource.VolSource.CSI.VolumeAttributes["mountOptions"] = "enable-cloud-profiler=false"
+		}
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 
 		ginkgo.By("Deploying the pod")
@@ -124,6 +127,12 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 		// Wait for the log to appear
 		tPod.WaitForLog(ctx, sidecarServiceName, expectedLogLine)
 
+		if disableGcsfuseProfiler {
+			ginkgo.By("Checking that GCSFuse profiler is disabled via logs")
+			disabledLogLine := "Cloud Profiler for GCSFuse is disabled via mount options: enable-cloud-profiler=false"
+			tPod.WaitForLog(ctx, sidecarServiceName, disabledLogLine)
+		}
+
 		ginkgo.By("Generating load")
 		// Write a 10MB file to the mount path to generate activity for the profiler to capture.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("head -c 10485760 </dev/urandom > %s/test.bin", mountPath))
@@ -137,18 +146,24 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 			g.Expect(sidecarOk).To(gomega.BeTrue(), fmt.Sprintf("sidecar profile does not exist yet for version %s", expectedVersion))
 		}, "10m", "10s").Should(gomega.Succeed())
 
-		ginkgo.By("Checking that gcsfuse profile is generated")
-		framework.Logf("Checking if gcsfuse profile exists for version %s", expectedVersion)
-		gomega.Eventually(ctx, func(g gomega.Gomega) {
-			// Check GCSFuse Profile
-			gcsfuseOk, err := checkIfProfileExistForServiceAndVersion(ctx, gcsfuseServiceName, expectedVersion)
-			g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check gcsfuse profile for version %s", expectedVersion))
-			g.Expect(gcsfuseOk).To(gomega.BeTrue(), fmt.Sprintf("gcsfuse profile does not exist yet for version %s", expectedVersion))
-		}, "10m", "10s").Should(gomega.Succeed())
+		if !disableGcsfuseProfiler {
+			ginkgo.By("Checking that gcsfuse profile is generated")
+			framework.Logf("Checking if gcsfuse profile exists for version %s", expectedVersion)
+			gomega.Eventually(ctx, func(g gomega.Gomega) {
+				// Check GCSFuse Profile
+				gcsfuseOk, err := checkIfProfileExistForServiceAndVersion(ctx, gcsfuseServiceName, expectedVersion)
+				g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check gcsfuse profile for version %s", expectedVersion))
+				g.Expect(gcsfuseOk).To(gomega.BeTrue(), fmt.Sprintf("gcsfuse profile does not exist yet for version %s", expectedVersion))
+			}, "10m", "10s").Should(gomega.Succeed())
+		}
 	}
 
 	ginkgo.It("cloud_profiler should create profiles for sidecar and gcsfuse", ginkgo.SpecPriority(10), func() {
-		testCaseCloudProfilerProfileCreation("")
+		testCaseCloudProfilerProfileCreation("", false)
+	})
+
+	ginkgo.It("cloud_profiler should only create profiles for sidecar when gcsfuse profiler is disabled", ginkgo.SpecPriority(10), func() {
+		testCaseCloudProfilerProfileCreation("", true)
 	})
 }
 

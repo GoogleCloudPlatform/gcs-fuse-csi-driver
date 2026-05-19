@@ -356,11 +356,23 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	if mc.EnableCloudProfilerForSidecar {
-		// Inject Cloud Profiler flags supported by gcsfuse.
-		flagMap["enable-cloud-profiler"] = ""
-		customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
-		flagMap["cloud-profiler-label"] = customLabel
-		klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)
+		enableProfiler := true
+		val, ok := flagMap[util.EnableCloudProfilerConst]
+		if ok {
+			if parsed, err := strconv.ParseBool(val); err == nil && !parsed {
+				enableProfiler = false
+			}
+		}
+
+		if enableProfiler {
+			// Inject Cloud Profiler flags supported by gcsfuse.
+			flagMap[util.EnableCloudProfilerConst] = ""
+			customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
+			flagMap["cloud-profiler-label"] = customLabel
+			klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)
+		} else {
+			klog.Infof("Cloud Profiler for GCSFuse is disabled via mount options: %s=%s", util.EnableCloudProfilerConst, val)
+		}
 	}
 
 	mc.FlagMap = flagMap
