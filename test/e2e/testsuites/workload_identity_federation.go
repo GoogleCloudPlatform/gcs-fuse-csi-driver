@@ -32,6 +32,7 @@ import (
 	"github.com/onsi/gomega"
 	iam "google.golang.org/api/iam/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	klog "k8s.io/klog/v2"
@@ -313,6 +314,210 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			strings.Contains(sidecarLogs, "403") || strings.Contains(sidecarLogs, "PermissionDenied"),
 		).To(gomega.BeTrue(),
 			"expected GCS FUSE sidecar logs to contain '403' or 'forbidden' after permission revocation;\nsidecar logs: %s", string(sidecarLogBytes))
+	})
+
+	ginkgo.It("should isolate workload identity federation access for Kubernetes service accounts with the same name across different namespaces", func() {
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+
+		// OSS: credential ConfigMap doesn't exist at mount time, so the CSI pre-mount
+		// bucket access check would fail — skip it and let authz errors surface on I/O.
+		// GKE: WI binding and bucket access are both ready before the pod starts, so the
+		// pre-mount check can run normally.
+		if isOSS {
+			init(specs.SkipCSIBucketAccessCheckPrefix)
+		} else {
+			init()
+		}
+		defer cleanup()
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		const (
+			sharedKSAName           = "gcsfuse-test-sa"
+			volumeName              = "gcs-volume"
+			mountPath               = "/mnt/gcs"
+			credentialConfigMapName = "wif-isolation-credentials"
+		)
+
+		// ns-1: f.Namespace (framework-managed, will receive IAM access)
+		// ns-2: manually created with the same KSA name but no IAM access
+		ginkgo.By("Creating second namespace for identity isolation test")
+		ns2, err := f.ClientSet.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "wif-isolation-",
+				Labels: map[string]string{
+					admissionapi.EnforceLevelLabel: string(admissionapi.LevelPrivileged),
+				},
+			},
+		}, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "creating second namespace for isolation test")
+		ginkgo.DeferCleanup(func() {
+			if delErr := f.ClientSet.CoreV1().Namespaces().Delete(ctx, ns2.Name, metav1.DeleteOptions{}); delErr != nil {
+				klog.Warningf("failed to delete namespace %s: %v", ns2.Name, delErr)
+			}
+		})
+
+		var ns1Principal string
+
+		if isOSS {
+			// OSS: both namespaces receive the same WIF pool/provider credential config so
+			// both KSAs exchange their tokens via WIF rather than falling back to the node's
+			// default identity. The WIF subject is derived from the JWT "sub" claim, which
+			// encodes the namespace, making the two principals distinct:
+			//   ns-1: system:serviceaccount:<f.Namespace>:<ksaName>  → granted bucket access
+			//   ns-2: system:serviceaccount:<ns-2>:<ksaName>         → no bucket access
+			var credentialConfig string
+			ns1Principal, credentialConfig = setupOSSWIFPrincipal(sharedKSAName, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+
+			ginkgo.By(fmt.Sprintf("Creating Kubernetes service account %s in ns-2 (%s)", sharedKSAName, ns2.Name))
+			createServiceAccount(ctx, f, sharedKSAName, ns2.Name)
+			ginkgo.DeferCleanup(func() { deleteServiceAccount(ctx, f, sharedKSAName, ns2.Name) })
+
+			ginkgo.By(fmt.Sprintf("Creating credential ConfigMap %s in ns-2 (%s) — same WIF pool/provider, distinct subject", credentialConfigMapName, ns2.Name))
+			createCredentialConfigMap(ctx, f, credentialConfigMapName, credentialConfig, ns2.Name)
+			ginkgo.DeferCleanup(func() { deleteConfigMap(ctx, f, credentialConfigMapName, ns2.Name) })
+		} else {
+			// GKE: both KSAs are annotated with dedicated GSAs and have roles/iam.workloadIdentityUser
+			// bindings, preventing any fallback to the node's default service account.
+			// Only ns-1's GSA receives a GCS bucket IAM binding.
+			// ns-2's GSA is created first so both WI bindings propagate during the
+			// same 2-minute window inside setupGKEWIPrincipal.
+			projectID := os.Getenv(utils.ProjectEnvVar)
+			gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
+
+			ns2SAName := ns2.Name
+			if len(ns2SAName) > 30 {
+				ns2SAName = ns2SAName[:30]
+			}
+			testGcpSA2 := utils.NewTestGCPServiceAccount(ns2SAName, projectID)
+			ginkgo.By(fmt.Sprintf("Creating GCP service account for ns-2 (no bucket access): %s", ns2SAName))
+			testGcpSA2.Create(ctx)
+			ginkgo.DeferCleanup(func() { testGcpSA2.Cleanup(ctx) })
+
+			ginkgo.By(fmt.Sprintf("Binding KSA %s in ns-2 to GCP service account %s with roles/iam.workloadIdentityUser", sharedKSAName, testGcpSA2.GetEmail()))
+			addWorkloadIdentityBinding(ctx, testGcpSA2.GetEmail(), projectID, ns2.Name, sharedKSAName)
+
+			ginkgo.By(fmt.Sprintf("Creating Kubernetes service account %s in ns-2 annotated with GCP service account %s", sharedKSAName, testGcpSA2.GetEmail()))
+			testK8sSA2 := utils.NewTestKubernetesServiceAccount(f.ClientSet, ns2, sharedKSAName, testGcpSA2.GetEmail())
+			testK8sSA2.Create(ctx)
+			ginkgo.DeferCleanup(func() { testK8sSA2.Cleanup(ctx) })
+
+			// setupGKEWIPrincipal creates ns-1's GSA + WI binding + KSA, then waits 2 minutes
+			// for both ns-1 and ns-2 WI bindings to propagate globally.
+			ns1Principal = setupGKEWIPrincipal(sharedKSAName)
+		}
+
+		ginkgo.By("Granting GCS bucket access to ns-1 principal only")
+		grantBucketAccess(bucketName, ns1Principal, "roles/storage.objectAdmin")
+		defer revokeBucketAccess(bucketName, ns1Principal, "roles/storage.objectAdmin")
+
+		ginkgo.By("Waiting for IAM policy and WIF infrastructure propagation")
+		time.Sleep(2 * time.Minute)
+
+		// Deploy authorized pod in ns-1. Kept long-running (default "tail -f /dev/null") so
+		// that mount success and GCS write access can be validated explicitly via exec.
+		ginkgo.By("Deploying authorized pod in ns-1 with GCS write access")
+		tPodNs1 := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPodNs1.SetServiceAccount(sharedKSAName)
+		tPodNs1.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		if isOSS {
+			tPodNs1.SetAnnotations(map[string]string{
+				webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: credentialConfigMapName,
+			})
+		}
+
+		tPodNs1.Create(ctx)
+		defer tPodNs1.Cleanup(ctx)
+
+		// Deploy unauthorized pod in ns-2. It runs a continuous write loop so that GCS FUSE
+		// makes repeated upload attempts, ensuring the 403 error surfaces in sidecar logs
+		// even under IAM propagation delays.
+		ginkgo.By("Deploying unauthorized pod in ns-2 with same KSA name but no GCS access")
+		tPodNs2 := specs.NewTestPodModifiedSpec(f.ClientSet, ns2, true)
+		tPodNs2.SetServiceAccount(sharedKSAName)
+		tPodNs2.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		if !isOSS {
+			// GKE: the CSI node driver's pre-mount check uses the pod's WI credentials.
+			// ns-2 KSA has no bucket access, so without this skip the check raises a
+			// FailedMount event before the sidecar ever starts, making logs unavailable.
+			// We skip only the CSI check here; the sidecar's own bucket access check still
+			// runs and surfaces the 403, which is what the assertion below validates.
+			// Deep-copy the CSI spec to avoid modifying ns-1's shared volume source.
+			vols := tPodNs2.GetPodVols()
+			for i, vol := range vols {
+				if vol.Name == volumeName && vol.VolumeSource.CSI != nil {
+					csiCopy := *vol.VolumeSource.CSI
+					attrsCopy := make(map[string]string, len(csiCopy.VolumeAttributes)+1)
+					for k, v := range csiCopy.VolumeAttributes {
+						attrsCopy[k] = v
+					}
+					attrsCopy["skipCSIBucketAccessCheck"] = "true"
+					csiCopy.VolumeAttributes = attrsCopy
+					vols[i].VolumeSource.CSI = &csiCopy
+					break
+				}
+			}
+		}
+		if isOSS {
+			tPodNs2.SetAnnotations(map[string]string{
+				webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: credentialConfigMapName,
+			})
+		}
+		tPodNs2.SetCommand(fmt.Sprintf(
+			"i=0; while true; do "+
+				"i=$((i+1)); "+
+				"dd if=/dev/urandom bs=1M count=1 of=%s/ns2-chunk-$i.bin 2>&1; "+
+				"sleep 3; "+
+				"done",
+			mountPath,
+		))
+		tPodNs2.SetRestartPolicy(corev1.RestartPolicyNever)
+		tPodNs2.Create(ctx)
+		defer tPodNs2.Cleanup(ctx)
+
+		ginkgo.By("Waiting for ns-1 pod (authorized identity) to reach Running state — confirms GCS mount succeeded")
+		tPodNs1.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying the GCS volume is mounted read-write in ns-1 pod")
+		tPodNs1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("mount | grep %s | grep rw,", mountPath))
+
+		ginkgo.By("Verifying ns-1 pod (authorized identity) can write to the GCS bucket")
+		tPodNs1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("dd if=/dev/urandom bs=1M count=1 of=%s/ns1-test.bin 2>&1", mountPath))
+
+		// In GKE, the sidecar's own bucket access check surfaces the 403 before the main
+		// container ever starts, so the ns-2 pod may never reach Running. Logs are still
+		// available from the sidecar container as soon as it starts; the polling loop
+		// retries on fetch errors until the container is ready or the timeout expires.
+		ginkgo.By("Polling ns-2 GCS FUSE sidecar logs for 403 Forbidden (confirms IAM denial, not a mount issue)")
+		var ns2AccessDenied bool
+		err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 3*time.Minute, true,
+			func(pollCtx context.Context) (bool, error) {
+				sidecarLogReq := f.ClientSet.CoreV1().Pods(ns2.Name).GetLogs(tPodNs2.GetPodName(), &corev1.PodLogOptions{
+					Container: webhook.GcsFuseSidecarName,
+				})
+				logBytes, fetchErr := sidecarLogReq.DoRaw(pollCtx)
+				if fetchErr != nil {
+					klog.Warningf("failed to fetch ns-2 sidecar logs: %v — retrying", fetchErr)
+					return false, nil
+				}
+				logLower := strings.ToLower(string(logBytes))
+				if strings.Contains(logLower, "403") || strings.Contains(logLower, "forbidden") ||
+					strings.Contains(logLower, "permission denied") || strings.Contains(logLower, "permissiondenied") {
+					ns2AccessDenied = true
+					return true, nil
+				}
+				return false, nil
+			},
+		)
+		framework.ExpectNoError(err, "polling ns-2 sidecar logs for access denial indicator")
+		gomega.Expect(ns2AccessDenied).To(gomega.BeTrue(),
+			"expected ns-2 GCS FUSE sidecar logs to contain an access-denial indicator "+
+				"('403', 'forbidden', 'permission denied', or 'permissiondenied'), "+
+				"confirming the unauthorized identity was correctly denied GCS access;\n"+
+				"ns-2 pod: %s/%s", ns2.Name, tPodNs2.GetPodName())
 	})
 }
 
