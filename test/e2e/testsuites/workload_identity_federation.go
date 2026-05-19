@@ -78,8 +78,6 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	var l local
 	ctx := context.Background()
 
-	// Beware that it also registers an AfterEach which renders f unusable. Any code using
-	// f must run inside an It or Context callback.
 	f := framework.NewFrameworkWithCustomTimeouts("workload-identity-federation", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
@@ -101,7 +99,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 	// setupOSSWIFPrincipal creates all OSS Workload Identity Federation infrastructure
 	// (WIF pool, provider, KSA, credential ConfigMap) for ksaName and returns the
-	// WIF principal string and the credential config JSON. Cleanup is registered via ginkgo.DeferCleanup.
+	// WIF principal string and credential config. Cleanup is registered via ginkgo.DeferCleanup.
 	setupOSSWIFPrincipal := func(ksaName, poolID, providerID, configMapName string) (string, string) {
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
@@ -113,13 +111,10 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		ginkgo.By(fmt.Sprintf("Creating workload identity pool: %s", poolID))
 		createWorkloadIdentityPool(projectID, poolID)
 
-		ginkgo.By("Getting cluster OIDC issuer URL")
 		clusterName := os.Getenv(utils.ClusterNameEnvVar)
 		clusterLocation := os.Getenv(utils.ClusterLocationEnvVar)
-		gomega.Expect(clusterName).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterNameEnvVar))
-		gomega.Expect(clusterLocation).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterLocationEnvVar))
 		clusterIssuer := getClusterOIDCIssuer(clusterName, clusterLocation, projectID)
-		gomega.Expect(clusterIssuer).NotTo(gomega.BeEmpty(), "failed to get cluster OIDC issuer")
+		gomega.Expect(clusterIssuer).NotTo(gomega.BeEmpty(), "failed to discover cluster OIDC issuer")
 
 		ginkgo.By(fmt.Sprintf("Creating workload identity provider: %s", providerID))
 		createWorkloadIdentityProvider(projectID, poolID, providerID, clusterIssuer)
@@ -146,9 +141,21 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA principal string. Cleanup is registered via ginkgo.DeferCleanup.
 	setupGKEWIPrincipal := func(ksaName string) string {
-		projectID := os.Getenv(utils.ProjectEnvVar)
-		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
-		saName := f.Namespace.Name
+		rawProjectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(rawProjectID).NotTo(gomega.BeEmpty(), "PROJECT must be set")
+
+		// Strip any Cloud Shell "Your active configuration is: [...]" warning prefix.
+		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
+		projectID := lines[len(lines)-1]
+
+		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
+			fmt.Sprintf("invalid projectID detected: %q", projectID))
+
+		// Append the namespace numeric suffix to make the GCP SA name unique per test run,
+		// preventing 409 conflicts when a previous run's SA was not cleaned up.
+		nsIdx := strings.LastIndex(f.Namespace.Name, "-")
+		nsSuffix := f.Namespace.Name[nsIdx+1:]
+		saName := fmt.Sprintf("%s-%s", ksaName, nsSuffix)
 		if len(saName) > 30 {
 			saName = saName[:30]
 		}
@@ -169,6 +176,21 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		time.Sleep(2 * time.Minute)
 
 		return "serviceAccount:" + testGcpSA.GetEmail()
+	}
+
+	// deployWIFPod creates a pod with the WIF KSA, mounts the volume, and applies the
+	// credential ConfigMap annotation when running on an OSS cluster.
+	deployWIFPod := func(ksaName, credentialConfigMapName, volumeName, mountPath string) *specs.TestPod {
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPod.SetServiceAccount(ksaName)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		if credentialConfigMapName != "" {
+			tPod.SetAnnotations(map[string]string{
+				webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: credentialConfigMapName,
+			})
+		}
+		tPod.Create(ctx)
+		return tPod
 	}
 
 	ginkgo.It("should isolate workload identity federation access for Kubernetes service accounts with the same name across different namespaces", func() {
@@ -374,6 +396,92 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 				"confirming the unauthorized identity was correctly denied GCS access;\n"+
 				"ns-2 pod: %s/%s", ns2.Name, tPodNs2.GetPodName())
 	})
+
+	ginkgo.It("should enforce different GCS bucket permissions for different Kubernetes service accounts", func() {
+		init(specs.SkipCSIBucketAccessCheckPrefix)
+		defer cleanup()
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		const (
+			ksaReader     = "wif-reader-ksa"
+			ksaReadWriter = "wif-readwriter-ksa"
+			ksaNoAccess   = "wif-noaccess-ksa"
+			mountPath     = "/mnt/gcs"
+			testFileName  = "readwriter-write-test.txt"
+		)
+
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+
+		var (
+			readerPrincipal     string
+			readWriterPrincipal string
+			readerCredMap       string
+			readWriterCredMap   string
+			noAccessCredMap     string
+		)
+
+		if isOSS {
+			readerCredMap = "wif-reader-credentials"
+			readWriterCredMap = "wif-readwriter-credentials"
+			noAccessCredMap = "wif-noaccess-credentials"
+
+			readerPrincipal, _ = setupOSSWIFPrincipal(ksaReader, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, readerCredMap)
+			readWriterPrincipal, _ = setupOSSWIFPrincipal(ksaReadWriter, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, readWriterCredMap)
+			// noAccess KSA gets a valid WIF identity but intentionally no IAM binding on the bucket.
+			_, _ = setupOSSWIFPrincipal(ksaNoAccess, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, noAccessCredMap)
+		} else {
+			readerPrincipal = setupGKEWIPrincipal(ksaReader)
+			readWriterPrincipal = setupGKEWIPrincipal(ksaReadWriter)
+			setupGKEWIPrincipal(ksaNoAccess)
+		}
+
+		ginkgo.By("Granting objectViewer to reader KSA and objectAdmin to read-writer KSA; no binding for no-access KSA")
+		grantBucketAccess(bucketName, readerPrincipal, "roles/storage.objectViewer")
+		defer revokeBucketAccess(bucketName, readerPrincipal, "roles/storage.objectViewer")
+		grantBucketAccess(bucketName, readWriterPrincipal, "roles/storage.objectAdmin")
+		defer revokeBucketAccess(bucketName, readWriterPrincipal, "roles/storage.objectAdmin")
+
+		ginkgo.By("Waiting for IAM policy propagation")
+		time.Sleep(2 * time.Minute)
+
+		// --- Reader pod: objectViewer — read must pass, write must be denied by GCS ---
+		ginkgo.By("Deploying reader pod (objectViewer)")
+		readerPod := deployWIFPod(ksaReader, readerCredMap, "gcs-volume-reader", mountPath)
+		readerPod.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying reader KSA can list objects in the bucket")
+		readerPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("ls %s", mountPath))
+
+		ginkgo.By("Verifying reader KSA cannot write to the bucket (objectViewer denies object creation)")
+		readerPod.VerifyExecInPodFail(f, specs.TesterContainerName,
+			fmt.Sprintf("touch %s/%s", mountPath, testFileName), 1)
+		readerPod.Cleanup(ctx)
+
+		// --- ReadWriter pod: objectAdmin — both read and write must pass ---
+		ginkgo.By("Deploying read-writer pod (objectAdmin)")
+		readWriterPod := deployWIFPod(ksaReadWriter, readWriterCredMap, "gcs-volume-readwriter", mountPath)
+		readWriterPod.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying read-writer KSA can list objects in the bucket")
+		readWriterPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("ls %s", mountPath))
+
+		ginkgo.By("Verifying read-writer KSA can write a file to the bucket")
+		readWriterPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("touch %s/%s", mountPath, testFileName))
+		readWriterPod.Cleanup(ctx)
+
+		// --- NoAccess pod: no IAM binding — GCS FUSE mount fails with gRPC PermissionDenied ---
+		ginkgo.By("Deploying no-access pod (no bucket IAM binding)")
+		noAccessPod := deployWIFPod(ksaNoAccess, noAccessCredMap, "gcs-volume-noaccess", mountPath)
+		defer noAccessPod.Cleanup(ctx)
+
+		ginkgo.By("Verifying no-access KSA cannot mount the bucket (expects FailedMount event with PermissionDenied)")
+		noAccessPod.WaitForFailedMountError(ctx, "PermissionDenied")
+	})
 }
 
 // addWorkloadIdentityBinding grants roles/iam.workloadIdentityUser on the given GCP service
@@ -391,25 +499,26 @@ func addWorkloadIdentityBinding(ctx context.Context, gcpSAEmail, projectID, name
 			klog.Warningf("GetIamPolicy for %s not ready yet: %v — retrying", gcpSAEmail, e)
 			return false, nil
 		}
-		alreadyBound := false
+		var binding *iam.Binding
 		for _, b := range policy.Bindings {
 			if b.Role == "roles/iam.workloadIdentityUser" {
-				for _, m := range b.Members {
-					if m == member {
-						alreadyBound = true
-						break
-					}
-				}
+				binding = b
+				break
 			}
-			if alreadyBound {
+		}
+		if binding == nil {
+			binding = &iam.Binding{Role: "roles/iam.workloadIdentityUser"}
+			policy.Bindings = append(policy.Bindings, binding)
+		}
+		alreadyBound := false
+		for _, m := range binding.Members {
+			if m == member {
+				alreadyBound = true
 				break
 			}
 		}
 		if !alreadyBound {
-			policy.Bindings = append(policy.Bindings, &iam.Binding{
-				Role:    "roles/iam.workloadIdentityUser",
-				Members: []string{member},
-			})
+			binding.Members = append(binding.Members, member)
 		}
 		if _, e = iamService.Projects.ServiceAccounts.SetIamPolicy(saResourceName, &iam.SetIamPolicyRequest{Policy: policy}).Do(); e != nil {
 			klog.Warningf("SetIamPolicy for %s failed: %v — retrying", gcpSAEmail, e)
