@@ -106,6 +106,7 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = ginkgo.Describe("E2E Test Suite", func() {
+
 	GCSFuseCSITestSuites := func() []func() storageframework.TestSuite {
 		suites := []func() storageframework.TestSuite{
 			testsuites.InitGcsFuseCSIVolumesTestSuite,
@@ -125,6 +126,8 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseMountTestSuite,
 			testsuites.InitGcsFuseCSIWorkloadIdentityFederationTestSuite,
 			testsuites.InitGcsFuseCSIOIDCTestSuite,
+			testsuites.InitGcsFuseCSICloudProfilerTestSuite,
+			testsuites.InitGcsFuseCSIWorkloadIdentityFederationTestSuite,
 		}
 
 		if *profilesFlag {

@@ -487,4 +487,3 @@ func GetErrorCode(err error) string {
 	code := internalErr.Code().String()
 	return code
 }
-

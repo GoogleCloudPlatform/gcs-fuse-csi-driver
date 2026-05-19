@@ -77,7 +77,7 @@ const (
 	VolumeContextKeyBucketName             = "bucketName"
 	TokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
 	SidecarBucketAccessCheckMinVersion     = "v1.20.0-gke.0"
-	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
+	SidecarCloudProfilerMinVersion         = "v1.23.5-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
@@ -574,6 +574,10 @@ func isManagedSidecarImage(imageName string) bool {
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+	if imageName == "" {
+		return false
+	}
+
 	if d.config.AssumeGoodSidecarVersion {
 		klog.V(4).Infof("Assuming good sidecar version from flag")
 		return true

@@ -38,6 +38,7 @@ const (
 	AnnotationTotalSize       = AnnotationPrefix + "/bucket-scan-total-size-bytes"
 	AnnotationLastUpdatedTime = AnnotationPrefix + "/bucket-scan-last-updated-time"
 	AnnotationLocationType    = AnnotationPrefix + "/bucket-scan-location-type"
+	AnnotationHNSEnabled      = AnnotationPrefix + "/bucket-scan-hns-enabled"
 
 	LabelProfile = AnnotationPrefix + "/profile"
 

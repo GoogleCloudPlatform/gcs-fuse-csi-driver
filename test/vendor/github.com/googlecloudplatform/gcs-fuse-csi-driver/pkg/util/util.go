@@ -47,6 +47,8 @@ const (
 	TokenServerIdentityPoolConst        = "token-server-identity-pool"
 	ServiceAccountNameConst             = "service-account-name"
 	PodNamespaceConst                   = "pod-namespace"
+	PodNameConst                        = "pod-name"
+	PodUIDConst                         = "pod-uid"
 	TokenServerIdentityProviderConst    = "token-server-identity-provider"
 	FileCacheMediumConst                = "file-cache-medium"
 	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
@@ -299,4 +301,10 @@ func ParseBool(str string) (bool, error) {
 	default:
 		return false, fmt.Errorf("could not parse string to bool: the acceptable values for %q are 'True', 'true', 'false' or 'False'", str)
 	}
+}
+
+// GetCloudProfilerServiceVersion returns the service version for Cloud Profiler.
+// It returns the provided podName and podUID joined by an underscore.
+func GetCloudProfilerServiceVersion(podName, podUID string) string {
+	return fmt.Sprintf("%s_%s", podName, podUID)
 }

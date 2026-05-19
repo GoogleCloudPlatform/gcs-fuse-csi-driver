@@ -64,19 +64,17 @@ const (
 	// EphemeralStorageLocalSSDLabelKey is the specific label key we are looking for within the applied labels.
 	ephemeralStorageLocalSSDLabelKey = "cloud.google.com/gke-ephemeral-storage-local-ssd"
 
-	// metadataStatCacheBytesPerObject is the average number of metadata stat cache bytes per object.
-	metadataStatCacheBytesPerObject int64 = 1500
-	// metadataTypeCacheBytesPerObject is the average number of metadata type cache bytes per object.
-	metadataTypeCacheBytesPerObject int64 = 200
+	// metadataStatCacheBytesPerObjectHNS is the average number of metadata stat cache bytes per object for an HNS bucket.
+	metadataStatCacheBytesPerObjectHNS int64 = 1500
+	// metadataStatCacheBytesPerObjectFlat is the average number of metadata stat cache bytes per object for a flat bucket.
+	metadataStatCacheBytesPerObjectFlat int64 = 1700
 	// mib represents 1024 * 1024 bytes.
 	mib int64 = 1024 * 1024
 
 	// Mount option names.
 	statCacheConfigFileKey = "metadata-cache:stat-cache-max-size-mb"
-	typeCacheConfigFileKey = "metadata-cache:type-cache-max-size-mb"
 	fileCacheConfigFileKey = "file-cache:max-size-mb"
 	statCacheCLIKey        = "stat-cache-max-size-mb"
-	typeCacheCLIKey        = "type-cache-max-size-mb"
 	fileCacheCLIKey        = "file-cache-max-size-mb"
 )
 
@@ -95,6 +93,7 @@ type pvDetails struct {
 	totalSizeBytes int64  // The total size in bytes reported by the PV.
 	locationType   string // The location type of the bucket.
 	name           string // The name of the PersistentVolume.
+	hnsEnabled     bool   // True if the bucket has HNS enabled.
 }
 
 // nodeDetails holds a parsed summary of information about a Node that are relevant to the recommender.
@@ -132,8 +131,6 @@ type parsedResourceList struct {
 type cacheRequirements struct {
 	// metadataStatCacheBytes is the maximum size (in bytes) for the metadata stat cache.
 	metadataStatCacheBytes int64
-	// metadataTypeCacheBytes is the maximum size (in bytes) for the metadata type cache.
-	metadataTypeCacheBytes int64
 	// fileCache is the maximum size (in bytes) for the file cache.
 	fileCacheBytes int64
 }
@@ -142,31 +139,15 @@ type cacheRequirements struct {
 type cacheOverrides struct {
 	// metadataStatCacheBytes is the maximum size (in bytes) for the metadata stat cache. Nil means no override.
 	metadataStatCacheBytes *int64
-	// metadataTypeCacheBytes is the maximum size (in bytes) for the metadata type cache. Nil means no override.
-	metadataTypeCacheBytes *int64
 	// fileCache is the maximum size (in bytes) for the file cache. Nil means no override.
 	fileCacheBytes *int64
-}
-
-// overridableCalc represents a calculation that can optionally be overridden.
-// It holds a potential override value and a function to perform the calculation if no override is present.
-type overridableCalc struct {
-	// override is a pointer to an int64. If non-nil, this value is used to prioritize the calculation
-	// over non-overrided calculations.
-	// A pointer is used to distinguish between an explicit override of 0 and no override.
-	override *int64
-	// fn is the function to call to perform the calculation if override is nil.
-	// The argument to fn is typically the pointer to the value being calculated.
-	fn func(*int64)
 }
 
 // recommendation suggests optimal cache sizes based on certain criteria.
 type recommendation struct {
 	// metadataStatCacheBytes is the recommended size in bytes for the metadata stat cache.
 	metadataStatCacheBytes int64
-	// metadataTypeCacheBytes is the recommended size in bytes for the metadata type cache.
-	metadataTypeCacheBytes int64
-	// metadataTypeCacheBytes is the recommended size in bytes for the file cache.
+	// fileCacheBytes is the recommended size in bytes for the file cache.
 	fileCacheBytes int64
 	// fileCacheMedium is the recommended medium for file cache (ram or lssd).
 	fileCacheMedium string
@@ -314,9 +295,9 @@ type GCSFuseCSIRecommendationLog struct {
 		BucketTotalObjects                   int64  `json:"bucketTotalObjects"`
 		BucketTotalDataSizeBytes             int64  `json:"bucketTotalDataSizeBytes"`
 		BucketLocationType                   string `json:"bucketLocationType"`
+		BucketHNSEnabled                     bool   `json:"bucketHNSEnabled"`
 		RequiredFileCacheBytes               int64  `json:"requiredFileCacheBytes"`
 		RequiredMetadataStatCacheBytes       int64  `json:"requiredMetadataStatCacheBytes"`
-		RequiredMetadataTypeCacheBytes       int64  `json:"requiredMetadataTypeCacheBytes"`
 		NodeType                             string `json:"nodeType"`
 		NodeAllocatableMemoryBytes           int64  `json:"nodeAllocatableMemoryBytes"`
 		NodeAllocatableEphemeralStorageBytes int64  `json:"nodeAllocatableEphemeralStorageBytes"`
@@ -328,7 +309,6 @@ type GCSFuseCSIRecommendationLog struct {
 	} `json:"inputSignals"`
 	Decision struct {
 		MetadataStatCacheBytes int64  `json:"metadataStatCacheBytes"`
-		MetadataTypeCacheBytes int64  `json:"metadataTypeCacheBytes"`
 		FileCacheBytes         int64  `json:"fileCacheBytes"`
 		FileCacheMedium        string `json:"fileCacheMedium"`
 	} `json:"decision"`
@@ -356,14 +336,6 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 		summaryMessage = fmt.Sprintf("%s (capped)", summaryMessage)
 	}
 
-	// Metadata type cache
-	summaryMessage = fmt.Sprintf("%s | MetadataTypeCache: %dMiB", summaryMessage, bytesToMiB(recommendation.metadataTypeCacheBytes))
-	if overrides != nil && overrides.metadataTypeCacheBytes != nil {
-		summaryMessage = fmt.Sprintf("%s (override)", summaryMessage)
-	} else if recommendation.metadataTypeCacheBytes < requirement.metadataTypeCacheBytes && requirement.metadataTypeCacheBytes > 0 {
-		summaryMessage = fmt.Sprintf("%s (capped)", summaryMessage)
-	}
-
 	// The full JSON log below is only visibile until the user clicks on the message and expands it.
 	summaryMessage = fmt.Sprintf("%s | Expand for full details", summaryMessage)
 
@@ -380,12 +352,12 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	// Requirements
 	logEntry.InputSignals.RequiredFileCacheBytes = requirement.fileCacheBytes
 	logEntry.InputSignals.RequiredMetadataStatCacheBytes = requirement.metadataStatCacheBytes
-	logEntry.InputSignals.RequiredMetadataTypeCacheBytes = requirement.metadataTypeCacheBytes
 
 	// Bucket signals
 	logEntry.InputSignals.BucketTotalObjects = config.pvDetails.numObjects
 	logEntry.InputSignals.BucketTotalDataSizeBytes = config.pvDetails.totalSizeBytes
 	logEntry.InputSignals.BucketLocationType = config.pvDetails.locationType
+	logEntry.InputSignals.BucketHNSEnabled = config.pvDetails.hnsEnabled
 
 	// Node signals
 	logEntry.InputSignals.NodeType = config.nodeDetails.nodeType
@@ -403,7 +375,6 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 
 	// Decision
 	logEntry.Decision.MetadataStatCacheBytes = recommendation.metadataStatCacheBytes
-	logEntry.Decision.MetadataTypeCacheBytes = recommendation.metadataTypeCacheBytes
 	logEntry.Decision.FileCacheBytes = recommendation.fileCacheBytes
 	logEntry.Decision.FileCacheMedium = recommendation.fileCacheMedium
 
@@ -422,7 +393,6 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 // It calculates optimal cache configurations and translates them into gcsfuse mount option strings.
 // If the user provides any of the following mount options:
 //   - "metadata-cache:stat-cache-max-size-mb"
-//   - "metadata-cache:type-cache-max-size-mb"
 //   - "file-cache:max-size-mb"
 //
 // the cache recommendation be best effort, respecting the user's mount options in the case of duplication.
@@ -452,7 +422,6 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 	// GCSFuse's --profile flag.
 	for moKey, bytes := range map[string]int64{
 		statCacheConfigFileKey: recommendation.metadataStatCacheBytes,
-		typeCacheConfigFileKey: recommendation.metadataTypeCacheBytes,
 		fileCacheConfigFileKey: recommendation.fileCacheBytes,
 	} {
 		cacheOptions = append(cacheOptions, fmt.Sprintf("%s:%d", moKey, bytesToMiB(bytes)))
@@ -473,13 +442,20 @@ func (config *ProfileConfig) MergeRecommendedMountOptionsOnMissingKeys(userMount
 }
 
 // buildCacheRequirements constructs a cacheRequirements struct based on the provided pvDetails.
-// It calculates the ideal sizes for metadata stat, metadata type, and file caches.
+// It calculates the ideal sizes for metadata stat and file caches.
 func buildCacheRequirements(pvDetails *pvDetails) *cacheRequirements {
 	reqs := cacheRequirements{
-		metadataStatCacheBytes: pvDetails.numObjects * metadataStatCacheBytesPerObject,
-		metadataTypeCacheBytes: pvDetails.numObjects * metadataTypeCacheBytesPerObject,
-		fileCacheBytes:         pvDetails.totalSizeBytes,
+		fileCacheBytes: pvDetails.totalSizeBytes,
 	}
+
+	// Calculate the estimated stat cache for HNS and flat buckets.
+	// In the future, we should consider implicit dirs and separating
+	// files from directories for a more accurate approximation.
+	statCacheAvgBytesPerFile := metadataStatCacheBytesPerObjectFlat
+	if pvDetails.hnsEnabled {
+		statCacheAvgBytesPerFile = metadataStatCacheBytesPerObjectHNS
+	}
+	reqs.metadataStatCacheBytes = pvDetails.numObjects * statCacheAvgBytesPerFile
 	if isZonalBucket(pvDetails.locationType) {
 		klog.Infof("Bucket location type is %q, file cache not required. Disabling file cache.", pvDetails.locationType)
 		reqs.fileCacheBytes = 0
@@ -550,50 +526,8 @@ func recommendCacheConfigs(mountOptions []string, config *ProfileConfig) (*recom
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse cache overrides: %v", err)
 	}
 
-	// Initialize a list of overridableCalc structs, one for each cache type (stat, type).
-	// Each struct contains a pointer to an override value and a function to calculate the recommendation.
-	var calcs, calcsWithOverrides []overridableCalc
-	for _, c := range []overridableCalc{
-		{
-			override: cacheOverrides.metadataStatCacheBytes,
-			fn: func(override *int64) {
-				recommendation.metadataStatCacheBytes, memoryBudget = recommendMetadataCacheSize(config, cacheRequirements.metadataStatCacheBytes, memoryBudget, override, "stat")
-			},
-		},
-		{
-			override: cacheOverrides.metadataTypeCacheBytes,
-			fn: func(override *int64) {
-				recommendation.metadataTypeCacheBytes, memoryBudget = recommendMetadataCacheSize(config, cacheRequirements.metadataTypeCacheBytes, memoryBudget, override, "type")
-			},
-		},
-	} {
-		// Separate the calculations into two groups:
-		// - calcsWithOverrides: Those where the user has provided an override value.
-		// - calcs: Those where the value needs to be automatically calculated.
-		if c.override == nil {
-			calcs = append(calcs, c)
-		} else {
-			calcsWithOverrides = append(calcsWithOverrides, c)
-		}
-	}
-
-	// Calculate the cache recommendations that have been overridden first, in order to not overbudget resources.
-	// For example, if we calculate stat cache first, and user overrides type cache and doesn't leave room for
-	// the stat cache we calculated above, that would overbudget the memory. We fix this by first calculating
-	// stuff with user overrides, and leaving the automatic calculations for last.
-
-	// Process all calculations that have user-provided overrides.
-	// The override value from c.override is passed to the function.
-	for _, c := range calcsWithOverrides {
-		c.fn(c.override)
-	}
-
-	// Process all calculations that do NOT have user-provided overrides.
-	// nil is passed to the function, indicating no override is present.
-	// These are done last to use the remaining memoryBudget after overrides are accounted for.
-	for _, c := range calcs {
-		c.fn(nil)
-	}
+	// Calculate metadata stat cache size.
+	recommendation.metadataStatCacheBytes, memoryBudget = recommendMetadataStatCacheSize(config, cacheRequirements.metadataStatCacheBytes, memoryBudget, cacheOverrides.metadataStatCacheBytes)
 
 	// Calculate file cache size and medium selection.
 	recommendation.fileCacheBytes, recommendation.fileCacheMedium, err = recommendFileCacheSizeAndMedium(cacheRequirements.fileCacheBytes, cacheOverrides.fileCacheBytes, config, memoryBudget, ephemeralStorageBudget)
@@ -676,10 +610,10 @@ func recommendFileCacheSizeAndMedium(required int64, override *int64, config *Pr
 	return 0, "", nil
 }
 
-// recommendMetadataCacheSize determines the recommended size for a specific metadata cache type
-// (e.g., "stat" or "type"), ensuring it does not exceed the available memoryBudget.
+// recommendMetadataStatCacheSize determines the recommended size for metadata stat cache,
+// ensuring it does not exceed the available memoryBudget.
 // It returns the recommended size and the remaining memory budget.
-func recommendMetadataCacheSize(config *ProfileConfig, required, memoryBudget int64, override *int64, cacheType string) (int64, int64) {
+func recommendMetadataStatCacheSize(config *ProfileConfig, required, memoryBudget int64, override *int64) (int64, int64) {
 	// Handle customer override.
 	if override != nil {
 		switch *override {
@@ -688,16 +622,16 @@ func recommendMetadataCacheSize(config *ProfileConfig, required, memoryBudget in
 			// the memory budget for the next recommendation, since we assume
 			// that all of the estimated cache size could be used up.
 			if required > memoryBudget {
-				klog.Warningf("For target node %s, metadata %s size override is infinite (-1). The estimated size for the cache is %d MiB, which is greater than the memory budget %d MiB. This may cause the host to OOM.", config.nodeDetails.name, cacheType, bytesToMiB(required), bytesToMiB(memoryBudget))
+				klog.Warningf("For target node %s, metadata stat cache size override is infinite (-1). The estimated size for the cache is %d MiB, which is greater than the memory budget %d MiB. This may cause the host to OOM.", config.nodeDetails.name, bytesToMiB(required), bytesToMiB(memoryBudget))
 			}
 			memoryBudget = maxInt64(0, memoryBudget-required)
-			klog.V(6).Infof("Available memory after metadata %s cache: %d bytes.", cacheType, memoryBudget)
+			klog.V(6).Infof("Available memory after metadata stat cache: %d bytes.", memoryBudget)
 			return *override, memoryBudget
 		default:
 			// If the override is set to a finite value, respect the override, but
 			// warn the customer if the override exceeds the memory budget.
 			if *override > memoryBudget {
-				klog.Warningf("For target node %s, metadata %s size %d MiB override is greater than the memory budget %d MiB. This may cause the host to OOM.", config.nodeDetails.name, cacheType, bytesToMiB(*override), bytesToMiB(memoryBudget))
+				klog.Warningf("For target node %s, metadata stat cache size %d MiB override is greater than the memory budget %d MiB. This may cause the host to OOM.", config.nodeDetails.name, bytesToMiB(*override), bytesToMiB(memoryBudget))
 			}
 			memoryBudget = maxInt64(0, memoryBudget-*override)
 			return *override, memoryBudget
@@ -708,10 +642,10 @@ func recommendMetadataCacheSize(config *ProfileConfig, required, memoryBudget in
 	recommended := minInt64(required, memoryBudget)
 	if recommended < required && required > 0 {
 		// TODO(urielguzman): Log this in a Kubernetes Pod event warning.
-		klog.Warningf("For target node %s, required metadata %s size %d MiB capped to available fuse memory budget %d MiB. This can impact perf due to increased GCS metadata API calls.", config.nodeDetails.name, cacheType, bytesToMiB(required), bytesToMiB(recommended))
+		klog.Warningf("For target node %s, required metadata stat cache size %d MiB capped to available fuse memory budget %d MiB. This can impact perf due to increased GCS metadata API calls.", config.nodeDetails.name, bytesToMiB(required), bytesToMiB(recommended))
 	}
 	memoryBudget = maxInt64(0, memoryBudget-recommended)
-	klog.V(6).Infof("Available memory after metadata %s cache: %d bytes.", cacheType, memoryBudget)
+	klog.V(6).Infof("Available memory after metadata stat cache: %d bytes.", memoryBudget)
 	return recommended, memoryBudget
 }
 
@@ -821,11 +755,15 @@ func buildPVDetails(
 	// Parse the location type.
 	locationType := pvAnnotations[profilesutil.AnnotationLocationType]
 
+	// Parse the HNS enabled annotation.
+	hnsEnabled := pvAnnotations[profilesutil.AnnotationHNSEnabled] == util.TrueStr
+
 	return &pvDetails{
 		name:           pv.Name,
 		numObjects:     numObjects,
 		totalSizeBytes: totalSizeBytes,
 		locationType:   locationType,
+		hnsEnabled:     hnsEnabled,
 	}, nil
 }
 
@@ -1160,10 +1098,6 @@ func (config *ProfileConfig) parseCacheOverrides(mountOptions []string) (*cacheO
 			if err := assignOverride(&cacheOverrides.metadataStatCacheBytes, val); err != nil {
 				return nil, fmt.Errorf("failed to override mount option %q for recommendation: %w", opt, err)
 			}
-		case typeCacheConfigFileKey, typeCacheCLIKey:
-			if err := assignOverride(&cacheOverrides.metadataTypeCacheBytes, val); err != nil {
-				return nil, fmt.Errorf("failed to override mount option %q for recommendation: %w", opt, err)
-			}
 		case fileCacheConfigFileKey, fileCacheCLIKey:
 			if err := assignOverride(&cacheOverrides.fileCacheBytes, val); err != nil {
 				return nil, fmt.Errorf("failed to override mount option %q for recommendation: %w", opt, err)
@@ -1194,8 +1128,6 @@ func mergeMountOptionsOnMissingKeys(userOpts, systemOpts []string) ([]string, er
 		// of normalizing the keys, due to grouping inconsistencies.
 		case statCacheCLIKey:
 			return statCacheConfigFileKey
-		case typeCacheCLIKey:
-			return typeCacheConfigFileKey
 		case fileCacheCLIKey:
 			return fileCacheConfigFileKey
 		}

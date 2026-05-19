@@ -246,7 +246,7 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 			},
 			{
 				name:                       "sidecar bucket access check - should return true for supported sidecar version (managed driver image)",
-				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.19.0-gke.2@sha256:abcd",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.5-gke.2@sha256:abcd",
 				expectedSupported:          true,
 				minFeatureVersionSupported: SidecarCloudProfilerMinVersion,
 			},

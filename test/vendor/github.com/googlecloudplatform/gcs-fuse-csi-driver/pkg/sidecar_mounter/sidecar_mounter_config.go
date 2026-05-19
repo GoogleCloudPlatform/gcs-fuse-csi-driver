@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
 	"syscall"
 	"time"
 
@@ -62,6 +63,8 @@ type MountConfig struct {
 	EnableCloudProfilerForSidecar  bool                  `json:"-"`
 	PodNamespace                   string                `json:"-"`
 	ServiceAccountName             string                `json:"-"`
+	PodName                        string                `json:"-"`
+	PodUID                         string                `json:"-"`
 	EnableSidecarBucketAccessCheck bool                  `json:"-"`
 	TokenServerIdentityPool        string                `json:"-"`
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
@@ -80,19 +83,25 @@ type sidecarRetryConfig struct {
 
 var prometheusPort = 62990
 
-// DisallowedFlags is a map of flags that are not allowed to be passed to gcsfuse directly.
-// They are mapped to their config file representation.
+// DisallowedFlags is a map of flags that are disallowed to be passed to sidecar mounter directly.
+// They are mapped to their config file style representation so that they can be passed in config file format
+// as a workaround to bypass the disallowed flags validation.
+// Note: If you add a new disallowed flag here that is needed for integration testing,
+// you should also update the ParseConfigFlags() logic in test/e2e/utils/utils.go to handle it.
 var DisallowedFlags = map[string]string{
+	// The following flags are explicitly handled in test/e2e/utils/utils.go
+	"log-file":   "logging:file-path",
+	"log-format": "logging:format",
+	"o":          "o",
+	"cache-dir":  "cache-dir",
+
+	// --- Unused in test/e2e/utils/utils.go ---
 	"temp-dir":                 "temp-dir",
 	"config-file":              "config-file",
 	"foreground":               "foreground",
-	"log-file":                 "logging:file-path",
-	"log-format":               "logging:format",
 	"key-file":                 "gcs-auth:key-file",
 	"token-url":                "gcs-auth:token-url",
 	"reuse-token-from-url":     "gcs-auth:reuse-token-from-url",
-	"o":                        "o",
-	"cache-dir":                "cache-dir",
 	"prometheus-port":          "prometheus-port",
 	"kernel-params-file":       "file-system:kernel-params-file",
 	KernelParamsFileConfigFlag: KernelParamsFileConfigFlag,
@@ -274,6 +283,14 @@ func (mc *MountConfig) prepareMountArgs() {
 			mc.ServiceAccountName = value
 			continue
 
+		case util.PodNameConst:
+			mc.PodName = value
+			continue
+
+		case util.PodUIDConst:
+			mc.PodUID = value
+			continue
+
 		case util.EnableCloudProfilerForSidecarConst:
 			mc.EnableCloudProfilerForSidecar = value == util.TrueStr
 			continue
@@ -332,6 +349,21 @@ func (mc *MountConfig) prepareMountArgs() {
 	if mc.EnableGCSFuseKernelParams {
 		// This kernel params config file is created by GCSFuse only.
 		configFileFlagMap[KernelParamsFileConfigFlag] = filepath.Join(mc.TempDir, util.GCSFuseKernelParamsFileName)
+	}
+
+	if mc.EnableCloudProfilerForSidecar {
+		// Inject Cloud Profiler flags supported by gcsfuse.
+		flagMap["enable-cloud-profiler"] = ""
+		flagMap["cloud-profiler-cpu"] = ""
+		flagMap["cloud-profiler-heap"] = ""
+		flagMap["cloud-profiler-goroutines"] = ""
+		flagMap["cloud-profiler-mutex"] = ""
+		flagMap["cloud-profiler-allocated-heap"] = ""
+
+		// Get Hostname.
+		customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
+		flagMap["cloud-profiler-label"] = customLabel
+		klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)
 	}
 
 	mc.FlagMap = flagMap

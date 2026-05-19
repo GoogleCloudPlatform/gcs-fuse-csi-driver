@@ -40,6 +40,8 @@ var (
 	supportsMachineTypeAutoConfigMinimumVersion = version.MustParseGeneric("1.33.0")
 	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.1")
 	gcsfuseProfilesMinimumVersion               = version.MustParseGeneric("1.35.1")
+	// TODO(@yaozile): Check the version the non-managed testgrid is using once the release is cut, and update it here.
+	cloudProfilerMinimumVersion = version.MustParseGeneric("1.36.1")
 )
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,

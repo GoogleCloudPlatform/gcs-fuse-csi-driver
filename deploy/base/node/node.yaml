@@ -61,6 +61,7 @@ spec:
             - --enable-gcsfuse-profiles=true
             - --enable-gcsfuse-profiles-internal=true
             - --stream-metrics-export=true
+            - --enable-cloud-profiler-for-driver=true
           ports:
           - containerPort: 9920
             name: metrics
@@ -80,6 +81,14 @@ spec:
               value: ""
             - name: IDENTITY_POOL
               value: ""
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet/pods

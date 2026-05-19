@@ -20,12 +20,13 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
 
-	"github.com/google/uuid"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -62,6 +63,7 @@ const (
 	testNameCloudProfiler         = "cloud_profiler"
 	testNameBenchmarking          = "benchmarking"
 	testNameUnsupportedPath       = "unsupported_path"
+	testNameRequesterPaysBucket   = "requester_pays_bucket"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -85,6 +87,7 @@ var testPackageTimeoutMap = map[string]int{
 	testNameWriteLargeFiles: 60,
 	testNameReadLargeFiles:  60,
 	testNameRapidAppends:    60,
+	testNameCloudProfiler:   30,
 }
 
 var GCSFuseVersionStr = ""
@@ -162,6 +165,7 @@ type TestCommandConfig struct {
 	BucketName         string
 	OnlyDir            string
 	ProfileLabel       string
+	ProfileServiceName string
 	ReadOnly           bool
 	BillingProject     string
 }
@@ -175,9 +179,28 @@ type IntegrationTestOptions struct {
 	EnableZB        bool
 
 	// Tester pod resource overrides
-	TestPodCPU           string
-	TestPodMemoryRequest string
-	TestPodMemoryLimit   string
+	TestPodCPU          string
+	TestPodMemoryLimit  string
+	TestPodStorageLimit string
+}
+
+// The alphabet defines the sort order: 0 is smallest, z is largest.
+const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+const fixedLength = 13 // math.MaxInt64 in base 36 fits in 13 characters.
+
+// getDecreasingString generates a string that decreases lexicographically as time increases, making newer items appear earlier in sorted results.
+func getDecreasingString() string {
+	// Calculate the decreasing value
+	val := uint64(math.MaxInt64 - time.Now().UnixNano())
+
+	// Map the value to our 36-character alphabet
+	res := make([]byte, fixedLength)
+	for i := fixedLength - 1; i >= 0; i-- {
+		res[i] = alphabet[val%36]
+		val /= 36
+	}
+
+	return string(res)
 }
 
 // runIntegrationTest sets up necessary resources for the test pod and volumes,
@@ -194,7 +217,7 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	}
 
 	// Set resources
-	tPod.SetResource(opts.TestPodCPU, opts.TestPodMemoryRequest, opts.TestPodMemoryLimit)
+	tPod.SetResource(opts.TestPodCPU, opts.TestPodMemoryLimit, opts.TestPodStorageLimit)
 
 	sidecarMemoryRequest, sidecarMemoryLimit := configureLargeFileResources(tPod, opts.TestPkg, driver)
 
@@ -216,10 +239,17 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 
 	vars := map[string]string{"BUCKET_NAME": bucketName}
 
-	var profileLabel string
+	var profileLabel, serviceName string
 	if opts.TestPkg == testNameCloudProfiler || opts.TestName == testNameCloudProfiler {
-		profileLabel = fmt.Sprintf("ve2e0.0.0-%s", strings.ReplaceAll(uuid.New().String(), "-", "")[:8])
+		prefix := getDecreasingString()
+		profileLabel = fmt.Sprintf("%s-cloud-profiler-test", prefix)
+		// serviceName and profileLabel can be identical or different. They must follow
+		// a decreasing lexicographical order per run to avoid excessive pagination
+		// and potential timeouts when retrieving profiles from the GCP project.
+		serviceName = profileLabel
+
 		vars["PROFILE_LABEL"] = profileLabel
+		vars["PROFILE_SERVICE_NAME"] = serviceName
 	}
 
 	if opts.TestPkg == testNameReadonly && !opts.Config.ReadOnly {
@@ -289,15 +319,16 @@ func runIntegrationTest(ctx context.Context, f *framework.Framework, driver stor
 	gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
 	cmdOpts := TestCommandConfig{
-		TestPkg:        opts.TestPkg,
-		TestName:       opts.TestName,
-		GoEnvSetupCmd:  gcsfuseGoVersionCommand,
-		MountPath:      mountPath,
-		BucketName:     bucketName,
-		OnlyDir:        onlyDir,
-		ProfileLabel:   profileLabel,
-		ReadOnly:       opts.Config.ReadOnly,
-		BillingProject: opts.Config.BillingProject,
+		TestPkg:            opts.TestPkg,
+		TestName:           opts.TestName,
+		GoEnvSetupCmd:      gcsfuseGoVersionCommand,
+		MountPath:          mountPath,
+		BucketName:         bucketName,
+		OnlyDir:            onlyDir,
+		ProfileLabel:       profileLabel,
+		ProfileServiceName: serviceName,
+		ReadOnly:           opts.Config.ReadOnly,
+		BillingProject:     opts.Config.BillingProject,
 	}
 	if opts.SecondaryConfig != nil {
 		cmdOpts.SecondaryMountPath = mountPath2
@@ -339,6 +370,10 @@ func generateTestCommand(opts TestCommandConfig) string {
 
 	if opts.ProfileLabel != "" {
 		commandArgs = append(commandArgs, fmt.Sprintf("export PROFILE_LABEL=%s", opts.ProfileLabel))
+	}
+
+	if opts.ProfileServiceName != "" {
+		commandArgs = append(commandArgs, fmt.Sprintf("export PROFILE_SERVICE_NAME=%s", opts.ProfileServiceName))
 	}
 
 	if opts.SecondaryMountPath != "" {
@@ -507,6 +542,16 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// GCSFuse buffered_read tests are supported after v3.3.0-gke.1.
 		if !v.AtLeast(version.MustParseSemantic("v3.3.0-gke.1")) && testName == testNameBufferedReads {
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameBufferedReads, v.String())
+		}
+
+		// GCSFuse requester_pays_bucket tests are supported after v3.9.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.9.0-gke.0")) && testName == testNameRequesterPaysBucket {
+			e2eskipper.Skipf("skip gcsfuse integration test %v on gcsfuse version %v", testNameRequesterPaysBucket, v.String())
+		}
+
+		// GCSFuse cloud_profiler tests are supported after v3.10.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.10.0-gke.0")) && testName == testNameCloudProfiler {
+			e2eskipper.Skipf("skip gcsfuse integration test %v on gcsfuse version %v", testNameCloudProfiler, v.String())
 		}
 
 		return branch
@@ -745,14 +790,14 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 						ginkgo.By(fmt.Sprintf("Running integration test %v with GCSFuse branch %v", fullTestName, gcsfuseTestBranch))
 
 						opts := IntegrationTestOptions{
-							TestPkg:              pkgName,
-							TestName:             testName,
-							Config:               parsedFlags,
-							SecondaryConfig:      secondaryParsedFlags,
-							EnableZB:             zbEnabled(driver),
-							TestPodCPU:           "1",
-							TestPodMemoryRequest: "5Gi",
-							TestPodMemoryLimit:   "5Gi",
+							TestPkg:             pkgName,
+							TestName:            testName,
+							Config:              parsedFlags,
+							SecondaryConfig:     secondaryParsedFlags,
+							EnableZB:            zbEnabled(driver),
+							TestPodCPU:          "1",
+							TestPodMemoryLimit:  "5Gi",
+							TestPodStorageLimit: "5Gi",
 						}
 						runIntegrationTest(ctx, f, driver, l.volumeResource, opts, gcsfuseTestBranch)
 					})
@@ -1226,7 +1271,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 func installGcsfuseDependencies(tPod *specs.TestPod, f *framework.Framework, gcsfuseTestBranch string, installGcloud bool) {
 	ginkgo.By("Installing dependencies")
-	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
+	if utils.GCSFusePRNumber != "" {
+		framework.Logf("Running tests against GCSFuse PR %s", utils.GCSFusePRNumber)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone https://github.com/GoogleCloudPlatform/gcsfuse.git && cd gcsfuse && git fetch origin pull/%s/head:pr-branch && git checkout pr-branch", utils.GCSFusePRNumber))
+	} else {
+		framework.Logf("Running tests against GCSFuse branch %s", gcsfuseTestBranch)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("git clone --branch %v https://github.com/GoogleCloudPlatform/gcsfuse.git", gcsfuseTestBranch))
+	}
 	tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "ln -s /usr/bin/python3 /usr/bin/python")
 
 	if installGcloud {
