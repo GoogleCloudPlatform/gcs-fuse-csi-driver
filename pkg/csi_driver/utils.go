@@ -90,6 +90,8 @@ const (
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
+	// TODO(urielguzman): Change this to the actual version where it's supported.
+	StorageEndpointInternalMinVersion = "v1.999.0-gke.0"
 )
 
 var (
@@ -118,7 +120,6 @@ type requestArgs struct {
 	optInHostnetworkKSA           bool
 	enableCloudProfilerForSidecar bool
 	multiNICIndex                 int
-	customEndpoint                string
 }
 
 func NewControllerServiceCapability(c csi.ControllerServiceCapability_RPC_Type) *csi.ControllerServiceCapability {
@@ -374,10 +375,40 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]stri
 
 	args, err := parseVolumeAttributes(fuseMountOptions, vc)
 	args.bucketName = bucketName
-	if customEndpointVal := util.CustomEndpointFromOpts(args.fuseMountOptions); customEndpointVal != "" {
-		args.customEndpoint = customEndpointVal
-	}
 	return args, err
+}
+
+// storageEndpointFromUniverseDomain returns the storage endpoint for the universe domain,
+// in the format storage.UNIVERSE_DOMAIN:443. If no universe domain is provided, googleapis.com
+// will be used as default.
+func storageEndpointFromUniverseDomain(universeDomain string) string {
+	if universeDomain == "" {
+		universeDomain = "googleapis.com"
+	}
+	return fmt.Sprintf("storage.%s:443", universeDomain)
+}
+
+// overrideStorageEndpointInternal adds the storage-endpoint-internal flag to the mountOptions.
+// If it already exists, it will be overridden.
+func overrideStorageEndpointInternal(opts []string, storageEndpoint string) []string {
+	prefix := fmt.Sprintf("%s=", util.StorageEndpointInternal)
+	replacement := fmt.Sprintf("%s%s", prefix, storageEndpoint)
+	newMountOptions := make([]string, 0, len(opts)+1)
+
+	for _, opt := range opts {
+		if strings.HasPrefix(opt, prefix) {
+			if opt != replacement {
+				// Log a warning if we are actively changing an existing value.
+				klog.Warningf("Found flag %q, replaced with %q", opt, replacement)
+			}
+			// Skip adding the old/incorrect flag to the new slice.
+			continue
+		}
+		newMountOptions = append(newMountOptions, opt)
+	}
+
+	// Always append the correct/updated flag at the end.
+	return append(newMountOptions, replacement)
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {
