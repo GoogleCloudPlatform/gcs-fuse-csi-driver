@@ -114,7 +114,10 @@ func Handle(testParams *TestParameters) error {
 		if err != nil {
 			klog.Fatalf("Failed to get gcloud project: %v", err)
 		}
-		testParams.ProjectID = strings.TrimSpace(string(output))
+		// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
+		// "Your active configuration is: [...]" to the project ID. Take the last line.
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		testParams.ProjectID = strings.TrimSpace(lines[len(lines)-1])
 	}
 	if err := os.Setenv(ProjectEnvVar, testParams.ProjectID); err != nil {
 		klog.Fatalf("failed to set %s env var: %v", ProjectEnvVar, err)
