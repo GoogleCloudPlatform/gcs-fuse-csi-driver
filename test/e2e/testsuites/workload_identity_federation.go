@@ -148,13 +148,11 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	setupGKEWIPrincipal := func(ksaName string) string {
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
-		// Append a short KSA-derived suffix so each setupGKEWIPrincipal call
-		// within the same namespace gets a unique GCP SA name.
-		ksaSuffix := ksaName
-		if len(ksaSuffix) > 6 {
-			ksaSuffix = ksaSuffix[:6]
-		}
-		saName := fmt.Sprintf("%s-%s", f.Namespace.Name, ksaSuffix)
+		// Use ksaName as base + namespace numeric suffix to keep names unique per
+		// KSA and per test run, avoiding 409 conflicts from prior runs.
+		nsIdx := strings.LastIndex(f.Namespace.Name, "-")
+		nsSuffix := f.Namespace.Name[nsIdx+1:]
+		saName := fmt.Sprintf("%s-%s", ksaName, nsSuffix)
 		if len(saName) > 30 {
 			saName = saName[:30]
 		}
