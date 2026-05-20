@@ -57,6 +57,7 @@ const (
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
+	EnableCloudProfilerConst            = "enable-cloud-profiler"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
