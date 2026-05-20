@@ -63,8 +63,8 @@ spec:
             - --stream-metrics-export=true
             - --enable-cloud-profiler-for-driver=true
           ports:
-          - containerPort: 9920
-            name: metrics
+            - containerPort: 9920
+              name: metrics
           resources:
             limits:
               cpu: 200m
@@ -101,6 +101,8 @@ spec:
               mountPath: /sys
             - name: host-iproute
               mountPath: /etc/iproute2
+            - name: tmp
+              mountPath: /tmp
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -152,6 +154,9 @@ spec:
           hostPath:
             path: /etc/iproute2
             type: Directory
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Mi
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.
