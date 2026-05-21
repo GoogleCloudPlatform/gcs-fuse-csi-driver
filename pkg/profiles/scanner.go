@@ -347,7 +347,7 @@ func generateTokenSource(ctx context.Context, configFile *ConfigFile) (oauth2.To
 	// If configFile.Global.TokenURL is defined use AltTokenSource
 	if configFile != nil && configFile.Global.TokenURL != "" && configFile.Global.TokenURL != "nil" {
 		tokenSource := auth.NewAltTokenSource(ctx, configFile.Global.TokenURL, configFile.Global.TokenBody)
-		klog.Infof("Using AltTokenSource with token url %q", configFile.Global.TokenURL)
+		klog.Infof("Using AltTokenSource %#v", tokenSource)
 		return tokenSource, nil
 	}
 
@@ -382,7 +382,8 @@ func buildCloudConfig(configPath string) (*ConfigFile, error) {
 	if err := gcfg.FatalOnly(gcfg.ReadInto(cfg, reader)); err != nil {
 		return nil, fmt.Errorf("couldn't read cloud provider configuration at %s: %w", configPath, err)
 	}
-	klog.Infof("Config file read with token url %q", cfg.Global.TokenURL)
+	klog.Infof("Config file read %#v", cfg)
+
 	return cfg, nil
 }
 
