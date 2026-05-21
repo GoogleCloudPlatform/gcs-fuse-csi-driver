@@ -114,7 +114,10 @@ func Handle(testParams *TestParameters) error {
 		if err != nil {
 			klog.Fatalf("Failed to get gcloud project: %v", err)
 		}
-		testParams.ProjectID = strings.TrimSpace(string(output))
+		// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
+		// "Your active configuration is: [...]" to the project ID. Take the last line.
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		testParams.ProjectID = strings.TrimSpace(lines[len(lines)-1])
 	}
 	if err := os.Setenv(ProjectEnvVar, testParams.ProjectID); err != nil {
 		klog.Fatalf("failed to set %s env var: %v", ProjectEnvVar, err)
@@ -151,6 +154,15 @@ func Handle(testParams *TestParameters) error {
 		testParams.ProjectID = newProject
 		testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(newProject))
 
+		// Set env variables for OIDC auth prow tests. For local tests, these
+		// env variables are set in the Makefile from kubectl config current-context.
+		if err = os.Setenv(ClusterNameEnvVar, testParams.GkeClusterName); err != nil {
+			klog.Fatalf(`env variable %q could not be set: %v`, ClusterNameEnvVar, err)
+		}
+		if err = os.Setenv(ClusterLocationEnvVar, testParams.GkeClusterRegion); err != nil {
+			klog.Fatalf(`env variable %q could not be set: %v`, ClusterLocationEnvVar, err)
+		}
+
 		// 4. After the test, tear down the cluster, and switch back to the old project.
 		defer func() {
 			if err := setEnvProject(oldProject); err != nil {
@@ -162,15 +174,6 @@ func Handle(testParams *TestParameters) error {
 		testParams.GkeClusterName = "gcsfuse" + string(uuid.NewUUID())[0:4]
 		if err := clusterUpGKE(testParams); err != nil {
 			return fmt.Errorf("failed to cluster up: %w", err)
-		}
-
-		// Set env variables for OIDC auth prow tests. For local tests, these
-		// env variables are set in the Makefile from kubectl config current-context.
-		if err = os.Setenv(ClusterNameEnvVar, testParams.GkeClusterName); err != nil {
-			klog.Fatalf(`env variable %q could not be set: %v`, ClusterNameEnvVar, err)
-		}
-		if err = os.Setenv(ClusterLocationEnvVar, testParams.GkeClusterRegion); err != nil {
-			klog.Fatalf(`env variable %q could not be set: %v`, ClusterLocationEnvVar, err)
 		}
 
 		// 4. After the test, tear down the cluster, and switch back to the old project.

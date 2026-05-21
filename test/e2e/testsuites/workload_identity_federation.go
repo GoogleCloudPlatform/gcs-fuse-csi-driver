@@ -78,6 +78,8 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	var l local
 	ctx := context.Background()
 
+	// Beware that it also registers an AfterEach which renders f unusable. Any code using
+	// f must run inside an It or Context callback.
 	f := framework.NewFrameworkWithCustomTimeouts("workload-identity-federation", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
@@ -99,7 +101,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 	// setupOSSWIFPrincipal creates all OSS Workload Identity Federation infrastructure
 	// (WIF pool, provider, KSA, credential ConfigMap) for ksaName and returns the
-	// WIF principal string and credential config. Cleanup is registered via ginkgo.DeferCleanup.
+	// WIF principal string and the credential config JSON. Cleanup is registered via ginkgo.DeferCleanup.
 	setupOSSWIFPrincipal := func(ksaName, poolID, providerID, configMapName string) (string, string) {
 		projectID := os.Getenv(utils.ProjectEnvVar)
 		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
@@ -111,10 +113,13 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		ginkgo.By(fmt.Sprintf("Creating workload identity pool: %s", poolID))
 		createWorkloadIdentityPool(projectID, poolID)
 
+		ginkgo.By("Getting cluster OIDC issuer URL")
 		clusterName := os.Getenv(utils.ClusterNameEnvVar)
 		clusterLocation := os.Getenv(utils.ClusterLocationEnvVar)
+		gomega.Expect(clusterName).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterNameEnvVar))
+		gomega.Expect(clusterLocation).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ClusterLocationEnvVar))
 		clusterIssuer := getClusterOIDCIssuer(clusterName, clusterLocation, projectID)
-		gomega.Expect(clusterIssuer).NotTo(gomega.BeEmpty(), "failed to discover cluster OIDC issuer")
+		gomega.Expect(clusterIssuer).NotTo(gomega.BeEmpty(), "failed to get cluster OIDC issuer")
 
 		ginkgo.By(fmt.Sprintf("Creating workload identity provider: %s", providerID))
 		createWorkloadIdentityProvider(projectID, poolID, providerID, clusterIssuer)
@@ -141,18 +146,10 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	// roles/iam.workloadIdentityUser, and creates the annotated KSA. Returns the
 	// GSA principal string. Cleanup is registered via ginkgo.DeferCleanup.
 	setupGKEWIPrincipal := func(ksaName string) string {
-		rawProjectID := os.Getenv(utils.ProjectEnvVar)
-		gomega.Expect(rawProjectID).NotTo(gomega.BeEmpty(), "PROJECT must be set")
-
-		// Strip any Cloud Shell "Your active configuration is: [...]" warning prefix.
-		lines := strings.Split(strings.TrimSpace(rawProjectID), "\n")
-		projectID := lines[len(lines)-1]
-
-		gomega.Expect(strings.Contains(projectID, "Your active configuration")).To(gomega.BeFalse(),
-			fmt.Sprintf("invalid projectID detected: %q", projectID))
-
-		// Append the namespace numeric suffix to make the GCP SA name unique per test run,
-		// preventing 409 conflicts when a previous run's SA was not cleaned up.
+		projectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
+		// Use ksaName as base + namespace numeric suffix to keep names unique per
+		// KSA and per test run, avoiding 409 conflicts from prior runs.
 		nsIdx := strings.LastIndex(f.Namespace.Name, "-")
 		nsSuffix := f.Namespace.Name[nsIdx+1:]
 		saName := fmt.Sprintf("%s-%s", ksaName, nsSuffix)
@@ -192,6 +189,151 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		tPod.Create(ctx)
 		return tPod
 	}
+
+	ginkgo.It("should fail GCS access after workload identity federation principal permissions are removed while pod is running", func() {
+		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+
+		// OSS: credential ConfigMap doesn't exist at mount time, so the CSI pre-mount
+		// bucket access check would fail — skip it and let authz errors surface on I/O.
+		// GKE: WI binding and bucket access are both ready before the pod starts, so the
+		// pre-mount check can run normally.
+		if isOSS {
+			init(specs.SkipCSIBucketAccessCheckPrefix)
+		} else {
+			init()
+		}
+		defer cleanup()
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		const (
+			wifKSA     = "wif-revoke-ksa"
+			volumeName = "gcs-volume"
+			mountPath  = "/mnt/gcs"
+		)
+
+		var (
+			principal               string
+			credentialConfigMapName string
+			permissionRevoked       bool
+		)
+
+		if isOSS {
+			credentialConfigMapName = "wif-revoke-credentials"
+			principal, _ = setupOSSWIFPrincipal(wifKSA, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+		} else {
+			principal = setupGKEWIPrincipal(wifKSA)
+		}
+
+		ginkgo.By("Granting bucket access to workload identity principal")
+		grantBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
+		defer func() {
+			if !permissionRevoked {
+				revokeBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
+			}
+		}()
+
+		ginkgo.By("Waiting for IAM policy and WIF infrastructure propagation")
+		time.Sleep(2 * time.Minute)
+
+		// The pod continuously writes 10 MB chunks as separate GCS objects. Each chunk close
+		// triggers a GCS upload which is IAM-checked. When permission is revoked the next
+		// upload returns 403 and dd exits non-zero, stopping the loop.
+		ginkgo.By("Creating and deploying test pod with continuous write loop")
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPod.SetServiceAccount(wifKSA)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		if credentialConfigMapName != "" {
+			tPod.SetAnnotations(map[string]string{
+				webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: credentialConfigMapName,
+			})
+		}
+		tPod.SetCommand(fmt.Sprintf(
+			"i=0; while true; do "+
+				"i=$((i+1)); "+
+				"dd if=/dev/urandom bs=1M count=10 of=%s/chunk-$i.bin 2>&1; "+
+				"if [ $? -ne 0 ]; then "+
+				"echo WRITE_FAILED; "+
+				"sleep 5; "+
+				"fi; "+
+				"done",
+			mountPath,
+		))
+		tPod.SetRestartPolicy(corev1.RestartPolicyNever)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for pod to reach Running state")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Polling until at least one chunk is written to GCS (confirms active writes before revocation)")
+		preRevokeCtx, cancelPreRevoke := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancelPreRevoke()
+		chunkWritten := false
+		err := wait.PollUntilContextCancel(preRevokeCtx, 5*time.Second, true, func(_ context.Context) (bool, error) {
+			output := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName,
+				fmt.Sprintf("test -f %s/chunk-1.bin && echo WRITTEN || echo PENDING", mountPath))
+			if strings.Contains(output, "WRITTEN") {
+				chunkWritten = true
+				return true, nil
+			}
+			return false, nil
+		})
+		framework.ExpectNoError(err, "polling for first chunk to be written before permission revocation")
+		gomega.Expect(chunkWritten).To(gomega.BeTrue(),
+			"expected pod to write at least one chunk to GCS before permission revocation")
+
+		ginkgo.By("Revoking bucket access while pod is actively writing")
+		revokeBucketAccess(bucketName, principal, "roles/storage.objectAdmin")
+		permissionRevoked = true
+
+		ginkgo.By("Waiting for IAM revocation to propagate")
+		time.Sleep(20 * time.Second)
+
+		ginkgo.By("Waiting until writes stop progressing")
+
+		var countStable bool
+
+		err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 2*time.Minute, true,
+			func(ctx context.Context) (bool, error) {
+				out1 := tPod.VerifyExecInPodSucceedWithOutput(
+					f, specs.TesterContainerName,
+					fmt.Sprintf("ls %s/chunk-* 2>/dev/null | wc -l", mountPath),
+				)
+
+				time.Sleep(10 * time.Second)
+
+				out2 := tPod.VerifyExecInPodSucceedWithOutput(
+					f, specs.TesterContainerName,
+					fmt.Sprintf("ls %s/chunk-* 2>/dev/null | wc -l", mountPath),
+				)
+
+				if strings.TrimSpace(out1) == strings.TrimSpace(out2) {
+					countStable = true
+					return true, nil
+				}
+				return false, nil
+			},
+		)
+		framework.ExpectNoError(err, "polling for writes to stop after permission revocation")
+
+		gomega.Expect(countStable).To(gomega.BeTrue(),
+			"expected writes to stop after permission revocation")
+
+		ginkgo.By("Verifying GCS FUSE sidecar logs contain a 403 Forbidden error")
+		sidecarLogReq := f.ClientSet.CoreV1().Pods(f.Namespace.Name).GetLogs(tPod.GetPodName(), &corev1.PodLogOptions{
+			Container: webhook.GcsFuseSidecarName,
+		})
+		var sidecarLogBytes []byte
+		sidecarLogBytes, err = sidecarLogReq.DoRaw(ctx)
+		framework.ExpectNoError(err, "fetching GCS FUSE sidecar logs")
+		sidecarLogs := strings.ToLower(string(sidecarLogBytes))
+		gomega.Expect(
+			strings.Contains(sidecarLogs, "403") || strings.Contains(sidecarLogs, "PermissionDenied"),
+		).To(gomega.BeTrue(),
+			"expected GCS FUSE sidecar logs to contain '403' or 'forbidden' after permission revocation;\nsidecar logs: %s", string(sidecarLogBytes))
+	})
 
 	ginkgo.It("should isolate workload identity federation access for Kubernetes service accounts with the same name across different namespaces", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"

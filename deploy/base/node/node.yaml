@@ -63,8 +63,8 @@ spec:
             - --stream-metrics-export=true
             - --enable-cloud-profiler-for-driver=true
           ports:
-          - containerPort: 9920
-            name: metrics
+            - containerPort: 9920
+              name: metrics
           resources:
             limits:
               cpu: 200m
