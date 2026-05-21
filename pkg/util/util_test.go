@@ -549,3 +549,75 @@ func TestIsGKEIdentityProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckNotSymlink(t *testing.T) {
+	t.Parallel()
+
+	// Set up a temporary directory for the test files
+	base, err := os.MkdirTemp("", "symlink-test")
+	if err != nil {
+		t.Fatalf("failed to setup testdir: %v", err)
+	}
+	defer os.RemoveAll(base)
+
+	// Create test files, directories, and symlinks
+	normalFile := filepath.Join(base, "normal.txt")
+	os.WriteFile(normalFile, []byte("test data"), 0644)
+
+	normalDir := filepath.Join(base, "normal_dir")
+	os.MkdirAll(normalDir, 0755)
+
+	symlinkToFile := filepath.Join(base, "symlink_file")
+	os.Symlink(normalFile, symlinkToFile)
+
+	symlinkToDir := filepath.Join(base, "symlink_dir")
+	os.Symlink(normalDir, symlinkToDir)
+
+	nonExistentPath := filepath.Join(base, "does_not_exist")
+
+	testCases := []struct {
+		name          string
+		path          string
+		expectedError bool
+	}{
+		{
+			name:          "regular file should pass",
+			path:          normalFile,
+			expectedError: false,
+		},
+		{
+			name:          "regular directory should pass",
+			path:          normalDir,
+			expectedError: false,
+		},
+		{
+			name:          "symlink to file should fail",
+			path:          symlinkToFile,
+			expectedError: true,
+		},
+		{
+			name:          "symlink to directory should fail",
+			path:          symlinkToDir,
+			expectedError: true,
+		},
+		{
+			name:          "non-existent path should fail",
+			path:          nonExistentPath,
+			expectedError: true, // os.Lstat returns an error for non-existent files
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckNotSymlink(tc.path)
+
+			if tc.expectedError && err == nil {
+				t.Errorf("Expected error but got none")
+			}
+
+			if !tc.expectedError && err != nil {
+				t.Errorf("Did not expect error but got: %v", err)
+			}
+		})
+	}
+}

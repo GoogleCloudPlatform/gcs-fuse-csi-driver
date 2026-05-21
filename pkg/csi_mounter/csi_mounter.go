@@ -264,17 +264,23 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 	// 3. Change ownership of the mount socket itself.
 
 	targetSocketPath := filepath.Join(emptyDirBasePath, socketName)
+	baseDir := filepath.Dir(emptyDirBasePath)
+	if err := util.CheckNotSymlink(baseDir); err != nil {
+		return nil, fmt.Errorf("failed to verify base directory before changing ownership: %w", err)
+	}
 	// First changing ownership of parent directory where socket resides.
 	// Full path: /var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/gke-gcsfuse-tmp/.volumes/
-	baseDir := filepath.Dir(emptyDirBasePath)
-	if err = os.Chown(baseDir, webhook.NobodyUID, webhook.NobodyGID); err != nil {
+	if err = os.Lchown(baseDir, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on base of emptyDirBasePath: %w", err)
 	}
 	klog.V(4).Infof("Chown on basedir %s done", baseDir)
 
+	if err = util.CheckNotSymlink(emptyDirBasePath); err != nil {
+		return nil, fmt.Errorf("failed to verify volume directory before changing ownership: %w", err)
+	}
 	// Changing ownership of base path directory.
 	// Full path: /var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/gke-gcsfuse-tmp/.volumes/my-vol
-	if err = os.Chown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
+	if err = os.Lchown(emptyDirBasePath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on emptyDirBasePath: %w", err)
 	}
 	_, err = os.Stat(emptyDirBasePath)
@@ -284,9 +290,12 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 
 	klog.V(4).Infof("Chown on emptyDirBasePath %s success", emptyDirBasePath)
 
+	if err := util.CheckNotSymlink(targetSocketPath); err != nil {
+		return nil, fmt.Errorf("failed to verify socket path before changing ownership: %w", err)
+	}
 	// Changing ownership of socket itself.
 	// Full path: /var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/gke-gcsfuse-tmp/.volumes/my-vol/socket
-	if err = os.Chown(targetSocketPath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
+	if err = os.Lchown(targetSocketPath, webhook.NobodyUID, webhook.NobodyGID); err != nil {
 		return nil, fmt.Errorf("failed to change ownership on targetSocketPath: %w", err)
 	}
 
