@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gcs-csi-test
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gcs-csi-test-sa
+  namespace: gcs-csi-test
+  annotations:
+    iam.gke.io/gcp-service-account: <YOUR_GCP_SERVICE_ACCOUNT>@gcs-tess.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gcs-csi-test-pod
+  namespace: gcs-csi-test
+  annotations:
+    gke-gcsfuse/volumes: "true"
+spec:
+  containers:
+  - name: test-container
+    image: busybox
+    command:
+      - "/bin/sh"
+      - "-c"
+      - |
+        echo "Testing GCS FUSE CSI Driver with custom build"
+        echo "Writing to /data/test-file.txt"
+        echo "Hello from custom CSI driver build at $(date)" > /data/test-file.txt
+        echo "Contents of /data:"
+        ls -la /data/
+        echo "Reading back the file:"
+        cat /data/test-file.txt
+        echo "Sleeping to keep pod running..."
+        sleep 3600
+    volumeMounts:
+    - name: gcs-volume
+      mountPath: /data
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+  serviceAccountName: gcs-csi-test-sa
+  volumes:
+  - name: gcs-volume
+    csi:
+      driver: gcsfuse.csi.storage.gke.io
+      volumeAttributes:
+        bucketName: gcs-fuse-warp-test-bucket

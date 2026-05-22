@@ -74,6 +74,8 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	klog.Info("*** CUSTOM BUILD: Webhook - Manual Test Version ***")
+
 	// Thanks to the PR https://github.com/solo-io/gloo/pull/8549
 	// This line prevents controller-runtime from complaining about log.SetLogger never being called
 	log.SetLogger(logr.New(log.NullLogSink{}))

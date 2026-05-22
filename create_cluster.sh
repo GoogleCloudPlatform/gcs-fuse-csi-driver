@@ -1,0 +1,36 @@
+gcloud beta container --project "gcs-tess" clusters create "rapid-ga-test-cluster-us-west4a" \
+  --zone "us-west4-a" \
+  --no-enable-basic-auth \
+  --cluster-version "1.33.5-gke.2072000" \
+  --release-channel "regular" \
+  --machine-type "c4-standard-192" \
+  --image-type "COS_CONTAINERD" \
+  --disk-type "hyperdisk-balanced" \
+  --disk-size "400" \
+  --metadata disable-legacy-endpoints=true \
+  --service-account "default" \
+  --max-pods-per-node "110" \
+  --num-nodes "8" \
+  --logging=SYSTEM,WORKLOAD \
+  --monitoring=SYSTEM,STORAGE,POD,DEPLOYMENT,STATEFULSET,DAEMONSET,HPA,CADVISOR,KUBELET \
+  --enable-ip-alias \
+  --network "projects/gcs-tess/global/networks/default" \
+  --subnetwork "projects/gcs-tess/regions/us-west4/subnetworks/default" \
+  --cluster-secondary-range-name "geertj-pods" \
+  --no-enable-intra-node-visibility \
+  --default-max-pods-per-node "110" \
+  --enable-ip-access \
+  --security-posture=standard \
+  --workload-vulnerability-scanning=disabled \
+  --addons HorizontalPodAutoscaling,HttpLoadBalancing,GcePersistentDiskCsiDriver \
+  --enable-autoupgrade \
+  --enable-autorepair \
+  --max-surge-upgrade 1 \
+  --max-unavailable-upgrade 0 \
+  --binauthz-evaluation-mode=DISABLED \
+  --enable-shielded-nodes \
+  --shielded-integrity-monitoring \
+  --no-shielded-secure-boot \
+  --node-locations "us-west4-a" \
+  --enable-gvnic \
+  --workload-pool=gcs-tess.svc.id.goog
