@@ -26,6 +26,18 @@ import (
 )
 
 var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
+var nativePrefetchMinVersion = version.MustParseGeneric("999.0.0")
+
+func parseImageVersion(image string) (*version.Version, error) {
+	_, tag, _, err := parseImageName(image)
+	if err != nil {
+		return nil, err
+	}
+	if tag == "" {
+		return nil, fmt.Errorf("no tag found in image %q", image)
+	}
+	return version.ParseGeneric(tag)
+}
 
 func ParseBool(str string) (bool, error) {
 	switch str {

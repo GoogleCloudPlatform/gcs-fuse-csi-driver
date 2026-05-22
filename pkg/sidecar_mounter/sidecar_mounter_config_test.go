@@ -858,3 +858,54 @@ func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareMountArgs_MetadataPrefetch(t *testing.T) {
+	testCases := []struct {
+		name                   string
+		webhookHandledPrefetch bool
+		prefetchRequested      bool
+		expectedConfigMapArgs  map[string]string
+	}{
+		{
+			name:              "WebhookHandledPrefetch=false, PrefetchRequested=true -> force disable",
+			prefetchRequested: true,
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "",
+				"metadata-cache:enable-metadata-prefetch": "false",
+			},
+		},
+		{
+			name:                  "WebhookHandledPrefetch=false, PrefetchRequested=false -> no force disable",
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
+			name:                   "WebhookHandledPrefetch=true, PrefetchRequested=true -> no force disable",
+			webhookHandledPrefetch: true,
+			prefetchRequested:      true,
+			expectedConfigMapArgs:  defaultConfigFileFlagMap,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mc := &MountConfig{
+				BucketName:             "test-bucket",
+				BufferDir:              "test-buffer-dir",
+				CacheDir:               "test-cache-dir",
+				ConfigFile:             "test-config-file",
+				WebhookHandledPrefetch: tc.webhookHandledPrefetch,
+				PrefetchRequested:      tc.prefetchRequested,
+			}
+
+			mc.prepareMountArgs()
+
+			for k, v := range tc.expectedConfigMapArgs {
+				if got := mc.ConfigFileFlagMap[k]; got != v {
+					t.Errorf("expected config map arg %q to be %q, but got %q", k, v, got)
+				}
+			}
+		})
+	}
+}

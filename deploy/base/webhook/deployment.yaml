@@ -63,6 +63,7 @@ spec:
             - --enable-gcsfuse-profiles=true
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
+            - --enable-gcsfuse-metadata-prefetch=false
           env:
             - name: SIDECAR_IMAGE_PULL_POLICY
               value: "IfNotPresent"

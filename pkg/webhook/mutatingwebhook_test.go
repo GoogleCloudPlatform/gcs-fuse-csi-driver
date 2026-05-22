@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"gomodules.xyz/jsonpatch/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -348,11 +351,14 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name         string
-		inputPod     *corev1.Pod
-		operation    admissionv1.Operation
-		wantResponse admission.Response
-		nodes        []corev1.Node
+		name                          string
+		inputPod                      *corev1.Pod
+		operation                     admissionv1.Operation
+		wantResponse                  admission.Response
+		nodes                         []corev1.Node
+		pvcs                          []*corev1.PersistentVolumeClaim
+		pvs                           []*corev1.PersistentVolume
+		enableGCSFuseMetadataPrefetch bool
 	}{
 		{
 			name:         "Empty request test.",
@@ -595,6 +601,231 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantResponse(t, false, false, true),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:                          "native prefetch: enabled via PVC/PV volume attributes",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithImageAndPVC("my-pvc-default", "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.0"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithImageAndPVC("my-pvc-default", "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.0"), true, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-default", "default", "my-pv-default"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-default", nil, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: disabled automatically when no volume requests prefetch",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPod(),
+			wantResponse:                  wantResponse(t, false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+		},
+		{
+			name:                          "native prefetch: enabled via inline CSI ephemeral volume",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithImageAndEphemeral("gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.0", ""),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithImageAndEphemeral("gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.0", ""), true, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+		},
+		{
+			name:                          "native prefetch: legacy fallback when explicitly disabled via ephemeral volume attributes",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithEphemeralVolumeMountOptions("metadata-cache:enable-metadata-prefetch:false"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithEphemeralVolumeMountOptions("metadata-cache:enable-metadata-prefetch:false"), []string{"gcsfuse-volume"}, false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+		},
+		{
+			name:                          "native prefetch: enabled automatically and parses mountOptions from PV VolumeAttributes correctly",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithPVC("my-pvc-vol-opts"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithPVC("my-pvc-vol-opts"), false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-vol-opts", "default", "my-pv-vol-opts"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-vol-opts", nil, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+					"mountOptions": "metadata-cache:enable-metadata-prefetch:true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: legacy fallback when explicitly disabled via PV mount options",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithPVC("my-pvc-fallback"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithPVC("my-pvc-fallback"), []string{"gcsfuse-volume"}, false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-fallback", "default", "my-pv-fallback"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-fallback", []string{"metadata-cache:enable-metadata-prefetch:false"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: falls back to injecting legacy prefetch container when enableGCSFuseMetadataPrefetch is false",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithPVC("my-pvc-unsupported"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithPVC("my-pvc-unsupported"), []string{"gcsfuse-volume"}, false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: false,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-unsupported", "default", "my-pv-unsupported"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-unsupported", nil, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: user override forces native prefetch even if feature gate is disabled",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithPVC("my-pvc-unsupported-override"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithPVC("my-pvc-unsupported-override"), false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: false,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-unsupported-override", "default", "my-pv-unsupported-override"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-unsupported-override", []string{"metadata-cache:enable-metadata-prefetch:true"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: legacy fallback for custom sidecar image",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithImageAndPVC("my-pvc-custom-image", "private-repo/fake-sidecar-image:v999.999.999"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithImageAndPVC("my-pvc-custom-image", "private-repo/fake-sidecar-image:v999.999.999"), []string{"gcsfuse-volume"}, true, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-custom-image", "default", "my-pv-custom-image"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-custom-image", nil, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: user override forces native prefetch for custom sidecar image",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithImageAndPVC("my-pvc-custom-image-override", "private-repo/fake-sidecar-image:v999.999.999"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithImageAndPVC("my-pvc-custom-image-override", "private-repo/fake-sidecar-image:v999.999.999"), true, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-custom-image-override", "default", "my-pv-custom-image-override"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-custom-image-override", []string{"metadata-cache:enable-metadata-prefetch:true"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: legacy fallback when managed sidecar image version is unsupported",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithImageAndPVC("my-pvc-old-version", "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-gke.0"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithImageAndPVC("my-pvc-old-version", "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-gke.0"), []string{"gcsfuse-volume"}, true, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-old-version", "default", "my-pv-old-version"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-old-version", nil, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: user override forces native prefetch for unsupported sidecar version",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithImageAndPVC("my-pvc-old-version-override", "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-gke.0"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithImageAndPVC("my-pvc-old-version-override", "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-gke.0"), true, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-old-version-override", "default", "my-pv-old-version-override"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-old-version-override", []string{"metadata-cache:enable-metadata-prefetch:true"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: enabled when all ephemeral volume overrides are true",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithMultipleEphemeralVolumes("metadata-cache:enable-metadata-prefetch:true", "metadata-cache:enable-metadata-prefetch:true"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithMultipleEphemeralVolumes("metadata-cache:enable-metadata-prefetch:true", "metadata-cache:enable-metadata-prefetch:true"), false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+		},
+		{
+			name:                          "native prefetch: legacy fallback when all ephemeral volume overrides are false",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithMultipleEphemeralVolumes("metadata-cache:enable-metadata-prefetch:false", "metadata-cache:enable-metadata-prefetch:false"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithMultipleEphemeralVolumes("metadata-cache:enable-metadata-prefetch:false", "metadata-cache:enable-metadata-prefetch:false"), []string{"gcsfuse-volume-1", "gcsfuse-volume-2"}, false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+		},
+		{
+			name:                          "native prefetch: enabled when all PVC/PV overrides are true",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithMultiplePVCs("my-pvc-1", "my-pvc-2"),
+			wantResponse:                  wantResponseWithNativePrefetch(t, validInputPodWithMultiplePVCs("my-pvc-1", "my-pvc-2"), false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-1", "default", "my-pv-1"),
+				makePrefetchPVC("my-pvc-2", "default", "my-pv-2"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-1", []string{"metadata-cache:enable-metadata-prefetch:true"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+				makePrefetchPV("my-pv-2", []string{"metadata-cache:enable-metadata-prefetch:true"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
+		{
+			name:                          "native prefetch: legacy fallback when all PVC/PV overrides are false",
+			operation:                     admissionv1.Create,
+			inputPod:                      validInputPodWithMultiplePVCs("my-pvc-1", "my-pvc-2"),
+			wantResponse:                  wantResponseWithLegacyPrefetch(t, validInputPodWithMultiplePVCs("my-pvc-1", "my-pvc-2"), []string{"gcsfuse-volume-0", "gcsfuse-volume-1"}, false, false, true),
+			nodes:                         nativeSupportNodes(),
+			enableGCSFuseMetadataPrefetch: true,
+			pvcs: []*corev1.PersistentVolumeClaim{
+				makePrefetchPVC("my-pvc-1", "default", "my-pv-1"),
+				makePrefetchPVC("my-pvc-2", "default", "my-pv-2"),
+			},
+			pvs: []*corev1.PersistentVolume{
+				makePrefetchPV("my-pv-1", []string{"metadata-cache:enable-metadata-prefetch:false"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+				makePrefetchPV("my-pv-2", []string{"metadata-cache:enable-metadata-prefetch:false"}, map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+				}),
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -609,6 +840,19 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 				_, err := fakeClient.CoreV1().Nodes().Create(context.Background(), &n, metav1.CreateOptions{})
 				if err != nil {
 					t.Error("failed to setup/create nodes")
+				}
+			}
+
+			for _, pv := range tc.pvs {
+				_, err := fakeClient.CoreV1().PersistentVolumes().Create(context.Background(), pv, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("failed to setup test PV: %v", err)
+				}
+			}
+			for _, pvc := range tc.pvcs {
+				_, err := fakeClient.CoreV1().PersistentVolumeClaims(pvc.Namespace).Create(context.Background(), pvc, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("failed to setup test PVC: %v", err)
 				}
 			}
 
@@ -638,14 +882,19 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 
 			informerFactory := informers.NewSharedInformerFactoryWithOptions(fakeClient, time.Second*1, informers.WithNamespace(metav1.NamespaceAll))
 			lister := informerFactory.Core().V1().Nodes().Lister()
+			pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
+			pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
 
 			si := SidecarInjector{
-				Client:                 nil,
-				Config:                 FakeConfig(),
-				MetadataPrefetchConfig: FakePrefetchConfig(),
-				Decoder:                admission.NewDecoder(runtime.NewScheme()),
-				NodeLister:             lister,
-				K8SClient:              fakeClient,
+				Client:                        nil,
+				Config:                        FakeConfig(),
+				MetadataPrefetchConfig:        FakePrefetchConfig(),
+				Decoder:                       admission.NewDecoder(runtime.NewScheme()),
+				NodeLister:                    lister,
+				PvLister:                      pvLister,
+				PvcLister:                     pvcLister,
+				K8SClient:                     fakeClient,
+				EnableGCSFuseMetadataPrefetch: tc.enableGCSFuseMetadataPrefetch,
 			}
 
 			stopCh := make(<-chan struct{})
@@ -858,20 +1107,17 @@ func compareResponses(wantResponse, gotResponse admission.Response) error {
 	if len(wantResponse.Patches) != len(gotResponse.Patches) {
 		return fmt.Errorf("expecting %d patches, got %d patches", len(wantResponse.Patches), len(gotResponse.Patches))
 	}
-	wantPaths := []string{}
-	gotPaths := []string{}
-	for i := range len(wantResponse.Patches) {
-		wantPaths = append(wantPaths, wantResponse.Patches[i].Path)
-		gotPaths = append(gotPaths, gotResponse.Patches[i].Path)
-	}
-
-	if len(wantPaths) > 0 && len(gotPaths) > 0 {
-		less := func(a, b string) bool { return a > b }
-		if diff := cmp.Diff(gotPaths, wantPaths, cmpopts.SortSlices(less)); diff != "" {
-			return fmt.Errorf("unexpected pod args (-got, +want)\n%s", diff)
+	if len(wantResponse.Patches) > 0 {
+		less := func(a, b jsonpatch.JsonPatchOperation) bool {
+			if a.Path != b.Path {
+				return a.Path < b.Path
+			}
+			return a.Operation < b.Operation
+		}
+		if diff := cmp.Diff(gotResponse.Patches, wantResponse.Patches, cmpopts.SortSlices(less)); diff != "" {
+			return fmt.Errorf("unexpected patches (-got, +want)\n%s", diff)
 		}
 	}
-
 	return nil
 }
 
@@ -907,6 +1153,7 @@ func getDuplicateDeclarationPodSpec() *corev1.Pod {
 			TerminationGracePeriodSeconds: ptr.To[int64](60),
 		},
 		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNamespace,
 			Annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation: "true",
 			},
@@ -915,7 +1162,7 @@ func getDuplicateDeclarationPodSpec() *corev1.Pod {
 }
 
 func getDuplicateDeclarationPodSpecResponse(nativeCustomImage bool) *corev1.Pod {
-	result := modifySpec(*validInputPodWithCustomImage(nativeCustomImage), true, nativeCustomImage, true)
+	result := modifySpec(*validInputPodWithCustomImage(nativeCustomImage), true, nativeCustomImage, true, false, false)
 
 	return result
 }
@@ -949,6 +1196,7 @@ func validInputPodWithSettings(customImage, native bool) *corev1.Pod {
 			TerminationGracePeriodSeconds: ptr.To[int64](60),
 		},
 		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNamespace,
 			Annotations: map[string]string{
 				GcsFuseVolumeEnableAnnotation: "true",
 			},
@@ -1013,7 +1261,7 @@ func validInputPodWithIstio(customImage, nativeCustomImage, nativeIstio bool) *c
 func wantResponse(t *testing.T, customImage bool, nativeCustomImage bool, native bool) admission.Response {
 	t.Helper()
 	pod := validInputPodWithSettings(customImage, nativeCustomImage)
-	newPod := *modifySpec(*validInputPodWithSettings(customImage, nativeCustomImage), customImage, nativeCustomImage, native)
+	newPod := *modifySpec(*validInputPodWithSettings(customImage, nativeCustomImage), customImage, nativeCustomImage, native, false, false)
 
 	return generatePatch(t, pod, &newPod)
 }
@@ -1021,12 +1269,12 @@ func wantResponse(t *testing.T, customImage bool, nativeCustomImage bool, native
 func wantResponseWithPrefetch(t *testing.T, customImage bool, nativeCustomImage bool, native bool) admission.Response {
 	t.Helper()
 	pod := validInputPodWithPrefetchIncluded()
-	newPod := *modifySpec(*validInputPodWithPrefetchIncluded(), customImage, nativeCustomImage, native)
+	newPod := *modifySpec(*validInputPodWithPrefetchIncluded(), customImage, nativeCustomImage, native, false, false)
 
 	return generatePatch(t, pod, &newPod)
 }
 
-func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native bool) *corev1.Pod {
+func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native, webhookHandledPrefetch, prefetchRequested bool) *corev1.Pod {
 	config := FakeConfig()
 	if customImage {
 		if nativeCustomImage {
@@ -1038,10 +1286,24 @@ func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native b
 		}
 	}
 
+	var sidecar corev1.Container
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, nil)}, newPod.Spec.InitContainers...)
+		sidecar = GetNativeSidecarContainerSpec(config, nil)
 	} else {
-		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
+		sidecar = GetSidecarContainerSpec(config, nil /*credentialConfig*/)
+	}
+
+	if webhookHandledPrefetch {
+		sidecar.Env = append(sidecar.Env, corev1.EnvVar{Name: util.WebhookHandledPrefetchEnvVar, Value: "true"})
+	}
+	if prefetchRequested {
+		sidecar.Env = append(sidecar.Env, corev1.EnvVar{Name: util.PrefetchRequestedEnvVar, Value: "true"})
+	}
+
+	if native {
+		newPod.Spec.InitContainers = append([]corev1.Container{sidecar}, newPod.Spec.InitContainers...)
+	} else {
+		newPod.Spec.Containers = append([]corev1.Container{sidecar}, newPod.Spec.Containers...)
 	}
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 
@@ -1826,7 +2088,7 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 				if resp.Allowed {
 					t.Errorf("Expected request to be denied, but it was allowed")
 				}
-				if tc.expectedErrorSubstr != "" && !stringContains(resp.Result.Message, tc.expectedErrorSubstr) {
+				if tc.expectedErrorSubstr != "" && !strings.Contains(resp.Result.Message, tc.expectedErrorSubstr) {
 					t.Errorf("Expected error message to contain %q, but got: %q", tc.expectedErrorSubstr, resp.Result.Message)
 				}
 				if resp.Result.Code != http.StatusBadRequest {
@@ -1841,15 +2103,161 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 	}
 }
 
-// Helper function to check if a string contains a substring
-func stringContains(s, substr string) bool {
-	if len(substr) == 0 {
-		return true
+// wantResponseWithNativePrefetch constructs the expected mutated Pod spec patch where
+// native prefetching is enabled (WEBHOOK_HANDLED_PREFETCH=true and PREFETCH_REQUESTED=true).
+func wantResponseWithNativePrefetch(t *testing.T, pod *corev1.Pod, customImage, nativeCustomImage, native bool) admission.Response {
+	t.Helper()
+	newPod := *modifySpec(*pod, customImage, nativeCustomImage, native, true, true)
+	return generatePatch(t, pod, &newPod)
+}
+
+func validInputPodWithEphemeralVolumeMountOptions(mountOptions string) *corev1.Pod {
+	pod := validInputPodWithSettings(false, false)
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: "gcsfuse-volume",
+		VolumeSource: corev1.VolumeSource{
+			CSI: &corev1.CSIVolumeSource{
+				Driver: gcsFuseCsiDriverName,
+				VolumeAttributes: map[string]string{
+					gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+					"mountOptions": mountOptions,
+				},
+			},
+		},
+	})
+	return pod
+}
+
+func validInputPodWithImageAndEphemeral(imageName, mountOptions string) *corev1.Pod {
+	pod := validInputPodWithEphemeralVolumeMountOptions(mountOptions)
+	pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
+		Name:  GcsFuseSidecarName,
+		Image: imageName,
+	})
+	return pod
+}
+
+func validInputPodWithPVC(pvcName string) *corev1.Pod {
+	pod := validInputPodWithSettings(false, false)
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: "gcsfuse-volume",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvcName,
+			},
+		},
+	})
+	return pod
+}
+
+func makePrefetchPVC(name, namespace, pvName string) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: pvName,
+		},
 	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+}
+
+func makePrefetchPV(name string, mountOptions []string, volumeAttributes map[string]string) *corev1.PersistentVolume {
+	return &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			MountOptions: mountOptions,
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:           gcsFuseCsiDriverName,
+					VolumeAttributes: volumeAttributes,
+				},
+			},
+		},
 	}
-	return false
+}
+
+// wantResponseWithLegacyPrefetch constructs the expected mutated Pod spec patch where
+// legacy prefetching sidecar container injection is expected (WEBHOOK_HANDLED_PREFETCH=false and PREFETCH_REQUESTED=true).
+func wantResponseWithLegacyPrefetch(t *testing.T, pod *corev1.Pod, volumeNames []string, customImage bool, nativeCustomImage bool, native bool) admission.Response {
+	t.Helper()
+	newPod := *modifySpec(*pod, customImage, nativeCustomImage, native, false, true)
+
+	limits, requests := prepareResourceList(FakePrefetchConfig())
+	legacyPrefetchContainer := corev1.Container{
+		Name:            MetadataPrefetchSidecarName,
+		SecurityContext: GetSecurityContext(FakePrefetchConfig()),
+		Image:           FakePrefetchConfig().ContainerImage,
+		ImagePullPolicy: corev1.PullPolicy(FakePrefetchConfig().ImagePullPolicy),
+		Resources: corev1.ResourceRequirements{
+			Requests: requests,
+			Limits:   limits,
+		},
+		VolumeMounts: []corev1.VolumeMount{},
+	}
+
+	for _, vn := range volumeNames {
+		legacyPrefetchContainer.VolumeMounts = append(legacyPrefetchContainer.VolumeMounts, corev1.VolumeMount{
+			Name:      vn,
+			ReadOnly:  true,
+			MountPath: filepath.Join("/volumes/", vn),
+		})
+	}
+
+	if native {
+		legacyPrefetchContainer.Env = []corev1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}}
+		legacyPrefetchContainer.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+		// Insert legacy prefetch container at index 1 (right after main sidecar which is at index 0)
+		newPod.Spec.InitContainers = append(newPod.Spec.InitContainers[:1], append([]corev1.Container{legacyPrefetchContainer}, newPod.Spec.InitContainers[1:]...)...)
+	} else {
+		// Insert legacy prefetch container at index 1 (right after main sidecar which is at index 0)
+		newPod.Spec.Containers = append(newPod.Spec.Containers[:1], append([]corev1.Container{legacyPrefetchContainer}, newPod.Spec.Containers[1:]...)...)
+	}
+
+	return generatePatch(t, pod, &newPod)
+}
+
+func validInputPodWithImageAndPVC(pvcName string, imageName string) *corev1.Pod {
+	pod := validInputPodWithPVC(pvcName)
+	pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
+		Name:  GcsFuseSidecarName,
+		Image: imageName,
+	})
+	return pod
+}
+
+func validInputPodWithMultipleEphemeralVolumes(prefetchOpts ...string) *corev1.Pod {
+	pod := validInputPodWithSettings(false, false)
+	for i, opt := range prefetchOpts {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: fmt.Sprintf("gcsfuse-volume-%d", i+1),
+			VolumeSource: corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver: gcsFuseCsiDriverName,
+					VolumeAttributes: map[string]string{
+						gcsFuseMetadataPrefetchOnMountVolumeAttribute: "true",
+						"mountOptions": opt,
+					},
+				},
+			},
+		})
+	}
+	return pod
+}
+
+func validInputPodWithMultiplePVCs(pvcNames ...string) *corev1.Pod {
+	pod := validInputPodWithSettings(false, false)
+	for i, name := range pvcNames {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: fmt.Sprintf("gcsfuse-volume-%d", i),
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: name,
+				},
+			},
+		})
+	}
+	return pod
 }

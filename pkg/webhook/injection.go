@@ -20,6 +20,7 @@ package webhook
 import (
 	"fmt"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -98,8 +99,8 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	return supportsNativeSidecar, nil
 }
 
-// InjectSidecarContainer injects a sidecar container into the pod and returns error if unexpected event occurs.
-func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *corev1.Pod, injectAsNativeSidecar bool, credentialConfig *SidecarContainerCredentialConfiguration) error {
+// injectSidecarContainer injects a sidecar container into the pod and returns error if unexpected event occurs.
+func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *corev1.Pod, injectAsNativeSidecar bool, credentialConfig *SidecarContainerCredentialConfiguration, webhookHandledPrefetch bool, prefetchRequested bool) error {
 	var containerSpec corev1.Container
 	var index int
 	config, err := si.prepareConfig(sidecarPrefixMap[containerName], *pod)
@@ -124,6 +125,15 @@ func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *cor
 	} else {
 		containerSpec = si.getContainerSpec(containerName, pod, config, credentialConfig)
 		index = getInjectIndexAfterContainer(pod.Spec.Containers, containerIndexOrderMap[containerName])
+	}
+
+	if containerName == GcsFuseSidecarName {
+		if webhookHandledPrefetch {
+			containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: util.WebhookHandledPrefetchEnvVar, Value: "true"})
+		}
+		if prefetchRequested {
+			containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: util.PrefetchRequestedEnvVar, Value: "true"})
+		}
 	}
 
 	// Skip metadata prefetch sidecar injection if no volumes are requesting metadata prefetch.
@@ -202,4 +212,17 @@ func containerPresent(containers []corev1.Container, container string) (int, boo
 	}
 
 	return -1, false
+}
+
+func (si *SidecarInjector) hasPrefetchRequested(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	config, err := si.prepareConfig(sidecarPrefixMap[MetadataPrefetchSidecarName], *pod)
+	if err != nil {
+		klog.Errorf("failed to prepare config for prefetch check: %v", err)
+		return false
+	}
+	container := si.GetMetadataPrefetchSidecarContainerSpec(pod, config)
+	return len(container.VolumeMounts) > 0
 }
