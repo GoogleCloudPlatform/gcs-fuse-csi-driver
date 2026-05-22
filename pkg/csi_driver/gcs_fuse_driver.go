@@ -45,9 +45,15 @@ type FeatureGCSFuseProfiles struct {
 	EnableGcsfuseProfilesInternal bool
 }
 
+type GoMemLimitOptions struct {
+	EnableAutoGoMemLimit bool
+	AutoGoMemLimitRatio  float64
+}
+
 type GCSDriverFeatureOptions struct {
 	EnableGCSFuseKernelParams bool
 	FeatureGCSFuseProfiles    *FeatureGCSFuseProfiles
+	GoMemLimitOptions         *GoMemLimitOptions
 }
 
 type GCSDriverConfig struct {

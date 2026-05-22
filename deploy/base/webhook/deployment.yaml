@@ -61,6 +61,8 @@ spec:
             - --health-probe-bind-address=:22031
             - --should-inject-sa-vol=true
             - --enable-gcsfuse-profiles=true
+            - --enable-auto-gomemlimit=true
+            - --auto-gomemlimit-ratio=0.95
           env:
             - name: SIDECAR_IMAGE_PULL_POLICY
               value: "IfNotPresent"

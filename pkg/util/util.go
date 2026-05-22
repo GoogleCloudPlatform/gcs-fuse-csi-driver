@@ -66,6 +66,9 @@ const (
 	GCSFuseAppNameArg                   = "app-name"
 	CustomEndpointConfigFileFlag        = "gcs-connection:custom-endpoint"
 	CustomEndpointCLIFlag               = "custom-endpoint"
+	EnableAutoGoMemLimitConst           = "enable-auto-gomemlimit"
+	AutoGoMemLimitRatioConst            = "auto-gomemlimit-ratio"
+	GoMemLimitCgroupPercentage          = 0.95
 )
 
 var (

@@ -86,6 +86,7 @@ const (
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
+	SidecarAutoGoMemLimitMinVersion        = "v1.23.11-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"

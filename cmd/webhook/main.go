@@ -22,7 +22,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/go-logr/logr"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	wh "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -56,6 +58,8 @@ var (
 	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
 	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
 	enableGcsfuseProfiles                   = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
+	enableAutoGoMemLimit                    = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
+	autoGoMemLimitRatio                     = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
 	metadataMemoryLimit                     = flag.String("metadata-sidecar-memory-limit", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory limit.")
 	metadataPrefetchCPURequest              = flag.String("metadata-sidecar-cpu-request", "10m", "The default cpu request for gcsfuse memory prefetch sidecar container cpu request.")
@@ -77,6 +81,20 @@ func main() {
 	// Thanks to the PR https://github.com/solo-io/gloo/pull/8549
 	// This line prevents controller-runtime from complaining about log.SetLogger never being called
 	log.SetLogger(logr.New(log.NullLogSink{}))
+
+	if *enableAutoGoMemLimit {
+		// Sets GOMEMLIMIT to a percentage of the cgroup limit.
+		// If cgroup limits are unavailable, it falls back to doing nothing
+		// (no limit).
+		if _, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(*autoGoMemLimitRatio),
+			memlimit.WithProvider(memlimit.FromCgroup),
+		); err != nil {
+			// This can happen if the gcs-fuse-csi-driver-webhook container
+			// memory limit is not set.
+			klog.Warningf("Failed to automatically set GOMEMLIMIT: %v", err)
+		}
+	}
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver admission webhook version %v, sidecar container image %v", webhookVersion, *sidecarImage)
 
