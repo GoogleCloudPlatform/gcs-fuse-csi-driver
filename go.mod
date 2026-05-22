@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/monitoring v1.24.2
 	cloud.google.com/go/profiler v0.4.3
 	cloud.google.com/go/storage v1.56.3
+	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/container-storage-interface/spec v1.11.0
 	github.com/distribution/reference v0.6.0
 	github.com/go-logr/logr v1.4.3
@@ -89,6 +90,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.27.0 // indirect
 	github.com/onsi/gomega v1.38.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect

@@ -62,6 +62,8 @@ spec:
             - --enable-gcsfuse-profiles-internal=true
             - --stream-metrics-export=true
             - --enable-cloud-profiler-for-driver=true
+            - --enable-auto-gomemlimit=true
+            - --auto-gomemlimit-ratio=0.95
           ports:
             - containerPort: 9920
               name: metrics

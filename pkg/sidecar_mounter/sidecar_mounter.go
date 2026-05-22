@@ -40,6 +40,7 @@ import (
 	cpmeta "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -141,6 +142,24 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	//nolint: gosec
 	klog.Infof("gcsfuse mounting with %s %v...", cmdName, args)
 	cmd := exec.CommandContext(ctx, cmdName, args...)
+
+	if mc.EnableAutoGoMemLimit {
+		//  Set for the sidecar mounter process
+		appliedLimit, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(mc.AutoGoMemLimitRatio),
+			memlimit.WithProvider(memlimit.FromCgroup),
+		)
+		if err != nil {
+			klog.V(4).Infof("GOMEMLIMIT not set (expected if gke-gcsfuse-sidecar memory limit is unset): %v", err)
+		} else if appliedLimit > 0 {
+			// Export GOMEMLIMIT for the gcsfuse child process.
+			// If appliedLimit is 0, it means GOMEMLIMIT was already set in
+			// the environment or there is no memory limit; in both cases we
+			// should not override.
+			cmd.Env = append(os.Environ(), fmt.Sprintf("GOMEMLIMIT=%d", appliedLimit))
+			klog.Infof("Successfully set GOMEMLIMIT=%d for gcsfuse and sidecar_mounter", appliedLimit)
+		}
+	}
 
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
 	cmd.Stdout = os.Stdout

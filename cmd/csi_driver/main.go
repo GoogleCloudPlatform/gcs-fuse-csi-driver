@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/profiler"
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
@@ -70,6 +71,8 @@ var (
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver.")
 	enableCloudProfilerForDriver   = flag.Bool("enable-cloud-profiler-for-driver", false, "Enable cloud profiler to collect analysis data.")
 	assumeGoodSidecarVersion       = flag.Bool("assume-good-sidecar-version", false, "Assume the sidecar version is compatible with all features in the running version of the driver.")
+	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
+	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 
 	// GCSFuse kernel params feature.
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
@@ -100,6 +103,20 @@ var (
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	if *enableAutoGoMemLimit {
+		// Sets GOMEMLIMIT to a percentage of the cgroup limit.
+		// If cgroup limits are unavailable, it falls back to doing nothing
+		// (no limit).
+		if _, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(*autoGoMemLimitRatio),
+			memlimit.WithProvider(memlimit.FromCgroup),
+		); err != nil {
+			// This can happen if the gcs-fuse-csi-driver container memory
+			// limit is not set.
+			klog.Warningf("Failed to automatically set GOMEMLIMIT: %v", err)
+		}
+	}
 
 	// All CSI sidecars use http-endpoint for metrics and health checks.
 	// Example: https://gke-internal.googlesource.com/third_party/kubernetes-csi/livenessprobe/+/refs/heads/master/cmd/livenessprobe/main.go#113
@@ -221,6 +238,10 @@ func main() {
 			EnableGcsfuseProfilesInternal: *enableGcsfuseProfilesInternal,
 		},
 		EnableGCSFuseKernelParams: *enableGCSFuseKernelParams,
+		GoMemLimitOptions: &driver.GoMemLimitOptions{
+			EnableAutoGoMemLimit: *enableAutoGoMemLimit,
+			AutoGoMemLimitRatio:  *autoGoMemLimitRatio,
+		},
 	}
 
 	var mounter mount.Interface

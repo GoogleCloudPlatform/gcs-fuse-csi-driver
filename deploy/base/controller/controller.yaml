@@ -45,6 +45,8 @@ spec:
             - "--cluster-location=$(CLUSTER_LOCATION)"
             - "--project-number=$(PROJECT_NUMBER)"
             - "--http-endpoint=:29633"
+            - "--enable-auto-gomemlimit=true"
+            - "--auto-gomemlimit-ratio=0.95"
           ports:
             - containerPort: 29633
               name: http-endpoint
