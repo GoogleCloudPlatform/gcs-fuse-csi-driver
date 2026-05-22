@@ -19,6 +19,8 @@ package testsuites
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -32,12 +34,9 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	iam "google.golang.org/api/iam/v1"
-<<<<<<< HEAD
 	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-=======
->>>>>>> 3727096f (replace getOSSClusterOIDCIssuer with getClusterOIDCIssuer, inline sanitizeProjectID, return credentialConfig from setupOSSWIFPrincipal)
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	klog "k8s.io/klog/v2"
@@ -45,6 +44,11 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
+)
+
+const (
+	wifWorkloadIdentityPoolID     = "gcs-fuse-oidc-pool"
+	wifWorkloadIdentityProviderID = "gcs-fuse-oidc-provider"
 )
 
 type gcsFuseCSIWorkloadIdentityFederationTestSuite struct {
@@ -837,7 +841,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			init(specs.SkipCSIBucketAccessCheckPrefix)
 		} else {
 			init()
-		}		
+		}
 		defer cleanup()
 
 		const (
@@ -929,7 +933,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			init(specs.SkipCSIBucketAccessCheckPrefix)
 		} else {
 			init()
-		}		
+		}
 		defer cleanup()
 
 		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
