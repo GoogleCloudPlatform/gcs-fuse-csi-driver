@@ -154,7 +154,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		nsSuffix := f.Namespace.Name[nsIdx+1:]
 		saName := fmt.Sprintf("%s-%s", ksaName, nsSuffix)
 		if len(saName) > 30 {
-			saName = saName[:30]
+			saName = strings.TrimRight(saName[:30], "-")
 		}
 		testGcpSA := utils.NewTestGCPServiceAccount(saName, projectID)
 		ginkgo.By(fmt.Sprintf("Creating GCP service account: %s", saName))
