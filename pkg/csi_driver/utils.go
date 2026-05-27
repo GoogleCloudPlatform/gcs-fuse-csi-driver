@@ -87,11 +87,10 @@ const (
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
 	SidecarAutoGoMemLimitMinVersion        = "v1.23.11-gke.0"
+	StorageEndpointInternalMinVersion      = "v1.23.14-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
-	// TODO(urielguzman): Change this to the actual version where it's supported.
-	StorageEndpointInternalMinVersion = "v1.999.0-gke.0"
 )
 
 var (
