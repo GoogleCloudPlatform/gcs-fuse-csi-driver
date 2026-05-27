@@ -380,6 +380,48 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				expectedSupported:          false,
 				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
 			},
+			{
+				name:                       "storage-endpoint-internal - should return true for supported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.2@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return true for supported sidecar version with container registry gke.gcr.io",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - false for unsupported registry host suffix gke.gcr.io",
+				imageName:                  "random-gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - false for gke.gcr.io in image path",
+				imageName:                  "randomhost.gcr.io/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return true for supported sidecar version in staging gcr",
+				imageName:                  "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return false for unsupported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.13-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return false for private sidecar",
+				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
 		}
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
@@ -1009,6 +1051,94 @@ func TestTransformKeysToSet(t *testing.T) {
 
 			if !reflect.DeepEqual(gotSet, tt.wantSet) {
 				t.Errorf("transformKeysToSet() = %v, want %v", gotSet, tt.wantSet)
+			}
+		})
+	}
+}
+
+func TestStorageEndpointFromUniverseDomain(t *testing.T) {
+	testCases := []struct {
+		name           string
+		universeDomain string
+		want           string
+	}{
+		{
+			name:           "Fake domain",
+			universeDomain: "fakeapis.goog",
+			want:           "storage.fakeapis.goog:443",
+		},
+		{
+			name:           "Empty domain",
+			universeDomain: "",
+			want:           "storage.googleapis.com:443", // Default
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := storageEndpointFromUniverseDomain(tc.universeDomain)
+			if got != tc.want {
+				t.Errorf("storageEndpointFromUniverseDomain(%q) = %q, want %q", tc.universeDomain, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOverrideStorageEndpointInternal(t *testing.T) {
+	t.Parallel()
+
+	storageEndpoint := storageEndpointFromUniverseDomain("googleapis.com")
+
+	testCases := []struct {
+		name            string
+		opts            []string
+		expectedOptions []string
+	}{
+		{
+			name: "should replace existing flag",
+			opts: []string{
+				"o=noexec",
+				"storage-endpoint-internal=storage.faceapis:443",
+				"rw",
+			},
+			expectedOptions: []string{
+				"o=noexec",
+				"rw",
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+		{
+			name: "should append flag if no pre-existing flags exist",
+			opts: []string{
+				"o=noexec",
+				"rw",
+			},
+			expectedOptions: []string{
+				"o=noexec",
+				"rw",
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+		{
+			name: "should replace multiple flags if they co-exist",
+			opts: []string{
+				"storage-endpoint-internal=https://config-endpoint.com",
+				"storage-endpoint-internal=https://old-config-endpoint.com",
+			},
+			expectedOptions: []string{
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			output := overrideStorageEndpointInternal(tc.opts, storageEndpoint)
+
+			if diff := cmp.Diff(output, tc.expectedOptions); diff != "" {
+				t.Errorf("unexpected options slice (-got, +want)\n%s", diff)
 			}
 		})
 	}

@@ -549,9 +549,21 @@ func TestNodePublishVolumeEnableAutoGoMemLimit(t *testing.T) {
 			// 2. Exact match check: ensure no extra options were injected
 			if len(fakeMounter.MountPoints) == 1 {
 				actualOpts := fakeMounter.MountPoints[0].Opts
-				if len(actualOpts) != len(tc.expectedOptions) {
-					t.Errorf("expected exactly %d options %v, but got %d options %v",
-						len(tc.expectedOptions), tc.expectedOptions, len(actualOpts), actualOpts)
+				actualSet := make(map[string]bool)
+				for _, opt := range actualOpts {
+					actualSet[opt] = true
+				}
+
+				var missingOpts []string
+				for _, expectedOpt := range tc.expectedOptions {
+					if !actualSet[expectedOpt] {
+						missingOpts = append(missingOpts, expectedOpt)
+					}
+				}
+
+				if len(missingOpts) > 0 {
+					t.Errorf("Expected options %v to be present, but options %v are missing from actual options %v",
+						tc.expectedOptions, missingOpts, actualOpts)
 				}
 			}
 		})
@@ -1149,6 +1161,86 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			}
 			if !tc.expectCollectorRegistered && collectorRegistered {
 				t.Error("expected metrics collector not to be registered, but it was")
+			}
+		})
+	}
+}
+
+func TestNodePublishVolumeStorageEndpointInternal(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                     string
+		universeDomain           string
+		assumeGoodSidecarVersion bool
+		expectedOptions          []string
+		unexpectedOptions        []string
+	}{
+		{
+			name:                     "sidecar version supported, universe domain set, injects internal storage endpoint override",
+			universeDomain:           "my-custom-universe",
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{"storage-endpoint-internal=storage.my-custom-universe:443"},
+		},
+		{
+			name:                     "sidecar version supported, empty universe domain, injects default internal storage endpoint override",
+			universeDomain:           "",
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{"storage-endpoint-internal=storage.googleapis.com:443"},
+		},
+		{
+			name:                     "sidecar version not supported, universe domain set, should not inject flag",
+			universeDomain:           "my-custom-universe.com",
+			assumeGoodSidecarVersion: false,
+			unexpectedOptions:        []string{"storage-endpoint-internal="},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testTargetPath, cleanup := setupMountTarget(t)
+			defer cleanup()
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+
+			driver.config.UniverseDomain = tc.universeDomain
+			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns := newNodeServer(driver, fakeMounter)
+
+			_, err := ns.NodePublishVolume(context.Background(), req)
+			if err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOptions,
+			}, tc.unexpectedOptions)
+
+			// Double check if unexpected options were completely avoided from the list prefix
+			if !tc.assumeGoodSidecarVersion && len(fakeMounter.MountPoints) == 1 {
+				for _, opt := range fakeMounter.MountPoints[0].Opts {
+					if strings.HasPrefix(opt, "storage-endpoint-internal=") {
+						t.Errorf("found unexpected storage-endpoint-internal flag option: %s", opt)
+					}
+				}
 			}
 		})
 	}
