@@ -42,24 +42,26 @@ import (
 )
 
 var (
-	port                                    = flag.Int("port", 443, "The port that the webhook server serves at.")
-	healthProbeBindAddress                  = flag.String("health-probe-bind-address", ":8080", "The TCP address that the controller should bind to for serving health probes.")
-	certDir                                 = flag.String("cert-dir", "/etc/tls-certs", "The directory that contains the server key and certificate.")
-	certName                                = flag.String("cert-name", "cert.pem", "The server certificate name.")
-	keyName                                 = flag.String("key-name", "key.pem", "The server key name.")
-	imagePullPolicy                         = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
-	cpuRequest                              = flag.String("sidecar-cpu-request", "250m", "The default CPU request for gcsfuse sidecar container.")
-	cpuLimit                                = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
-	memoryRequest                           = flag.String("sidecar-memory-request", "256Mi", "The default memory request for gcsfuse sidecar container.")
-	memoryLimit                             = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
-	ephemeralStorageRequest                 = flag.String("sidecar-ephemeral-storage-request", "5Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
-	ephemeralStorageLimit                   = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
-	sidecarImage                            = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
-	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
-	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
-	enableGcsfuseProfiles                   = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
-	enableAutoGoMemLimit                    = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
-	autoGoMemLimitRatio                     = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
+	port                          = flag.Int("port", 443, "The port that the webhook server serves at.")
+	healthProbeBindAddress        = flag.String("health-probe-bind-address", ":8080", "The TCP address that the controller should bind to for serving health probes.")
+	certDir                       = flag.String("cert-dir", "/etc/tls-certs", "The directory that contains the server key and certificate.")
+	certName                      = flag.String("cert-name", "cert.pem", "The server certificate name.")
+	keyName                       = flag.String("key-name", "key.pem", "The server key name.")
+	imagePullPolicy               = flag.String("sidecar-image-pull-policy", "IfNotPresent", "The default image pull policy for gcsfuse sidecar container.")
+	cpuRequest                    = flag.String("sidecar-cpu-request", "250m", "The default CPU request for gcsfuse sidecar container.")
+	cpuLimit                      = flag.String("sidecar-cpu-limit", "250m", "The default CPU limit for gcsfuse sidecar container.")
+	memoryRequest                 = flag.String("sidecar-memory-request", "256Mi", "The default memory request for gcsfuse sidecar container.")
+	memoryLimit                   = flag.String("sidecar-memory-limit", "256Mi", "The default memory limit for gcsfuse sidecar container.")
+	ephemeralStorageRequest       = flag.String("sidecar-ephemeral-storage-request", "5Gi", "The default ephemeral storage request for gcsfuse sidecar container.")
+	ephemeralStorageLimit         = flag.String("sidecar-ephemeral-storage-limit", "5Gi", "The default ephemeral storage limit for gcsfuse sidecar container.")
+	sidecarImage                  = flag.String("sidecar-image", "", "The gcsfuse sidecar container image.")
+	metadataSidecarImage          = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
+	injectSAVol                   = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
+	enableGcsfuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
+	enableAutoGoMemLimit          = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
+	autoGoMemLimitRatio           = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
+	enableGCSFuseMetadataPrefetch = flag.Bool("enable-gcsfuse-metadata-prefetch", false, "Enable native GCSFuse metadata prefetch")
+
 	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
 	metadataMemoryLimit                     = flag.String("metadata-sidecar-memory-limit", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory limit.")
 	metadataPrefetchCPURequest              = flag.String("metadata-sidecar-cpu-request", "10m", "The default cpu request for gcsfuse memory prefetch sidecar container cpu request.")
@@ -177,16 +179,17 @@ func main() {
 	klog.Info("Registering webhooks to the webhook server.")
 	hookServer.Register("/inject", &webhook.Admission{
 		Handler: &wh.SidecarInjector{
-			Client:                 mgr.GetClient(),
-			Config:                 fuseSideCarConfig,
-			MetadataPrefetchConfig: metadataPrefetchSideCarConfig,
-			Decoder:                admission.NewDecoder(runtime.NewScheme()),
-			NodeLister:             nodeLister,
-			PvLister:               pvLister,
-			PvcLister:              pvcLister,
-			ScLister:               scLister,
-			ServerVersion:          serverVersion,
-			K8SClient:              client,
+			Client:                        mgr.GetClient(),
+			Config:                        fuseSideCarConfig,
+			MetadataPrefetchConfig:        metadataPrefetchSideCarConfig,
+			Decoder:                       admission.NewDecoder(runtime.NewScheme()),
+			NodeLister:                    nodeLister,
+			PvLister:                      pvLister,
+			PvcLister:                     pvcLister,
+			ScLister:                      scLister,
+			ServerVersion:                 serverVersion,
+			K8SClient:                     client,
+			EnableGCSFuseMetadataPrefetch: *enableGCSFuseMetadataPrefetch,
 		},
 	})
 

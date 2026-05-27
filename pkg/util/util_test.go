@@ -679,3 +679,75 @@ func TestCheckNotSymlink(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePrefetchOverride(t *testing.T) {
+	testCases := []struct {
+		name          string
+		input         string
+		expectMatched bool
+		expectValue   bool
+		expectError   bool
+	}{
+		{
+			name:          "Standard colon true",
+			input:         "metadata-cache:enable-metadata-prefetch:true",
+			expectMatched: true,
+			expectValue:   true,
+		},
+		{
+			name:          "Standard colon false",
+			input:         "metadata-cache:enable-metadata-prefetch:false",
+			expectMatched: true,
+			expectValue:   false,
+		},
+		{
+			name:          "Standard equal sign true",
+			input:         "metadata-cache:enable-metadata-prefetch=true",
+			expectMatched: true,
+			expectValue:   true,
+		},
+		{
+			name:          "With inner spaces",
+			input:         "metadata-cache : enable-metadata-prefetch : false ",
+			expectMatched: true,
+			expectValue:   false,
+		},
+		{
+			name:          "With casing",
+			input:         "metadata-cache:enable-metadata-prefetch:True",
+			expectMatched: true,
+			expectValue:   true,
+		},
+		{
+			name:          "Other unrelated flag",
+			input:         "implicit-dirs",
+			expectMatched: false,
+		},
+		{
+			name:          "Other unrelated config flag",
+			input:         "logging:severity:error",
+			expectMatched: false,
+		},
+		{
+			name:          "Invalid boolean value",
+			input:         "metadata-cache:enable-metadata-prefetch:yes",
+			expectMatched: true,
+			expectError:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			matched, val, err := ParsePrefetchOverride(tc.input)
+			if matched != tc.expectMatched {
+				t.Errorf("expected matched to be %v, got %v", tc.expectMatched, matched)
+			}
+			if val != tc.expectValue {
+				t.Errorf("expected value to be %v, got %v", tc.expectValue, val)
+			}
+			if (err != nil) != tc.expectError {
+				t.Errorf("expected error presence to be %v, got error: %v", tc.expectError, err)
+			}
+		})
+	}
+}

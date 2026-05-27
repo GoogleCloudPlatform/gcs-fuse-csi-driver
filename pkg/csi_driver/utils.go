@@ -93,10 +93,6 @@ const (
 )
 
 var (
-	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+\.*`
-	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
-	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
-	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
 	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
@@ -606,10 +602,6 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 	return nil, errors.New("the sidecar container was not found")
 }
 
-func isManagedSidecarImage(imageName string) bool {
-	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
-}
-
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
 	if imageName == "" {
 		return false
@@ -627,7 +619,7 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 		return true
 	}
 
-	if !isManagedSidecarImage(imageName) {
+	if !util.IsManagedSidecarImage(imageName) {
 		klog.Warningf("sidecarMinSupportedVersion check skipped since this %q is not a GKE managed image", imageName)
 		return false
 	}

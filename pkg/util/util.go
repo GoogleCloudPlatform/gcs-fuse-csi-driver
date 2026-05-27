@@ -36,6 +36,9 @@ import (
 )
 
 const (
+	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+\.*`
+	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+
 	Mb = 1024 * 1024
 
 	TrueStr  = "true"
@@ -69,9 +72,13 @@ const (
 	EnableAutoGoMemLimitConst           = "enable-auto-gomemlimit"
 	AutoGoMemLimitRatioConst            = "auto-gomemlimit-ratio"
 	GoMemLimitCgroupPercentage          = 0.95
+	WebhookHandledPrefetchEnvVar        = "WEBHOOK_HANDLED_PREFETCH"
+	PrefetchRequestedEnvVar             = "PREFETCH_REQUESTED"
 )
 
 var (
+	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
+	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
 	volumeIDRegEx            = regexp.MustCompile(`:.*$`)
 	targetPathRegexp         = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
 	emptyReplacementRegexp   = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
@@ -309,6 +316,29 @@ func ParseBool(str string) (bool, error) {
 	}
 }
 
+// ParsePrefetchOverride parses a single mount option string.
+// If the option matches "metadata-cache:enable-metadata-prefetch", it returns (true, value, nil).
+// It is robust against spaces and supports both ":" and "=" as delimiters.
+// E.g., "metadata-cache:enable-metadata-prefetch : true " -> (true, true, nil)
+func ParsePrefetchOverride(opt string) (bool, bool, error) {
+	opt = strings.TrimSpace(opt)
+	normalized := strings.ReplaceAll(opt, "=", ":")
+	parts := strings.Split(normalized, ":")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+
+	if len(parts) == 3 && parts[0] == "metadata-cache" && parts[1] == "enable-metadata-prefetch" {
+		val, err := ParseBool(parts[2])
+		if err != nil {
+			return true, false, fmt.Errorf("invalid boolean value for prefetch override in option %q: %w", opt, err)
+		}
+		return true, val, nil
+	}
+
+	return false, false, nil
+}
+
 // CustomEndpointFromOpts parses a list of mount options to extract the custom endpoint value.
 // It looks for options in two formats:
 // 1. Config file format (e.g., "gcs-connection:custom-endpoint:storage.example.com:443")
@@ -359,4 +389,8 @@ func CheckNotSymlink(path string) error {
 		return fmt.Errorf("security error: path %q is a symlink", path)
 	}
 	return nil
+}
+
+func IsManagedSidecarImage(imageName string) bool {
+	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
 }

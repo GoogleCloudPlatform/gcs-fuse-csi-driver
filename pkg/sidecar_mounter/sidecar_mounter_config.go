@@ -72,6 +72,8 @@ type MountConfig struct {
 	CustomEndpoint                 string                `json:"-"`
 	EnableAutoGoMemLimit           bool                  `json:"-"`
 	AutoGoMemLimitRatio            float64               `json:"-"`
+	WebhookHandledPrefetch         bool                  `json:"-"`
+	PrefetchRequested              bool                  `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -119,13 +121,15 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 	tempDir := filepath.Dir(sp)
 	volumeName := filepath.Base(tempDir)
 	mc := MountConfig{
-		VolumeName:          volumeName,
-		BufferDir:           filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
-		CacheDir:            filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
-		TempDir:             tempDir,
-		ConfigFile:          filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-		ErrWriter:           NewErrorWriter(filepath.Join(tempDir, "error")),
-		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
+		VolumeName:             volumeName,
+		BufferDir:              filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		CacheDir:               filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		TempDir:                tempDir,
+		ConfigFile:             filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+		ErrWriter:              NewErrorWriter(filepath.Join(tempDir, "error")),
+		AutoGoMemLimitRatio:    util.GoMemLimitCgroupPercentage,
+		WebhookHandledPrefetch: os.Getenv(util.WebhookHandledPrefetchEnvVar) == "true",
+		PrefetchRequested:      os.Getenv(util.PrefetchRequestedEnvVar) == "true",
 	}
 
 	klog.Infof("connecting to socket %q", sp)
@@ -210,6 +214,16 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	mc.GcsFuseNumaNode = -1
+
+	// WebhookHandledPrefetch is false when an older webhook injects the legacy prefetch
+	// container. To prevent the double execution of the legacy prefetch container and the
+	// GCSFuse native prefetch when version skew issues happen (older webhook + newer sidecar),
+	// disable native prefetch here.
+	if !mc.WebhookHandledPrefetch && mc.PrefetchRequested {
+		klog.Infof("Legacy prefetch is used, disable native prefetch in GCSFuse to prevent double execution.")
+		mc.Options = append(mc.Options, "metadata-cache:enable-metadata-prefetch:false")
+	}
+
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
 

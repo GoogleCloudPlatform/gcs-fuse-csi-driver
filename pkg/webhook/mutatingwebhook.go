@@ -66,15 +66,16 @@ var (
 type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
-	Config                 *Config
-	MetadataPrefetchConfig *Config
-	Decoder                admission.Decoder
-	NodeLister             listersv1.NodeLister
-	PvcLister              listersv1.PersistentVolumeClaimLister
-	PvLister               listersv1.PersistentVolumeLister
-	ScLister               listerstoragev1.StorageClassLister
-	ServerVersion          *version.Version
-	K8SClient              kubernetes.Interface
+	Config                        *Config
+	MetadataPrefetchConfig        *Config
+	Decoder                       admission.Decoder
+	NodeLister                    listersv1.NodeLister
+	PvcLister                     listersv1.PersistentVolumeClaimLister
+	PvLister                      listersv1.PersistentVolumeLister
+	ScLister                      listerstoragev1.StorageClassLister
+	ServerVersion                 *version.Version
+	K8SClient                     kubernetes.Interface
+	EnableGCSFuseMetadataPrefetch bool
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
@@ -159,10 +160,66 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
 	}
 
+	gcsfuseImage := si.Config.ContainerImage
+	if index, ok := containerPresent(pod.Spec.Containers, GcsFuseSidecarName); ok && pod.Spec.Containers[index].Image != "" {
+		gcsfuseImage = pod.Spec.Containers[index].Image
+	} else if index, ok := containerPresent(pod.Spec.InitContainers, GcsFuseSidecarName); ok && pod.Spec.InitContainers[index].Image != "" {
+		gcsfuseImage = pod.Spec.InitContainers[index].Image
+	}
+	isCustom := !util.IsManagedSidecarImage(gcsfuseImage)
+	sidecarVersion, err := parseImageVersion(gcsfuseImage)
+	if err != nil {
+		klog.Warningf("failed to parse sidecar image version %q: %v, assuming old version", gcsfuseImage, err)
+		sidecarVersion = version.MustParseGeneric("0.0.0")
+	}
+
+	supportsNativePrefetch := sidecarVersion.AtLeast(nativePrefetchMinVersion)
+	prefetchRequested := si.hasPrefetchRequested(pod)
+	nativePrefetchEnabledByUser, nativePrefetchDisabledByUser := si.getNativePrefetchOverrides(pod)
+
+	// Use native prefetch when: the feature is enabled, the sidecar version supports it,
+	// the user is not running a custom image, native prefetch was not disabled by user explicitly,
+	// and prefetch is requested.
+	useNativePrefetch := si.EnableGCSFuseMetadataPrefetch &&
+		supportsNativePrefetch &&
+		!isCustom &&
+		!nativePrefetchDisabledByUser &&
+		prefetchRequested
+
+	// Determine whether to inject the legacy prefetch sidecar and whether
+	// the webhook has taken responsibility for prefetch configuration.
+	//
+	// WEBHOOK_HANDLED_PREFETCH prevents version skew issues (older webhook + newer sidecar)
+	// that could cause both prefetch mechanisms to run simultaneously.
+	// - true: Webhook handled prefetch logic; sidecar must NOT force-disable native prefetch.
+	// - false: Webhook injected legacy prefetch; sidecar MUST force-disable native prefetch.
+	var injectLegacyPrefetch bool
+	var webhookHandledPrefetch bool
+	if useNativePrefetch {
+		// Native prefetch is fully managed by the webhook; no legacy injection needed.
+		injectLegacyPrefetch = false
+		webhookHandledPrefetch = true
+	} else if nativePrefetchEnabledByUser && prefetchRequested {
+		// User explicitly enabled native prefetch via mount options AND requested prefetch
+		// via the volume attribute. Skip legacy injection and let the sidecar respect the
+		// user's override directly.
+		injectLegacyPrefetch = false
+		webhookHandledPrefetch = true
+	} else {
+		// Native prefetch is not available or not requested. Fall back to legacy
+		// prefetch injection if the pod annotation requested it.
+		webhookHandledPrefetch = false
+		if prefetchRequested {
+			injectLegacyPrefetch = true
+		} else {
+			injectLegacyPrefetch = false
+		}
+	}
+
 	// Inject Fuse Side Car container.
 	injected, _ := validatePodHasSidecarContainerInjected(GcsFuseSidecarName, pod, []corev1.Volume{tmpVolume}, []corev1.VolumeMount{TmpVolumeMount})
 	if !injected {
-		err = si.injectSidecarContainer(GcsFuseSidecarName, pod, injectAsNativeSidecar, sidecarCredentialConfig)
+		err = si.injectSidecarContainer(GcsFuseSidecarName, pod, injectAsNativeSidecar, sidecarCredentialConfig, webhookHandledPrefetch, prefetchRequested)
 	}
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
@@ -181,12 +238,14 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
 	// Inject metadata prefetch sidecar.
-	injected, _ = validatePodHasSidecarContainerInjected(MetadataPrefetchSidecarName, pod, []corev1.Volume{}, []corev1.VolumeMount{})
-	if !injected {
-		err = si.injectSidecarContainer(MetadataPrefetchSidecarName, pod, injectAsNativeSidecar, nil /*credentialConfig*/)
-	}
-	if err != nil {
-		return admission.Errored(http.StatusBadRequest, err)
+	if injectLegacyPrefetch {
+		injected, _ = validatePodHasSidecarContainerInjected(MetadataPrefetchSidecarName, pod, []corev1.Volume{}, []corev1.VolumeMount{})
+		if !injected {
+			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, pod, injectAsNativeSidecar, nil /*credentialConfig*/, false /*webhookHandledPrefetch*/, false /*prefetchRequested*/)
+		}
+		if err != nil {
+			return admission.Errored(http.StatusBadRequest, err)
+		}
 	}
 
 	if si.Config.EnableGcsfuseProfiles {

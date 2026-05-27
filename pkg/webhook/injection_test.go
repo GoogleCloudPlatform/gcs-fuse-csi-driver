@@ -546,6 +546,9 @@ func TestInjectSidecarMounter(t *testing.T) {
 		if custom.Image != "" {
 			container.Image = custom.Image
 		}
+		if len(custom.Env) > 0 {
+			container.Env = append(container.Env, custom.Env...)
+		}
 		if custom.SecurityContext != nil {
 			if custom.SecurityContext.Capabilities != nil {
 				container.SecurityContext.Capabilities = custom.SecurityContext.Capabilities
@@ -558,9 +561,11 @@ func TestInjectSidecarMounter(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name        string
-		pod         *corev1.Pod
-		expectedPod *corev1.Pod
+		name                   string
+		pod                    *corev1.Pod
+		expectedPod            *corev1.Pod
+		webhookHandledPrefetch bool
+		prefetchRequested      bool
 	}{
 		{
 			name: "simple",
@@ -707,6 +712,67 @@ func TestInjectSidecarMounter(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:                   "prefetchRequested but not webhookHandledPrefetch",
+			webhookHandledPrefetch: false,
+			prefetchRequested:      true,
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Env: []v1.EnvVar{
+								{Name: "PREFETCH_REQUESTED", Value: "true"},
+							},
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name:                   "both webhookHandledPrefetch and prefetchRequested",
+			webhookHandledPrefetch: true,
+			prefetchRequested:      true,
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Env: []v1.EnvVar{
+								{Name: "WEBHOOK_HANDLED_PREFETCH", Value: "true"},
+								{Name: "PREFETCH_REQUESTED", Value: "true"},
+							},
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -714,7 +780,7 @@ func TestInjectSidecarMounter(t *testing.T) {
 				Config:                 &Config{},
 				MetadataPrefetchConfig: FakeConfig(),
 			}
-			err := si.injectSidecarContainer(GcsFuseSidecarName, tc.pod, true, nil /*credentialConfig*/)
+			err := si.injectSidecarContainer(GcsFuseSidecarName, tc.pod, true, nil /*credentialConfig*/, tc.webhookHandledPrefetch, tc.prefetchRequested)
 			if err != nil {
 				t.Errorf("Expected no error, but got %v", err)
 			}
@@ -1760,7 +1826,7 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 				tc.nativeSidecar = ptr.To(true)
 			}
 			si := SidecarInjector{MetadataPrefetchConfig: FakePrefetchConfig()}
-			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil /*credentialConfig*/)
+			err := si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil /*credentialConfig*/, false /*webhookHandledPrefetch*/, false /*prefetchRequested*/)
 			if !tc.expectError && err != nil {
 				t.Errorf("Expected no error, but got %v", err)
 			} else if tc.expectError && err == nil {
@@ -1973,7 +2039,7 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 
 			informer.WaitForCacheSync(ctx.Done())
 
-			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil)
+			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil, false, false)
 			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
 			if !reflect.DeepEqual(tc.pod, tc.expectedPod) {
 				t.Errorf(`failed to run %s, expected: "%v", but got "%v". Diff: %s`, tc.testName, tc.expectedPod, tc.pod, cmp.Diff(tc.expectedPod, tc.pod))

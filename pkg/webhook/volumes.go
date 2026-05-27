@@ -18,6 +18,9 @@ limitations under the License.
 package webhook
 
 import (
+	"strings"
+
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
@@ -80,4 +83,51 @@ func (si *SidecarInjector) isGcsFuseCSIVolume(volume corev1.Volume, namespace st
 	}
 
 	return false, false, nil, nil, nil
+}
+
+func (si *SidecarInjector) getNativePrefetchOverrides(pod *corev1.Pod) (bool, bool) {
+	if pod == nil {
+		return false, false
+	}
+	var hasEnabled, hasDisabled bool
+	for _, v := range pod.Spec.Volumes {
+		isGcsFuse, _, volumeAttributes, pv, err := si.isGcsFuseCSIVolume(v, pod.Namespace)
+		if err != nil || !isGcsFuse {
+			continue
+		}
+		if volumeAttributes != nil {
+			if mountOptions, ok := volumeAttributes["mountOptions"]; ok {
+				options := strings.Split(mountOptions, ",")
+				for _, opt := range options {
+					if matched, val, err := util.ParsePrefetchOverride(opt); matched {
+						if err != nil {
+							klog.Warning(err)
+							continue
+						}
+						if val {
+							hasEnabled = true
+						} else {
+							hasDisabled = true
+						}
+					}
+				}
+			}
+		}
+		if pv != nil && pv.Spec.MountOptions != nil {
+			for _, opt := range pv.Spec.MountOptions {
+				if matched, val, err := util.ParsePrefetchOverride(opt); matched {
+					if err != nil {
+						klog.Warningf("failed to parse prefetch override from PV mountOptions: %v", err)
+						continue
+					}
+					if val {
+						hasEnabled = true
+					} else {
+						hasDisabled = true
+					}
+				}
+			}
+		}
+	}
+	return hasEnabled, hasDisabled
 }

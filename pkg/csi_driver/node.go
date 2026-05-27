@@ -356,7 +356,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
-	canUseMultiNIC := !isManagedSidecarImage(gcsFuseSidecarImage) || s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MultiNICMinVersion)
+	canUseMultiNIC := !util.IsManagedSidecarImage(gcsFuseSidecarImage) || s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MultiNICMinVersion)
 	if err := s.setupMultiNIC(&args, pod, canUseMultiNIC); err != nil {
 		return nil, err
 	}
