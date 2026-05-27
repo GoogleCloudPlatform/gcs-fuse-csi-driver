@@ -74,6 +74,7 @@ type GCSDriverConfig struct {
 	EnableCloudProfilerForSidecar  bool
 	FeatureOptions                 *GCSDriverFeatureOptions
 	AssumeGoodSidecarVersion       bool
+	UniverseDomain                 string
 }
 
 type GCSDriver struct {

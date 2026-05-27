@@ -164,9 +164,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
+	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
 	if vs != nil && !args.skipCSIBucketAccessCheck {
 		if !vs.BucketAccessCheckPassed {
-			storageService, err := s.prepareStorageService(ctx, vc, args.customEndpoint)
+			storageService, err := s.prepareStorageService(ctx, vc, storageEndpoint)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 			}
@@ -383,6 +384,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
+
+	// Pass the universe-aware storage endpoint if the sidecar version supports it.
+	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, StorageEndpointInternalMinVersion) {
+		args.fuseMountOptions = overrideStorageEndpointInternal(args.fuseMountOptions, storageEndpoint)
+	}
+
 	// Start to mount
 	if err = s.mounter.Mount(args.bucketName, targetPath, FuseMountType, args.fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
