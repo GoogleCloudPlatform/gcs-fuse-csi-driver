@@ -61,7 +61,7 @@ var (
 )
 
 func TestPrepareMountArgs(t *testing.T) {
-	t.Parallel()
+	// Do not parallelize [e.g t.Parallel()] because all testcases share testPrometheusPort.
 
 	testCases := []struct {
 		name                   string
@@ -550,7 +550,6 @@ func TestPrepareMountArgs(t *testing.T) {
 	testPrometheusPort := prometheusPort
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Do not parallelize [e.g t.Parallel()] because all testcases share testPrometheusPort.
 			found := slices.Contains(tc.mc.Options, util.DisableMetricsForGKE+":true")
 			if !found {
 				tc.expectedArgs["prometheus-port"] = strconv.Itoa(testPrometheusPort)
