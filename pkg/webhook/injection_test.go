@@ -1940,38 +1940,35 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 			si.PvLister = informer.Core().V1().PersistentVolumes().Lister()
 			si.PvcLister = informer.Core().V1().PersistentVolumeClaims().Lister()
 			informer.Start(ctx.Done())
-			_, err := fakeClient.StorageV1().StorageClasses().Create(context.TODO(), tc.sc, metav1.CreateOptions{})
-
+			err := informer.Storage().V1().StorageClasses().Informer().GetStore().Add(tc.sc)
 			if err != nil {
 				t.Fatalf("failed to setup test SC: %v", err)
 			}
-			_, err = fakeClient.CoreV1().PersistentVolumes().Create(context.TODO(), tc.pv, metav1.CreateOptions{})
+			err = informer.Core().V1().PersistentVolumes().Informer().GetStore().Add(tc.pv)
 			if err != nil {
 				t.Fatalf("failed to setup test PV: %v", err)
 			}
-			_, err = fakeClient.CoreV1().PersistentVolumes().Create(context.TODO(), &corev1.PersistentVolume{
+			err = informer.Core().V1().PersistentVolumes().Informer().GetStore().Add(&corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "pv-mention-prefetch",
-				}}, metav1.CreateOptions{})
+				}})
 			if err != nil {
 				t.Fatalf("failed to setup test PV: %v", err)
 			}
 
-			_, err = fakeClient.CoreV1().PersistentVolumeClaims("").Create(context.TODO(), tc.pvc, metav1.CreateOptions{})
+			err = informer.Core().V1().PersistentVolumeClaims().Informer().GetStore().Add(tc.pvc)
 			if err != nil {
 				t.Fatalf("failed to setup test PVC: %v", err)
 			}
-			_, err = fakeClient.CoreV1().PersistentVolumeClaims("").Create(context.TODO(), &corev1.PersistentVolumeClaim{
+			err = informer.Core().V1().PersistentVolumeClaims().Informer().GetStore().Add(&corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "pvc-mention-prefetch",
 				}, Spec: corev1.PersistentVolumeClaimSpec{
 					VolumeName: "pv-mention-prefetch",
-				}}, metav1.CreateOptions{})
+				}})
 			if err != nil {
 				t.Fatalf("failed to setup test PVC: %v", err)
 			}
-
-			informer.WaitForCacheSync(ctx.Done())
 
 			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil)
 			t.Logf("%s resulted in %v and error: %v", tc.testName, err == nil, err)
