@@ -18,6 +18,7 @@ limitations under the License.
 package sidecarmounter
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -526,16 +527,17 @@ func TestPrepareMountArgs(t *testing.T) {
 	testPrometheusPort := prometheusPort
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			expectedArgs := maps.Clone(tc.expectedArgs)
 			found := slices.Contains(tc.mc.Options, util.DisableMetricsForGKE+":true")
 			if !found {
-				tc.expectedArgs["prometheus-port"] = strconv.Itoa(testPrometheusPort)
+				expectedArgs["prometheus-port"] = strconv.Itoa(testPrometheusPort)
 			}
 			// Increase port value to match behavior of prepareMountArgs()
 			testPrometheusPort++
 
 			tc.mc.prepareMountArgs()
-			if !reflect.DeepEqual(tc.mc.FlagMap, tc.expectedArgs) {
-				t.Errorf("Got args %v, but expected %v", tc.mc.FlagMap, tc.expectedArgs)
+			if !reflect.DeepEqual(tc.mc.FlagMap, expectedArgs) {
+				t.Errorf("Got args %v, but expected %v", tc.mc.FlagMap, expectedArgs)
 			}
 
 			if !reflect.DeepEqual(tc.mc.ConfigFileFlagMap, tc.expectedConfigMapArgs) {
