@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	klog "k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -717,6 +718,154 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		ginkgo.By("All pods successfully authenticated using the same federation configuration")
 	})
+	validatePermissionDenied := func(podName string) {
+		foundAuthFailure := false
+		foundWrongReason := false
+		var lastEvents []corev1.Event
+
+		ginkgo.By("Waiting for PermissionDenied auth failure")
+
+		for i := 0; i < 60; i++ {
+			pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, podName, metav1.GetOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			for _, cs := range pod.Status.ContainerStatuses {
+				if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CreateContainerError" {
+					ginkgo.By(fmt.Sprintf("CreateContainerError on %s: %s", cs.Name, cs.State.Waiting.Message))
+				}
+			}
+
+			events, err := f.ClientSet.CoreV1().Events(f.Namespace.Name).List(ctx,
+				metav1.ListOptions{
+					FieldSelector: fmt.Sprintf(
+						"involvedObject.name=%s",
+						podName,
+					),
+				},
+			)
+
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			lastEvents = events.Items
+			for _, e := range events.Items {
+
+				ginkgo.By(fmt.Sprintf("Event [%s]: %s", e.Reason, e.Message))
+
+				if strings.Contains(e.Message, "PermissionDenied") && (strings.Contains(e.Message, "storage.objects.list") || strings.Contains(e.Message, "storageLayout") || strings.Contains(e.Message, "failed to get GCS bucket")) {
+					foundAuthFailure = true
+					foundWrongReason = false
+					ginkgo.By("Confirmed PermissionDenied auth failure")
+					break
+				}
+
+				if !foundAuthFailure && (strings.Contains(e.Message, "transport endpoint is not connected") || strings.Contains(e.Message, "failed to generate container") || strings.Contains(e.Message, "failed to stat")) {
+					foundWrongReason = true
+				}
+			}
+
+			if foundAuthFailure {
+				break
+			}
+			time.Sleep(5 * time.Second)
+		}
+
+		if !foundAuthFailure {
+			ginkgo.By("PermissionDenied not found — printing debug info")
+
+			pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, podName, metav1.GetOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			ginkgo.By(fmt.Sprintf("Final Pod Phase: %s", pod.Status.Phase))
+
+			for _, cs := range pod.Status.ContainerStatuses {
+				if cs.State.Waiting != nil {
+					ginkgo.By(fmt.Sprintf("Container %s Waiting: reason=%s message=%s", cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message))
+				}
+
+				if cs.State.Terminated != nil {
+					ginkgo.By(fmt.Sprintf("Container %s Terminated: reason=%s message=%s", cs.Name, cs.State.Terminated.Reason, cs.State.Terminated.Message))
+				}
+			}
+
+			for _, e := range lastEvents {
+				ginkgo.By(fmt.Sprintf("Last Event [%s]: %s", e.Reason, e.Message))
+			}
+		}
+
+		gomega.Expect(foundWrongReason).To(gomega.BeFalse(), "Test failed for wrong reason instead of PermissionDenied auth failure")
+
+		gomega.Expect(foundAuthFailure).To(gomega.BeTrue(), "Expected PermissionDenied auth failure but none found")
+	}
+
+	validatePodNeverRunning := func(podName string) {
+		ginkgo.By("Confirming pod never reaches Running state")
+		podReachedRunning := false
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, podName, metav1.GetOptions{})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			if pod.Status.Phase == corev1.PodRunning {
+				podReachedRunning = true
+				ginkgo.By("ERROR: Pod unexpectedly reached Running")
+				break
+			}
+			if pod.Status.Phase == corev1.PodFailed {
+				ginkgo.By("Pod reached Failed phase as expected")
+				break
+			}
+			time.Sleep(3 * time.Second)
+		}
+
+		gomega.Expect(podReachedRunning).To(gomega.BeFalse(), "Pod must not reach Running state")
+
+		pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, podName, metav1.GetOptions{})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		gomega.Expect(pod.Status.Phase).NotTo(gomega.Equal(corev1.PodRunning), fmt.Sprintf("Pod phase must not be Running, got: %s", pod.Status.Phase))
+	}
+
+	ginkgo.It("should fail authentication when KSA is not bound to IAM service account",
+		func() {
+			isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+			if pattern.VolType == storageframework.DynamicPV {
+				e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+			}
+
+			const (
+				ksaName    = "gcs-fuse-oidc-ksa"
+				volumeName = "gcs-volume"
+				mountPath  = "/mnt/gcs"
+			)
+			var credentialConfigMapName string
+
+			if isOSS {
+				init(specs.SkipCSIBucketAccessCheckPrefix)
+				ginkgo.DeferCleanup(cleanup)
+				credentialConfigMapName = "oidc-auth-failure-credentials"
+				_, _ = setupOSSWIFPrincipal(ksaName, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+
+			} else {
+				init()
+				ginkgo.DeferCleanup(cleanup)
+				ginkgo.By("Creating unbound KSA")
+				unboundKSA := &corev1.ServiceAccount{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      ksaName,
+						Namespace: f.Namespace.Name,
+					},
+				}
+
+				_, err := f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).Create(ctx, unboundKSA, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				ginkgo.DeferCleanup(func() {
+					_ = f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).Delete(ctx, ksaName, metav1.DeleteOptions{})
+				})
+			}
+			ginkgo.By("Deploying pod")
+			tPod := deployWIFPod(ksaName, credentialConfigMapName, volumeName, mountPath)
+
+			ginkgo.DeferCleanup(func() { tPod.Cleanup(ctx) })
+			podName := tPod.GetPodName()
+			validatePermissionDenied(podName)
+			validatePodNeverRunning(podName)
+		},
+	)
 }
 
 // addWorkloadIdentityBinding grants roles/iam.workloadIdentityUser on the given GCP service
