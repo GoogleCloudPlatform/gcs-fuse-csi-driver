@@ -43,9 +43,9 @@ func getDefaultMetadataPrefetchConfig(image string) *Config {
 		CPURequest:              resource.MustParse("10m"),
 		CPULimit:                resource.MustParse("50m"),
 		MemoryRequest:           resource.MustParse("10Mi"),
-		MemoryLimit:             resource.MustParse("10Mi"),
+		MemoryLimit:             resource.MustParse("250Mi"),
 		EphemeralStorageRequest: resource.MustParse("10Mi"),
-		EphemeralStorageLimit:   resource.MustParse("10Mi"),
+		EphemeralStorageLimit:   resource.MustParse("0"),
 		ImagePullPolicy:         "Always",
 		ContainerImage:          image,
 	}
