@@ -163,6 +163,12 @@ func TestJoinMountOptions(t *testing.T) {
 			newOptions:      []string{"experimental-local-socket-address=144.2.2.0"},
 			expectedOptions: []string{"experimental-local-socket-address=128.0.0.1"},
 		},
+		{
+			name:            "should overwrite enable-sidecar-bucket-access-check",
+			existingOptions: []string{"o=noexec", "enable-sidecar-bucket-access-check=true"},
+			newOptions:      []string{"enable-sidecar-bucket-access-check=false"},
+			expectedOptions: []string{"o=noexec", "enable-sidecar-bucket-access-check=false"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1139,6 +1145,106 @@ func TestOverrideStorageEndpointInternal(t *testing.T) {
 
 			if diff := cmp.Diff(output, tc.expectedOptions); diff != "" {
 				t.Errorf("unexpected options slice (-got, +want)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestHasMountOption(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		options  []string
+		key      string
+		expected bool
+	}{
+		{
+			name:     "key exists with value",
+			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check=true", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: true,
+		},
+		{
+			name:     "key exists without value",
+			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: true,
+		},
+		{
+			name:     "key does not exist",
+			options:  []string{"o=noexec", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: false,
+		},
+		{
+			name:     "empty options list",
+			options:  []string{},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: false,
+		},
+		{
+			name:     "key is prefix of another option",
+			options:  []string{"enable-sidecar-bucket-access-check-suffix=true"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hasMountOption(tc.options, tc.key)
+			if got != tc.expected {
+				t.Errorf("hasMountOption(%v, %q) = %v; want %v", tc.options, tc.key, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGetMountOptionValue(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		options  []string
+		key      string
+		expected string
+	}{
+		{
+			name:     "key exists with value",
+			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check=true", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "true",
+		},
+		{
+			name:     "key exists without value",
+			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "",
+		},
+		{
+			name:     "key does not exist",
+			options:  []string{"o=noexec", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "",
+		},
+		{
+			name:     "empty options list",
+			options:  []string{},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "",
+		},
+		{
+			name:     "multiple occurrences - returns last one",
+			options:  []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "false",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := getMountOptionValue(tc.options, tc.key)
+			if got != tc.expected {
+				t.Errorf("getMountOptionValue(%v, %q) = %q; want %q", tc.options, tc.key, got, tc.expected)
 			}
 		})
 	}

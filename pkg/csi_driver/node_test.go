@@ -833,6 +833,131 @@ func TestNodePublishVolumeEnableGCSFuseKernelParams(t *testing.T) {
 	}
 }
 
+func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                           string
+		enableSidecarBucketAccessCheck bool
+		userMountOptions               string
+		assumeGoodSidecarVersion       bool
+		expectedOptions                []string
+		unexpectedOptions              []string
+	}{
+		{
+			name:                           "sidecar check enabled globally, user does not specify option, sidecar check should be enabled",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "",
+			assumeGoodSidecarVersion:       true,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:                           "sidecar check enabled globally, user specifies false, sidecar check should be disabled",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "enable-sidecar-bucket-access-check=false",
+			assumeGoodSidecarVersion:       true,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=false"},
+			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:                           "sidecar check enabled globally, user specifies true, sidecar check should be enabled",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "enable-sidecar-bucket-access-check=true",
+			assumeGoodSidecarVersion:       true,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:                           "sidecar check disabled globally, user does not specify option, sidecar check should be disabled (absent)",
+			enableSidecarBucketAccessCheck: false,
+			userMountOptions:               "",
+			assumeGoodSidecarVersion:       true,
+			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+		},
+		{
+			name:                           "sidecar check disabled globally, user specifies true, sidecar check should be enabled",
+			enableSidecarBucketAccessCheck: false,
+			userMountOptions:               "enable-sidecar-bucket-access-check=true",
+			assumeGoodSidecarVersion:       true,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:                           "sidecar check disabled globally, user specifies false, sidecar check should be disabled",
+			enableSidecarBucketAccessCheck: false,
+			userMountOptions:               "enable-sidecar-bucket-access-check=false",
+			assumeGoodSidecarVersion:       true,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=false"},
+			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:                           "sidecar check enabled globally, unsupported sidecar version, user does not specify, sidecar check should be absent",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "",
+			assumeGoodSidecarVersion:       false,
+			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+		},
+		{
+			name:                           "sidecar check enabled globally, unsupported sidecar version, user specifies true, sidecar check should be enabled",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "enable-sidecar-bucket-access-check=true",
+			assumeGoodSidecarVersion:       false,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:                           "sidecar check enabled globally, unsupported sidecar version, user specifies false, sidecar check should be disabled",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "enable-sidecar-bucket-access-check=false",
+			assumeGoodSidecarVersion:       false,
+			expectedOptions:                []string{"enable-sidecar-bucket-access-check=false"},
+			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testTargetPath, cleanup := setupMountTarget(t)
+			defer cleanup()
+
+			volumeContext := map[string]string{
+				VolumeContextKeyPodName:            "test-pod",
+				VolumeContextKeyPodNamespace:       "test-ns",
+				VolumeContextKeyServiceAccountName: "test-sa",
+			}
+			if tc.userMountOptions != "" {
+				volumeContext[VolumeContextKeyMountOptions] = tc.userMountOptions
+			}
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    volumeContext,
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+			driver.config.EnableSidecarBucketAccessCheck = tc.enableSidecarBucketAccessCheck
+			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns := newNodeServer(driver, fakeMounter)
+
+			_, err := ns.NodePublishVolume(context.TODO(), req)
+			if err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOptions,
+			},
+				tc.unexpectedOptions)
+		})
+	}
+}
+
 type volumeTestCase struct {
 	name                         string
 	totalEphemeralVolumeCount    int
