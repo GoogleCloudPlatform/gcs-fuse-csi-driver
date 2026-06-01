@@ -207,6 +207,7 @@ func (mc *MountConfig) prepareMountArgs() {
 	invalidArgs := []string{}
 
 	mc.GcsFuseNumaNode = -1
+	enableSidecarBucketAccessCheckParsed := false
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
 
@@ -276,7 +277,10 @@ func (mc *MountConfig) prepareMountArgs() {
 			continue
 
 		case util.EnableSidecarBucketAccessCheckConst:
-			mc.EnableSidecarBucketAccessCheck = value == util.TrueStr
+			if !enableSidecarBucketAccessCheckParsed {
+				mc.EnableSidecarBucketAccessCheck = value == util.TrueStr
+				enableSidecarBucketAccessCheckParsed = true
+			}
 			continue
 
 		case util.PodNamespaceConst:
