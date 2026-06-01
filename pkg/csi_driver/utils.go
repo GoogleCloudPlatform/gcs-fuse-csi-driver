@@ -182,9 +182,10 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 // joinMountOptions joins mount options eliminating duplicates.
 func joinMountOptions(existingOptions []string, newOptions []string) []string {
 	overwritableOptions := map[string]string{
-		"gid":       "",
-		"file-mode": "",
-		"dir-mode":  "",
+		"gid":                                    "",
+		"file-mode":                              "",
+		"dir-mode":                               "",
+		util.EnableSidecarBucketAccessCheckConst: "",
 	}
 
 	ignorableOptions := map[string]bool{
@@ -776,4 +777,27 @@ func transformKeysToSet(inputMap map[string]string) map[string]struct{} {
 		outputSet[key] = struct{}{}
 	}
 	return outputSet
+}
+
+func hasMountOption(options []string, key string) bool {
+	for _, o := range options {
+		k, _, _ := strings.Cut(o, "=")
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+func getMountOptionValue(options []string, key string) string {
+	for i := len(options) - 1; i >= 0; i-- {
+		k, v, found := strings.Cut(options[i], "=")
+		if k == key {
+			if found {
+				return v
+			}
+			return ""
+		}
+	}
+	return ""
 }

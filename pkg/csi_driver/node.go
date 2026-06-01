@@ -181,7 +181,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
+	userExplicitlyEnabled := hasMountOption(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) && getMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) == util.TrueStr
+	userExplicitlyDisabled := hasMountOption(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) && getMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) == util.FalseStr
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
+		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, args.userSpecifiedIdentityProvider != "") {
 		if args.userSpecifiedIdentityProvider != "" {
@@ -193,7 +196,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
 	} else if enableSidecarBucketAccessCheckForSidecarVersion {
 		//Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheck)})
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(enableSidecarBucketAccessCheckForSidecarVersion)})
 	}
 
 	if enableSidecarBucketAccessCheckForSidecarVersion {
