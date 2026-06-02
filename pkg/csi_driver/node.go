@@ -197,7 +197,7 @@ enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupp
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
 	} else if enableSidecarBucketAccessCheckForSidecarVersion {
 		//Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(enableSidecarBucketAccessCheckForSidecarVersion)})
+	args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=true"})
 	}
 
 	if enableSidecarBucketAccessCheckForSidecarVersion {
