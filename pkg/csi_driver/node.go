@@ -181,7 +181,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-sidecarCheckVal := getMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
+sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
 userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
 userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
 enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&

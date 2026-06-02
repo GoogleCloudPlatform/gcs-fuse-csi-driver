@@ -779,7 +779,7 @@ func transformKeysToSet(inputMap map[string]string) map[string]struct{} {
 	return outputSet
 }
 
-func hasMountOption(options []string, key string) bool {
+func hasInternalMountOption(options []string, key string) bool {
 	for _, o := range options {
 		k, _, _ := strings.Cut(o, "=")
 		if k == key {
@@ -789,7 +789,7 @@ func hasMountOption(options []string, key string) bool {
 	return false
 }
 
-func getMountOptionValue(options []string, key string) string {
+func getInternalMountOptionValue(options []string, key string) string {
 	for i := len(options) - 1; i >= 0; i-- {
 		k, v, found := strings.Cut(options[i], "=")
 		if k == key {
