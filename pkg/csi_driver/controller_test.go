@@ -31,6 +31,7 @@ import (
 
 const (
 	testVolumeID = "test-volume-id"
+	testNodeID   = "test-node-id"
 )
 
 func initTestController(t *testing.T) csi.ControllerServer {
@@ -162,5 +163,88 @@ func TestDeleteVolume(t *testing.T) {
 		if !reflect.DeepEqual(resp, test.resp) {
 			t.Errorf("test %q failed:\ngot resp %+v,\nexpected resp %+v", test.name, resp, test.resp)
 		}
+	}
+}
+
+func TestControllerPublishVolume(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		req       *csi.ControllerPublishVolumeRequest
+		expectErr error
+	}{
+		{
+			name: "empty volume ID - should return error",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         "",
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "ControllerPublishVolume Volume ID must be provided"),
+		},
+		{
+			name: "empty node ID - should return error",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           "",
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "ControllerPublishVolume Node ID must be provided"),
+		},
+		{
+			name: "empty volume capabilities - should return error",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: nil,
+				VolumeContext:    map[string]string{},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "volume capability must be provided"),
+		},
+		{
+			name: "missing sharedMount - should return success",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{},
+			},
+			expectErr: nil,
+		},
+		{
+			name: "sharedMount true - should return success",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			expectErr: nil,
+		},
+		{
+			name: "sharedMount false - should return success",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "false",
+				},
+			},
+			expectErr: nil,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			s := initTestController(t)
+			_, err := s.ControllerPublishVolume(context.Background(), test.req)
+			if !errors.Is(err, test.expectErr) {
+				t.Errorf("Expected error: %v, got: %v", test.expectErr, err)
+			}
+		})
 	}
 }

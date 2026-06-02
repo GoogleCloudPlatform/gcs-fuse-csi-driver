@@ -66,6 +66,7 @@ const (
 	VolumeContextKeyIdentityPool               = "identityPool"
 	VolumeContextKeyMultiNICIndex              = "multiNICIndex"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
+	VolumeContextSharedNodeMount               = "sharedMount"
 	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
