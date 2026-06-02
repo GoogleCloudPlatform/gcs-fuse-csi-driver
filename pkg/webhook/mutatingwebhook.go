@@ -59,7 +59,7 @@ const (
 	NumaPinningAnnotation                            = "gke-gcsfuse/enable-numa-pinning"
 	// AdditionalVolumeMountsAnnotation is used to specify additional volumes to mount into the GCS Fuse sidecar.
 	// The expected format is a comma-separated list of volumeName:mountPath (e.g., "vol1:/path1,vol2:/path2").
-	AdditionalVolumeMountsAnnotation                 = "gke-gcsfuse/additional-volume-mounts"
+	AdditionalVolumeMountsAnnotation = "gke-gcsfuse/additional-volume-mounts"
 )
 
 var (
@@ -166,7 +166,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		}
 
 		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
-			GacEnv: &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
+			GacEnv:                 &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
 			CredentialVolumeMounts: credentialVolumeMounts,
 			EnvVars:                envVars,
 		}

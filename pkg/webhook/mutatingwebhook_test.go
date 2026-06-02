@@ -597,8 +597,8 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			nodes:        nativeSupportNodes(),
 		},
 		{
-			name:         "workload identity with additional volume mounts injection successful test.",
-			operation:    admissionv1.Create,
+			name:      "workload identity with additional volume mounts injection successful test.",
+			operation: admissionv1.Create,
 			inputPod: func() *corev1.Pod {
 				pod := validInputPodWithWorkloadIdentity("test-credentials")
 				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:/scripts,meta-certs-vol:/etc/meta/certs"
