@@ -41,10 +41,12 @@ type FakePodConfig struct {
 }
 
 type FakePVConfig struct {
-	Annotations map[string]string
-	SCName      string
-	DriverName  string
-	Name        string
+	Annotations  map[string]string
+	SCName       string
+	DriverName   string
+	Name         string
+	VolumeHandle string
+	ClaimRef     *corev1.ObjectReference
 }
 
 type FakePVCConfig struct {
@@ -60,11 +62,12 @@ type FakeSCConfig struct {
 }
 
 type FakeClientset struct {
-	fakePod  *corev1.Pod
-	fakeNode *corev1.Node
-	fakePVs  map[string]*corev1.PersistentVolume
-	fakePVCs map[string]*corev1.PersistentVolumeClaim
-	fakeSCs  map[string]*storagev1.StorageClass
+	fakePod   *corev1.Pod
+	fakeNode  *corev1.Node
+	fakePVs   map[string]*corev1.PersistentVolume
+	fakePVCs  map[string]*corev1.PersistentVolumeClaim
+	fakeSCs   map[string]*storagev1.StorageClass
+	ListPVErr error
 }
 
 func NewFakeClientset() *FakeClientset {
@@ -160,9 +163,11 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 			StorageClassName: pvConfig.SCName,
 			PersistentVolumeSource: corev1.PersistentVolumeSource{
 				CSI: &corev1.CSIPersistentVolumeSource{
-					Driver: pvConfig.DriverName,
+					Driver:       pvConfig.DriverName,
+					VolumeHandle: pvConfig.VolumeHandle,
 				},
 			},
+			ClaimRef: pvConfig.ClaimRef,
 		},
 	}
 
@@ -222,6 +227,17 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	}
 
 	return c.fakePVs[""], nil
+}
+
+func (c *FakeClientset) ListPV() ([]*corev1.PersistentVolume, error) {
+	if c.ListPVErr != nil {
+		return nil, c.ListPVErr
+	}
+	var pvs []*corev1.PersistentVolume
+	for _, pv := range c.fakePVs {
+		pvs = append(pvs, pv)
+	}
+	return pvs, nil
 }
 
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {

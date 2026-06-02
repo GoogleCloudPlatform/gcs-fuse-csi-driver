@@ -155,6 +155,32 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return &csi.ControllerPublishVolumeResponse{}, nil
 	}
 
+	// Find the workload namespace where the mounter pod should be created by identifying the PVC
+	// bound to this volume's PV.
+	clientset := s.driver.config.K8sClients
+	pv, err := pvFromVolumeID(clientset, volumeID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if pv.Spec.ClaimRef == nil {
+		// The PV should be bound if ControllerPublishVolume is called. Return error since this is unexpected.
+		return nil, status.Errorf(codes.Internal, "pv %q is not bound to any pvc", pv.Name)
+	}
+	pvcName := pv.Spec.ClaimRef.Name
+	pvcNamespace := pv.Spec.ClaimRef.Namespace
+	if pvcNamespace == "" || pvcName == "" {
+		return nil, status.Errorf(codes.Internal, "pv claimRef namespace and name can't be empty, namespace: %q, name: %q", pvcNamespace, pvcName)
+	}
+	mounterPodNamespace := pvcNamespace
+
+	// Prepare mounter pod config.
+	podName := createMounterPodName(nodeID, volumeID)
+	_ = &mounterPodConfig{
+		podName:   podName,
+		namespace: mounterPodNamespace,
+		nodeID:    nodeID,
+	}
+
 	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
 	return &csi.ControllerPublishVolumeResponse{}, nil
 }
