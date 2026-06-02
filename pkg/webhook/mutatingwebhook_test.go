@@ -1874,6 +1874,26 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 			},
 			expectError: false, // Empty annotation value should be ignored
 		},
+		{
+			name: "allow pod with hostNetwork=true and executable credential configuration",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation:                    "true",
+						GCPWorkloadIdentityCredentialConfigMapAnnotation: "executable-credentials",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   true,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError: false, // Executable credentials should be ALLOWED on hostNetwork pods
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1881,18 +1901,29 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 			// Create fake clientset with necessary ConfigMap for OIDC tests
 			fakeClient := fake.NewSimpleClientset()
 			if tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] != "" {
+				configJson := `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"file": "/var/run/service-account/token"
+							}
+						}`
+				if tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] == "executable-credentials" {
+					configJson = `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"executable": {
+									"command": "/scripts/fetch-token"
+								}
+							}
+						}`
+				}
 				configMap := &corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation],
 						Namespace: testNamespace,
 					},
 					Data: map[string]string{
-						"credential-configuration.json": `{
-							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
-							"credential_source": {
-								"file": "/var/run/service-account/token"
-							}
-						}`,
+						"credential-configuration.json": configJson,
 					},
 				}
 				_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
