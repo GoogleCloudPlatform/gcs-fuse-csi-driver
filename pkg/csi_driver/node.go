@@ -181,10 +181,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	userExplicitlyEnabled := hasMountOption(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) && getMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) == util.TrueStr
-	userExplicitlyDisabled := hasMountOption(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) && getMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst) == util.FalseStr
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
-		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
+sidecarCheckVal := getMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
+userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
+userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
+enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
+	(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, args.userSpecifiedIdentityProvider != "") {
 		if args.userSpecifiedIdentityProvider != "" {
