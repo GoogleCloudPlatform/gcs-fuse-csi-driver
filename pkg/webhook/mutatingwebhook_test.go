@@ -623,6 +623,13 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			nodes:        nativeSupportNodes(),
 		},
 
+		{
+			name:         "executable workload identity injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithWorkloadIdentity("executable-credentials"),
+			wantResponse: wantExecutableWorkloadIdentityResponse(t, "executable-credentials"),
+			nodes:        nativeSupportNodes(),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -643,18 +650,29 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			// Create workload identity ConfigMap if the test uses it
 			if tc.inputPod != nil && tc.inputPod.Annotations != nil {
 				if configMapName, ok := tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" {
+					configJson := `{
+								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+								"credential_source": {
+									"file": "/var/run/service-account/token"
+								}
+							}`
+					if configMapName == "executable-credentials" {
+						configJson = `{
+								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+								"credential_source": {
+									"executable": {
+										"command": "/scripts/fetch-token"
+									}
+								}
+							}`
+					}
 					configMap := &corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      configMapName,
 							Namespace: testNamespace,
 						},
 						Data: map[string]string{
-							"credential-configuration.json": `{
-								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
-								"credential_source": {
-									"file": "/var/run/service-account/token"
-								}
-							}`,
+							"credential-configuration.json": configJson,
 						},
 					}
 					_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
@@ -1970,4 +1988,53 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func wantExecutableWorkloadIdentityResponse(t *testing.T, configMapName string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithWorkloadIdentity(configMapName)
+	newPod := *modifySpecWithExecutableWorkloadIdentity(*originalPod, configMapName)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func modifySpecWithExecutableWorkloadIdentity(newPod corev1.Pod, configMapName string) *corev1.Pod {
+	config := FakeConfig()
+
+	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
+	if configMapName != "" {
+		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
+			GacEnv: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "credential-configuration.json"),
+			},
+			CredentialVolumeMounts: []corev1.VolumeMount{
+				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+			},
+			EnvVars: []corev1.EnvVar{
+				{
+					Name:  "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
+					Value: "1",
+				},
+			},
+		}
+
+		newPod.Spec.Volumes = append(newPod.Spec.Volumes,
+			corev1.Volume{
+				Name: SidecarContainerWICredentialConfigMapVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: configMapName,
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+		)
+	}
+
+	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
+
+	return &newPod
 }
