@@ -611,6 +611,18 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts,meta-certs-vol:/etc/meta/certs"),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:      "workload identity with invalid format and missing additional volume mounts injection test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "valid-but-missing-vol:/scripts,invalid-format"
+				return pod
+			}(),
+			wantResponse: wantAdditionalVolumeMountsResponseWithMissingVolume(t, "test-credentials", "valid-but-missing-vol:/scripts"),
+			nodes:        nativeSupportNodes(),
+		},
+
 	}
 
 	for _, tc := range testCases {
@@ -1654,6 +1666,15 @@ func wantAdditionalVolumeMountsResponse(t *testing.T, configMapName string, addi
 		corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
+
+	newPod := *modifySpecWithAdditionalVolumeMounts(*originalPod, configMapName, additionalMounts)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func wantAdditionalVolumeMountsResponseWithMissingVolume(t *testing.T, configMapName string, additionalMounts string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithWorkloadIdentity(configMapName)
+	originalPod.Annotations[AdditionalVolumeMountsAnnotation] = additionalMounts
 
 	newPod := *modifySpecWithAdditionalVolumeMounts(*originalPod, configMapName, additionalMounts)
 	return generatePatch(t, originalPod, &newPod)
