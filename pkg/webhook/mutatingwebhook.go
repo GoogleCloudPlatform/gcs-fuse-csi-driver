@@ -154,13 +154,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 					"Please either remove hostNetwork or use standard Workload Identity authentication. ",
 					GCPWorkloadIdentityCredentialConfigMapAnnotation))
 		}
-		mountPath := filepath.Dir(credentialConfig.CredentialSource.File)
-
 		credentialVolumeMounts := []corev1.VolumeMount{
 			{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
 		}
 		var envVars []corev1.EnvVar
 		if credentialConfig.CredentialSource.Executable == nil {
+			mountPath := filepath.Dir(credentialConfig.CredentialSource.File)
 			credentialVolumeMounts = append(credentialVolumeMounts, corev1.VolumeMount{Name: SidecarContainerWITokenVolumeName, MountPath: mountPath})
 		} else {
 			envVars = append(envVars, corev1.EnvVar{Name: "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES", Value: "1"})
@@ -180,10 +179,23 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		}
 		mounts := strings.Split(additionalMounts, ",")
 		for _, mount := range mounts {
+			mount = strings.TrimSpace(mount)
+			if mount == "" {
+				continue
+			}
 			parts := strings.Split(mount, ":")
 			if len(parts) == 2 {
-				volName := parts[0]
-				mountPath := parts[1]
+				volName := strings.TrimSpace(parts[0])
+				mountPath := strings.TrimSpace(parts[1])
+
+				if volName == "" || mountPath == "" {
+					klog.Warningf("Invalid empty volume name or mount path in %s: %s", AdditionalVolumeMountsAnnotation, mount)
+					continue
+				}
+
+				if !strings.HasPrefix(mountPath, "/") {
+					klog.Warningf("Mount path %q specified in %s is not an absolute path", mountPath, AdditionalVolumeMountsAnnotation)
+				}
 
 				if !volumeExists(pod.Spec.Volumes, volName) {
 					klog.Warningf("Volume %q specified in %s not found in pod spec", volName, AdditionalVolumeMountsAnnotation)

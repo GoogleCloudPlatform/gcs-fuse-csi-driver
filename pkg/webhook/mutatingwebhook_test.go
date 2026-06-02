@@ -622,6 +622,21 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantAdditionalVolumeMountsResponseWithMissingVolume(t, "test-credentials", "valid-but-missing-vol:/scripts"),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:      "workload identity with additional volume mounts containing whitespace and relative path injection test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "  binary-volume : /scripts , meta-certs-vol : relative/path  "
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts,meta-certs-vol:relative/path"),
+			nodes:        nativeSupportNodes(),
+		},
 
 		{
 			name:         "executable workload identity injection successful test.",
