@@ -127,6 +127,43 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 	}, nil
 }
 
+func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	// Validate arguments
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerPublishVolume Volume ID must be provided")
+	}
+	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	nodeID := req.GetNodeId()
+	if len(nodeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerPublishVolume Node ID must be provided")
+	}
+
+	// Acquires the lock for the volume on that node only, because we need to support the ability
+	// to publish the same volume onto different nodes concurrently
+	lockingVolumeID := fmt.Sprintf("%s/%s", nodeID, volumeID)
+	if acquired := s.volumeLocks.TryAcquire(lockingVolumeID); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, lockingVolumeID)
+	}
+	defer s.volumeLocks.Release(lockingVolumeID)
+
+	// Skip ControllerPublishVolume if the volume is not using the shared mount feature.
+	vc := req.GetVolumeContext()
+	if !sharedMount(vc) {
+		return &csi.ControllerPublishVolumeResponse{}, nil
+	}
+
+	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
+	return &csi.ControllerPublishVolumeResponse{}, nil
+}
+
+// TODO(urielguzman): implement ControllerUnpublishVolume.
+func (s *controllerServer) ControllerUnpublishVolume(_ context.Context, _ *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
+}
+
 func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Validate arguments
 	name := req.GetName()
