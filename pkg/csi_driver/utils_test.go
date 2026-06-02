@@ -1150,7 +1150,7 @@ func TestOverrideStorageEndpointInternal(t *testing.T) {
 	}
 }
 
-func TestHasMountOption(t *testing.T) {
+func TestHasInternalMountOption(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		name     string
@@ -1192,15 +1192,15 @@ func TestHasMountOption(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := hasMountOption(tc.options, tc.key)
+			got := hasInternalMountOption(tc.options, tc.key)
 			if got != tc.expected {
-				t.Errorf("hasMountOption(%v, %q) = %v; want %v", tc.options, tc.key, got, tc.expected)
+				t.Errorf("hasInternalMountOption(%v, %q) = %v; want %v", tc.options, tc.key, got, tc.expected)
 			}
 		})
 	}
 }
 
-func TestGetMountOptionValue(t *testing.T) {
+func TestGetInternalMountOptionValue(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		name     string
@@ -1242,9 +1242,9 @@ func TestGetMountOptionValue(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getMountOptionValue(tc.options, tc.key)
+			got := getInternalMountOptionValue(tc.options, tc.key)
 			if got != tc.expected {
-				t.Errorf("getMountOptionValue(%v, %q) = %q; want %q", tc.options, tc.key, got, tc.expected)
+				t.Errorf("getInternalMountOptionValue(%v, %q) = %q; want %q", tc.options, tc.key, got, tc.expected)
 			}
 		})
 	}
