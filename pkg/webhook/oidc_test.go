@@ -74,6 +74,45 @@ func TestParseCredentialConfigurationConfigMap(t *testing.T) {
 			},
 		},
 		{
+			name:          "valid credential configuration with executable",
+			configMapName: "executable-credentials",
+			configMapsInCluster: []*corev1.ConfigMap{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "executable-credentials",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"credential-configuration.json": `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"executable": {
+									"command": "/scripts/fetch-token"
+								}
+							}
+						}`,
+					},
+				},
+			},
+			expectError:      false,
+			expectedFilename: "credential-configuration.json",
+			expectedCredConfig: &CredentialConfig{
+				Audience: "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+				CredentialSource: struct {
+					File       string `json:"file,omitempty"`
+					Executable *struct {
+						Command string `json:"command"`
+					} `json:"executable,omitempty"`
+				}{
+					Executable: &struct {
+						Command string `json:"command"`
+					}{
+						Command: "/scripts/fetch-token",
+					},
+				},
+			},
+		},
+		{
 			name:                "configmap not found",
 			configMapName:       "missing-credentials",
 			configMapsInCluster: []*corev1.ConfigMap{},
@@ -423,6 +462,52 @@ func TestAppendWorkloadCredentialConfigurationVolumes(t *testing.T) {
 						ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{
 								Name: "root-level-credentials",
+							},
+							DefaultMode: &defaultMode,
+						},
+					},
+				},
+			},
+		},
+		{
+			name:          "successful volume injection for executable credential configuration",
+			configMapName: "executable-credentials",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: "default",
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{},
+				},
+			},
+			configMapsInCluster: []*corev1.ConfigMap{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "executable-credentials",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"credential-configuration.json": `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"executable": {
+									"command": "/scripts/fetch-token"
+								}
+							}
+						}`,
+					},
+				},
+			},
+			expectError:      false,
+			expectedFilename: "credential-configuration.json",
+			expectedVolumes: []corev1.Volume{
+				{
+					Name: SidecarContainerWICredentialConfigMapVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: "executable-credentials",
 							},
 							DefaultMode: &defaultMode,
 						},
