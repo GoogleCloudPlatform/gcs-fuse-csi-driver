@@ -29,6 +29,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -51,6 +52,7 @@ type Interface interface {
 	GetPV(name string) (*corev1.PersistentVolume, error)
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
+	ListPV() ([]*corev1.PersistentVolume, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -160,6 +162,7 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 			},
 			Spec: corev1.PersistentVolumeSpec{
 				StorageClassName: pvObj.Spec.StorageClassName,
+				ClaimRef:         pvObj.Spec.ClaimRef,
 			},
 		}
 
@@ -364,6 +367,15 @@ func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	}
 
 	return c.pvLister.Get(name)
+}
+
+func (c *Clientset) ListPV() ([]*corev1.PersistentVolume, error) {
+	if c.pvLister == nil {
+		return nil, errors.New("pv informer is not ready")
+	}
+
+	// TODO(urielguzman): Optimize lister to only filter for a specific label.
+	return c.pvLister.List(labels.Everything())
 }
 
 func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc/codes"
 )
@@ -919,7 +920,7 @@ func TestRemoveDisallowedMountOptions(t *testing.T) {
 
 func TestGenerateDisallowedFlagsMap(t *testing.T) {
 	t.Parallel()
-	driver := initTestDriver(t, nil)
+	driver := initTestDriver(t, nil, clientset.NewFakeClientset())
 	driver.config.FeatureOptions = &GCSDriverFeatureOptions{
 		FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{
 			EnableGcsfuseProfilesInternal: false,
