@@ -1939,7 +1939,6 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 			si.ScLister = informer.Storage().V1().StorageClasses().Lister()
 			si.PvLister = informer.Core().V1().PersistentVolumes().Lister()
 			si.PvcLister = informer.Core().V1().PersistentVolumeClaims().Lister()
-			informer.Start(ctx.Done())
 			_, err := fakeClient.StorageV1().StorageClasses().Create(context.TODO(), tc.sc, metav1.CreateOptions{})
 
 			if err != nil {
@@ -1971,6 +1970,7 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 				t.Fatalf("failed to setup test PVC: %v", err)
 			}
 
+			informer.Start(ctx.Done())
 			informer.WaitForCacheSync(ctx.Done())
 
 			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil)
