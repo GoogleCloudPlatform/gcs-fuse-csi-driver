@@ -182,10 +182,9 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 // joinMountOptions joins mount options eliminating duplicates.
 func joinMountOptions(existingOptions []string, newOptions []string) []string {
 	overwritableOptions := map[string]string{
-		"gid":                                    "",
-		"file-mode":                              "",
-		"dir-mode":                               "",
-		util.EnableSidecarBucketAccessCheckConst: "",
+		"gid":       "",
+		"file-mode": "",
+		"dir-mode":  "",
 	}
 
 	ignorableOptions := map[string]bool{

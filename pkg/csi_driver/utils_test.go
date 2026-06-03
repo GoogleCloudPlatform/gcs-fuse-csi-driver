@@ -163,12 +163,6 @@ func TestJoinMountOptions(t *testing.T) {
 			newOptions:      []string{"experimental-local-socket-address=144.2.2.0"},
 			expectedOptions: []string{"experimental-local-socket-address=128.0.0.1"},
 		},
-		{
-			name:            "should overwrite enable-sidecar-bucket-access-check",
-			existingOptions: []string{"o=noexec", "enable-sidecar-bucket-access-check=true"},
-			newOptions:      []string{"enable-sidecar-bucket-access-check=false"},
-			expectedOptions: []string{"o=noexec", "enable-sidecar-bucket-access-check=false"},
-		},
 	}
 
 	for _, tc := range testCases {
