@@ -171,17 +171,25 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	if pvcNamespace == "" || pvcName == "" {
 		return nil, status.Errorf(codes.Internal, "pv claimRef namespace and name can't be empty, namespace: %q, name: %q", pvcNamespace, pvcName)
 	}
-	mounterPodNamespace := pvcNamespace
+	podNamespace := pvcNamespace
 
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
-	_ = &mounterPodConfig{
+	podConfig := &mounterPodConfig{
 		podName:   podName,
-		namespace: mounterPodNamespace,
+		namespace: podNamespace,
 		nodeID:    nodeID,
+		// TODO(urielguzman): Replace with the actual mounter pod image.
+		image: "k8s.gcr.io/pause",
+	}
+
+	if err := createMounterPod(clientset, ctx, podConfig); err != nil {
+		// TODO(urielguzman): Wait for mounter pod to be scheduled before succeeding.
+		return nil, err
 	}
 
 	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
+	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.namespace, podConfig.podName, nodeID, volumeID)
 	return &csi.ControllerPublishVolumeResponse{}, nil
 }
 

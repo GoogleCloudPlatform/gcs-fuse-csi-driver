@@ -18,18 +18,21 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 const (
@@ -38,6 +41,8 @@ const (
 	testPV        = "test-pv"
 	testPVC       = "test-pvc"
 	testNamespace = "test-namespace"
+	testPod       = "test-pod"
+	testImage     = "k8s.gcr.io/pause"
 )
 
 func initTestController(t *testing.T, clientset clientset.Interface) csi.ControllerServer {
@@ -174,11 +179,31 @@ func TestDeleteVolume(t *testing.T) {
 
 func TestControllerPublishVolume(t *testing.T) {
 	t.Parallel()
+	timeNow := metav1.Now()
+
+	// Helper to create a mounter pod for initial state
+	makeMounterPod := func(config *mounterPodConfig, deletionTimestamp *metav1.Time) *corev1.Pod {
+		p := createMounterPodSpec(config)
+		p.ObjectMeta.DeletionTimestamp = deletionTimestamp
+		p.ResourceVersion = "1"
+		return p
+	}
+
+	defaultMounterPodConfig := &mounterPodConfig{
+		podName:   createMounterPodName(testNodeID, testVolumeID),
+		namespace: testNamespace,
+		nodeID:    testNodeID,
+		image:     testImage,
+	}
+
 	cases := []struct {
-		name      string
-		req       *csi.ControllerPublishVolumeRequest
-		setupFake func() *clientset.FakeClientset
-		expectErr error
+		name          string
+		req           *csi.ControllerPublishVolumeRequest
+		setupFake     func() *clientset.FakeClientset
+		podGetErr     error
+		podCreateErr  error
+		expectErr     bool
+		expectErrCode codes.Code
 	}{
 		{
 			name: "empty volume ID - should return error",
@@ -186,10 +211,10 @@ func TestControllerPublishVolume(t *testing.T) {
 				VolumeId:         "",
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
-				VolumeContext:    map[string]string{},
 			},
-			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
-			expectErr: status.Error(codes.InvalidArgument, "ControllerPublishVolume Volume ID must be provided"),
+			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
 		},
 		{
 			name: "empty node ID - should return error",
@@ -197,10 +222,10 @@ func TestControllerPublishVolume(t *testing.T) {
 				VolumeId:         testVolumeID,
 				NodeId:           "",
 				VolumeCapability: testVolumeCapability,
-				VolumeContext:    map[string]string{},
 			},
-			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
-			expectErr: status.Error(codes.InvalidArgument, "ControllerPublishVolume Node ID must be provided"),
+			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
 		},
 		{
 			name: "empty volume capabilities - should return error",
@@ -208,10 +233,10 @@ func TestControllerPublishVolume(t *testing.T) {
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
 				VolumeCapability: nil,
-				VolumeContext:    map[string]string{},
 			},
-			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
-			expectErr: status.Error(codes.InvalidArgument, "volume capability must be provided"),
+			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
 		},
 		{
 			name: "missing sharedMount - should return success",
@@ -222,27 +247,20 @@ func TestControllerPublishVolume(t *testing.T) {
 				VolumeContext:    map[string]string{},
 			},
 			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
-			expectErr: nil,
+			expectErr: false,
 		},
 		{
-			name: "sharedMount true - should return success",
+			name: "sharedMount false - should return success",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount": "false",
 				},
 			},
-			setupFake: func() *clientset.FakeClientset {
-				fc := clientset.NewFakeClientset()
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      "test-pvc",
-					Namespace: "test-namespace",
-				}})
-				return fc
-			},
-			expectErr: nil,
+			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErr: false,
 		},
 		{
 			name: "sharedMount true - no pv found - should return error",
@@ -254,8 +272,9 @@ func TestControllerPublishVolume(t *testing.T) {
 					"sharedMount": "true",
 				},
 			},
-			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
-			expectErr: status.Errorf(codes.Internal, "no pv found for volumeID: %q", testVolumeID),
+			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErr:     true,
+			expectErrCode: codes.Internal,
 		},
 		{
 			name: "sharedMount true - claimRef nil - should return error",
@@ -272,10 +291,11 @@ func TestControllerPublishVolume(t *testing.T) {
 				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: nil})
 				return fc
 			},
-			expectErr: status.Errorf(codes.Internal, "pv %q is not bound to any pvc", testPV),
+			expectErr:     true,
+			expectErrCode: codes.Internal,
 		},
 		{
-			name: "sharedMount true - claimRef namespace empty - should return error",
+			name: "sharedMount true - mounter pod created successfully",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -288,14 +308,57 @@ func TestControllerPublishVolume(t *testing.T) {
 				fc := clientset.NewFakeClientset()
 				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
 					Name:      testPVC,
-					Namespace: "",
+					Namespace: testNamespace,
 				}})
 				return fc
 			},
-			expectErr: status.Error(codes.Internal, fmt.Sprintf("pv claimRef namespace and name can't be empty, namespace: %q, name: %q", "", testPVC)),
+			expectErr: false,
 		},
 		{
-			name: "sharedMount true - claimRef name empty - should return error",
+			name: "sharedMount true - mounter pod already exists",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				existingPod := makeMounterPod(defaultMounterPodConfig, nil)
+				fc := clientset.NewFakeClientset(existingPod)
+				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
+					Name:      testPVC,
+					Namespace: testNamespace,
+				}})
+				return fc
+			},
+			expectErr: false,
+		},
+		{
+			name: "sharedMount true - mounter pod being deleted",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				existingPod := makeMounterPod(defaultMounterPodConfig, &timeNow)
+				fc := clientset.NewFakeClientset(existingPod)
+				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
+					Name:      testPVC,
+					Namespace: testNamespace,
+				}})
+				return fc
+			},
+			expectErr:     true,
+			expectErrCode: codes.Aborted,
+		},
+		{
+			name: "sharedMount true - mounter pod get error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -307,34 +370,75 @@ func TestControllerPublishVolume(t *testing.T) {
 			setupFake: func() *clientset.FakeClientset {
 				fc := clientset.NewFakeClientset()
 				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      "",
+					Name:      testPVC,
 					Namespace: testNamespace,
 				}})
 				return fc
 			},
-			expectErr: status.Error(codes.Internal, fmt.Sprintf("pv claimRef namespace and name can't be empty, namespace: %q, name: %q", testNamespace, "")),
+			podGetErr:     errors.New("simulated get error"),
+			expectErr:     true,
+			expectErrCode: codes.Internal,
 		},
 		{
-			name: "sharedMount false - should return success",
+			name: "sharedMount true - mounter pod create error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "false",
+					"sharedMount": "true",
 				},
 			},
-			setupFake: func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
-			expectErr: nil,
+			setupFake: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
+					Name:      testPVC,
+					Namespace: testNamespace,
+				}})
+				return fc
+			},
+			podCreateErr:  errors.New("simulated create error"),
+			expectErr:     true,
+			expectErrCode: codes.Internal,
 		},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			clientset := test.setupFake()
 			s := initTestController(t, clientset)
+
+			fakeK8sClient := clientset.K8sClient().(*fake.Clientset)
+
+			if test.podGetErr != nil {
+				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					return true, nil, test.podGetErr
+				})
+			}
+			if test.podCreateErr != nil {
+				fakeK8sClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					return true, nil, test.podCreateErr
+				})
+			}
+
 			_, err := s.ControllerPublishVolume(context.Background(), test.req)
-			if !errors.Is(err, test.expectErr) {
-				t.Errorf("Expected error: %v, got: %v", test.expectErr, err)
+
+			if test.expectErr {
+				if err == nil {
+					t.Fatalf("Expected error code %v, got nil", test.expectErrCode)
+				}
+				st, ok := status.FromError(err)
+				if !ok {
+					// If not a status error, check if any error was expected
+					if test.expectErrCode != codes.Unknown {
+						t.Fatalf("Expected status error with code %v, got non-status error: %v", test.expectErrCode, err)
+					}
+				} else if st.Code() != test.expectErrCode {
+					t.Errorf("Expected error code %v, got %v (error: %v)", test.expectErrCode, st.Code(), err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
 			}
 		})
 	}

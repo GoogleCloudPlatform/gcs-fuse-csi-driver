@@ -59,6 +59,7 @@ const (
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
 	EnableCloudProfilerConst            = "enable-cloud-profiler"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
+	SidecarContainerTmpVolumePath       = "/gke-gcsfuse-tmp"
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
@@ -70,6 +71,7 @@ const (
 	AutoGoMemLimitRatioConst            = "auto-gomemlimit-ratio"
 	GoMemLimitCgroupPercentage          = 0.95
 	StorageEndpointInternal             = "storage-endpoint-internal"
+	KubeletDir                          = "/var/lib/kubelet"
 )
 
 var (

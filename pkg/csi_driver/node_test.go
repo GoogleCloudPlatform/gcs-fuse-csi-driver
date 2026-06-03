@@ -934,7 +934,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			}
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
-			driver := initTestDriver(t, fakeMounter)
+			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
 			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 				t.Fatalf("failed to create the fake bucket: %v", err)

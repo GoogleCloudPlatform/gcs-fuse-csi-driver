@@ -26,7 +26,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type FakeNodeConfig struct {
@@ -38,6 +40,7 @@ type FakeNodeConfig struct {
 type FakePodConfig struct {
 	HostNetworkEnabled bool
 	SidecarLimits      corev1.ResourceList
+	DeletionTimestamp  *metav1.Time
 }
 
 type FakePVConfig struct {
@@ -62,6 +65,7 @@ type FakeSCConfig struct {
 }
 
 type FakeClientset struct {
+	Client    kubernetes.Interface
 	fakePod   *corev1.Pod
 	fakeNode  *corev1.Node
 	fakePVs   map[string]*corev1.PersistentVolume
@@ -70,8 +74,10 @@ type FakeClientset struct {
 	ListPVErr error
 }
 
-func NewFakeClientset() *FakeClientset {
+func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
+	fakeK8sClient := fake.NewSimpleClientset(objects...)
 	fakeClientSet := &FakeClientset{
+		Client:   fakeK8sClient,
 		fakePVs:  make(map[string]*corev1.PersistentVolume),
 		fakePVCs: make(map[string]*corev1.PersistentVolumeClaim),
 		fakeSCs:  make(map[string]*storagev1.StorageClass),
@@ -87,7 +93,7 @@ func NewFakeClientset() *FakeClientset {
 }
 
 func (c *FakeClientset) K8sClient() kubernetes.Interface {
-	return nil
+	return c.Client
 }
 
 func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
@@ -133,6 +139,10 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	if podConfig.HostNetworkEnabled {
 		c.fakePod.Spec.HostNetwork = true
+	}
+
+	if podConfig.DeletionTimestamp != nil {
+		c.fakePod.DeletionTimestamp = podConfig.DeletionTimestamp
 	}
 }
 
