@@ -1150,56 +1150,6 @@ func TestOverrideStorageEndpointInternal(t *testing.T) {
 	}
 }
 
-func TestHasInternalMountOption(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name     string
-		options  []string
-		key      string
-		expected bool
-	}{
-		{
-			name:     "key exists with value",
-			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check=true", "rw"},
-			key:      "enable-sidecar-bucket-access-check",
-			expected: true,
-		},
-		{
-			name:     "key exists without value",
-			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check", "rw"},
-			key:      "enable-sidecar-bucket-access-check",
-			expected: true,
-		},
-		{
-			name:     "key does not exist",
-			options:  []string{"o=noexec", "rw"},
-			key:      "enable-sidecar-bucket-access-check",
-			expected: false,
-		},
-		{
-			name:     "empty options list",
-			options:  []string{},
-			key:      "enable-sidecar-bucket-access-check",
-			expected: false,
-		},
-		{
-			name:     "key is prefix of another option",
-			options:  []string{"enable-sidecar-bucket-access-check-suffix=true"},
-			key:      "enable-sidecar-bucket-access-check",
-			expected: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := hasInternalMountOption(tc.options, tc.key)
-			if got != tc.expected {
-				t.Errorf("hasInternalMountOption(%v, %q) = %v; want %v", tc.options, tc.key, got, tc.expected)
-			}
-		})
-	}
-}
-
 func TestGetInternalMountOptionValue(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
