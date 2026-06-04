@@ -184,7 +184,14 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {
-		// TODO(urielguzman): Wait for mounter pod to be scheduled before succeeding.
+		return nil, err
+	}
+
+	// Wait until the mounter pod is scheduled to a node.
+	// This ensures that the mounter pod can be scheduled even if there are resource constraints on the node,
+	// such as needing to wait for a regular pod to be evicted first.
+	// Without this check, NodeStageVolume could return an internal error because the mounter pod is not yet scheduled.
+	if err := waitForMounterPodScheduled(clientset, ctx, podNamespace, podName, nodeID); err != nil {
 		return nil, err
 	}
 

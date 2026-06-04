@@ -41,6 +41,8 @@ type FakePodConfig struct {
 	HostNetworkEnabled bool
 	SidecarLimits      corev1.ResourceList
 	DeletionTimestamp  *metav1.Time
+	PodStatus          *corev1.PodStatus
+	NodeName           string
 }
 
 type FakePVConfig struct {
@@ -72,6 +74,7 @@ type FakeClientset struct {
 	fakePVCs  map[string]*corev1.PersistentVolumeClaim
 	fakeSCs   map[string]*storagev1.StorageClass
 	ListPVErr error
+	GetPodErr error
 }
 
 func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
@@ -143,6 +146,14 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	if podConfig.DeletionTimestamp != nil {
 		c.fakePod.DeletionTimestamp = podConfig.DeletionTimestamp
+	}
+
+	if podConfig.PodStatus != nil {
+		c.fakePod.Status = *podConfig.PodStatus
+	}
+
+	if podConfig.NodeName != "" {
+		c.fakePod.Spec.NodeName = podConfig.NodeName
 	}
 }
 
@@ -219,6 +230,9 @@ func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
 }
 
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
+	if c.GetPodErr != nil {
+		return nil, c.GetPodErr
+	}
 	c.fakePod.ObjectMeta.Name = name
 	c.fakePod.ObjectMeta.Namespace = namespace
 

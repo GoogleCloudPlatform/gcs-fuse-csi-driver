@@ -252,6 +252,7 @@ func main() {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
+		// TODO(urielguzman): Configure pod lister in the controller for shared node mount.
 		clientset.ConfigurePodLister(ctx, *nodeID)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
 		// Both PVs & PVCs are needed to check count of GCSFuseVolumes

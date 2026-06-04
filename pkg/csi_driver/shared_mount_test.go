@@ -21,7 +21,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -29,6 +33,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -394,6 +399,181 @@ func TestCreateMounterPod(t *testing.T) {
 			if gotCreates != tc.wantCreates {
 				t.Errorf("createMounterPod(%v) made %d create calls, want %d", baseConfig, gotCreates, tc.wantCreates)
 			}
+		})
+	}
+}
+func TestWaitForMounterPodScheduled(t *testing.T) {
+	// Do not enable t.Parallel to avoid global data races.
+	oldInterval := mounterPodPollInterval
+	mounterPodPollInterval = 10 * time.Millisecond
+	defer func() { mounterPodPollInterval = oldInterval }()
+
+	testMounterPodName := createMounterPodName(testNodeID, testVolumeID)
+	// Fast timeout to improve test speed.
+	testContextTimeout := 200 * time.Millisecond
+	cases := []struct {
+		name       string
+		expectErr  error
+		podStatus  *corev1.PodStatus
+		nodeName   string
+		getPodErr  error
+		initialPod *clientset.FakePodConfig
+		patchPod   *clientset.FakePodConfig
+		nodeID     string
+	}{
+		{
+			name:      "scheduled to node - should return success",
+			expectErr: nil,
+			initialPod: &clientset.FakePodConfig{
+				PodStatus: &corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodScheduled,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+				NodeName: testNodeID,
+			},
+			nodeID: testNodeID,
+		},
+		{
+			name:      "scheduled to wrong node - should return internal error",
+			expectErr: status.Errorf(codes.Internal, "mounter pod %s/%s expected to be scheduled to node %q, instead, was scheduled to node %q", testNamespace, testMounterPodName, testNodeID, "other-node"),
+			initialPod: &clientset.FakePodConfig{
+				PodStatus: &corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodScheduled,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+				NodeName: "other-node",
+			},
+			nodeID: testNodeID,
+		},
+		{
+			name:      "scheduled to node with a delay - should return success",
+			expectErr: nil,
+			initialPod: &clientset.FakePodConfig{
+				NodeName: testNodeID,
+			},
+			patchPod: &clientset.FakePodConfig{
+				PodStatus: &corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodScheduled,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+				NodeName: testNodeID,
+			},
+			nodeID: testNodeID,
+		},
+		{
+			name: "scheduled but nodeName missing - should return error",
+			expectErr: status.Errorf(codes.DeadlineExceeded,
+				"timeout waiting for mounter pod %s/%s to be scheduled to node %q: context deadline exceeded",
+				testNamespace, testMounterPodName, testNodeID,
+			),
+			initialPod: &clientset.FakePodConfig{
+				PodStatus: &corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodScheduled,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+			nodeID: testNodeID,
+		},
+		{
+			name: "not scheduled but has nodeName - should return error",
+			expectErr: status.Errorf(codes.DeadlineExceeded,
+				"timeout waiting for mounter pod %s/%s to be scheduled to node %q: context deadline exceeded",
+				testNamespace, testMounterPodName, testNodeID,
+			),
+			initialPod: &clientset.FakePodConfig{
+				PodStatus: &corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodScheduled,
+							Status: corev1.ConditionFalse,
+						},
+					},
+				},
+				NodeName: testNodeID,
+			},
+			nodeID: testNodeID,
+		},
+		{
+			name:      "time out waiting for scheduled - should return DeadlineExceeded error",
+			podStatus: &corev1.PodStatus{},
+			expectErr: status.Errorf(codes.DeadlineExceeded,
+				"timeout waiting for mounter pod %s/%s to be scheduled to node %q: context deadline exceeded",
+				testNamespace, testMounterPodName, testNodeID,
+			),
+			nodeID: testNodeID,
+		},
+		{
+			name:      "pod get internal error - should return Internal error",
+			podStatus: &corev1.PodStatus{},
+			getPodErr: status.Errorf(codes.Internal, "failed to get pod"),
+			expectErr: status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", testNamespace, testMounterPodName, status.Errorf(codes.Internal, "failed to get pod")),
+			nodeID:    testNodeID,
+		},
+		{
+			name:      "pod not found - should time out and return DeadlineExceeded error",
+			podStatus: &corev1.PodStatus{},
+			getPodErr: k8serrors.NewNotFound(schema.GroupResource{}, "pod not found"),
+			expectErr: status.Errorf(codes.DeadlineExceeded,
+				"timeout waiting for mounter pod %s/%s to be scheduled to node %q: context deadline exceeded",
+				testNamespace, testMounterPodName, testNodeID,
+			),
+			nodeID: testNodeID,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), testContextTimeout)
+			defer cancel()
+			clientset := clientset.NewFakeClientset()
+
+			if test.initialPod != nil {
+				clientset.CreatePod(*test.initialPod)
+			}
+
+			if test.getPodErr != nil {
+				clientset.GetPodErr = test.getPodErr
+			}
+
+			// Asynchronously wait for the pod so we can patch it while it polls.
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := waitForMounterPodScheduled(clientset, ctx, testNamespace, testMounterPodName, test.nodeID)
+				if !errors.Is(err, test.expectErr) {
+					t.Errorf("Expected error: %v, got: %v", test.expectErr, err)
+				}
+			}()
+
+			if test.patchPod != nil {
+				time.Sleep(15 * time.Millisecond)
+				// CreatePod replaces the pod when it already exists, so it
+				// acts like a patch.
+				clientset.CreatePod(*test.patchPod)
+			}
+
+			wg.Wait()
 		})
 	}
 }
