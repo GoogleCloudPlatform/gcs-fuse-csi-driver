@@ -157,14 +157,17 @@ func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCreden
 		volumeMounts = append(volumeMounts, saTokenVolumeMount)
 	}
 
+	args := []string{"--v=5"}
+	if c.RequireApplicationCredentials {
+		args = append(args, "--require-application-credentials=true")
+	}
+
 	container := corev1.Container{
 		Name:            GcsFuseSidecarName,
 		Image:           c.ContainerImage,
 		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
 		SecurityContext: GetSecurityContext(c),
-		Args: []string{
-			"--v=5",
-		},
+		Args:            args,
 		Resources: corev1.ResourceRequirements{
 			Limits:   limits,
 			Requests: requests,

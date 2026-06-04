@@ -18,6 +18,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -27,12 +28,14 @@ import (
 
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -40,9 +43,10 @@ import (
 )
 
 var (
-	err              error
-	c                clientset.Interface
-	m                metadata.Service
+	err                              error
+	c                                clientset.Interface
+	m                                metadata.Service
+	webhookWIFEnforcementBeforeRun   bool
 	clientProtocol   = flag.String("client-protocol", "http", "the test bucket location")
 	bucketLocation   = flag.String("test-bucket-location", "us-central1", "the test bucket location")
 	skipGcpSaTest    = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
@@ -91,6 +95,41 @@ var _ = func() bool {
 	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
 	return true
 }()
+
+var _ = ginkgo.BeforeSuite(func() {
+	if os.Getenv(utils.IsOSSEnvVar) != "true" {
+		return
+	}
+	k8sClient := buildK8sClient()
+	ctx := context.Background()
+	webhookWIFEnforcementBeforeRun = utils.GetWebhookWIFEnforcement(ctx, k8sClient)
+	if err := utils.SetWebhookWIFEnforcement(ctx, k8sClient, false); err != nil {
+		klog.Errorf("BeforeSuite: failed to disable WIF enforcement: %v", err)
+	}
+})
+
+var _ = ginkgo.AfterSuite(func() {
+	if os.Getenv(utils.IsOSSEnvVar) != "true" {
+		return
+	}
+	k8sClient := buildK8sClient()
+	ctx := context.Background()
+	if err := utils.SetWebhookWIFEnforcement(ctx, k8sClient, webhookWIFEnforcementBeforeRun); err != nil {
+		klog.Errorf("AfterSuite: failed to restore WIF enforcement to %v: %v", webhookWIFEnforcementBeforeRun, err)
+	}
+})
+
+func buildK8sClient() k8sclient.Interface {
+	cfg, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
+	if err != nil {
+		klog.Fatalf("failed to build kube config: %v", err)
+	}
+	client, err := k8sclient.NewForConfig(cfg)
+	if err != nil {
+		klog.Fatalf("failed to create k8s client: %v", err)
+	}
+	return client
+}
 
 func TestE2E(t *testing.T) {
 	t.Parallel()

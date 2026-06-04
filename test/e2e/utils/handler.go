@@ -203,9 +203,12 @@ func Handle(testParams *TestParameters) error {
 		return fmt.Errorf("--skip-csi-driver-install used with --use-gke-managed-driver, this is invalid")
 	}
 
+	if !testParams.UseGKEManagedDriver {
+		os.Setenv(IsOSSEnvVar, "true")
+	}
+
 	// Build and push the driver if the test does not use the pre-installed managed CSI driver. Defer the driver image deletion.
 	if !testParams.UseGKEManagedDriver && !testParams.SkipCSIDriverInstall {
-		os.Setenv(IsOSSEnvVar, "true")
 		if testParams.BuildGcsFuseCsiDriver {
 			klog.Infof("Building GCS FUSE CSI Driver")
 			if testParams.GCSFusePRNumber != "" {

@@ -72,16 +72,17 @@ var (
 type SidecarInjector struct {
 	Client client.Client
 	// default sidecar container config values, can be overwritten by the pod annotations
-	Config                 *Config
-	MetadataPrefetchConfig *Config
-	Decoder                admission.Decoder
-	NodeLister             listersv1.NodeLister
-	PvcLister              listersv1.PersistentVolumeClaimLister
-	PvLister               listersv1.PersistentVolumeLister
-	ScLister               listerstoragev1.StorageClassLister
-	PodTemplateLister      listersv1.PodTemplateLister
-	ServerVersion          *version.Version
-	K8SClient              kubernetes.Interface
+	Config                        *Config
+	MetadataPrefetchConfig        *Config
+	Decoder                       admission.Decoder
+	NodeLister                    listersv1.NodeLister
+	PvcLister                     listersv1.PersistentVolumeClaimLister
+	PvLister                      listersv1.PersistentVolumeLister
+	ScLister                      listerstoragev1.StorageClassLister
+	PodTemplateLister             listersv1.PodTemplateLister
+	ServerVersion                 *version.Version
+	K8SClient                     kubernetes.Interface
+	RequireWIFCredentialConfigMap bool
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
@@ -244,6 +245,18 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	if sidecarInjected {
 		return admission.Allowed("The sidecar container was injected, no injection required.")
 	}
+
+	if si.RequireWIFCredentialConfigMap {
+		configMapName := pod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]
+		if configMapName == "" {
+			return admission.Denied(fmt.Sprintf(
+				"pod %q in namespace %q is missing required annotation %q: "+
+					"all GCS FUSE workloads must use Workload Identity Federation credentials",
+				pod.Name, pod.Namespace, GCPWorkloadIdentityCredentialConfigMapAnnotation,
+			))
+		}
+	}
+
 	// Check support for native sidecar.
 	injectAsNativeSidecar, err := si.injectAsNativeSidecar(pod)
 	if err != nil {
