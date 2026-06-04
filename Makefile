@@ -58,10 +58,9 @@ else
     export WI_NODE_LABEL_CHECK ?= true
     # Auto-discover Identity Provider from the cluster
     IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
-    # assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
-    export PROJECT ?= $(shell ctx=$$(kubectl config current-context); echo "$$ctx" | grep -q '^gke_' && echo "$$ctx" | cut -d '_' -f 2 || echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$6}')
-    export CLUSTER_LOCATION ?= $(shell ctx=$$(kubectl config current-context); echo "$$ctx" | grep -q '^gke_' && echo "$$ctx" | cut -d '_' -f 3 || echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$8}')
-    export CLUSTER_NAME ?= $(shell ctx=$$(kubectl config current-context); echo "$$ctx" | grep -q '^gke_' && echo "$$ctx" | cut -d '_' -f 4 || echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$10}')
+    export PROJECT ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$6}')
+    export CLUSTER_LOCATION ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$8}')
+    export CLUSTER_NAME ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$10}')
     # Use jq to extract CA Bundle specifically for the current GKE context
     CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
     # Derive Identity Pool from Project ID
