@@ -22,21 +22,31 @@ import (
 	"fmt"
 	"io"
 
+	"context"
+
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 )
 
 const (
-	mounterPodNamePrefix = "gcsfusecsi-mount"
+	mounterPodNamePrefix    = "gcsfusecsi-mount"
+	mounterPodPriorityClass = "gcsfusecsi-mount-priority"
+	mounterPodMountDir      = "mount-dir"
 )
 
 // mounterPodConfig holds the configuration parameters required to define and manage a mounter pod.
 type mounterPodConfig struct {
-	podName       string // The name to assign to the mounter pod.
-	nodeID        string // The specific node ID where the pod should be scheduled.
-	namespace     string // The Kubernetes namespace in which to create the pod.
-	priorityClass string // The name of the PriorityClass to apply to the pod.
+	podName   string // The name to assign to the mounter pod.
+	nodeID    string // The specific node ID where the pod should be scheduled.
+	namespace string // The Kubernetes namespace in which to create the pod.
+	image     string // The image for the mounter pod binary.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -75,4 +85,112 @@ func pvFromVolumeID(clientset clientset.Interface, volumeID string) (*corev1.Per
 		}
 	}
 	return nil, fmt.Errorf("no pv found for volumeID: %q", volumeID)
+}
+
+// createMounterPod handles the creation of the mounter pod using the Kubernetes API client.
+func createMounterPod(clientset clientset.Interface, ctx context.Context, config *mounterPodConfig) error {
+	if clientset == nil || clientset.K8sClient() == nil {
+		return status.Error(codes.Internal, "kubernetes client is uninitialized")
+	}
+	if config == nil {
+		return status.Error(codes.Internal, "mounter pod config cannot be nil")
+	}
+	// Check if the mounter pod already exists, but was marked for deletion.
+	// This requires calling the API server directly to retrieve the most up-to-date pod status.
+	pod, err := clientset.K8sClient().CoreV1().Pods(config.namespace).Get(ctx, config.podName, metav1.GetOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", config.namespace, config.podName, err)
+	}
+	// GET always returns a pointer to the pod, even if the pod doesn't exist.
+	// Therefore, we cannot rely on a nil pointer to determine the pod's existence.
+	if errors.IsNotFound(err) {
+		podSpec := createMounterPodSpec(config)
+		if _, err = clientset.K8sClient().CoreV1().Pods(config.namespace).Create(ctx, podSpec, metav1.CreateOptions{}); err != nil {
+			if errors.IsAlreadyExists(err) {
+				klog.Infof("Mounter pod %s/%s already exists.", config.namespace, config.podName)
+				return nil
+			}
+			return status.Errorf(codes.Internal, "failed to create mounter pod %s/%s: %v", config.namespace, config.podName, err)
+		}
+		return nil
+	}
+	// If the mounter pod is marked for deletion, prevent ControllerPublishVolume from succeeding.
+	if pod == nil {
+		return status.Errorf(codes.Internal, "mounter pod %s/%s was found but returned as nil", config.namespace, config.podName)
+	}
+	if pod.ObjectMeta.DeletionTimestamp != nil {
+		return status.Errorf(
+			codes.Aborted,
+			"Mounter pod %s/%s is marked for deletion. Waiting for pod deletion to complete.",
+			config.namespace, config.podName,
+		)
+	}
+	klog.Infof("Mounter pod %s/%s already exists.", config.namespace, config.podName)
+	return nil
+}
+
+// createMounterPodSpec returns the pod spec for the mounter pod.
+func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
+	spec := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.podName,
+			Namespace: config.namespace,
+		},
+		Spec: corev1.PodSpec{
+			NodeSelector: map[string]string{
+				// Use NodeSelector rather than NodeName in the mounter pod spec,
+				// since NodeName will bypass kube-scheduler.
+				"kubernetes.io/hostname": config.nodeID,
+				"kubernetes.io/os":       "linux",
+			},
+			PriorityClassName: mounterPodPriorityClass,
+			Containers: []corev1.Container{
+				{
+					Name:            mounterPodNamePrefix,
+					Image:           config.image,
+					ImagePullPolicy: corev1.PullAlways,
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: ptr.To(true),
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:             mounterPodMountDir,
+							MountPath:        util.KubeletDir,
+							MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
+						},
+						{
+							Name:      util.SidecarContainerTmpVolumeName,
+							MountPath: util.SidecarContainerTmpVolumePath,
+						},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: mounterPodMountDir,
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: util.KubeletDir,
+							Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+						},
+					},
+				},
+				{
+					Name: util.SidecarContainerTmpVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{},
+					},
+				},
+			},
+			Tolerations: []corev1.Toleration{
+				{
+					//  https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+					//  See "special case". This will tolerate everything. Mounter pod should
+					//  be possible to be scheduled on all nodes where the workloads are scheduled.
+					Operator: corev1.TolerationOpExists,
+				},
+			},
+		},
+	}
+	return spec
 }
