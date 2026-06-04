@@ -22,6 +22,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -178,7 +179,10 @@ func TestDeleteVolume(t *testing.T) {
 }
 
 func TestControllerPublishVolume(t *testing.T) {
-	t.Parallel()
+	oldInterval := mounterPodPollInterval
+	mounterPodPollInterval = 10 * time.Millisecond
+	defer func() { mounterPodPollInterval = oldInterval }()
+
 	timeNow := metav1.Now()
 
 	// Helper to create a mounter pod for initial state
@@ -327,6 +331,17 @@ func TestControllerPublishVolume(t *testing.T) {
 			setupFake: func() *clientset.FakeClientset {
 				existingPod := makeMounterPod(defaultMounterPodConfig, nil)
 				fc := clientset.NewFakeClientset(existingPod)
+				fc.CreatePod(clientset.FakePodConfig{
+					NodeName: testNodeID,
+					PodStatus: &corev1.PodStatus{
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodScheduled,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				})
 				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
 					Name:      testPVC,
 					Namespace: testNamespace,
@@ -404,10 +419,10 @@ func TestControllerPublishVolume(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			clientset := test.setupFake()
-			s := initTestController(t, clientset)
+			fc := test.setupFake()
+			s := initTestController(t, fc)
 
-			fakeK8sClient := clientset.K8sClient().(*fake.Clientset)
+			fakeK8sClient := fc.K8sClient().(*fake.Clientset)
 
 			if test.podGetErr != nil {
 				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
@@ -418,9 +433,31 @@ func TestControllerPublishVolume(t *testing.T) {
 				fakeK8sClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 					return true, nil, test.podCreateErr
 				})
+			} else {
+				fakeK8sClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					createAction := action.(k8stesting.CreateAction)
+					pod := createAction.GetObject().(*corev1.Pod)
+					pod.Spec.NodeName = testNodeID
+					pod.Status.Conditions = []corev1.PodCondition{
+						{
+							Type:   corev1.PodScheduled,
+							Status: corev1.ConditionTrue,
+						},
+					}
+
+					// Update the fakePod in clientset so GetPod returns it!
+					fc.CreatePod(clientset.FakePodConfig{
+						NodeName:  testNodeID,
+						PodStatus: &pod.Status,
+					})
+
+					return false, nil, nil
+				})
 			}
 
-			_, err := s.ControllerPublishVolume(context.Background(), test.req)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, err := s.ControllerPublishVolume(ctx, test.req)
 
 			if test.expectErr {
 				if err == nil {

@@ -21,6 +21,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"time"
 
 	"context"
 
@@ -39,6 +40,10 @@ const (
 	mounterPodNamePrefix    = "gcsfusecsi-mount"
 	mounterPodPriorityClass = "gcsfusecsi-mount-priority"
 	mounterPodMountDir      = "mount-dir"
+)
+
+var (
+	mounterPodPollInterval = 1 * time.Second
 )
 
 // mounterPodConfig holds the configuration parameters required to define and manage a mounter pod.
@@ -193,4 +198,57 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 		},
 	}
 	return spec
+}
+
+// waitForMounterPodScheduled wait for mounter pod to be scheduled.
+func waitForMounterPodScheduled(clientset clientset.Interface, ctx context.Context, namespace, podName, nodeID string) error {
+	if clientset == nil {
+		return status.Error(codes.Internal, "kubernetes client is uninitialized")
+	}
+
+	checkIfScheduled := func() (bool, error) {
+		pod, err := clientset.GetPod(namespace, podName)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", namespace, podName, err)
+		}
+		if pod != nil && pod.Spec.NodeName != "" {
+			if pod.Spec.NodeName != nodeID {
+				return false, status.Errorf(codes.Internal, "mounter pod %s/%s expected to be scheduled to node %q, instead, was scheduled to node %q", namespace, podName, nodeID, pod.Spec.NodeName)
+			}
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue {
+					klog.Infof("Mounter pod %s/%s has been scheduled to node %s", namespace, podName, pod.Spec.NodeName)
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+
+	// Check immediately to avoid waiting if the pod is already scheduled.
+	if scheduled, err := checkIfScheduled(); err != nil || scheduled {
+		return err
+	}
+
+	klog.Infof("Waiting for mounter pod %s/%s to be scheduled. Polling every %v", namespace, podName, mounterPodPollInterval)
+
+	ticker := time.NewTicker(mounterPodPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if scheduled, err := checkIfScheduled(); err != nil || scheduled {
+				return err
+			}
+		case <-ctx.Done():
+			code := codes.DeadlineExceeded
+			if ctx.Err() == context.Canceled {
+				code = codes.Canceled
+			}
+			return status.Errorf(code, "timeout waiting for mounter pod %s/%s to be scheduled to node %q: %v", namespace, podName, nodeID, ctx.Err())
+		}
+	}
 }
