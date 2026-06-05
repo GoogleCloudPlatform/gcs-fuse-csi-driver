@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
@@ -34,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -97,6 +99,10 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 	}
 
 	testCaseCloudProfilerProfileCreation := func(configPrefix string, disableGcsfuseProfiler bool) {
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip cloud_profiler tests when Zonal Buckets is enabled")
+		}
+
 		init(configPrefix)
 		defer cleanup()
 
@@ -137,25 +143,44 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 		// Write a 10MB file to the mount path to generate activity for the profiler to capture.
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("head -c 10485760 </dev/urandom > %s/test.bin", mountPath))
 
-		ginkgo.By("Checking that sidecar profile is generated")
-		framework.Logf("Checking if sidecar profile exists for version %s", expectedVersion)
-		gomega.Eventually(ctx, func(g gomega.Gomega) {
-			// Check Sidecar Profile
-			sidecarOk, err := checkIfProfileExistForServiceAndVersion(ctx, sidecarServiceName, expectedVersion)
-			g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check sidecar profile for version %s", expectedVersion))
-			g.Expect(sidecarOk).To(gomega.BeTrue(), fmt.Sprintf("sidecar profile does not exist yet for version %s", expectedVersion))
-		}, "10m", "10s").Should(gomega.Succeed())
+		ginkgo.By("Initializing Cloud Profiler client once")
+		profilerClient, err := cloudprofiler.NewService(ctx, option.WithScopes(cloudprofiler.CloudPlatformScope))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize cloudprofiler service client")
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			defer ginkgo.GinkgoRecover()
+
+			ginkgo.By("Checking that sidecar profile is generated")
+			framework.Logf("Checking if sidecar profile exists for version %s", expectedVersion)
+			gomega.Eventually(ctx, func(g gomega.Gomega) {
+				// Check Sidecar Profile
+				sidecarOk, err := checkIfProfileExistForServiceAndVersion(ctx, profilerClient, sidecarServiceName, expectedVersion)
+				g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check sidecar profile for version %s", expectedVersion))
+				g.Expect(sidecarOk).To(gomega.BeTrue(), fmt.Sprintf("sidecar profile does not exist yet for version %s", expectedVersion))
+			}, "10m", "10s").Should(gomega.Succeed())
+		}()
 
 		if !disableGcsfuseProfiler {
-			ginkgo.By("Checking that gcsfuse profile is generated")
-			framework.Logf("Checking if gcsfuse profile exists for version %s", expectedVersion)
-			gomega.Eventually(ctx, func(g gomega.Gomega) {
-				// Check GCSFuse Profile
-				gcsfuseOk, err := checkIfProfileExistForServiceAndVersion(ctx, gcsfuseServiceName, expectedVersion)
-				g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check gcsfuse profile for version %s", expectedVersion))
-				g.Expect(gcsfuseOk).To(gomega.BeTrue(), fmt.Sprintf("gcsfuse profile does not exist yet for version %s", expectedVersion))
-			}, "10m", "10s").Should(gomega.Succeed())
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer ginkgo.GinkgoRecover()
+
+				ginkgo.By("Checking that gcsfuse profile is generated")
+				framework.Logf("Checking if gcsfuse profile exists for version %s", expectedVersion)
+				gomega.Eventually(ctx, func(g gomega.Gomega) {
+					// Check GCSFuse Profile
+					gcsfuseOk, err := checkIfProfileExistForServiceAndVersion(ctx, profilerClient, gcsfuseServiceName, expectedVersion)
+					g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check gcsfuse profile for version %s", expectedVersion))
+					g.Expect(gcsfuseOk).To(gomega.BeTrue(), fmt.Sprintf("gcsfuse profile does not exist yet for version %s", expectedVersion))
+				}, "10m", "10s").Should(gomega.Succeed())
+			}()
 		}
+		wg.Wait()
 	}
 
 	ginkgo.It("cloud_profiler should create profiles for sidecar and gcsfuse", ginkgo.SpecPriority(10), func() {
@@ -167,27 +192,24 @@ func (t *gcsFuseCSICloudProfilerTestSuite) DefineTests(driver storageframework.T
 	})
 }
 
-func checkIfProfileExistForServiceAndVersion(ctx context.Context, serviceName, version string) (bool, error) {
+func checkIfProfileExistForServiceAndVersion(ctx context.Context, service *cloudprofiler.Service, serviceName, version string) (bool, error) {
 	framework.Logf("Checking if profile exists for service %q and version %q", serviceName, version)
-	service, err := cloudprofiler.NewService(ctx, option.WithScopes(cloudprofiler.CloudPlatformScope))
-	if err != nil {
-		return false, err
-	}
 	projectID := os.Getenv(utils.ProjectEnvVar)
 	parent := "projects/" + projectID
-
 	call := service.Projects.Profiles.List(parent)
 
 	var found bool
 	stopErr := fmt.Errorf("stop iteration")
+	var pageIndex int
+
 	// Use Pages to iterate through all profiles, handling pagination automatically.
-	err = call.Pages(ctx, func(page *cloudprofiler.ListProfilesResponse) error {
-		framework.Logf("Scanning profiles for service %q", serviceName)
+	err := call.Pages(ctx, func(page *cloudprofiler.ListProfilesResponse) error {
+		pageIndex++
+		framework.Logf("Scanning page %d of profiles for service %q and version %q", pageIndex, serviceName, version)
 		for _, profile := range page.Profiles {
 			if profile.Deployment != nil && profile.Deployment.Target == serviceName && profile.Deployment.Labels != nil && profile.Deployment.Labels["version"] == version {
 				found = true
-				framework.Logf("Found profile for service %q and version %q", serviceName, version)
-				// Return a specific error to break out of the pagination early.
+				framework.Logf("Found profile for service %q and version %q on page %d", serviceName, version, pageIndex)
 				return stopErr
 			}
 		}

@@ -61,11 +61,11 @@ var (
 	enableAutoGoMemLimit                    = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio                     = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
-	metadataMemoryLimit                     = flag.String("metadata-sidecar-memory-limit", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory limit.")
+	metadataMemoryLimit                     = flag.String("metadata-sidecar-memory-limit", "250Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory limit.")
 	metadataPrefetchCPURequest              = flag.String("metadata-sidecar-cpu-request", "10m", "The default cpu request for gcsfuse memory prefetch sidecar container cpu request.")
 	metadataPrefetchCPULimit                = flag.String("metadata-sidecar-cpu-limit", "50m", "Flag to use default value for gcsfuse memory prefetch sidecar container cpu limit.")
 	metadataPrefetchEphemeralStorageRequest = flag.String("metadata-sidecar-ephemeral-storage-request", "10Mi", "The default value for gcsfuse memory prefetch sidecar ephemeral storage request.")
-	metadataPrefetchEphemeralStorageLimit   = flag.String("metadata-sidecar-ephemeral-storage-limit", "10Mi", "The default value for gcsfuse memory prefetch sidecar ephemeral storage limit.")
+	metadataPrefetchEphemeralStorageLimit   = flag.String("metadata-sidecar-ephemeral-storage-limit", "0", "The default value for gcsfuse memory prefetch sidecar ephemeral storage limit.")
 	// These are set at compile time.
 	webhookVersion = "unknown"
 )

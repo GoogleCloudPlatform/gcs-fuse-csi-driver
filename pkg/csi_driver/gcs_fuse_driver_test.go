@@ -29,7 +29,7 @@ import (
 	mount "k8s.io/mount-utils"
 )
 
-func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
+func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Interface) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
@@ -41,7 +41,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 		TokenManager:          auth.NewFakeTokenManager(),
 		Mounter:               fm,
 		NetworkManager:        &fakeNetworkManager{},
-		K8sClients:            clientset.NewFakeClientset(),
+		K8sClients:            clientset,
 		MetricsManager:        metrics.NewFakeMetricsManager(),
 		FeatureOptions:        &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
 	}
@@ -88,7 +88,7 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 
 func TestDriverValidateVolumeCapability(t *testing.T) {
 	t.Parallel()
-	driver := initTestDriver(t, nil)
+	driver := initTestDriver(t, nil, clientset.NewFakeClientset())
 
 	cases := []struct {
 		name       string
@@ -224,7 +224,7 @@ func TestDriverValidateVolumeCapability(t *testing.T) {
 
 func TestDriverValidateVolumeCapabilities(t *testing.T) {
 	t.Parallel()
-	driver := initTestDriver(t, nil)
+	driver := initTestDriver(t, nil, clientset.NewFakeClientset())
 
 	cases := []struct {
 		name         string

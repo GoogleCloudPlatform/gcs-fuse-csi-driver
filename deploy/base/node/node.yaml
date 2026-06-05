@@ -64,6 +64,7 @@ spec:
             - --enable-cloud-profiler-for-driver=true
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
+            - --universe-domain=$(UNIVERSE_DOMAIN)
           ports:
             - containerPort: 9920
               name: metrics
@@ -91,6 +92,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.uid
+            - name: UNIVERSE_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: gcsfusecsi-node-config
+                  key: universe-domain
           volumeMounts:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet/pods
@@ -172,3 +178,10 @@ metadata:
 data:
   sidecar-image: gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter
   metadata-sidecar-image: gke.gcr.io/gcs-fuse-csi-driver-metadata-prefetch
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gcsfusecsi-node-config
+data:
+  universe-domain: googleapis.com

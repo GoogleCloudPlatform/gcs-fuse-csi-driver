@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"golang.org/x/net/context"
 )
 
@@ -32,7 +33,7 @@ const (
 func initTestIdentityServer(t *testing.T) csi.IdentityServer {
 	t.Helper()
 
-	return newIdentityServer(initTestDriver(t, nil))
+	return newIdentityServer(initTestDriver(t, nil, clientset.NewFakeClientset()))
 }
 
 func TestGetPluginInfo(t *testing.T) {

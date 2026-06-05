@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc/codes"
 )
@@ -379,6 +380,48 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
 				expectedSupported:          false,
 				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return true for supported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.2@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return true for supported sidecar version with container registry gke.gcr.io",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - false for unsupported registry host suffix gke.gcr.io",
+				imageName:                  "random-gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - false for gke.gcr.io in image path",
+				imageName:                  "randomhost.gcr.io/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return true for supported sidecar version in staging gcr",
+				imageName:                  "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return false for unsupported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.13-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
+			},
+			{
+				name:                       "storage-endpoint-internal - should return false for private sidecar",
+				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
 			},
 		}
 		for _, tc := range testCases {
@@ -877,7 +920,7 @@ func TestRemoveDisallowedMountOptions(t *testing.T) {
 
 func TestGenerateDisallowedFlagsMap(t *testing.T) {
 	t.Parallel()
-	driver := initTestDriver(t, nil)
+	driver := initTestDriver(t, nil, clientset.NewFakeClientset())
 	driver.config.FeatureOptions = &GCSDriverFeatureOptions{
 		FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{
 			EnableGcsfuseProfilesInternal: false,
@@ -1009,6 +1052,144 @@ func TestTransformKeysToSet(t *testing.T) {
 
 			if !reflect.DeepEqual(gotSet, tt.wantSet) {
 				t.Errorf("transformKeysToSet() = %v, want %v", gotSet, tt.wantSet)
+			}
+		})
+	}
+}
+
+func TestStorageEndpointFromUniverseDomain(t *testing.T) {
+	testCases := []struct {
+		name           string
+		universeDomain string
+		want           string
+	}{
+		{
+			name:           "Fake domain",
+			universeDomain: "fakeapis.goog",
+			want:           "storage.fakeapis.goog:443",
+		},
+		{
+			name:           "Empty domain",
+			universeDomain: "",
+			want:           "storage.googleapis.com:443", // Default
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := storageEndpointFromUniverseDomain(tc.universeDomain)
+			if got != tc.want {
+				t.Errorf("storageEndpointFromUniverseDomain(%q) = %q, want %q", tc.universeDomain, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOverrideStorageEndpointInternal(t *testing.T) {
+	t.Parallel()
+
+	storageEndpoint := storageEndpointFromUniverseDomain("googleapis.com")
+
+	testCases := []struct {
+		name            string
+		opts            []string
+		expectedOptions []string
+	}{
+		{
+			name: "should replace existing flag",
+			opts: []string{
+				"o=noexec",
+				"storage-endpoint-internal=storage.faceapis:443",
+				"rw",
+			},
+			expectedOptions: []string{
+				"o=noexec",
+				"rw",
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+		{
+			name: "should append flag if no pre-existing flags exist",
+			opts: []string{
+				"o=noexec",
+				"rw",
+			},
+			expectedOptions: []string{
+				"o=noexec",
+				"rw",
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+		{
+			name: "should replace multiple flags if they co-exist",
+			opts: []string{
+				"storage-endpoint-internal=https://config-endpoint.com",
+				"storage-endpoint-internal=https://old-config-endpoint.com",
+			},
+			expectedOptions: []string{
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			output := overrideStorageEndpointInternal(tc.opts, storageEndpoint)
+
+			if diff := cmp.Diff(output, tc.expectedOptions); diff != "" {
+				t.Errorf("unexpected options slice (-got, +want)\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGetInternalMountOptionValue(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		options  []string
+		key      string
+		expected string
+	}{
+		{
+			name:     "key exists with value",
+			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check=true", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "true",
+		},
+		{
+			name:     "key exists without value",
+			options:  []string{"o=noexec", "enable-sidecar-bucket-access-check", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "",
+		},
+		{
+			name:     "key does not exist",
+			options:  []string{"o=noexec", "rw"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "",
+		},
+		{
+			name:     "empty options list",
+			options:  []string{},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "",
+		},
+		{
+			name:     "multiple occurrences - returns last one",
+			options:  []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+			key:      "enable-sidecar-bucket-access-check",
+			expected: "false",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := getInternalMountOptionValue(tc.options, tc.key)
+			if got != tc.expected {
+				t.Errorf("getInternalMountOptionValue(%v, %q) = %q; want %q", tc.options, tc.key, got, tc.expected)
 			}
 		})
 	}

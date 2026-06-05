@@ -127,6 +127,84 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 	}, nil
 }
 
+func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	// Validate arguments
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerPublishVolume Volume ID must be provided")
+	}
+	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	nodeID := req.GetNodeId()
+	if len(nodeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerPublishVolume Node ID must be provided")
+	}
+
+	// Acquires the lock for the volume on that node only, because we need to support the ability
+	// to publish the same volume onto different nodes concurrently
+	lockingVolumeID := fmt.Sprintf("%s/%s", nodeID, volumeID)
+	if acquired := s.volumeLocks.TryAcquire(lockingVolumeID); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, lockingVolumeID)
+	}
+	defer s.volumeLocks.Release(lockingVolumeID)
+
+	// Skip ControllerPublishVolume if the volume is not using the shared mount feature.
+	vc := req.GetVolumeContext()
+	if !sharedMount(vc) {
+		return &csi.ControllerPublishVolumeResponse{}, nil
+	}
+
+	// Find the workload namespace where the mounter pod should be created by identifying the PVC
+	// bound to this volume's PV.
+	clientset := s.driver.config.K8sClients
+	pv, err := pvFromVolumeID(clientset, volumeID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if pv.Spec.ClaimRef == nil {
+		// The PV should be bound if ControllerPublishVolume is called. Return error since this is unexpected.
+		return nil, status.Errorf(codes.Internal, "pv %q is not bound to any pvc", pv.Name)
+	}
+	pvcName := pv.Spec.ClaimRef.Name
+	pvcNamespace := pv.Spec.ClaimRef.Namespace
+	if pvcNamespace == "" || pvcName == "" {
+		return nil, status.Errorf(codes.Internal, "pv claimRef namespace and name can't be empty, namespace: %q, name: %q", pvcNamespace, pvcName)
+	}
+	podNamespace := pvcNamespace
+
+	// Prepare mounter pod config.
+	podName := createMounterPodName(nodeID, volumeID)
+	podConfig := &mounterPodConfig{
+		podName:   podName,
+		namespace: podNamespace,
+		nodeID:    nodeID,
+		// TODO(urielguzman): Replace with the actual mounter pod image.
+		image: "k8s.gcr.io/pause",
+	}
+
+	if err := createMounterPod(clientset, ctx, podConfig); err != nil {
+		return nil, err
+	}
+
+	// Wait until the mounter pod is scheduled to a node.
+	// This ensures that the mounter pod can be scheduled even if there are resource constraints on the node,
+	// such as needing to wait for a regular pod to be evicted first.
+	// Without this check, NodeStageVolume could return an internal error because the mounter pod is not yet scheduled.
+	if err := waitForMounterPodScheduled(clientset, ctx, podNamespace, podName, nodeID); err != nil {
+		return nil, err
+	}
+
+	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
+	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.namespace, podConfig.podName, nodeID, volumeID)
+	return &csi.ControllerPublishVolumeResponse{}, nil
+}
+
+// TODO(urielguzman): implement ControllerUnpublishVolume.
+func (s *controllerServer) ControllerUnpublishVolume(_ context.Context, _ *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
+}
+
 func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Validate arguments
 	name := req.GetName()

@@ -72,6 +72,7 @@ type MountConfig struct {
 	CustomEndpoint                 string                `json:"-"`
 	EnableAutoGoMemLimit           bool                  `json:"-"`
 	AutoGoMemLimitRatio            float64               `json:"-"`
+	StorageEndpoint                string                `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -205,10 +206,6 @@ func (mc *MountConfig) prepareMountArgs() {
 
 	invalidArgs := []string{}
 
-	if customEndpointVal := util.CustomEndpointFromOpts(mc.Options); customEndpointVal != "" {
-		mc.CustomEndpoint = customEndpointVal
-	}
-
 	mc.GcsFuseNumaNode = -1
 	for _, arg := range mc.Options {
 		klog.Infof("processing mount arg %v", arg)
@@ -330,6 +327,10 @@ func (mc *MountConfig) prepareMountArgs() {
 			} else {
 				mc.AutoGoMemLimitRatio = ratio
 			}
+			continue
+
+		case util.StorageEndpointInternal:
+			mc.StorageEndpoint = value
 			continue
 		}
 

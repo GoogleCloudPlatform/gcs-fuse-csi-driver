@@ -23,6 +23,9 @@ import (
 	"os"
 	"strconv"
 
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
+
 	"github.com/onsi/ginkgo/v2"
 	"google.golang.org/grpc/codes"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -32,8 +35,6 @@ import (
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
-	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 )
 
 type gcsFuseCSIIstioTestSuite struct {
@@ -110,6 +111,10 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32"})
 			specs.DeployIstioSidecar(f.Namespace.Name)
 			specs.DeployIstioServiceEntry(f.Namespace.Name)
+		}
+
+		if zbEnabled(driver) {
+			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundPorts": "443"})
 		}
 
 		ginkgo.By("Deploying the pod")
