@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	klog "k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -780,6 +781,153 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 		ginkgo.By("All pods successfully authenticated using the same federation configuration")
 	})
+	validatePermissionDenied := func(podName string) {
+		foundWrongReason := false
+
+		ginkgo.By("Waiting for PermissionDenied auth failure")
+
+		// Use PollUntilContextTimeout instead of manual sleep loop
+		// as required by the test suite conventions.
+		pollErr := wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, true,
+			func(ctx context.Context) (bool, error) {
+				pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(
+					ctx, podName, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+
+				for _, cs := range pod.Status.ContainerStatuses {
+					if cs.State.Waiting != nil &&
+						cs.State.Waiting.Reason == "CreateContainerError" {
+						ginkgo.By(fmt.Sprintf("CreateContainerError on %s: %s",
+							cs.Name, cs.State.Waiting.Message))
+					}
+				}
+
+				events, err := f.ClientSet.CoreV1().Events(f.Namespace.Name).List(
+					ctx,
+					metav1.ListOptions{
+						FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
+					},
+				)
+				if err != nil {
+					return false, err
+				}
+
+				for _, e := range events.Items {
+					ginkgo.By(fmt.Sprintf("Event [%s]: %s", e.Reason, e.Message))
+
+					if strings.Contains(e.Message, "PermissionDenied") &&
+						(strings.Contains(e.Message, "storage.objects.list") ||
+							strings.Contains(e.Message, "storageLayout") ||
+							strings.Contains(e.Message, "failed to get GCS bucket")) {
+						ginkgo.By("Confirmed PermissionDenied auth failure")
+						foundWrongReason = false
+						return true, nil
+					}
+
+					if strings.Contains(e.Message, "transport endpoint is not connected") ||
+						strings.Contains(e.Message, "failed to generate container") ||
+						strings.Contains(e.Message, "failed to stat") {
+						ginkgo.By(fmt.Sprintf("WARNING: non-auth signal (may be side effect): %s", e.Message))
+						foundWrongReason = true
+					}
+				}
+
+				return false, nil
+			},
+		)
+
+		if pollErr != nil {
+			ginkgo.By("PermissionDenied not found — printing debug info")
+			pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(
+				ctx, podName, metav1.GetOptions{})
+			if err == nil {
+				ginkgo.By(fmt.Sprintf("Final Pod Phase: %s", pod.Status.Phase))
+				for _, cs := range pod.Status.ContainerStatuses {
+					if cs.State.Waiting != nil {
+						ginkgo.By(fmt.Sprintf("Container %s Waiting: reason=%s message=%s",
+							cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message))
+					}
+					if cs.State.Terminated != nil {
+						ginkgo.By(fmt.Sprintf("Container %s Terminated: reason=%s message=%s",
+							cs.Name, cs.State.Terminated.Reason, cs.State.Terminated.Message))
+					}
+				}
+			}
+		}
+
+		gomega.Expect(foundWrongReason).To(
+			gomega.BeFalse(),
+			"Test failed for wrong reason instead of PermissionDenied auth failure",
+		)
+		gomega.Expect(pollErr).ToNot(
+			gomega.HaveOccurred(),
+			"Expected PermissionDenied auth failure but none found",
+		)
+	}
+
+	validatePodNeverRunning := func(podName string) {
+		ginkgo.By("Confirming pod never reaches Running state")
+		// Use gomega.Consistently instead of manual sleep loop
+		// as required by the test suite conventions.
+		gomega.Consistently(func(g gomega.Gomega) {
+			pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(
+				ctx, podName, metav1.GetOptions{})
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(pod.Status.Phase).NotTo(
+				gomega.Equal(corev1.PodRunning),
+				fmt.Sprintf("Pod must not reach Running state, got: %s", pod.Status.Phase),
+			)
+		}, 60*time.Second, 3*time.Second).Should(gomega.Succeed())
+	}
+
+	ginkgo.It("should fail authentication when KSA is not bound to IAM service account",
+		func() {
+			isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+			if pattern.VolType == storageframework.DynamicPV {
+				e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+			}
+
+			const (
+				ksaName    = "gcs-fuse-oidc-ksa"
+				volumeName = "gcs-volume"
+				mountPath  = "/mnt/gcs"
+			)
+			var credentialConfigMapName string
+
+			if isOSS {
+				init(specs.SkipCSIBucketAccessCheckPrefix)
+				ginkgo.DeferCleanup(cleanup)
+				credentialConfigMapName = "oidc-auth-failure-credentials"
+				_, _ = setupOSSWIFPrincipal(ksaName, wifWorkloadIdentityPoolID, wifWorkloadIdentityProviderID, credentialConfigMapName)
+
+			} else {
+				init()
+				ginkgo.DeferCleanup(cleanup)
+				ginkgo.By("Creating unbound KSA")
+				unboundKSA := &corev1.ServiceAccount{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      ksaName,
+						Namespace: f.Namespace.Name,
+					},
+				}
+
+				_, err := f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).Create(ctx, unboundKSA, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				ginkgo.DeferCleanup(func() {
+					_ = f.ClientSet.CoreV1().ServiceAccounts(f.Namespace.Name).Delete(ctx, ksaName, metav1.DeleteOptions{})
+				})
+			}
+			ginkgo.By("Deploying pod")
+			tPod := deployWIFPod(ksaName, credentialConfigMapName, volumeName, mountPath)
+
+			ginkgo.DeferCleanup(func() { tPod.Cleanup(ctx) })
+			podName := tPod.GetPodName()
+			validatePermissionDenied(podName)
+			validatePodNeverRunning(podName)
+		},
+	)
 
 	ginkgo.It("should re-authenticate successfully after pod restart using federation", func() {
 		init(specs.SkipCSIBucketAccessCheckPrefix)
