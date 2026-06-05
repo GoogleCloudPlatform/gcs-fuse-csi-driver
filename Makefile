@@ -60,7 +60,12 @@ else
     IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
     export PROJECT ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$6}')
     export CLUSTER_LOCATION ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$8}')
-    export CLUSTER_NAME ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$10}')
+
+    # To override the default empty string in prow and support overriding it via environment variables or command-line arguments we conditionally use :=.
+    ifeq ($(CLUSTER_NAME),)
+        CLUSTER_NAME := $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$10}')
+    endif
+    export CLUSTER_NAME
     # Use jq to extract CA Bundle specifically for the current GKE context
     CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
     # Derive Identity Pool from Project ID
