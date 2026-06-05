@@ -94,3 +94,13 @@ func (si *SidecarInjector) GetVolumesStorageClass(volume *corev1.PersistentVolum
 	}
 	return sc, nil
 }
+
+// GetPodTemplate retrieves the referenced PodTemplate object from the informer cache.
+func (si *SidecarInjector) GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error) {
+	podTemplate, err := si.PodTemplateLister.PodTemplates(namespace).Get(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return podTemplate, nil
+}

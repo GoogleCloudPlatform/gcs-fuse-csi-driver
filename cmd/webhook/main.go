@@ -30,8 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
-	storagelisters "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/rest"
+
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -58,6 +58,7 @@ var (
 	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
 	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
 	enableGcsfuseProfiles                   = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
+	enableSharedNodeMount                   = flag.Bool("enable-shared-node-mount", false, "Enable shared node mount feature when true")
 	enableAutoGoMemLimit                    = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio                     = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 	metadataMemoryRequest                   = flag.String("metadata-sidecar-memory-request", "10Mi", "Flag to use default value for gcsfuse memory prefetch sidecar container memory request.")
@@ -106,6 +107,9 @@ func main() {
 	fuseSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
 	klog.Infof("Webhook should enable gcsfuse profiles: %t", fuseSideCarConfig.EnableGcsfuseProfiles)
 
+	fuseSideCarConfig.EnableSharedNodeMount = *enableSharedNodeMount
+	klog.Infof("Webhook should enable shared node mount: %t", fuseSideCarConfig.EnableSharedNodeMount)
+
 	metadataPrefetchSideCarConfig := wh.LoadConfig(*metadataSidecarImage, *imagePullPolicy, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit)
 	metadataPrefetchSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
 
@@ -140,10 +144,8 @@ func main() {
 	nodeLister := informerFactory.Core().V1().Nodes().Lister()
 	pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
 	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
-	var scLister storagelisters.StorageClassLister
-	if *enableGcsfuseProfiles {
-		scLister = informerFactory.Storage().V1().StorageClasses().Lister()
-	}
+	scLister := informerFactory.Storage().V1().StorageClasses().Lister()
+	podTemplateLister := informerFactory.Core().V1().PodTemplates().Lister()
 
 	informerFactory.Start(context.Done())
 	informerFactory.WaitForCacheSync(context.Done())
@@ -185,6 +187,7 @@ func main() {
 			PvLister:               pvLister,
 			PvcLister:              pvcLister,
 			ScLister:               scLister,
+			PodTemplateLister:      podTemplateLister,
 			ServerVersion:          serverVersion,
 			K8SClient:              client,
 		},

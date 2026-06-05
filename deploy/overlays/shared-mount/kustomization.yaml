@@ -67,4 +67,10 @@ patches:
     kind: DaemonSet
     name: gcsfusecsi-node
     version: v1
+- path: enable_shared_node_mount_patch.json
+  target:
+    group: apps
+    kind: Deployment
+    name: gcs-fuse-csi-driver-webhook
+    version: v1
 

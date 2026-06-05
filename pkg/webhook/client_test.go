@@ -516,3 +516,108 @@ func TestGetVolumesStorageClass(t *testing.T) {
 		}
 	}
 }
+
+func TestGetPodTemplate(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		testName         string
+		ptName           string
+		ptNamespace      string
+		ptsInK8s         []corev1.PodTemplate
+		expectedResponse *corev1.PodTemplate
+		expectedError    error
+	}{
+		{
+			testName:         "pod template not in k8s",
+			ptName:           "pt-5678",
+			ptNamespace:      metav1.NamespaceAll,
+			ptsInK8s:         []corev1.PodTemplate{},
+			expectedResponse: nil,
+			expectedError:    errors.New(`podtemplate "pt-5678" not found`),
+		},
+		{
+			testName:    "pod template in k8s on different namespace",
+			ptName:      "pt-12345",
+			ptNamespace: metav1.NamespaceSystem,
+			ptsInK8s: []corev1.PodTemplate{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pt-13",
+						Namespace: metav1.NamespaceDefault,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pt-12345",
+						Namespace: metav1.NamespaceDefault,
+					},
+				},
+			},
+			expectedResponse: nil,
+			expectedError:    errors.New(`podtemplate "pt-12345" not found`),
+		},
+		{
+			testName:    "pod template in k8s",
+			ptName:      "pt-12345",
+			ptNamespace: metav1.NamespaceDefault,
+			ptsInK8s: []corev1.PodTemplate{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pt-13",
+						Namespace: metav1.NamespaceDefault,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pt-12345",
+						Namespace: metav1.NamespaceDefault,
+					},
+				},
+			},
+			expectedResponse: &corev1.PodTemplate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pt-12345",
+					Namespace: metav1.NamespaceDefault,
+				},
+			},
+			expectedError: nil,
+		},
+	}
+
+	for _, testcase := range testcases {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		fakeClient := fake.NewSimpleClientset()
+		for _, ptInK8s := range testcase.ptsInK8s {
+			pt := ptInK8s
+			_, err := fakeClient.CoreV1().PodTemplates(pt.Namespace).Create(context.TODO(), &pt, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("failed to setup test: %v", err)
+			}
+		}
+
+		csiGroupClient := SidecarInjector{}
+		const resyncDuration = 0 * time.Second
+
+		informer := informers.NewSharedInformerFactory(fakeClient, resyncDuration)
+		csiGroupClient.PodTemplateLister = informer.Core().V1().PodTemplates().Lister()
+
+		informer.Start(ctx.Done())
+		informer.WaitForCacheSync(ctx.Done())
+
+		response, err := csiGroupClient.GetPodTemplate(testcase.ptNamespace, testcase.ptName)
+		if err != nil && testcase.expectedError != nil {
+			if err.Error() != testcase.expectedError.Error() {
+				t.Error("for test: ", testcase.testName, ", want error: ", testcase.expectedError.Error(), " but got: ", err.Error())
+			}
+		} else if err != nil || testcase.expectedError != nil {
+			t.Error("for test: ", testcase.testName, ", want error: ", testcase.expectedError, " but got: ", err)
+		}
+
+		if !reflect.DeepEqual(response, testcase.expectedResponse) {
+			t.Error("for test: ", testcase.testName, ", want response: ", testcase.expectedResponse, " but got: ", response)
+		}
+	}
+}

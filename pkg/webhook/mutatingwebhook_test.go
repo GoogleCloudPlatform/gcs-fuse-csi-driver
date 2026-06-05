@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1202,6 +1204,7 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 		inputPod           *corev1.Pod
 		wantPod            *corev1.Pod
 		cacheCreatedByUser bool
+		isSharedMount      bool
 		expectErr          bool
 	}{
 		{
@@ -1530,6 +1533,64 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "pod with shared node mount, should inject profile label and scheduling gate but not sidecar cache",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "shared-mount-pod",
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "shared-mount-pod",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			isSharedMount: true,
+		},
+		{
+			name: "pod with shared node mount and user provided cache volume, should inject profile label, scheduling gate, and cache created by user label",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "shared-mount-pod-user-provided-cache",
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "shared-mount-pod-user-provided-cache",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel:    "true",
+						GcsfuseCacheCreatedByUserLabel: "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{expectedGate},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			cacheCreatedByUser: true,
+			isSharedMount:      true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1539,7 +1600,7 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 
 			// The function doesn't actually use the client or context,
 			// so we can pass in nil or empty values.
-			err := ModifyPodSpecForGCSFuseProfiles(podToModify, tc.cacheCreatedByUser)
+			err := ModifyPodSpecForGCSFuseProfiles(podToModify, tc.cacheCreatedByUser, tc.isSharedMount)
 			if err != nil || tc.expectErr {
 				if !tc.expectErr {
 					t.Fatalf("ModifyPodSpecForGcsfuseProfiles() returned an unexpected error: %v", err)
@@ -1800,6 +1861,7 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 				MetadataPrefetchConfig: FakePrefetchConfig(),
 				Decoder:                admission.NewDecoder(runtime.NewScheme()),
 				NodeLister:             nodeInformer.Lister(),
+				PodTemplateLister:      informerFactory.Core().V1().PodTemplates().Lister(),
 			}
 
 			// Marshal the pod to create admission request
@@ -1826,7 +1888,7 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 				if resp.Allowed {
 					t.Errorf("Expected request to be denied, but it was allowed")
 				}
-				if tc.expectedErrorSubstr != "" && !stringContains(resp.Result.Message, tc.expectedErrorSubstr) {
+				if tc.expectedErrorSubstr != "" && !strings.Contains(resp.Result.Message, tc.expectedErrorSubstr) {
 					t.Errorf("Expected error message to contain %q, but got: %q", tc.expectedErrorSubstr, resp.Result.Message)
 				}
 				if resp.Result.Code != http.StatusBadRequest {
@@ -1841,15 +1903,402 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 	}
 }
 
-// Helper function to check if a string contains a substring
-func stringContains(s, substr string) bool {
-	if len(substr) == 0 {
-		return true
+func TestSharedNodeMountWebhook(t *testing.T) {
+	t.Parallel()
+
+	sharedPV := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "shared-pv",
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver: util.GCSFuseCsiDriverName,
+					VolumeAttributes: map[string]string{
+						"sharedMount": "true",
+					},
+				},
+			},
+		},
 	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+
+	sharedPVWithLabel := sharedPV.DeepCopy()
+	sharedPVWithLabel.Labels = map[string]string{
+		SharedMountLabel: "true",
 	}
-	return false
+
+	sharedPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-pvc",
+			Namespace: "default",
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "shared-pv",
+		},
+	}
+
+	sharedProfileSC := &storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "shared-profile-sc",
+			Labels: map[string]string{
+				putil.LabelProfile: "true",
+			},
+		},
+		Provisioner: util.GCSFuseCsiDriverName,
+		Parameters: map[string]string{
+			"sharedMount": "true",
+		},
+	}
+
+	sharedPVCWithProfile := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-pvc",
+			Namespace: "default",
+			Annotations: map[string]string{
+				MounterPodTemplateAnnotation: "mounter-template",
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To("shared-profile-sc"),
+			VolumeName:       "shared-pv",
+		},
+	}
+
+	podTemplateWithUserProvidedCache := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mounter-template-user-provided-cache",
+			Namespace: "default",
+		},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Volumes: []corev1.Volume{
+					{
+						Name: SidecarContainerCacheVolumeName,
+					},
+				},
+			},
+		},
+	}
+
+	sharedPVCWithProfileAndUserProvidedCache := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-pvc",
+			Namespace: "default",
+			Annotations: map[string]string{
+				MounterPodTemplateAnnotation: "mounter-template-user-provided-cache",
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To("shared-profile-sc"),
+			VolumeName:       "shared-pv",
+		},
+	}
+
+	sharedPVCWithAnnotation := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-pvc",
+			Namespace: "default",
+			Annotations: map[string]string{
+				MounterPodTemplateAnnotation: "mounter-template",
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "shared-pv",
+		},
+	}
+
+	podTemplate := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mounter-template",
+			Namespace: "default",
+		},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				SecurityContext: &corev1.PodSecurityContext{
+					FSGroup: ptr.To[int64](2001),
+				},
+			},
+		},
+	}
+
+	mixedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mixed-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{
+					Name: "shared-vol",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "shared-pvc",
+						},
+					},
+				},
+				{
+					Name: "standard-vol",
+					VolumeSource: corev1.VolumeSource{
+						CSI: &corev1.CSIVolumeSource{
+							Driver: util.GCSFuseCsiDriverName,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	sharedOnlyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-only-pod",
+			Namespace: "default",
+			Annotations: map[string]string{
+				GcsFuseVolumeEnableAnnotation: "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{
+					Name: "shared-vol",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "shared-pvc",
+						},
+					},
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "app-container",
+				},
+			},
+		},
+	}
+
+	sharedOnlyPodWithProfileMutated := sharedOnlyPod.DeepCopy()
+	sharedOnlyPodWithProfileMutated.Labels = map[string]string{
+		GcsfuseProfilesManagedLabel: "true",
+	}
+	sharedOnlyPodWithProfileMutated.Spec.SchedulingGates = []corev1.PodSchedulingGate{
+		{Name: BucketScanPendingSchedulingGate},
+	}
+
+	sharedOnlyPodWithProfileAndUserProvidedCacheMutated := sharedOnlyPod.DeepCopy()
+	sharedOnlyPodWithProfileAndUserProvidedCacheMutated.Labels = map[string]string{
+		GcsfuseProfilesManagedLabel:    "true",
+		GcsfuseCacheCreatedByUserLabel: "true",
+	}
+	sharedOnlyPodWithProfileAndUserProvidedCacheMutated.Spec.SchedulingGates = []corev1.PodSchedulingGate{
+		{Name: BucketScanPendingSchedulingGate},
+	}
+
+	workloadPodMismatchFSGroup := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			SecurityContext: &corev1.PodSecurityContext{
+				FSGroup: ptr.To[int64](1001), // fsGroup (1001) does not match the volume's PodTemplate fsGroup (2001)
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "shared-vol",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "shared-pvc",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	workloadPodMatchFSGroup := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			SecurityContext: &corev1.PodSecurityContext{
+				FSGroup: ptr.To[int64](2001), // fsGroup (2001) matches the volume's PodTemplate fsGroup (2001)
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "shared-vol",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "shared-pvc",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	workloadPodNoFSGroup := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{
+					Name: "shared-vol",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "shared-pvc",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	podTemplateNoFSGroup := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mounter-template",
+			Namespace: "default",
+		},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{},
+		},
+	}
+
+	testCases := []struct {
+		name           string
+		objects        []runtime.Object
+		requestObj     runtime.Object
+		requestKind    string
+		wantResponse   admission.Response
+		enableProfiles bool
+	}{
+		{
+			name:         "PersistentVolume using shared node mount is labeled with the shared-mount label.",
+			objects:      []runtime.Object{sharedPV},
+			requestObj:   sharedPV,
+			requestKind:  "PersistentVolume",
+			wantResponse: admission.PatchResponseFromRaw(serialize(t, sharedPV), serialize(t, sharedPVWithLabel)),
+		},
+		{
+			name:         "Pod mixing standard and shared node mount GCSFuse volumes is rejected.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplateNoFSGroup},
+			requestObj:   mixedPod,
+			requestKind:  "Pod",
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("mixing shared node mount and non-shared node mount GCSFuse volumes in the same Pod is not allowed")),
+		},
+		{
+			name:         "Pod using only shared node mount GCSFuse volumes bypasses sidecar injection.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplateNoFSGroup},
+			requestObj:   sharedOnlyPod,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod using shared node mount is rejected if PVC is missing PodTemplate annotation.",
+			objects:      []runtime.Object{sharedPV, sharedPVC},
+			requestObj:   sharedOnlyPod,
+			requestKind:  "Pod",
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q uses shared node mount but its PVC %q is missing a referenced PodTemplate annotation %q", "shared-vol", "shared-pvc", MounterPodTemplateAnnotation)),
+		},
+		{
+			name:         "Pod is rejected if its fsGroup does not match the volume's PodTemplate fsGroup.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplate},
+			requestObj:   workloadPodMismatchFSGroup,
+			requestKind:  "Pod",
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("Pod fsGroup 1001 does not match the one specified in volume's PodTemplate %q (2001)", "mounter-template")),
+		},
+		{
+			name:         "Pod is allowed if its fsGroup matches the volume's PodTemplate fsGroup.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplate},
+			requestObj:   workloadPodMatchFSGroup,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod is rejected if its fsGroup is not set but the volume's PodTemplate requires one.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplate},
+			requestObj:   workloadPodNoFSGroup,
+			requestKind:  "Pod",
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("Pod fsGroup is not set, but volume's PodTemplate %q requires fsGroup %d", "mounter-template", 2001)),
+		},
+		{
+			name:         "Pod is rejected if its fsGroup is set but the volume's PodTemplate does not specify one.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplateNoFSGroup},
+			requestObj:   workloadPodMatchFSGroup,
+			requestKind:  "Pod",
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("Pod has fsGroup set, but volume's PodTemplate %q does not specify one (not allowed for shared node mount)", "mounter-template")),
+		},
+		{
+			name:         "Pod is allowed if neither the Pod nor the volume's PodTemplate specify an fsGroup.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplateNoFSGroup},
+			requestObj:   workloadPodNoFSGroup,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:           "Pod using shared node mount with Profiles enabled is mutated with profile label and scheduling gate.",
+			objects:        []runtime.Object{sharedProfileSC, sharedPVCWithProfile, sharedPV, podTemplateNoFSGroup},
+			requestObj:     sharedOnlyPod,
+			requestKind:    "Pod",
+			wantResponse:   admission.PatchResponseFromRaw(serialize(t, sharedOnlyPod), serialize(t, sharedOnlyPodWithProfileMutated)),
+			enableProfiles: true,
+		},
+		{
+			name:           "Pod using shared node mount with Profiles enabled and user provided cache volume in PodTemplate is mutated with profile label, scheduling gate, and cache-created-by-user label.",
+			objects:        []runtime.Object{sharedProfileSC, sharedPVCWithProfileAndUserProvidedCache, sharedPV, podTemplateWithUserProvidedCache},
+			requestObj:     sharedOnlyPod,
+			requestKind:    "Pod",
+			wantResponse:   admission.PatchResponseFromRaw(serialize(t, sharedOnlyPod), serialize(t, sharedOnlyPodWithProfileAndUserProvidedCacheMutated)),
+			enableProfiles: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeClient := fake.NewSimpleClientset(tc.objects...)
+			informerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
+			si := SidecarInjector{
+				Decoder:                admission.NewDecoder(runtime.NewScheme()),
+				Config:                 FakeConfig(),
+				MetadataPrefetchConfig: FakePrefetchConfig(),
+				K8SClient:              fakeClient,
+				PvLister:               informerFactory.Core().V1().PersistentVolumes().Lister(),
+				PvcLister:              informerFactory.Core().V1().PersistentVolumeClaims().Lister(),
+				ScLister:               informerFactory.Storage().V1().StorageClasses().Lister(),
+				PodTemplateLister:      informerFactory.Core().V1().PodTemplates().Lister(),
+			}
+			if tc.enableProfiles {
+				si.Config.EnableGcsfuseProfiles = true
+			}
+			si.Config.EnableSharedNodeMount = true
+
+			stopCh := make(chan struct{})
+			defer close(stopCh)
+			informerFactory.Start(stopCh)
+			informerFactory.WaitForCacheSync(stopCh)
+
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Create,
+					Kind: metav1.GroupVersionKind{
+						Group:   "",
+						Version: "v1",
+						Kind:    tc.requestKind,
+					},
+					Object: runtime.RawExtension{
+						Raw: serialize(t, tc.requestObj),
+					},
+				},
+			}
+
+			gotResponse := si.Handle(context.Background(), req)
+
+			if err := compareResponses(tc.wantResponse, gotResponse); err != nil {
+				t.Errorf("for test case %q: %v", tc.name, err)
+			}
+		})
+	}
 }

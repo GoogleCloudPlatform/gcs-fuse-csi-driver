@@ -34,7 +34,7 @@ metadata:
   name: gcs-fuse-csi-webhook-role
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "persistentvolumes", "persistentvolumeclaims", "configmaps"]
+    resources: ["nodes", "persistentvolumes", "persistentvolumeclaims", "configmaps", "podtemplates"]
     verbs: ["get","list","watch"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses"]
