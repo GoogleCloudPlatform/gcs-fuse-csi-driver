@@ -470,7 +470,7 @@ func appendWorkloadCredentialConfigurationVolumes(client kubernetes.Interface, p
 	}
 	klog.Infof("Parsed the workload identity credential configuration configMap %s in namespace %s %+v", configMapName, pod.Namespace, credConfig)
 
-	if credConfig.CredentialSource.Executable == nil {
+	if credConfig.CredentialSource.Executable == nil && !volumeExists(pod.Spec.Volumes, SidecarContainerWITokenVolumeName) {
 		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 			Name: SidecarContainerWITokenVolumeName,
 			VolumeSource: corev1.VolumeSource{
