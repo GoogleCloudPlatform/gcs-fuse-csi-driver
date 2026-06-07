@@ -18,6 +18,7 @@ limitations under the License.
 package sidecarmounter
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -496,6 +497,37 @@ func TestPrepareMountArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMountErrorFileCleanup(t *testing.T) {
+	t.Parallel()
+
+	tempDir, err := os.MkdirTemp("", "sidecar-mounter-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	errFilePath := filepath.Join(tempDir, util.ErrorFileName)
+	if err := os.WriteFile(errFilePath, []byte("fake error"), 0644); err != nil {
+		t.Fatalf("failed to write error file: %v", err)
+	}
+
+	mc := &MountConfig{
+		BucketName: "test-bucket",
+		VolumeName: "test-volume",
+		TempDir:    tempDir,
+		BufferDir:  filepath.Join(tempDir, "buffer"),
+		CacheDir:   filepath.Join(tempDir, "cache"),
+		ErrWriter:  NewErrorWriter(filepath.Join(tempDir, util.ErrorFileName)),
+	}
+
+	mounter := New("invalid-gcsfuse-path")
+	_ = mounter.Mount(context.Background(), mc)
+
+	if _, err := os.Stat(errFilePath); !os.IsNotExist(err) {
+		t.Fatalf("expected error file to be deleted, but it still exists (or another error occurred: %v)", err)
 	}
 }
 
