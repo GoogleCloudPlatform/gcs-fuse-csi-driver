@@ -153,9 +153,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		klog.Errorf("failed to get emptyDir path: %v", err)
 	}
 
-	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, "/error")
+	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.ErrorFileName)
 	if err != nil {
-		klog.Errorf("failed to check and delete stale /error file: %v", err)
+		klog.Errorf("failed to check and delete stale %s file: %v", util.ErrorFileName, err)
 	}
 
 	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.GCSFuseKernelParamsFileName)
