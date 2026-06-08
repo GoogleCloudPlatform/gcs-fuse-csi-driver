@@ -67,7 +67,7 @@ var (
 	metadataPrefetchCPULimit                = flag.String("metadata-sidecar-cpu-limit", "50m", "Flag to use default value for gcsfuse memory prefetch sidecar container cpu limit.")
 	metadataPrefetchEphemeralStorageRequest = flag.String("metadata-sidecar-ephemeral-storage-request", "10Mi", "The default value for gcsfuse memory prefetch sidecar ephemeral storage request.")
 	metadataPrefetchEphemeralStorageLimit   = flag.String("metadata-sidecar-ephemeral-storage-limit", "0", "The default value for gcsfuse memory prefetch sidecar ephemeral storage limit.")
-	requireWIFCredentialConfigMap          = flag.Bool("require-wif-credential-configmap", false, "When true, the webhook denies pod creation if the WIF credential ConfigMap annotation is absent, preventing fallback to the node's identity.")
+	requireWIFCredentialConfigMap          = flag.Bool("require-wif-credential-configmap", false, "When true, the webhook denies the creation of pods with GCS FUSE volumes if the WIF credential ConfigMap annotation is absent, preventing fallback to the node's identity.")
 	requireApplicationCredentials          = flag.Bool("require-application-credentials", false, "When true, the sidecar container is started with --require-application-credentials=true, causing it to refuse to start if GOOGLE_APPLICATION_CREDENTIALS is unset.")
 	// These are set at compile time.
 	webhookVersion = "unknown"
