@@ -634,6 +634,101 @@ func TestNodeUnpublishVolume(t *testing.T) {
 	}
 }
 
+func TestNodeStageVolume(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		req       *csi.NodeStageVolumeRequest
+		expectErr error
+	}{
+		{
+			name:      "empty request",
+			req:       nil,
+			expectErr: status.Error(codes.InvalidArgument, "Request cannot be nil"),
+		},
+		{
+			name: "empty volume id",
+			req: &csi.NodeStageVolumeRequest{
+				StagingTargetPath: "/test/staging/path",
+				VolumeCapability:  testVolumeCapability,
+			},
+			expectErr: status.Error(codes.InvalidArgument, "Volume ID must be provided"),
+		},
+		{
+			name: "missing volume capability",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: "/test/staging/path",
+			},
+			expectErr: status.Error(codes.InvalidArgument, "Volume capability must be provided"),
+		},
+		{
+			name: "invalid volume capability",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: "/test/staging/path",
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Mount{
+						Mount: &csi.VolumeCapability_MountVolume{},
+					},
+					AccessMode: &csi.VolumeCapability_AccessMode{
+						Mode: csi.VolumeCapability_AccessMode_UNKNOWN,
+					},
+				},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "driver does not support access mode: UNKNOWN"),
+		},
+		{
+			name: "empty staging target path",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:         testVolumeID,
+				VolumeCapability: testVolumeCapability,
+			},
+			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided"),
+		},
+		{
+			name: "valid request with sharedMount false",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: "/test/staging/path",
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "false",
+				},
+			},
+		},
+		{
+			name: "valid request with sharedMount true",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: "/test/staging/path",
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			testEnv := initTestNodeServer(t)
+			_, err := testEnv.ns.NodeStageVolume(context.TODO(), test.req)
+			if test.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if test.expectErr != nil {
+				if err == nil {
+					t.Errorf("got error nil, expected error %q", test.expectErr)
+				} else if !errors.Is(err, test.expectErr) && err.Error() != test.expectErr.Error() {
+					t.Errorf("got error %q, expected error %q", err, test.expectErr)
+				}
+			}
+		})
+	}
+}
+
 func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint, unexpectedOpts []string) {
 	t.Helper()
 	if e == nil {
