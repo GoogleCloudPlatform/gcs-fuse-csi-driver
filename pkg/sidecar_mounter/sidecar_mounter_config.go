@@ -129,10 +129,6 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
-	if err := mc.ErrWriter.Clean(); err != nil {
-		klog.Warningf("failed to cleanup stale error file: %v", err)
-	}
-
 	klog.Infof("connecting to socket %q", sp)
 	c, err := net.Dial("unix", sp)
 	if err != nil {
