@@ -60,6 +60,8 @@ const (
 	// AdditionalVolumeMountsAnnotation is used to specify additional volumes to mount into the GCS Fuse sidecar.
 	// The expected format is a comma-separated list of volumeName:mountPath (e.g., "vol1:/path1,vol2:/path2").
 	AdditionalVolumeMountsAnnotation = "gke-gcsfuse/additional-volume-mounts"
+
+	GoogleExternalAccountAllowExecutablesEnvVar = "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES"
 )
 
 var (
@@ -162,7 +164,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 			mountPath := filepath.Dir(credentialConfig.CredentialSource.File)
 			credentialVolumeMounts = append(credentialVolumeMounts, corev1.VolumeMount{Name: SidecarContainerWITokenVolumeName, MountPath: mountPath})
 		} else {
-			envVars = append(envVars, corev1.EnvVar{Name: "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES", Value: "1"})
+			envVars = append(envVars, corev1.EnvVar{Name: GoogleExternalAccountAllowExecutablesEnvVar, Value: "1"})
 		}
 
 		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
@@ -183,32 +185,30 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 			if mount == "" {
 				continue
 			}
-			parts := strings.Split(mount, ":")
-			if len(parts) == 2 {
-				volName := strings.TrimSpace(parts[0])
-				mountPath := strings.TrimSpace(parts[1])
-
-				if volName == "" || mountPath == "" {
-					klog.Warningf("Invalid empty volume name or mount path in %s: %s", AdditionalVolumeMountsAnnotation, mount)
-					continue
-				}
-
-				if !strings.HasPrefix(mountPath, "/") {
-					klog.Warningf("Mount path %q specified in %s is not an absolute path", mountPath, AdditionalVolumeMountsAnnotation)
-				}
-
-				if !volumeExists(pod.Spec.Volumes, volName) {
-					klog.Warningf("Volume %q specified in %s not found in pod spec", volName, AdditionalVolumeMountsAnnotation)
-				}
-
-				sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
-					Name:      volName,
-					MountPath: mountPath,
-					ReadOnly:  true,
-				})
-			} else {
-				klog.Warningf("Invalid format for %s: %s", AdditionalVolumeMountsAnnotation, mount)
+			volName, mountPath, found := strings.Cut(mount, ":")
+			if !found {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid format for %s: %q, expected \"volume-name:mount-path\"", AdditionalVolumeMountsAnnotation, mount))
 			}
+			volName = strings.TrimSpace(volName)
+			mountPath = strings.TrimSpace(mountPath)
+
+			if volName == "" || mountPath == "" {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid empty volume name or mount path in %s: %q", AdditionalVolumeMountsAnnotation, mount))
+			}
+
+			if !strings.HasPrefix(mountPath, "/") {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("mount path %q specified in %s is not an absolute path", mountPath, AdditionalVolumeMountsAnnotation))
+			}
+
+			if !volumeExists(pod.Spec.Volumes, volName) {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q specified in %s not found in pod spec", volName, AdditionalVolumeMountsAnnotation))
+			}
+
+			sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
+				Name:      volName,
+				MountPath: mountPath,
+				ReadOnly:  true,
+			})
 		}
 	}
 

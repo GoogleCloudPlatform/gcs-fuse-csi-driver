@@ -612,29 +612,82 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			nodes:        nativeSupportNodes(),
 		},
 		{
-			name:      "workload identity with invalid format and missing additional volume mounts injection test.",
+			name:      "workload identity with additional volume mounts complex formatting successful test.",
 			operation: admissionv1.Create,
 			inputPod: func() *corev1.Pod {
 				pod := validInputPodWithWorkloadIdentity("test-credentials")
-				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "valid-but-missing-vol:/scripts,invalid-format"
-				return pod
-			}(),
-			wantResponse: wantAdditionalVolumeMountsResponseWithMissingVolume(t, "test-credentials", "valid-but-missing-vol:/scripts"),
-			nodes:        nativeSupportNodes(),
-		},
-		{
-			name:      "workload identity with additional volume mounts containing whitespace and relative path injection test.",
-			operation: admissionv1.Create,
-			inputPod: func() *corev1.Pod {
-				pod := validInputPodWithWorkloadIdentity("test-credentials")
-				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "  binary-volume : /scripts , meta-certs-vol : relative/path  "
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = " , binary-volume : /scripts:extra , , meta-certs-vol : /etc/meta/certs , "
 				pod.Spec.Volumes = append(pod.Spec.Volumes,
 					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 					corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 				)
 				return pod
 			}(),
-			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts,meta-certs-vol:relative/path"),
+			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts:extra,meta-certs-vol:/etc/meta/certs"),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts missing volume failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "missing-vol:/scripts"
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q specified in %s not found in pod spec", "missing-vol", AdditionalVolumeMountsAnnotation)),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts relative path failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:relative/path"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("mount path %q specified in %s is not an absolute path", "relative/path", AdditionalVolumeMountsAnnotation)),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts no colons failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume-no-colons"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid format for %s: %q, expected \"volume-name:mount-path\"", AdditionalVolumeMountsAnnotation, "binary-volume-no-colons")),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts empty volume name failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = ":/scripts"
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid empty volume name or mount path in %s: %q", AdditionalVolumeMountsAnnotation, ":/scripts")),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts empty mount path failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid empty volume name or mount path in %s: %q", AdditionalVolumeMountsAnnotation, "binary-volume:")),
 			nodes:        nativeSupportNodes(),
 		},
 
@@ -1704,15 +1757,6 @@ func wantAdditionalVolumeMountsResponse(t *testing.T, configMapName string, addi
 	return generatePatch(t, originalPod, &newPod)
 }
 
-func wantAdditionalVolumeMountsResponseWithMissingVolume(t *testing.T, configMapName string, additionalMounts string) admission.Response {
-	t.Helper()
-	originalPod := validInputPodWithWorkloadIdentity(configMapName)
-	originalPod.Annotations[AdditionalVolumeMountsAnnotation] = additionalMounts
-
-	newPod := *modifySpecWithAdditionalVolumeMounts(*originalPod, configMapName, additionalMounts)
-	return generatePatch(t, originalPod, &newPod)
-}
-
 func modifySpecWithAdditionalVolumeMounts(newPod corev1.Pod, configMapName string, additionalMounts string) *corev1.Pod {
 	config := FakeConfig()
 
@@ -1763,11 +1807,17 @@ func modifySpecWithAdditionalVolumeMounts(newPod corev1.Pod, configMapName strin
 		if additionalMounts != "" {
 			mounts := strings.Split(additionalMounts, ",")
 			for _, mount := range mounts {
-				parts := strings.Split(mount, ":")
-				if len(parts) == 2 {
+				mount = strings.TrimSpace(mount)
+				if mount == "" {
+					continue
+				}
+				volName, mountPath, found := strings.Cut(mount, ":")
+				if found {
+					volName = strings.TrimSpace(volName)
+					mountPath = strings.TrimSpace(mountPath)
 					sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
-						Name:      parts[0],
-						MountPath: parts[1],
+						Name:      volName,
+						MountPath: mountPath,
 						ReadOnly:  true,
 					})
 				}
