@@ -108,7 +108,6 @@ const (
 	gcsfuseCSIProfilesStaticBucket       = "gcsfusecsi-list-storm-hns-bucket"
 	gcsfuseCSIProfilesStaticBucketRegion = "us-central1"
 	gkeScalabilityImagesProjectID        = "gke-scalability-images"
-	iamPropagationWaitTime               = 10 * time.Minute
 )
 
 var (
@@ -156,8 +155,8 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 	if isBillingTest() {
 		e2eframework.Logf("Creating Project IAM Policy Binding for Billing Test (Service Usage Consumer)...")
 		billingBinding.Create(ctx)
-		e2eframework.Logf("Waiting for Billing IAM policy propagation to prevent 403 flakiness...")
-		time.Sleep(iamPropagationWaitTime)
+		e2eframework.Logf("Waiting 5 minutes for Billing IAM policy propagation to prevent 403 flakiness...")
+		time.Sleep(5 * time.Minute)
 	}
 
 	// This is required to run the cloud profiler tests. See requirements here:
@@ -169,8 +168,8 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 		e2eframework.Logf("Creating Project IAM Policy Bindings for Cloud Profiler (Agent and User)...")
 		profilerAgentBinding.Create(ctx)
 		profilerUserBinding.Create(ctx)
-		e2eframework.Logf("Waiting for Profiler IAM policy propagation to prevent 403 flakiness...")
-		time.Sleep(iamPropagationWaitTime)
+		e2eframework.Logf("Waiting 5 minutes for Profiler IAM policy propagation to prevent 403 flakiness...")
+		time.Sleep(5 * time.Minute)
 	}
 
 	config := &storageframework.PerTestConfig{

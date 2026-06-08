@@ -101,6 +101,7 @@ const (
 	IsOSSEnvVar                            = "IS_OSS"
 	IsZBEnabledEnvVar                      = "IS_ZB_ENABLED"
 	GCSFusePRNumberEnvVar                  = "GCSFUSE_PR_NUMBER"
+	NodeServiceAccountEnvVar               = "NODE_SERVICE_ACCOUNT"
 )
 
 var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
