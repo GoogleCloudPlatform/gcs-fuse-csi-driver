@@ -64,9 +64,51 @@ func TestParseCredentialConfigurationConfigMap(t *testing.T) {
 			expectedCredConfig: &CredentialConfig{
 				Audience: "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
 				CredentialSource: struct {
-					File string `json:"file"`
+					File       string `json:"file,omitempty"`
+					Executable *struct {
+						Command string `json:"command"`
+					} `json:"executable,omitempty"`
 				}{
 					File: "/var/run/service-account/token",
+				},
+			},
+		},
+		{
+			name:          "valid credential configuration with executable",
+			configMapName: "executable-credentials",
+			configMapsInCluster: []*corev1.ConfigMap{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "executable-credentials",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"credential-configuration.json": `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"executable": {
+									"command": "/scripts/fetch-token"
+								}
+							}
+						}`,
+					},
+				},
+			},
+			expectError:      false,
+			expectedFilename: "credential-configuration.json",
+			expectedCredConfig: &CredentialConfig{
+				Audience: "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+				CredentialSource: struct {
+					File       string `json:"file,omitempty"`
+					Executable *struct {
+						Command string `json:"command"`
+					} `json:"executable,omitempty"`
+				}{
+					Executable: &struct {
+						Command string `json:"command"`
+					}{
+						Command: "/scripts/fetch-token",
+					},
 				},
 			},
 		},
@@ -427,6 +469,52 @@ func TestAppendWorkloadCredentialConfigurationVolumes(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:          "successful volume injection for executable credential configuration",
+			configMapName: "executable-credentials",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: "default",
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{},
+				},
+			},
+			configMapsInCluster: []*corev1.ConfigMap{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "executable-credentials",
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"credential-configuration.json": `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"executable": {
+									"command": "/scripts/fetch-token"
+								}
+							}
+						}`,
+					},
+				},
+			},
+			expectError:      false,
+			expectedFilename: "credential-configuration.json",
+			expectedVolumes: []corev1.Volume{
+				{
+					Name: SidecarContainerWICredentialConfigMapVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: "executable-credentials",
+							},
+							DefaultMode: &defaultMode,
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -485,11 +573,12 @@ func TestSidecarContainerCredentialConfiguration(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name           string
-		credConfig     *SidecarContainerCredentialConfiguration
-		config         *Config
-		expectedEnvVar *corev1.EnvVar
-		expectedMounts []corev1.VolumeMount
+		name            string
+		credConfig      *SidecarContainerCredentialConfiguration
+		config          *Config
+		expectedEnvVar  *corev1.EnvVar
+		expectedEnvVars []corev1.EnvVar
+		expectedMounts  []corev1.VolumeMount
 	}{
 		{
 			name: "valid credential configuration",
@@ -620,6 +709,33 @@ func TestSidecarContainerCredentialConfiguration(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "credential configuration with generic env vars",
+			credConfig: &SidecarContainerCredentialConfiguration{
+				GacEnv: &corev1.EnvVar{
+					Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+					Value: "/etc/workload-identity/credential-configuration.json",
+				},
+				EnvVars: []corev1.EnvVar{
+					{
+						Name:  "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
+						Value: "1",
+					},
+				},
+			},
+			config: FakeConfig(),
+			expectedEnvVar: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: "/etc/workload-identity/credential-configuration.json",
+			},
+			expectedEnvVars: []corev1.EnvVar{
+				{
+					Name:  "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
+					Value: "1",
+				},
+			},
+			expectedMounts: nil,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -647,6 +763,17 @@ func TestSidecarContainerCredentialConfiguration(t *testing.T) {
 				} else if diff := cmp.Diff(tc.expectedEnvVar, foundGacEnv); diff != "" {
 					t.Errorf("GOOGLE_APPLICATION_CREDENTIALS env var mismatch (-want +got):\n%s", diff)
 				}
+			}
+
+			// Check generic environment variables
+			var foundEnvVars []corev1.EnvVar
+			for _, env := range container.Env {
+				if env.Name == "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES" {
+					foundEnvVars = append(foundEnvVars, env)
+				}
+			}
+			if diff := cmp.Diff(tc.expectedEnvVars, foundEnvVars); diff != "" {
+				t.Errorf("generic env vars mismatch (-want +got):\n%s", diff)
 			}
 
 			// Check volume mounts - find credential-related mounts

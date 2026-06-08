@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -595,6 +596,108 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			wantResponse: wantResponse(t, false, false, true),
 			nodes:        nativeSupportNodes(),
 		},
+		{
+			name:      "workload identity with additional volume mounts injection successful test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:/scripts,meta-certs-vol:/etc/meta/certs"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts,meta-certs-vol:/etc/meta/certs"),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts complex formatting successful test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = " , binary-volume : /scripts:extra , , meta-certs-vol : /etc/meta/certs , "
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts:extra,meta-certs-vol:/etc/meta/certs"),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts missing volume failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "missing-vol:/scripts"
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q specified in %s not found in pod spec", "missing-vol", AdditionalVolumeMountsAnnotation)),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts relative path failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:relative/path"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("mount path %q specified in %s is not an absolute path", "relative/path", AdditionalVolumeMountsAnnotation)),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts no colons failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume-no-colons"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid format for %s: %q, expected \"volume-name:mount-path\"", AdditionalVolumeMountsAnnotation, "binary-volume-no-colons")),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts empty volume name failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = ":/scripts"
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid empty volume name or mount path in %s: %q", AdditionalVolumeMountsAnnotation, ":/scripts")),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:      "workload identity with additional volume mounts empty mount path failure test.",
+			operation: admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid empty volume name or mount path in %s: %q", AdditionalVolumeMountsAnnotation, "binary-volume:")),
+			nodes:        nativeSupportNodes(),
+		},
+
+		{
+			name:         "executable workload identity injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod:     validInputPodWithWorkloadIdentity("executable-credentials"),
+			wantResponse: wantExecutableWorkloadIdentityResponse(t, "executable-credentials"),
+			nodes:        nativeSupportNodes(),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -615,18 +718,29 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			// Create workload identity ConfigMap if the test uses it
 			if tc.inputPod != nil && tc.inputPod.Annotations != nil {
 				if configMapName, ok := tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" {
+					configJson := `{
+								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+								"credential_source": {
+									"file": "/var/run/service-account/token"
+								}
+							}`
+					if configMapName == "executable-credentials" {
+						configJson = `{
+								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+								"credential_source": {
+									"executable": {
+										"command": "/scripts/fetch-token"
+									}
+								}
+							}`
+					}
 					configMap := &corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      configMapName,
 							Namespace: testNamespace,
 						},
 						Data: map[string]string{
-							"credential-configuration.json": `{
-								"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
-								"credential_source": {
-									"file": "/var/run/service-account/token"
-								}
-							}`,
+							"credential-configuration.json": configJson,
 						},
 					}
 					_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
@@ -1630,6 +1744,93 @@ func modifySpecWithWorkloadIdentity(newPod corev1.Pod, configMapName string) *co
 	return &newPod
 }
 
+func wantAdditionalVolumeMountsResponse(t *testing.T, configMapName string, additionalMounts string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithWorkloadIdentity(configMapName)
+	originalPod.Annotations[AdditionalVolumeMountsAnnotation] = additionalMounts
+	originalPod.Spec.Volumes = append(originalPod.Spec.Volumes,
+		corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	)
+
+	newPod := *modifySpecWithAdditionalVolumeMounts(*originalPod, configMapName, additionalMounts)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func modifySpecWithAdditionalVolumeMounts(newPod corev1.Pod, configMapName string, additionalMounts string) *corev1.Pod {
+	config := FakeConfig()
+
+	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
+	if configMapName != "" {
+		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
+			GacEnv: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "credential-configuration.json"),
+			},
+			CredentialVolumeMounts: []corev1.VolumeMount{
+				{Name: SidecarContainerWITokenVolumeName, MountPath: "/var/run/service-account"},
+				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+			},
+		}
+
+		newPod.Spec.Volumes = append(newPod.Spec.Volumes,
+			corev1.Volume{
+				Name: SidecarContainerWITokenVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					Projected: &corev1.ProjectedVolumeSource{
+						Sources: []corev1.VolumeProjection{
+							{
+								ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+									Audience:          "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+									ExpirationSeconds: &tokenExpirationSeconds,
+									Path:              "token",
+								},
+							},
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+			corev1.Volume{
+				Name: SidecarContainerWICredentialConfigMapVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: configMapName,
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+		)
+
+		if additionalMounts != "" {
+			mounts := strings.Split(additionalMounts, ",")
+			for _, mount := range mounts {
+				mount = strings.TrimSpace(mount)
+				if mount == "" {
+					continue
+				}
+				volName, mountPath, found := strings.Cut(mount, ":")
+				if found {
+					volName = strings.TrimSpace(volName)
+					mountPath = strings.TrimSpace(mountPath)
+					sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
+						Name:      volName,
+						MountPath: mountPath,
+						ReadOnly:  true,
+					})
+				}
+			}
+		}
+	}
+
+	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
+
+	return &newPod
+}
+
 func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 	t.Parallel()
 
@@ -1738,6 +1939,26 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 			},
 			expectError: false, // Empty annotation value should be ignored
 		},
+		{
+			name: "allow pod with hostNetwork=true and executable credential configuration",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						GcsFuseVolumeEnableAnnotation:                    "true",
+						GCPWorkloadIdentityCredentialConfigMapAnnotation: "executable-credentials",
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork:                   true,
+					Containers:                    []corev1.Container{{Name: "app-container"}},
+					Volumes:                       []corev1.Volume{},
+					TerminationGracePeriodSeconds: ptr.To[int64](60),
+				},
+			},
+			expectError: false, // Executable credentials should be ALLOWED on hostNetwork pods
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1745,18 +1966,29 @@ func TestOIDCAuthenticationWithHostNetwork(t *testing.T) {
 			// Create fake clientset with necessary ConfigMap for OIDC tests
 			fakeClient := fake.NewSimpleClientset()
 			if tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] != "" {
+				configJson := `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"file": "/var/run/service-account/token"
+							}
+						}`
+				if tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation] == "executable-credentials" {
+					configJson = `{
+							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+							"credential_source": {
+								"executable": {
+									"command": "/scripts/fetch-token"
+								}
+							}
+						}`
+				}
 				configMap := &corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      tc.inputPod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation],
 						Namespace: testNamespace,
 					},
 					Data: map[string]string{
-						"credential-configuration.json": `{
-							"audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
-							"credential_source": {
-								"file": "/var/run/service-account/token"
-							}
-						}`,
+						"credential-configuration.json": configJson,
 					},
 				}
 				_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(context.Background(), configMap, metav1.CreateOptions{})
@@ -1852,4 +2084,53 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func wantExecutableWorkloadIdentityResponse(t *testing.T, configMapName string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithWorkloadIdentity(configMapName)
+	newPod := *modifySpecWithExecutableWorkloadIdentity(*originalPod, configMapName)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func modifySpecWithExecutableWorkloadIdentity(newPod corev1.Pod, configMapName string) *corev1.Pod {
+	config := FakeConfig()
+
+	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
+	if configMapName != "" {
+		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
+			GacEnv: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "credential-configuration.json"),
+			},
+			CredentialVolumeMounts: []corev1.VolumeMount{
+				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+			},
+			EnvVars: []corev1.EnvVar{
+				{
+					Name:  "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
+					Value: "1",
+				},
+			},
+		}
+
+		newPod.Spec.Volumes = append(newPod.Spec.Volumes,
+			corev1.Volume{
+				Name: SidecarContainerWICredentialConfigMapVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: configMapName,
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+		)
+	}
+
+	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
+
+	return &newPod
 }
