@@ -118,12 +118,25 @@ func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *cor
 	}
 
 	// Retrieve container spec and index to inject sidecar for either init containers or regular based on native sidecar support.
+	targetContainer := containerIndexOrderMap[containerName]
+	if val, ok := pod.Annotations[GcsFuseInjectAfterAnnotation]; ok && val != "" {
+		targetContainer = val
+	}
+
 	if injectAsNativeSidecar {
 		containerSpec = si.getNativeContainerSpec(containerName, pod, config, credentialConfig)
-		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, containerIndexOrderMap[containerName])
+		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, targetContainer)
+		
+		if index == 0 && targetContainer != IstioSidecarName {
+			index = getInjectIndexAfterContainer(pod.Spec.InitContainers, IstioSidecarName)
+		}
 	} else {
 		containerSpec = si.getContainerSpec(containerName, pod, config, credentialConfig)
-		index = getInjectIndexAfterContainer(pod.Spec.Containers, containerIndexOrderMap[containerName])
+		index = getInjectIndexAfterContainer(pod.Spec.Containers, targetContainer)
+		
+		if index == 0 && targetContainer != IstioSidecarName {
+			index = getInjectIndexAfterContainer(pod.Spec.Containers, IstioSidecarName)
+		}
 	}
 
 	// Skip metadata prefetch sidecar injection if no volumes are requesting metadata prefetch.

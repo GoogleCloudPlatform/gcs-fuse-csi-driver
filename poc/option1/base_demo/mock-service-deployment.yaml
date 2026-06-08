@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-token-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-token-service
+  template:
+    metadata:
+      labels:
+        app: mock-token-service
+    spec:
+      containers:
+      - name: mock-token-service
+        image: gcr.io/yangspirit-joonix/mock-service:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-token-service
+spec:
+  selector:
+    app: mock-token-service
+  ports:
+  - protocol: TCP
+    port: 5000
+    targetPort: 5000

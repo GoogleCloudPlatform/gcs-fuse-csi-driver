@@ -1,0 +1,3 @@
+FROM alpine:latest
+COPY fetch-token /usr/bin/fetch-token
+RUN chmod +x /usr/bin/fetch-token

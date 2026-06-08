@@ -118,6 +118,7 @@ var (
 type SidecarContainerCredentialConfiguration struct {
 	GacEnv                 *corev1.EnvVar       // This is the environment variable for GOOGLE_APPLICATION_CREDENTIALS that will be injected into the sidecar container.
 	CredentialVolumeMounts []corev1.VolumeMount // These are the volume mounts for the credential files that will be injected into the sidecar container.
+	EnvVars                []corev1.EnvVar      // These are generic environment variables that will be injected into the sidecar container.
 }
 
 func GetNativeSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {
@@ -159,6 +160,10 @@ func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCreden
 			container.Env = append(container.Env, *credentialConfig.GacEnv)
 		}
 
+		// Inject generic environment variables.
+		if len(credentialConfig.EnvVars) > 0 {
+			container.Env = append(container.Env, credentialConfig.EnvVars...)
+		}
 		// Inject the volume mounts for the credential files.
 		if len(credentialConfig.CredentialVolumeMounts) > 0 {
 			container.VolumeMounts = append(container.VolumeMounts, credentialConfig.CredentialVolumeMounts...)

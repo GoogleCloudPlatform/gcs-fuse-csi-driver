@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gke-workload-with-gcsfuse-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gke-workload-with-gcsfuse-demo
+  template:
+    metadata:
+      labels:
+        app: gke-workload-with-gcsfuse-demo
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/workload-identity-credential-configmap: "mock-auth-config"
+        gke-gcsfuse/additional-volume-mounts: "binary-volume:/scripts"
+        gke-gcsfuse/inject-after: "copy-token-binary"
+    spec:
+      initContainers:
+      - name: copy-token-binary
+        image: gcr.io/yangspirit-joonix/token-fetcher:latest
+        command: ["sh", "-c", "cp /usr/bin/fetch-token /scripts/fetch-token"]
+        volumeMounts:
+        - name: binary-volume
+          mountPath: /scripts
+      
+      containers:
+      - name: workload
+        image: ubuntu
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: demo-bucket-vol
+          mountPath: /data
+      
+
+      
+      volumes:
+      - name: binary-volume
+        emptyDir: {}
+      - name: demo-bucket-vol
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: yangspirit-joonix-demo-bucket

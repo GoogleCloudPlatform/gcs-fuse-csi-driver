@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gke-workload-with-gcsfuse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gke-workload-with-gcsfuse
+  template:
+    metadata:
+      labels:
+        app: gke-workload-with-gcsfuse
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/workload-identity-credential-configmap: "custom-auth-config"
+        gke-gcsfuse/additional-volume-mounts: "binary-volume:/scripts,custom-certs-vol:/etc/custom/certs"
+    spec:
+      initContainers:
+      - name: copy-token-binary
+        image: gcr.io/yangspirit-joonix/token-fetcher:latest
+        command: ["sh", "-c", "cp /usr/bin/fetch-token /scripts/fetch-token"]
+        volumeMounts:
+        - name: binary-volume
+          mountPath: /scripts
+      
+      containers:
+      - name: workload
+        image: ubuntu
+        command: ["sleep", "infinity"]
+      
+      volumes:
+      - name: binary-volume
+        emptyDir: {}
+      - name: custom-certs-vol
+        csi:
+          driver: csi.cert-manager.io
+          readOnly: true
+          volumeAttributes:
+            csi.cert-manager.io/issuer-name: floodgate-issuer
+            csi.cert-manager.io/issuer-kind: Issuer
+            csi.cert-name: custom-client

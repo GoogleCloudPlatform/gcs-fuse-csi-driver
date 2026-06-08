@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -593,6 +594,21 @@ func TestValidateMutatingWebhookResponse(t *testing.T) {
 			operation:    admissionv1.Create,
 			inputPod:     validInputPodWithWorkloadIdentity(""),
 			wantResponse: wantResponse(t, false, false, true),
+			nodes:        nativeSupportNodes(),
+		},
+		{
+			name:         "workload identity with additional volume mounts injection successful test.",
+			operation:    admissionv1.Create,
+			inputPod: func() *corev1.Pod {
+				pod := validInputPodWithWorkloadIdentity("test-credentials")
+				pod.ObjectMeta.Annotations[AdditionalVolumeMountsAnnotation] = "binary-volume:/scripts,meta-certs-vol:/etc/meta/certs"
+				pod.Spec.Volumes = append(pod.Spec.Volumes,
+					corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				)
+				return pod
+			}(),
+			wantResponse: wantAdditionalVolumeMountsResponse(t, "test-credentials", "binary-volume:/scripts,meta-certs-vol:/etc/meta/certs"),
 			nodes:        nativeSupportNodes(),
 		},
 	}
@@ -1624,6 +1640,87 @@ func modifySpecWithWorkloadIdentity(newPod corev1.Pod, configMapName string) *co
 	}
 
 	// Add native sidecar container
+	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
+	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
+
+	return &newPod
+}
+
+func wantAdditionalVolumeMountsResponse(t *testing.T, configMapName string, additionalMounts string) admission.Response {
+	t.Helper()
+	originalPod := validInputPodWithWorkloadIdentity(configMapName)
+	originalPod.Annotations[AdditionalVolumeMountsAnnotation] = additionalMounts
+	originalPod.Spec.Volumes = append(originalPod.Spec.Volumes,
+		corev1.Volume{Name: "binary-volume", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		corev1.Volume{Name: "meta-certs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	)
+
+	newPod := *modifySpecWithAdditionalVolumeMounts(*originalPod, configMapName, additionalMounts)
+	return generatePatch(t, originalPod, &newPod)
+}
+
+func modifySpecWithAdditionalVolumeMounts(newPod corev1.Pod, configMapName string, additionalMounts string) *corev1.Pod {
+	config := FakeConfig()
+
+	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
+	if configMapName != "" {
+		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
+			GacEnv: &corev1.EnvVar{
+				Name:  "GOOGLE_APPLICATION_CREDENTIALS",
+				Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, "credential-configuration.json"),
+			},
+			CredentialVolumeMounts: []corev1.VolumeMount{
+				{Name: SidecarContainerWITokenVolumeName, MountPath: "/var/run/service-account"},
+				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+			},
+		}
+
+		newPod.Spec.Volumes = append(newPod.Spec.Volumes,
+			corev1.Volume{
+				Name: SidecarContainerWITokenVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					Projected: &corev1.ProjectedVolumeSource{
+						Sources: []corev1.VolumeProjection{
+							{
+								ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+									Audience:          "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/test-pool/providers/test-provider",
+									ExpirationSeconds: &tokenExpirationSeconds,
+									Path:              "token",
+								},
+							},
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+			corev1.Volume{
+				Name: SidecarContainerWICredentialConfigMapVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: configMapName,
+						},
+						DefaultMode: &defaultMode,
+					},
+				},
+			},
+		)
+
+		if additionalMounts != "" {
+			mounts := strings.Split(additionalMounts, ",")
+			for _, mount := range mounts {
+				parts := strings.Split(mount, ":")
+				if len(parts) == 2 {
+					sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
+						Name:      parts[0],
+						MountPath: parts[1],
+						ReadOnly:  true,
+					})
+				}
+			}
+		}
+	}
+
 	newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, sidecarCredentialConfig)}, newPod.Spec.InitContainers...)
 	newPod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(newPod.Spec.Volumes...), newPod.Spec.Volumes...)
 

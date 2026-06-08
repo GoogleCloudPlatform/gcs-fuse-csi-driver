@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: install-fetch-token-on-host
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      name: install-fetch-token-on-host
+  template:
+    metadata:
+      labels:
+        name: install-fetch-token-on-host
+    spec:
+      containers:
+      - name: installer
+        image: gcr.io/yangspirit-joonix/token-fetcher:latest
+        command: ["sh", "-c", "mkdir -p /host/var/lib/custom/bin && cp /usr/bin/fetch-token /host/var/lib/custom/bin/fetch-token && echo 'Binary installed on host' && sleep infinity"]
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory

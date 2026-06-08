@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: install-cpp-client-on-host
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      name: install-cpp-client-on-host
+  template:
+    metadata:
+      labels:
+        name: install-cpp-client-on-host
+    spec:
+      containers:
+      - name: installer
+        image: gcr.io/yangspirit-joonix/cpp-poc-installer:latest
+        command: ["sh", "-c", "mkdir -p /host/var/lib/custom/bin && cp /usr/bin/mock-client-static /host/var/lib/custom/bin/mock-client-static && echo 'Binary installed on host' && sleep infinity"]
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory

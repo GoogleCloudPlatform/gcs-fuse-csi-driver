@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpp-source-config
+data:
+  mock_crypto.cpp: |
+    #include <iostream>
+
+    extern "C" {
+        void mock_encrypt() {
+            std::cout << "MOCK CRYPTO: Encrypting using C++ standard library (cout)..." << std::endl;
+        }
+    }
+  main.rs: |
+    extern "C" {
+        fn mock_encrypt();
+    }
+
+    fn main() {
+        println!("Rust wrapper starting...");
+        unsafe {
+            mock_encrypt();
+        }
+        println!("Rust wrapper finished.");
+    }

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gke-workload-with-gcsfuse-cpp-init
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gke-workload-with-gcsfuse-cpp-init
+  template:
+    metadata:
+      labels:
+        app: gke-workload-with-gcsfuse-cpp-init
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/workload-identity-credential-configmap: "cpp-auth-config"
+        gke-gcsfuse/additional-volume-mounts: "binary-volume:/scripts"
+        gke-gcsfuse/inject-after: "copy-token-binary"
+    spec:
+      initContainers:
+      - name: copy-token-binary
+        image: rust:alpine
+        command: ["/bin/sh", "-c", "apk add --no-cache g++ && g++ -c -fPIC /src/mock_crypto.cpp -o /tmp/mock_crypto.o && ar rcs /tmp/libmockcrypto.a /tmp/mock_crypto.o && rustc -L /tmp -l static=mockcrypto -l stdc++ /src/main.rs -o /scripts/mock-client-static"]
+        volumeMounts:
+        - name: binary-volume
+          mountPath: /scripts
+        - name: source-volume
+          mountPath: /src
+      containers:
+      - name: workload
+        image: ubuntu
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: demo-bucket-vol
+          mountPath: /data
+      volumes:
+      - name: binary-volume
+        emptyDir: {}
+      - name: source-volume
+        configMap:
+          name: cpp-source-config
+      - name: demo-bucket-vol
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: yangspirit-joonix-demo-bucket

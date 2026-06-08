@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gke-workload-with-gcsfuse-cpp-hostpath
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gke-workload-with-gcsfuse-cpp-hostpath
+  template:
+    metadata:
+      labels:
+        app: gke-workload-with-gcsfuse-cpp-hostpath
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/workload-identity-credential-configmap: "cpp-auth-config"
+        gke-gcsfuse/additional-volume-mounts: "binary-volume:/scripts"
+    spec:
+      containers:
+      - name: workload
+        image: ubuntu
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: demo-bucket-vol
+          mountPath: /data
+      volumes:
+      - name: binary-volume
+        hostPath:
+          path: /var/lib/custom/bin
+          type: Directory
+      - name: demo-bucket-vol
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:
+            bucketName: yangspirit-joonix-demo-bucket
