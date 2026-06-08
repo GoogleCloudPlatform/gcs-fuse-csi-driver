@@ -125,7 +125,7 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 		CacheDir:            filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
 		TempDir:             tempDir,
 		ConfigFile:          filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-		ErrWriter:           NewErrorWriter(filepath.Join(tempDir, "error")),
+		ErrWriter:           NewErrorWriter(filepath.Join(tempDir, util.ErrorFileName)),
 		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
