@@ -646,36 +646,3 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 
 	return gcsFuseVolumeCount, nil
 }
-
-func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	// Validate arguments.
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "Request cannot be nil")
-	}
-	volumeID := req.GetVolumeId()
-	if len(volumeID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID must be provided")
-	}
-	if req.GetVolumeCapability() == nil {
-		return nil, status.Error(codes.InvalidArgument, "Volume capability must be provided")
-	}
-	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	stagingPath := req.GetStagingTargetPath()
-	if len(stagingPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided")
-	}
-	// Skip NodeStageVolume for sidecar mounted volumes.
-	if !sharedMount(req.GetVolumeContext()) {
-		return &csi.NodeStageVolumeResponse{}, nil
-	}
-
-	// Acquire a lock on the staging path.
-	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
-		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
-	}
-	defer s.volumeLocks.Release(stagingPath)
-
-	return &csi.NodeStageVolumeResponse{}, nil
-}
