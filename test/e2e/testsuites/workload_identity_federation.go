@@ -882,6 +882,59 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		}, 60*time.Second, 3*time.Second).Should(gomega.Succeed())
 	}
 
+	ginkgo.It("should fail when node SA has bucket access but pod KSA does not — confirms no node SA fallback",
+		func() {
+			isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
+			if pattern.VolType == storageframework.DynamicPV {
+				e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+			}
+
+			if isOSS {
+				init(specs.SkipCSIBucketAccessCheckPrefix)
+			} else {
+				init()
+			}
+
+			ginkgo.DeferCleanup(cleanup)
+			const (
+				wifKSA     = "wif-node-access-pod-no-access-ksa"
+				volumeName = "gcs-volume"
+				mountPath  = "/mnt/gcs"
+			)
+			bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+			gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set")
+
+			var (
+				podPrincipal            string
+				credentialConfigMapName string
+			)
+
+			if isOSS {
+				credentialConfigMapName = "wif-node-access-pod-no-access-credentials"
+				podPrincipal, _ = setupOSSWIFPrincipal(
+					wifKSA,
+					wifWorkloadIdentityPoolID,
+					wifWorkloadIdentityProviderID,
+					credentialConfigMapName,
+				)
+			} else {
+				podPrincipal = setupGKEWIPrincipal(wifKSA)
+			}
+			nodeSAPrincipal := os.Getenv(utils.NodeServiceAccountEnvVar)
+			gomega.Expect(nodeSAPrincipal).NotTo(gomega.BeEmpty(), "NODE_SERVICE_ACCOUNT env var must be set")
+			ginkgo.By(fmt.Sprintf("Granting bucket access to node SA only: %s", nodeSAPrincipal))
+			grantBucketAccess(bucketName, nodeSAPrincipal, "roles/storage.objectAdmin")
+			ginkgo.DeferCleanup(func() { revokeBucketAccess(bucketName, nodeSAPrincipal, "roles/storage.objectAdmin") })
+			ginkgo.By(fmt.Sprintf("Confirming pod principal has NO bucket access: %s", podPrincipal))
+			time.Sleep(2 * time.Minute)
+			tPod := deployWIFPod(wifKSA, credentialConfigMapName, volumeName, mountPath)
+			ginkgo.DeferCleanup(func() { tPod.Cleanup(ctx) })
+			podName := tPod.GetPodName()
+			validatePermissionDenied(podName)
+			validatePodNeverRunning(podName)
+		},
+	)
+
 	ginkgo.It("should fail authentication when KSA is not bound to IAM service account",
 		func() {
 			isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
