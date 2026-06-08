@@ -56,14 +56,18 @@ ifeq ($(SELF_MANAGED_K8S), true)
 else
 # GKE-Specific Logic (Default)
     export WI_NODE_LABEL_CHECK ?= true
-    # assume that a GKE cluster identifier follows the format gke_{project-name}_{location}_{cluster-name}
-    export PROJECT ?= $(shell kubectl config current-context | cut -d '_' -f 2)
-    export CLUSTER_LOCATION ?= $(shell kubectl config current-context | cut -d '_' -f 3)
-    export CLUSTER_NAME ?= $(shell kubectl config current-context | cut -d '_' -f 4)
-    # Use jq to extract CA Bundle specifically for the current GKE context
-    CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
     # Auto-discover Identity Provider from the cluster
     IDENTITY_PROVIDER ?= $(shell kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)
+    export PROJECT ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$6}')
+    export CLUSTER_LOCATION ?= $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$8}')
+
+    # To override the default empty string in prow and support overriding it via environment variables or command-line arguments we conditionally use :=.
+    ifeq ($(CLUSTER_NAME),)
+        CLUSTER_NAME := $(shell echo "$(IDENTITY_PROVIDER)" | awk -F/ '{print $$10}')
+    endif
+    export CLUSTER_NAME
+    # Use jq to extract CA Bundle specifically for the current GKE context
+    CA_BUNDLE ?= $(shell kubectl config view --raw -o json | jq '.clusters[]' | jq "select(.name == \"$(shell kubectl config current-context)\")" | jq '.cluster."certificate-authority-data"' | head -n 1)
     # Derive Identity Pool from Project ID
     IDENTITY_POOL ?= ${PROJECT}.svc.id.goog
 endif
@@ -72,6 +76,7 @@ endif
 GCSFUSE_PATH ?= $(shell cat cmd/sidecar_mounter/gcsfuse_binary)
 LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 PROJECT_NUMBER ?= $(shell gcloud projects describe $(PROJECT) --format="value(projectNumber)")
+UNIVERSE_DOMAIN ?= $(shell gcloud config get universe_domain)
 
 DRIVER_BINARY = gcs-fuse-csi-driver
 SIDECAR_BINARY = gcs-fuse-csi-driver-sidecar-mounter
@@ -93,6 +98,8 @@ DOCKER_BUILDX_ARGS += --quiet
 $(info PROJECT is ${PROJECT})
 $(info CLUSTER_LOCATION is ${CLUSTER_LOCATION})
 $(info CLUSTER_NAME is ${CLUSTER_NAME})
+$(info UNIVERSE_DOMAIN is ${UNIVERSE_DOMAIN})
+$(info IDENTITY_PROVIDER is ${IDENTITY_PROVIDER})
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is ${DRIVER_IMAGE})
@@ -309,6 +316,7 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER};
+	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-node-config --behavior=merge --disableNameSuffixHash --from-literal=universe-domain=${UNIVERSE_DOMAIN};
 # Must be unindented. When Make sees indented text, it attempts to pass it to the shell (/bin/sh) to execute. The shell doesn't know what ifeq is, so it crashes.
 ifeq ($(SELF_MANAGED_K8S), true)
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json

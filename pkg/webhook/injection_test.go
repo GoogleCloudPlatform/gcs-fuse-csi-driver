@@ -43,9 +43,9 @@ func getDefaultMetadataPrefetchConfig(image string) *Config {
 		CPURequest:              resource.MustParse("10m"),
 		CPULimit:                resource.MustParse("50m"),
 		MemoryRequest:           resource.MustParse("10Mi"),
-		MemoryLimit:             resource.MustParse("10Mi"),
+		MemoryLimit:             resource.MustParse("250Mi"),
 		EphemeralStorageRequest: resource.MustParse("10Mi"),
-		EphemeralStorageLimit:   resource.MustParse("10Mi"),
+		EphemeralStorageLimit:   resource.MustParse("0"),
 		ImagePullPolicy:         "Always",
 		ContainerImage:          image,
 	}
@@ -1484,10 +1484,10 @@ func TestInjectMetadataPrefetchSidecar(t *testing.T) {
 						"gke-gcsfuse/metadata-prefetch-container-image":           "fake-image",
 						"gke-gcsfuse/metadata-prefetch-cpu-limit":                 "50m",
 						"gke-gcsfuse/metadata-prefetch-cpu-request":               "10m",
-						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-limit":   "10Mi",
+						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-limit":   "0",
 						"gke-gcsfuse/metadata-prefetch-ephemeral-storage-request": "10Mi",
 						"gke-gcsfuse/metadata-prefetch-image-pull-policy":         "Always",
-						"gke-gcsfuse/metadata-prefetch-memory-limit":              "10Mi",
+						"gke-gcsfuse/metadata-prefetch-memory-limit":              "250Mi",
 						"gke-gcsfuse/metadata-prefetch-memory-request":            "10Mi",
 					},
 				},
@@ -1939,7 +1939,6 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 			si.ScLister = informer.Storage().V1().StorageClasses().Lister()
 			si.PvLister = informer.Core().V1().PersistentVolumes().Lister()
 			si.PvcLister = informer.Core().V1().PersistentVolumeClaims().Lister()
-			informer.Start(ctx.Done())
 			_, err := fakeClient.StorageV1().StorageClasses().Create(context.TODO(), tc.sc, metav1.CreateOptions{})
 
 			if err != nil {
@@ -1971,6 +1970,7 @@ func TestInjectMetadataPrefetchSidecarWithSC(t *testing.T) {
 				t.Fatalf("failed to setup test PVC: %v", err)
 			}
 
+			informer.Start(ctx.Done())
 			informer.WaitForCacheSync(ctx.Done())
 
 			err = si.injectSidecarContainer(MetadataPrefetchSidecarName, tc.pod, *tc.nativeSidecar, nil)

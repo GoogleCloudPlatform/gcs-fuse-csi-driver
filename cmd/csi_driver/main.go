@@ -73,6 +73,7 @@ var (
 	assumeGoodSidecarVersion       = flag.Bool("assume-good-sidecar-version", false, "Assume the sidecar version is compatible with all features in the running version of the driver.")
 	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
+	universeDomain                 = flag.String("universe-domain", "googleapis.com", "The universe domain. The default value is googleapis.com.")
 
 	// GCSFuse kernel params feature.
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
@@ -251,6 +252,7 @@ func main() {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
+		// TODO(urielguzman): Configure pod lister in the controller for shared node mount.
 		clientset.ConfigurePodLister(ctx, *nodeID)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
 		// Both PVs & PVCs are needed to check count of GCSFuseVolumes
@@ -290,6 +292,7 @@ func main() {
 		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
 		FeatureOptions:                 featureOptions,
 		AssumeGoodSidecarVersion:       *assumeGoodSidecarVersion,
+		UniverseDomain:                 *universeDomain,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config, recorder)
