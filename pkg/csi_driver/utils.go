@@ -37,8 +37,10 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 )
@@ -92,6 +94,9 @@ const (
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
+
+	// Shared Node Mount consts
+	MounterPodErrorFile = "error"
 )
 
 var (
@@ -104,6 +109,10 @@ var (
 	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
 	// imported by GCSFuse: https://github.com/GoogleCloudPlatform/gcsfuse/blob/fc54ba2287dba1ae4be0888686902f72e2f16f8b/go.mod#L34
 	invalidArgumentPatterns = regexp.MustCompile(`invalid argument .* for .* flag`)
+
+	stagingPathRegexp                 = regexp.MustCompile(`/var/lib/kubelet/plugins/kubernetes\.io/csi/gcsfuse\.csi\.storage\.gke\.io/(.*)/globalmount`)
+	targetPathEmptyReplacementRegexp  = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
+	stagingPathEmptyReplacementRegexp = regexp.MustCompile(`plugins/kubernetes\.io/csi/gcsfuse\.csi\.storage\.gke\.io/(.*)/globalmount`)
 )
 
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
@@ -790,4 +799,137 @@ func getInternalMountOptionValue(options []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func PrepareEmptyDirForStagingPath(stagingPath, podUID string, createEmptyDir bool) (string, error) {
+	_, err := ParseVolumeFromStagingPath(stagingPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse volume name from staging path %q: %w", stagingPath, err)
+	}
+
+	emptyDirBasePath := stagingPathEmptyReplacementRegexp.ReplaceAllString(stagingPath, fmt.Sprintf("pods/%s/volumes/kubernetes.io~empty-dir/%v/.volumes/$1", podUID, csiTmpVolumeMountPath))
+	if createEmptyDir {
+		if err := os.MkdirAll(emptyDirBasePath, 0o750); err != nil {
+			return "", fmt.Errorf("mkdir failed for path %q: %w", emptyDirBasePath, err)
+		}
+	}
+
+	return emptyDirBasePath, nil
+}
+
+func ParseVolumeFromStagingPath(stagingPath string) (string, error) {
+	matched := stagingPathRegexp.FindStringSubmatch(stagingPath)
+	if len(matched) < 2 {
+		return "", fmt.Errorf("stagingPath %v does not contain volume information", stagingPath)
+	}
+	volume := matched[1]
+
+	return volume, nil
+}
+
+// maybeReadGCSFuseErr returns an error either if gcs-fuse error was found or if failure to read gcs-fuse error.
+// If the gcs-fuse error file doesn't exist in the emptyDir this means the mounter pod didn't experience gcs-fuse mounting issues.
+func maybeReadGCSFuseErr(stagingPath string, podUID types.UID) error {
+	errorFile, err := errorFilePath(stagingPath, string(podUID))
+	if err != nil {
+		return err
+	}
+
+	exists, err := fileExists(errorFile)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	gcsfuseErr, err := ReadDataFromFile(errorFile)
+	if err != nil {
+		return err
+	}
+	return status.Errorf(codes.Internal, "gcsfuse error: %s", gcsfuseErr)
+}
+
+// maybeDeleteGCSFuseErr deletes the gcs-fuse error if it exists or returns an error.
+func maybeDeleteGCSFuseErr(stagingPath string, podUID types.UID) error {
+	errorFile, err := errorFilePath(stagingPath, string(podUID))
+	if err != nil {
+		return err
+	}
+
+	return DeleteFileIfExists(errorFile)
+}
+
+func errorFilePath(stagingPath, podUID string) (string, error) {
+	createEmptyDir := false
+	emptyDirBasePath, err := PrepareEmptyDirForStagingPath(stagingPath, string(podUID), createEmptyDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(emptyDirBasePath, MounterPodErrorFile), nil
+}
+
+// DeleteFileIfExists deletes the file at the given path if it exists.
+// If the file doesn't exist, it returns nil.
+// If an error occurs during deletion, it returns the error.
+func DeleteFileIfExists(path string) error {
+	parentDir := filepath.Dir(path)
+	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to securely open parent directory %q: %w", parentDir, err)
+	}
+	defer unix.Close(parentFd)
+
+	if err := unix.Unlinkat(parentFd, filepath.Base(path), 0); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to securely delete file %q: %w", path, err)
+	}
+	return nil
+}
+
+// fileExists returns true if the file exists
+func fileExists(filePath string) (bool, error) {
+	parentDir := filepath.Dir(filePath)
+	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to securely open parent directory %q: %w", parentDir, err)
+	}
+	defer unix.Close(parentFd)
+
+	var stat unix.Stat_t
+	if err := unix.Fstatat(parentFd, filepath.Base(filePath), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to securely lstat file %q: %w", filePath, err)
+	}
+	return true, nil
+}
+
+func ReadDataFromFile(filePath string) (string, error) {
+	parentDir := filepath.Dir(filePath)
+	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to securely open parent directory %q: %w", parentDir, err)
+	}
+	defer unix.Close(parentFd)
+
+	fd, err := unix.Openat(parentFd, filepath.Base(filePath), unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to securely open file %q: %w", filePath, err)
+	}
+
+	f := os.NewFile(uintptr(fd), filePath)
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", fmt.Errorf("failed to read data from path %q: %w", filePath, err)
+	}
+	return string(data), nil
 }

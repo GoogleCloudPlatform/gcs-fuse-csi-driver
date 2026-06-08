@@ -21,6 +21,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"context"
@@ -48,9 +49,9 @@ var (
 
 // mounterPodConfig holds the configuration parameters required to define and manage a mounter pod.
 type mounterPodConfig struct {
-	podName   string // The name to assign to the mounter pod.
-	nodeID    string // The specific node ID where the pod should be scheduled.
-	namespace string // The Kubernetes namespace in which to create the pod.
+	PodName   string // The name to assign to the mounter pod.
+	NodeID    string // The specific node ID where the pod should be scheduled.
+	Namespace string // The Kubernetes namespace in which to create the pod.
 	image     string // The image for the mounter pod binary.
 }
 
@@ -102,35 +103,35 @@ func createMounterPod(clientset clientset.Interface, ctx context.Context, config
 	}
 	// Check if the mounter pod already exists, but was marked for deletion.
 	// This requires calling the API server directly to retrieve the most up-to-date pod status.
-	pod, err := clientset.K8sClient().CoreV1().Pods(config.namespace).Get(ctx, config.podName, metav1.GetOptions{})
+	pod, err := clientset.K8sClient().CoreV1().Pods(config.Namespace).Get(ctx, config.PodName, metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
-		return status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", config.namespace, config.podName, err)
+		return status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", config.Namespace, config.PodName, err)
 	}
 	// GET always returns a pointer to the pod, even if the pod doesn't exist.
 	// Therefore, we cannot rely on a nil pointer to determine the pod's existence.
 	if errors.IsNotFound(err) {
 		podSpec := createMounterPodSpec(config)
-		if _, err = clientset.K8sClient().CoreV1().Pods(config.namespace).Create(ctx, podSpec, metav1.CreateOptions{}); err != nil {
+		if _, err = clientset.K8sClient().CoreV1().Pods(config.Namespace).Create(ctx, podSpec, metav1.CreateOptions{}); err != nil {
 			if errors.IsAlreadyExists(err) {
-				klog.Infof("Mounter pod %s/%s already exists.", config.namespace, config.podName)
+				klog.Infof("Mounter pod %s/%s already exists.", config.Namespace, config.PodName)
 				return nil
 			}
-			return status.Errorf(codes.Internal, "failed to create mounter pod %s/%s: %v", config.namespace, config.podName, err)
+			return status.Errorf(codes.Internal, "failed to create mounter pod %s/%s: %v", config.Namespace, config.PodName, err)
 		}
 		return nil
 	}
 	// If the mounter pod is marked for deletion, prevent ControllerPublishVolume from succeeding.
 	if pod == nil {
-		return status.Errorf(codes.Internal, "mounter pod %s/%s was found but returned as nil", config.namespace, config.podName)
+		return status.Errorf(codes.Internal, "mounter pod %s/%s was found but returned as nil", config.Namespace, config.PodName)
 	}
 	if pod.ObjectMeta.DeletionTimestamp != nil {
 		return status.Errorf(
 			codes.Aborted,
 			"Mounter pod %s/%s is marked for deletion. Waiting for pod deletion to complete.",
-			config.namespace, config.podName,
+			config.Namespace, config.PodName,
 		)
 	}
-	klog.Infof("Mounter pod %s/%s already exists.", config.namespace, config.podName)
+	klog.Infof("Mounter pod %s/%s already exists.", config.Namespace, config.PodName)
 	return nil
 }
 
@@ -138,14 +139,14 @@ func createMounterPod(clientset clientset.Interface, ctx context.Context, config
 func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 	spec := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      config.podName,
-			Namespace: config.namespace,
+			Name:      config.PodName,
+			Namespace: config.Namespace,
 		},
 		Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{
 				// Use NodeSelector rather than NodeName in the mounter pod spec,
 				// since NodeName will bypass kube-scheduler.
-				"kubernetes.io/hostname": config.nodeID,
+				"kubernetes.io/hostname": config.NodeID,
 				"kubernetes.io/os":       "linux",
 			},
 			PriorityClassName: mounterPodPriorityClass,
@@ -251,4 +252,88 @@ func waitForMounterPodScheduled(clientset clientset.Interface, ctx context.Conte
 			return status.Errorf(code, "timeout waiting for mounter pod %s/%s to be scheduled to node %q: %v", namespace, podName, nodeID, ctx.Err())
 		}
 	}
+}
+
+// waitForMounterServer waits for the mounter pod to reach the Running phase and for the gRPC server to
+// become fully operational by ensuring the socket file is available. It returns an error if the
+// operation times out.
+func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mounterPodConfig *mounterPodConfig, mounterSocketFile string) error {
+	klog.Infof("Waiting for mounter pod %s/%s to start running and the mounter pod socket file %q to become available. Polling every %s",
+		mounterPodConfig.Namespace, mounterPodConfig.PodName, mounterSocketFile, pollInterval)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	var pod *corev1.Pod
+	var err error
+	podRunning := false
+
+	for {
+		select {
+		case <-ticker.C:
+			// Check if the gRPC server socket file exists.
+			if _, err = os.Stat(mounterSocketFile); err == nil {
+				klog.Infof("Mounter pod %s/%s socket file %q is available.", mounterPodConfig.Namespace, mounterPodConfig.PodName, mounterSocketFile)
+				return nil
+			}
+
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("error checking socket file %q for mounter pod %s/%s: %w", mounterSocketFile, mounterPodConfig.Namespace, mounterPodConfig.PodName, err)
+			}
+
+			if !podRunning {
+				klog.Infof("Mounter pod socket file %q not found. Checking mounter pod %s/%s status.", mounterSocketFile, mounterPodConfig.Namespace, mounterPodConfig.PodName)
+				// Get the current status of the mounter pod.
+				pod, err = mustGetMounterPod(clientset, ctx, mounterPodConfig)
+				if err != nil {
+					return err
+				}
+				if pod.Status.Phase == corev1.PodRunning {
+					klog.Infof("Mounter pod %s/%s is running.", mounterPodConfig.Namespace, mounterPodConfig.PodName)
+					podRunning = true
+				} else if pod.Status.Phase != corev1.PodPending {
+					return status.Errorf(codes.Internal, "mounter pod %s/%s found in an unexpected status: %+v", mounterPodConfig.Namespace, mounterPodConfig.PodName, pod.Status)
+				} else {
+					klog.Infof("Mounter pod %s/%s found with status: %+v. Waiting for pod to start running...", mounterPodConfig.Namespace, mounterPodConfig.PodName, pod.Status)
+				}
+			}
+		case <-ctx.Done():
+			code := codes.DeadlineExceeded
+			if ctx.Err() == context.Canceled {
+				code = codes.Canceled
+			}
+			errMsg := fmt.Sprintf("timeout waiting for mounter pod %s/%s gRPC server to become available at %s: %v",
+				mounterPodConfig.Namespace, mounterPodConfig.PodName, mounterSocketFile, ctx.Err())
+			if pod != nil {
+				// The pod may be nil if the timeout is too sudden (e.g. less than a second)
+				errMsg = fmt.Sprintf("%s, pod status: %+v", errMsg, pod.Status)
+			}
+			return status.Error(code, errMsg)
+		}
+	}
+}
+
+// getMounterPod returns the mounter pod if it exists, or returns an error.
+func getMounterPod(clientset clientset.Interface, ctx context.Context, config *mounterPodConfig) (*corev1.Pod, error) {
+	pod, err := clientset.GetPod(config.Namespace, config.PodName)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return pod, nil
+}
+
+// mustGetMounterPod returns the pod if it exists or returns an error if it doesn't.
+// This function strictly expects the mounter pod to exist.
+func mustGetMounterPod(clientset clientset.Interface, ctx context.Context, config *mounterPodConfig) (*corev1.Pod, error) {
+	pod, err := getMounterPod(clientset, ctx, config)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if pod == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", config.Namespace, config.PodName)
+	}
+	return pod, nil
 }

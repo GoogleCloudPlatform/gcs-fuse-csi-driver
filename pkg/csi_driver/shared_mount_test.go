@@ -207,9 +207,9 @@ func TestCreateMounterPodSpec(t *testing.T) {
 		{
 			name: "basic config - should succeed",
 			config: &mounterPodConfig{
-				podName:   "my-mounter-pod",
-				namespace: "my-namespace",
-				nodeID:    "node-123",
+				PodName:   "my-mounter-pod",
+				Namespace: "my-namespace",
+				NodeID:    "node-123",
 				image:     "gcr.io/my-project/my-image:v1.0.0",
 			},
 			want: &corev1.Pod{
@@ -287,9 +287,9 @@ func TestCreateMounterPod(t *testing.T) {
 	ctx := context.Background()
 
 	baseConfig := &mounterPodConfig{
-		namespace: testNamespace,
-		podName:   testPod,
-		nodeID:    testNodeID,
+		Namespace: testNamespace,
+		PodName:   testPod,
+		NodeID:    testNodeID,
 		image:     testImage,
 	}
 

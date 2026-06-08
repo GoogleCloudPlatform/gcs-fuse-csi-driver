@@ -18,6 +18,7 @@ limitations under the License.
 package driver
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -176,9 +177,9 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
-		podName:   podName,
-		namespace: podNamespace,
-		nodeID:    nodeID,
+		PodName:   podName,
+		Namespace: podNamespace,
+		NodeID:    nodeID,
 		// TODO(urielguzman): Replace with the actual mounter pod image.
 		image: "k8s.gcr.io/pause",
 	}
@@ -195,9 +196,17 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return nil, err
 	}
 
+	mounterPodConfigBytes, err := json.Marshal(podConfig)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to marshal mounter pod config: %v", err)
+	}
 	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
-	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.namespace, podConfig.podName, nodeID, volumeID)
-	return &csi.ControllerPublishVolumeResponse{}, nil
+	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.Namespace, podConfig.PodName, nodeID, volumeID)
+	return &csi.ControllerPublishVolumeResponse{
+		PublishContext: map[string]string{
+			"mounterPodConfig": string(mounterPodConfigBytes),
+		},
+	}, nil
 }
 
 // TODO(urielguzman): implement ControllerUnpublishVolume.

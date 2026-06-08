@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+option go_package = "github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/proto/mounter";
+
+package mounter;
+
+service Mounter {
+  rpc Mount (MountRequest) returns (MountResponse);
+}
+
+message MountRequest {
+  string mountpoint = 1;
+  string volumeID = 2;
+}
+
+message MountResponse {}

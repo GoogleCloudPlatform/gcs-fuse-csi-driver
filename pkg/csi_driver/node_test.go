@@ -19,6 +19,7 @@ package driver
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -37,6 +39,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
 )
 
@@ -201,6 +208,205 @@ func TestNodePublishVolume(t *testing.T) {
 				t.Errorf("got error %q, expected error %q", err, test.expectErr)
 			}
 			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
+		})
+	}
+}
+
+func TestNodeStageVolume(t *testing.T) {
+	t.Parallel()
+
+	nodeID := "test-node"
+	testMounterPodNamespace := "default"
+	testMounterPodUID := "test-pod-uid"
+	testMounterPodName := createMounterPodName(nodeID, testVolumeID)
+	mounterPodConfigJSON := fmt.Sprintf(`{"PodName":"%s","Namespace":"%s","NodeID":"%s"}`, testMounterPodName, testMounterPodNamespace, nodeID)
+
+	// The staging path needs to match the standard regex for PrepareEmptyDirForStagingPath to succeed
+	tempDir := t.TempDir()
+	testStagingPath := filepath.Join(tempDir, "var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io", testVolumeID, "globalmount")
+
+	emptyDirPath, err := PrepareEmptyDirForStagingPath(testStagingPath, testMounterPodUID, false)
+	if err != nil {
+		t.Fatalf("failed to prepare empty dir path: %v", err)
+	}
+	testSocketPath := filepath.Join(filepath.Dir(emptyDirPath), mounterSocketFile)
+
+	cases := []struct {
+		name             string
+		existingMounts   []mount.MountPoint
+		req              *csi.NodeStageVolumeRequest
+		expectErr        error
+		expectErrFunc    func(string, corev1.PodStatus) error
+		mounterPodExists bool
+	}{
+		{
+			name: "missing sharedMount volume attribute, no-op success",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: testStagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext:     map[string]string{},
+			},
+			expectErr: nil,
+		},
+		{
+			name: "empty staging path",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:         testVolumeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: util.TrueStr,
+				},
+				StagingTargetPath: "",
+			},
+			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided"),
+		},
+		{
+			name: "missing mounterPodConfig in PublishContext",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:         testVolumeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: util.TrueStr,
+				},
+				StagingTargetPath: testStagingPath,
+				PublishContext:    map[string]string{},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "mounterPodConfig must be provided in PublishContext"),
+		},
+		{
+			name: "mounter pod doesn't exist, return error",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:         testVolumeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: util.TrueStr,
+				},
+				StagingTargetPath: testStagingPath,
+				PublishContext: map[string]string{
+					"mounterPodConfig": mounterPodConfigJSON,
+				},
+			},
+			existingMounts:   []mount.MountPoint{},
+			mounterPodExists: false,
+			expectErr:        status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", testMounterPodNamespace, testMounterPodName),
+		},
+		{
+			name: "mounter pod exists, staging path mounted, request succeeds",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:         testVolumeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: util.TrueStr,
+				},
+				StagingTargetPath: testStagingPath,
+				PublishContext: map[string]string{
+					"mounterPodConfig": mounterPodConfigJSON,
+				},
+			},
+			mounterPodExists: true,
+			existingMounts:   []mount.MountPoint{{Device: testVolumeID, Path: testStagingPath}},
+		},
+		{
+			name: "mounter pod exists, staging path not mounted, timeout waiting for socket",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:         testVolumeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: util.TrueStr,
+				},
+				StagingTargetPath: testStagingPath,
+				PublishContext: map[string]string{
+					"mounterPodConfig": mounterPodConfigJSON,
+				},
+			},
+			existingMounts:   []mount.MountPoint{},
+			mounterPodExists: true,
+			expectErr: status.Errorf(codes.DeadlineExceeded,
+				"timeout waiting for mounter pod %s/%s gRPC server to become available at %s, pod status: %+v",
+				testMounterPodNamespace, testMounterPodName, testSocketPath,
+				corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			),
+			expectErrFunc: func(socketPath string, podStatus corev1.PodStatus) error {
+				return status.Errorf(codes.DeadlineExceeded,
+					"timeout waiting for mounter pod %s/%s gRPC server to become available at %s, pod status: %+v",
+					testMounterPodNamespace, testMounterPodName, socketPath,
+					podStatus,
+				)
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			defer cancel()
+
+			var objs []runtime.Object
+			fakeClientSet := &clientset.FakeClientset{}
+			if test.mounterPodExists {
+				pod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      testMounterPodName,
+						Namespace: testMounterPodNamespace,
+						UID:       types.UID(testMounterPodUID),
+					},
+					Status: corev1.PodStatus{
+				fakeClientSet.CreatePod(clientset.FakePodConfig{
+					PodStatus: &corev1.PodStatus{
+						Phase: corev1.PodRunning,
+					},
+				}
+				objs = append(objs, pod)
+				})
+			} else {
+				fakeClientSet.GetPodErr = apierrors.NewNotFound(schema.GroupResource{}, "pod not found")
+			}
+
+			fakeClientSet := clientset.NewFakeClientset(objs...)
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+
+			if test.existingMounts != nil {
+				testEnv.fm.MountPoints = test.existingMounts
+			}
+
+			var expectedErr error
+			if test.expectErrFunc != nil {
+				var testMounterPodUID string
+				var podStatus corev1.PodStatus
+				pod, _ := fakeClientSet.GetPod("default", testMounterPodName)
+				if pod != nil {
+					testMounterPodUID = string(pod.UID)
+					podStatus = pod.Status
+				} else {
+					testMounterPodUID = "dummy-uid"
+				}
+				emptyDirPath, _ := PrepareEmptyDirForStagingPath(testStagingPath, testMounterPodUID, false)
+				testSocketPath := filepath.Join(filepath.Dir(emptyDirPath), mounterSocketFile)
+
+				expectedErr = test.expectErrFunc(testSocketPath, podStatus)
+			} else {
+				expectedErr = test.expectErr
+			}
+
+			_, err := testEnv.ns.NodeStageVolume(ctx, test.req)
+
+			if test.expectErr == nil && err != nil {
+			if expectedErr == nil && err != nil {
+				t.Errorf("Expected no error, got: %v", err)
+			} else if test.expectErr != nil {
+			} else if expectedErr != nil {
+				if err == nil {
+					t.Errorf("Expected error: %v, got nil", test.expectErr)
+				} else if err.Error() != test.expectErr.Error() {
+					t.Errorf("Expected error: %q, got: %q", test.expectErr, err)
+					t.Errorf("Expected error: %v, got nil", expectedErr)
+				} else if err.Error() != expectedErr.Error() {
+					t.Errorf("Expected error: %q, got: %q", expectedErr, err)
+				}
+			}
 		})
 	}
 }
@@ -1369,4 +1575,20 @@ func TestNodePublishVolumeStorageEndpointInternal(t *testing.T) {
 			}
 		})
 	}
+}
+
+func setupTestStagingPath(t *testing.T) string {
+	return setupTestDir(t, "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io/fake-pv/globalmount")
+}
+func setupTestDir(t *testing.T, path string) string {
+	// Create a temporary directory for the test
+	tempDir := t.TempDir()
+	// Append the full path
+	fullPath := filepath.Join(tempDir, path)
+	// Create the directory path (including any parent directories)
+	err := os.MkdirAll(fullPath, 0755)
+	if err != nil {
+		t.Fatalf("failed to create path: %v", err)
+	}
+	return fullPath
 }

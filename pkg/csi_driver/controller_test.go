@@ -194,9 +194,9 @@ func TestControllerPublishVolume(t *testing.T) {
 	}
 
 	defaultMounterPodConfig := &mounterPodConfig{
-		podName:   createMounterPodName(testNodeID, testVolumeID),
-		namespace: testNamespace,
-		nodeID:    testNodeID,
+		PodName:   createMounterPodName(testNodeID, testVolumeID),
+		Namespace: testNamespace,
+		NodeID:    testNodeID,
 		image:     testImage,
 	}
 
