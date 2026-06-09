@@ -316,12 +316,22 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		init(configPrefix...)
 		defer cleanup()
 
-		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
-		bucketName := l.config.Prefix
+		var bucketName string
+		if l.volumeResource.Pv != nil {
+			bucketName = l.volumeResource.Pv.Spec.CSI.VolumeHandle
+		} else {
+			bucketName = l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		}
+
+		volumeFolder := volumeName
+		if l.volumeResource.Pv != nil {
+			volumeFolder = l.volumeResource.Pv.Name
+		}
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
+		tPod.SetupTmpVolumeMount("/gcsfuse-tmp")
 
 		ginkgo.By("Deploying a Kubernetes service account without access to the GCS bucket")
 		saName := "sa-without-access"
@@ -334,15 +344,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
-		if enableSidecarBucketAccessCheck {
-			if slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
-				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
-				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
-				return
-			}
+		if enableSidecarBucketAccessCheck && slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
+			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
+		} else {
+			tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
+			tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
 		}
-		tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
-		tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
 
 		ginkgo.By("Setting up SA IAM policy")
 		setupIAMPolicy(bucketName, f.Namespace.Name, saName)
@@ -353,6 +361,9 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+
+		ginkgo.By("Checking that the error file is deleted")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("test ! -f /gcsfuse-tmp/.volumes/%v/error", volumeFolder))
 
 		ginkgo.By("Removing SA IAM policy")
 		removeIAMPolicy(bucketName, f.Namespace.Name, saName)
@@ -370,7 +381,7 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		if !enableSidecarBucketAccessCheck {
 			// We are skipping this test combination because this configuration disables bucket access checks in both the node driver and the sidecar.
 			// This prevents the system from recovering from any permission issues
-			e2eskipper.Skipf("skip permission change test for sidecar bcuekt access check not enabled and skip-csi-bucket-access-check set")
+			e2eskipper.Skipf("skip permission change test for sidecar bucket access check not enabled and skip-csi-bucket-access-check set")
 		}
 		testCasePermissionChanges(specs.SkipCSIBucketAccessCheckPrefix)
 	})

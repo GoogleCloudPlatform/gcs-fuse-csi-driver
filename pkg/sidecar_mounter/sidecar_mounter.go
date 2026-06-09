@@ -104,6 +104,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		}
 	}
 
+	// Clear the GCS Fuse error file after the sidecar bucket access check completes and just before the GCS Fuse mount starts.
+	// This ensures the NodePublish volume will always fail if the error persists until the GCS Fuse mount actually starts.
+	if err := mc.ErrWriter.Clean(); err != nil {
+		klog.Warningf("failed to cleanup error file: %v", err)
+	}
+
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
 	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
