@@ -650,14 +650,14 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	// Validate arguments.
 	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "Request cannot be nil")
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Request cannot be nil")
 	}
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID must be provided")
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Volume ID must be provided")
 	}
 	if req.GetVolumeCapability() == nil {
-		return nil, status.Error(codes.InvalidArgument, "Volume capability must be provided")
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Volume capability must be provided")
 	}
 	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())

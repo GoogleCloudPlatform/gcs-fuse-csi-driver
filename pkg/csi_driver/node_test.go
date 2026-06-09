@@ -645,7 +645,7 @@ func TestNodeStageVolume(t *testing.T) {
 		{
 			name:      "empty request",
 			req:       nil,
-			expectErr: status.Error(codes.InvalidArgument, "Request cannot be nil"),
+			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Request cannot be nil"),
 		},
 		{
 			name: "empty volume id",
@@ -653,7 +653,7 @@ func TestNodeStageVolume(t *testing.T) {
 				StagingTargetPath: "/test/staging/path",
 				VolumeCapability:  testVolumeCapability,
 			},
-			expectErr: status.Error(codes.InvalidArgument, "Volume ID must be provided"),
+			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Volume ID must be provided"),
 		},
 		{
 			name: "missing volume capability",
@@ -661,7 +661,7 @@ func TestNodeStageVolume(t *testing.T) {
 				VolumeId:          testVolumeID,
 				StagingTargetPath: "/test/staging/path",
 			},
-			expectErr: status.Error(codes.InvalidArgument, "Volume capability must be provided"),
+			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Volume capability must be provided"),
 		},
 		{
 			name: "invalid volume capability",
