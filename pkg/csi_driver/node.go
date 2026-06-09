@@ -671,11 +671,76 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
+	publishContext := req.GetPublishContext()
+	if publishContext == nil {
+		return nil, status.Error(codes.InvalidArgument, "publishContext must be provided")
+	}
+
+	podName, ok := publishContext[PublishContextKeyMounterPodName]
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "publishContext must contain mounter pod name")
+	}
+	if podName == "" {
+		return nil, status.Error(codes.InvalidArgument, "mounter pod name in publishContext cannot be empty")
+	}
+
+	podNamespace, ok := publishContext[PublishContextKeyMounterPodNamespace]
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "publishContext must contain mounter pod namespace")
+	}
+	if podNamespace == "" {
+		return nil, status.Error(codes.InvalidArgument, "mounter pod namespace in publishContext cannot be empty")
+	}
+
 	// Acquire a lock on the staging path.
 	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
 	}
 	defer s.volumeLocks.Release(stagingPath)
 
+	resp, err := s.executeNodeStageVolume(ctx, req)
+
+	if err != nil {
+		klog.Errorf("NodeStageVolume failed on staging path %q for volume %q: %v)", stagingPath, volumeID, err)
+	}
+
+	return resp, err
+}
+
+func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	clientset := s.driver.config.K8sClients
+	stagingPath := req.GetStagingTargetPath()
+
+	// Validate staging path and mounter pod information from the request.
+	publishContext := req.GetPublishContext()
+	podName := publishContext[PublishContextKeyMounterPodName]
+	podNamespace := publishContext[PublishContextKeyMounterPodNamespace]
+
+	klog.Infof("Executing NodeStageVolume. Mounter pod: %s/%s, node: %q, volume: %q, staging path: %q", podNamespace, podName, s.driver.config.NodeID, req.GetVolumeId(), stagingPath)
+
+	// Verify mounter pod exists.
+	pod, err := clientset.GetPod(podNamespace, podName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", podNamespace, podName)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", podNamespace, podName, err)
+	}
+	if pod == nil {
+		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
+	}
+
+	// Make the staging path.
+	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
+	if err := os.MkdirAll(stagingPath, 0750); err != nil {
+		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
+	}
+
+	// TODO(FUECHR) Add empty dir creation flow.
+	// TODO(FUECHR) Wait for mounter pod running flow.
+	// TODO(FUECHR) Add start gcsfuse flow.
+	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
+
+	klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
 	return &csi.NodeStageVolumeResponse{}, nil
 }

@@ -37,6 +37,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	mount "k8s.io/mount-utils"
 )
 
@@ -58,7 +61,23 @@ type nodeServerTestEnv struct {
 func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
-	driver := initTestDriver(t, mounter, clientset.NewFakeClientset())
+	podName := createMounterPodName("test-node", testVolumeID)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: "test-ns",
+		},
+	}
+	fakeClient := clientset.NewFakeClientset(pod)
+	fakeClient.CreatePV(clientset.FakePVConfig{
+		Name:         "test-pv",
+		VolumeHandle: testVolumeID,
+		ClaimRef: &corev1.ObjectReference{
+			Namespace: "test-ns",
+			Name:      "test-pvc",
+		},
+	})
+	driver := initTestDriver(t, mounter, fakeClient)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
@@ -201,6 +220,126 @@ func TestNodePublishVolume(t *testing.T) {
 				t.Errorf("got error %q, expected error %q", err, test.expectErr)
 			}
 			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
+		})
+	}
+}
+
+func TestExecuteNodeStageVolume(t *testing.T) {
+	t.Parallel()
+
+	stagingPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+
+	nodeID := "test-node" // default from initTestDriver
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+
+	cases := []struct {
+		name      string
+		req       *csi.NodeStageVolumeRequest
+		mounts    []mount.MountPoint
+		podExists bool
+		expectErr error
+	}{
+		{
+			name: "mounter pod does not exist - should return FailedPrecondition error",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: stagingPath,
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodNamespace: podNamespace,
+					PublishContextKeyMounterPodName:      podName,
+				},
+			},
+			podExists: false,
+			expectErr: status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", podNamespace, podName),
+		},
+		{
+			name: "mounter pod exists, not mounted - should return success",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: stagingPath,
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodNamespace: podNamespace,
+					PublishContextKeyMounterPodName:      podName,
+				},
+			},
+			podExists: true,
+			expectErr: nil,
+		},
+		{
+			name: "mounter pod exists, already mounted - should return success",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: stagingPath,
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodNamespace: podNamespace,
+					PublishContextKeyMounterPodName:      podName,
+				},
+			},
+			mounts: []mount.MountPoint{
+				{Path: stagingPath},
+			},
+			podExists: true,
+			expectErr: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var fakeClientSet *clientset.FakeClientset
+			if tc.podExists {
+				pod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      podName,
+						Namespace: podNamespace,
+					},
+				}
+				fakeClientSet = clientset.NewFakeClientset(pod)
+			} else {
+				fakeClientSet = clientset.NewFakeClientset()
+				fakeClientSet.GetPodErr = apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, podName)
+			}
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+			if tc.mounts != nil {
+				testEnv.fm.MountPoints = tc.mounts
+			}
+
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+
+			// Ensure the directory doesn't exist prior to the test to verify mkdir
+			if err := os.RemoveAll(tc.req.StagingTargetPath); err != nil {
+				t.Fatalf("failed to remove staging target path: %v", err)
+			}
+
+			_, err := ns.executeNodeStageVolume(context.TODO(), tc.req)
+			if tc.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if tc.expectErr != nil {
+				if err == nil {
+					t.Errorf("got error nil, expected error %q", tc.expectErr)
+				} else if !errors.Is(err, tc.expectErr) && err.Error() != tc.expectErr.Error() {
+					t.Errorf("got error %q, expected error %q", err, tc.expectErr)
+				}
+			}
+
+			if tc.expectErr == nil {
+				if info, err := os.Stat(tc.req.StagingTargetPath); err != nil {
+					if os.IsNotExist(err) {
+						t.Errorf("expected staging target path %q to be created, but it was not", tc.req.StagingTargetPath)
+					} else {
+						t.Errorf("failed to stat staging target path: %v", err)
+					}
+				} else if !info.IsDir() {
+					t.Errorf("expected staging target path %q to be a directory", tc.req.StagingTargetPath)
+				}
+			}
 		})
 	}
 }
@@ -637,6 +776,9 @@ func TestNodeUnpublishVolume(t *testing.T) {
 func TestNodeStageVolume(t *testing.T) {
 	t.Parallel()
 
+	stagingPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+
 	cases := []struct {
 		name      string
 		req       *csi.NodeStageVolumeRequest
@@ -650,7 +792,7 @@ func TestNodeStageVolume(t *testing.T) {
 		{
 			name: "empty volume id",
 			req: &csi.NodeStageVolumeRequest{
-				StagingTargetPath: "/test/staging/path",
+				StagingTargetPath: stagingPath,
 				VolumeCapability:  testVolumeCapability,
 			},
 			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Volume ID must be provided"),
@@ -659,7 +801,7 @@ func TestNodeStageVolume(t *testing.T) {
 			name: "missing volume capability",
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          testVolumeID,
-				StagingTargetPath: "/test/staging/path",
+				StagingTargetPath: stagingPath,
 			},
 			expectErr: status.Error(codes.InvalidArgument, "NodeStageVolume Volume capability must be provided"),
 		},
@@ -667,7 +809,7 @@ func TestNodeStageVolume(t *testing.T) {
 			name: "invalid volume capability",
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          testVolumeID,
-				StagingTargetPath: "/test/staging/path",
+				StagingTargetPath: stagingPath,
 				VolumeCapability: &csi.VolumeCapability{
 					AccessType: &csi.VolumeCapability_Mount{
 						Mount: &csi.VolumeCapability_MountVolume{},
@@ -691,7 +833,7 @@ func TestNodeStageVolume(t *testing.T) {
 			name: "valid request with sharedMount false",
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          testVolumeID,
-				StagingTargetPath: "/test/staging/path",
+				StagingTargetPath: stagingPath,
 				VolumeCapability:  testVolumeCapability,
 				VolumeContext: map[string]string{
 					VolumeContextSharedNodeMount: "false",
@@ -699,13 +841,89 @@ func TestNodeStageVolume(t *testing.T) {
 			},
 		},
 		{
-			name: "valid request with sharedMount true",
+			name: "nil publish context - should return InvalidArgument error",
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          testVolumeID,
-				StagingTargetPath: "/test/staging/path",
+				StagingTargetPath: stagingPath,
 				VolumeCapability:  testVolumeCapability,
 				VolumeContext: map[string]string{
 					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: nil,
+			},
+			expectErr: status.Error(codes.InvalidArgument, "publishContext must be provided"),
+		},
+		{
+			name: "missing pod name in publish context - should return InvalidArgument error",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: map[string]string{},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "publishContext must contain mounter pod name"),
+		},
+		{
+			name: "empty pod name in publish context - should return InvalidArgument error",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName: "",
+				},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "mounter pod name in publishContext cannot be empty"),
+		},
+		{
+			name: "missing pod namespace in publish context - should return InvalidArgument error",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName: createMounterPodName("test-node", testVolumeID),
+				},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "publishContext must contain mounter pod namespace"),
+		},
+		{
+			name: "empty pod namespace in publish context - should return InvalidArgument error",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "",
+				},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "mounter pod namespace in publishContext cannot be empty"),
+		},
+		{
+			name: "valid request with sharedMount true",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
 				},
 			},
 		},
