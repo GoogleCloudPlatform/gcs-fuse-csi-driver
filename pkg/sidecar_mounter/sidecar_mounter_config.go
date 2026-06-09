@@ -75,7 +75,24 @@ type MountConfig struct {
 	StorageEndpoint                string                `json:"-"`
 }
 
-// sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
+// EnsureErrWriter safely initializes ErrWriter to the correct writer if it is nil.
+func (mc *MountConfig) EnsureErrWriter() {
+	if mc == nil {
+		return
+	}
+	if mc.ErrWriter != nil {
+		return
+	}
+	if mc.TempDir != "" {
+		mc.ErrWriter = NewErrorWriter(filepath.Join(mc.TempDir, util.ErrorFileName))
+		klog.V(4).Infof("Initialized ErrWriter for volume %q", mc.VolumeName)
+		return
+	}
+	klog.Warningf("ErrWriter initialization failed for volume %q, creating a no-op error writer", mc.VolumeName)
+	mc.ErrWriter = NewErrorWriter("")
+}
+
+// sidecarRetryConfig controls the retry configurations for sidecarRetry behavior for storage service creation and bucket access check.
 type sidecarRetryConfig struct {
 	Duration time.Duration
 	Factor   float64
