@@ -73,6 +73,7 @@ func New(mounterPath string) *Mounter {
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
 	var tokenSource oauth2.TokenSource
@@ -535,6 +536,8 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset clientset.Interface, mc *MountConfig) error {
+	mc.EnsureErrWriter()
+
 	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
 		var tm auth.TokenManager
 		var ssm storage.ServiceManager
