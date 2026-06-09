@@ -83,17 +83,19 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
-		if mc.EnableCloudProfilerForSidecar {
-			cfg := profiler.Config{
-				Service: "gke-gcsfuse-sidecar",
-			}
-			if err := profiler.Start(cfg); err != nil {
-				klog.Errorf("Errored while starting cloud profiler, got %v", err)
-			} else {
-				klog.Infof("Running cloud profiler on %s", cfg.Service)
-			}
-		}
 		if mc != nil {
+			mc.EnsureErrWriter()
+			if mc.EnableCloudProfilerForSidecar {
+				cfg := profiler.Config{
+					Service: "gke-gcsfuse-sidecar",
+				}
+				if err := profiler.Start(cfg); err != nil {
+					klog.Errorf("Errored while starting cloud profiler, got %v", err)
+				} else {
+					klog.Infof("Running cloud profiler on %s", cfg.Service)
+				}
+			}
+
 			if mc.EnableSidecarBucketAccessCheck {
 				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap
 				mc.SidecarRetryConfig.Steps = *storageServiceAndBucketAccessSteps
