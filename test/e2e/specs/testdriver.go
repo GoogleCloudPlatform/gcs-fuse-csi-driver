@@ -503,8 +503,12 @@ func (n *GCSFuseCSITestDriver) prepareStorageService(ctx context.Context) (stora
 }
 
 // bucketIAMMember returns the IAM member string for the given KSA.
-// When OSS_WIF_POOL_ID is set, uses the WIF principal format for self-managed clusters.
-// Otherwise falls back to the GKE Workload Identity format.
+// For GKE with GCP SA tests (!skipGcpSaTest), uses the per-test GCP SA email.
+// For OSS clusters (IS_OSS=true): if OSS_WIF_POOL_ID is set, uses the WIF principal
+// format; otherwise (ADC flow) all pods share the node compute SA identity, so
+// NODE_SERVICE_ACCOUNT is used if set, falling back to the default compute SA derived
+// from PROJECT_NUMBER.
+// For GKE without GCP SA tests, uses the GKE Workload Identity format.
 func (n *GCSFuseCSITestDriver) bucketIAMMember(serviceAccountNamespace, serviceAccountName string) string {
 	if !n.skipGcpSaTest {
 		return fmt.Sprintf("serviceAccount:%v@%v.iam.gserviceaccount.com", prepareGcpSAName(serviceAccountNamespace), n.meta.GetProjectID())
@@ -513,6 +517,13 @@ func (n *GCSFuseCSITestDriver) bucketIAMMember(serviceAccountNamespace, serviceA
 		projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
 		return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/subject/system:serviceaccount:%s:%s",
 			projectNumber, wifPoolID, serviceAccountNamespace, serviceAccountName)
+	}
+	if os.Getenv(utils.IsOSSEnvVar) == "true" {
+		if nodeSA := os.Getenv(utils.NodeServiceAccountEnvVar); nodeSA != "" {
+			return nodeSA
+		}
+		projectNumber := os.Getenv(utils.ProjectNumberEnvVar)
+		return fmt.Sprintf("serviceAccount:%s-compute@developer.gserviceaccount.com", projectNumber)
 	}
 	return fmt.Sprintf("serviceAccount:%v.svc.id.goog[%v/%v]", n.meta.GetProjectID(), serviceAccountNamespace, serviceAccountName)
 }
