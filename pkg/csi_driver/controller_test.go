@@ -253,15 +253,15 @@ func TestControllerPublishVolume(t *testing.T) {
 	}
 
 	cases := []struct {
-		name              string
-		req               *csi.ControllerPublishVolumeRequest
-		setupFake         func() *clientset.FakeClientset
-		podGetErr         error
-		podCreateErr      error
-		expectErr         bool
-		expectErrCode     codes.Code
-		podTemplateGetErr error
-        wantPublishContext map[string]string
+		name               string
+		req                *csi.ControllerPublishVolumeRequest
+		setupFake          func() *clientset.FakeClientset
+		podGetErr          error
+		podCreateErr       error
+		expectErr          bool
+		expectErrCode      codes.Code
+		podTemplateGetErr  error
+		wantPublishContext map[string]string
 	}{
 		{
 			name: "empty volume ID - should return error",

@@ -270,7 +270,7 @@ stages by different components of the GCS Fuse CSI driver. Understanding this
 flow can help diagnose authentication errors based on where they are reported.
 
 Starting with cluster version 1.34.1-gke.3899001+ for Workload Identity enabled
-workloads, the GKE public image for GCS Fuse sidecar (1.21.9+)
+workloads, the GKE public image for GCS Fuse sidecar (v1.21.9+)
 [implements a bucket access check](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/pull/605)
 by default before attempting to mount the volume. This allows the sidecar to
 reuse the STS token for bucket access check and GCS Fuse process, and
@@ -301,7 +301,7 @@ The checks are performed in the following order:
     involve the GKE Metadata Server. This check uses `GetStorageLayout` for
     `1.34.6-gke.1154000` (v1.21.24) or later, or `1.35.2-gke.1691000` (v1.22.6) or later.
 2.  **GCS Fuse CSI Sidecar Container Check (Workload Identity Enabled & GKE
-    1.34.1-gke.3899001+ only):** In GKE versions `1.34.1-gke.3899001` and later,
+    1.34.1-gke.3899001+ only):** In GKE versions `1.34.1-gke.3899001` (v1.21.9) and later,
     the `gke-gcsfuse-sidecar` container performs an additional bucket access
     check *before* it invokes the main GCS Fuse process. This check was
     introduced to detect temporary connection or permission issues early and
@@ -322,8 +322,8 @@ The checks are performed in the following order:
 2.  There was a gap in the implementation for the sidecar bucket access check
     feature specified above due to which the GCS Fuse sidecar container fails to
     retry if GKE metadata server is not yet up. This means the solution will
-    resolve pods getting stuck in pending state on bucket access failure, and
-    STS quota exhaustion but not errors in fetching token from GKE metadata
+    resolve pods getting stuck in a pending state on bucket access failure and
+    STS quota exhaustion, but not errors in fetching tokens from the GKE metadata
     server. This gap is addressed in the following GKE versions. To apply the
     fix, upgrade your clusters to one of these versions and restart your
     workload pods using the GCS Fuse volumes:
@@ -342,10 +342,10 @@ The checks are performed in the following order:
 
 #### STS Quota exhaustion on high scale workloads
 
-GCS Fuse CSI driver queries GKE Metadata server twice in a mounting lifecycle:
+GCS Fuse CSI driver queries the GKE Metadata Server twice in a mounting lifecycle:
 
 -   to verify bucket access before mounting
--   access verification while spawning GCS Fuse.
+-   to verify access while spawning GCS Fuse.
 
 At high scale workloads, this can lead to STS quota exhaustion issues as too
 many pods are querying the MDS (GKE metadata server) at the same time.
@@ -407,8 +407,8 @@ account, and does **not** involve the GKE Metadata Server.
     WARNING 2026-04-28T18:42:46Z [resource.labels.podName: gcsfuse-volume-tester-ghslj] MountVolume.SetUp failed for volume "test-gcsfuse-volume" : rpc error: code = PermissionDenied desc = failed to get GCS bucket "58990a13-5043-4003-8ba1-7f4e420a863c": googleapi: Error 403: Caller does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource (or it may not exist)., forbidden
     ```
 
-    Another example of issues causing failed bucket access check where the error
-    is not evident
+    Another example of an issue causing a failed bucket access check where the
+    error is not immediately evident:
 
     ``` {.no-copy}
     jsonPayload.message="/csi.v1.Node/NodePublishVolume failed with error: rpc error: code = Aborted desc = failed to get GCS bucket \"pi-featurized-us\": context canceled"
@@ -448,7 +448,7 @@ fails due to any reason for e.g. metadataserver not yet ready.
     "http://169.254.169.254/computeMetadata/v1/project/project-id": dial tcp
     169.254.169.254:80: i/o timeout for identity pool PROJECT.svc.id.goog
     and identity provider
-    https://container.googleapis.com/v1/projects/PROJECT/locations/us-east4/clusters/CLUSTER`
+    https://container.googleapis.com/v1/projects/PROJECT/locations/us-east4/clusters/CLUSTER
     ```
 
     The above errors translate to a mount failure in the GCS Fuse CSI driver, which is
@@ -534,7 +534,7 @@ In most cases, unsatisfactory performance is caused by insufficient CPU or memor
 
 ### Bucket Location
 
-To improve performance, make sure your bucket and GKE cluster are in the same region. When you create the bucekt, set the `Location type` field to `Region`, and select a region where your GKE cluster is running. For example: ![example of bucket location](./images/bucket_location.png)
+To improve performance, make sure your bucket and GKE cluster are in the same region. When you create the bucket, set the `Location type` field to `Region`, and select a region where your GKE cluster is running. For example: ![example of bucket location](./images/bucket_location.png)
 
 ### Metadata cache
 
