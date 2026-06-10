@@ -169,11 +169,12 @@ func waitForWebhookRollout(ctx context.Context, client kubernetes.Interface) err
 
 // isDeploymentRolledOut returns true when the deployment has finished rolling out its latest spec.
 func isDeploymentRolledOut(d *appsv1.Deployment) bool {
-	if d.Spec.Replicas == nil {
-		return false
+	desired := int32(1)
+	if d.Spec.Replicas != nil {
+		desired = *d.Spec.Replicas
 	}
 	return d.Status.ObservedGeneration >= d.Generation &&
-		d.Status.UpdatedReplicas == *d.Spec.Replicas &&
-		d.Status.ReadyReplicas == *d.Spec.Replicas &&
-		d.Status.AvailableReplicas == *d.Spec.Replicas
+		d.Status.UpdatedReplicas == desired &&
+		d.Status.ReadyReplicas == desired &&
+		d.Status.AvailableReplicas == desired
 }

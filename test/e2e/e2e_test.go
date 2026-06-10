@@ -104,7 +104,7 @@ var _ = ginkgo.BeforeSuite(func() {
 	ctx := context.Background()
 	webhookWIFEnforcementBeforeRun = utils.GetWebhookWIFEnforcement(ctx, k8sClient)
 	if err := utils.SetWebhookWIFEnforcement(ctx, k8sClient, false); err != nil {
-		klog.Errorf("BeforeSuite: failed to disable WIF enforcement: %v", err)
+		klog.Fatalf("BeforeSuite: failed to disable WIF enforcement: %v", err)
 	}
 })
 
