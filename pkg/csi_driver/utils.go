@@ -92,6 +92,8 @@ const (
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
+	PublishContextKeyMounterPodName        = "mounter-pod-name"
+	PublishContextKeyMounterPodNamespace   = "mounter-pod-namespace"
 )
 
 var (
