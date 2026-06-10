@@ -256,7 +256,7 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 			expectErr: status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", podNamespace, podName),
 		},
 		{
-			name: "mounter pod exists, not mounted - should return success",
+			name: "mounter pod exists, not already mounted - should return success",
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          volID,
 				StagingTargetPath: stagingPath,
@@ -312,8 +312,11 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 				t.Fatalf("Failed to cast NodeServer to *nodeServer")
 			}
 
-			// Ensure the directory doesn't exist prior to the test to verify mkdir
-			if err := os.RemoveAll(tc.req.StagingTargetPath); err != nil {
+			// Clear the staging path so we can check whether os.MkdirAll was called.
+			// Note: isDirMounted relies on a FakeMounter which simply reads the test case's
+			// mounts array. It doesn't check the physical file system. This allows us to
+			// delete the physical directory here without affecting the mount check.
+			if err := os.RemoveAll(stagingPath); err != nil && !os.IsNotExist(err) {
 				t.Fatalf("failed to remove staging target path: %v", err)
 			}
 
@@ -329,15 +332,18 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 				}
 			}
 
-			if tc.expectErr == nil {
-				if info, err := os.Stat(tc.req.StagingTargetPath); err != nil {
-					if os.IsNotExist(err) {
-						t.Errorf("expected staging target path %q to be created, but it was not", tc.req.StagingTargetPath)
-					} else {
-						t.Errorf("failed to stat staging target path: %v", err)
-					}
-				} else if !info.IsDir() {
-					t.Errorf("expected staging target path %q to be a directory", tc.req.StagingTargetPath)
+			// Check if staging path was recreated
+			dirExists := false
+			if _, statErr := os.Stat(stagingPath); statErr == nil {
+				dirExists = true
+			}
+			isAlreadyMounted := len(tc.mounts) > 0
+			if tc.expectErr == nil && tc.podExists {
+				if isAlreadyMounted && dirExists {
+					t.Errorf("expected MkdirAll to not be called (mount already exists), but directory was created")
+				}
+				if !isAlreadyMounted && !dirExists {
+					t.Errorf("expected MkdirAll to be called, but directory was not created")
 				}
 			}
 		})
