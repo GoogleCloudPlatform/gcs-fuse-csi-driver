@@ -70,11 +70,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 	nativeSidecarEnvVar := os.Getenv(utils.TestWithNativeSidecarEnvVar)
 	supportsNativeSidecar, err := strconv.ParseBool(nativeSidecarEnvVar)
 	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, nativeSidecarEnvVar)
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, utils.TestWithNativeSidecarEnvVar)
 	}
 	enableSidecarBucketAccessCheck, err := strconv.ParseBool(os.Getenv(utils.TestWithSidecarBucketAccessCheckEnvVar))
 	if err != nil {
-		klog.Fatalf(`env variable "%t" could not be converted to boolean`, enableSidecarBucketAccessCheck)
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, utils.TestWithSidecarBucketAccessCheckEnvVar)
 	}
 	// In 1.28 (non native sidecar), when the sidecar is injected as a main
 	// container, the gcsFuseSidecarContainerImage always returns "". This
@@ -84,13 +84,13 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 	testErrorLogCleanUp, err := strconv.ParseBool(os.Getenv(utils.TestWithErrorFileCleanUpEnvVar))
 	if err != nil {
-		klog.Fatalf(`env variable "%t" could not be converted to boolean`, testErrorLogCleanUp)
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, utils.TestWithErrorFileCleanUpEnvVar)
 	}
 
 	saVolInjectEnvVar := os.Getenv(utils.TestWithSAVolumeInjectionEnvVar)
 	supportSAVolInjection, err := strconv.ParseBool(saVolInjectEnvVar)
 	if err != nil {
-		klog.Fatalf(`env variable "%s" could not be converted to boolean`, saVolInjectEnvVar)
+		klog.Fatalf(`env variable "%s" could not be converted to boolean`, utils.TestWithSAVolumeInjectionEnvVar)
 	}
 
 	type local struct {
