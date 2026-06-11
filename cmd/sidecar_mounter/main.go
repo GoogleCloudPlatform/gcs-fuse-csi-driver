@@ -87,6 +87,7 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
+			mc.EnsureErrWriter()
 			if mc.EnableCloudProfilerForSidecar {
 				serviceVersion := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
 				if serviceVersion == "" {
