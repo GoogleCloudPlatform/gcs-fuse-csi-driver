@@ -2195,36 +2195,6 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 		},
 	}
 
-	podTemplateWithUserProvidedCache := &corev1.PodTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "mounter-template-user-provided-cache",
-			Namespace: "default",
-		},
-		Template: corev1.PodTemplateSpec{
-			Spec: corev1.PodSpec{
-				Volumes: []corev1.Volume{
-					{
-						Name: SidecarContainerCacheVolumeName,
-					},
-				},
-			},
-		},
-	}
-
-	sharedPVCWithProfileAndUserProvidedCache := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "shared-pvc",
-			Namespace: "default",
-			Annotations: map[string]string{
-				MounterPodTemplateAnnotation: "mounter-template-user-provided-cache",
-			},
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			StorageClassName: ptr.To("shared-profile-sc"),
-			VolumeName:       "shared-pv",
-		},
-	}
-
 	sharedPVCWithAnnotation := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "shared-pvc",
@@ -2311,15 +2281,6 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 		GcsfuseProfilesManagedLabel: "true",
 	}
 	sharedOnlyPodWithProfileMutated.Spec.SchedulingGates = []corev1.PodSchedulingGate{
-		{Name: BucketScanPendingSchedulingGate},
-	}
-
-	sharedOnlyPodWithProfileAndUserProvidedCacheMutated := sharedOnlyPod.DeepCopy()
-	sharedOnlyPodWithProfileAndUserProvidedCacheMutated.Labels = map[string]string{
-		GcsfuseProfilesManagedLabel:    "true",
-		GcsfuseCacheCreatedByUserLabel: "true",
-	}
-	sharedOnlyPodWithProfileAndUserProvidedCacheMutated.Spec.SchedulingGates = []corev1.PodSchedulingGate{
 		{Name: BucketScanPendingSchedulingGate},
 	}
 
@@ -2473,14 +2434,6 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 			requestObj:     sharedOnlyPod,
 			requestKind:    "Pod",
 			wantResponse:   admission.PatchResponseFromRaw(serialize(t, sharedOnlyPod), serialize(t, sharedOnlyPodWithProfileMutated)),
-			enableProfiles: true,
-		},
-		{
-			name:           "Pod using shared node mount with Profiles enabled and user provided cache volume in PodTemplate is mutated with profile label, scheduling gate, and cache-created-by-user label.",
-			objects:        []runtime.Object{sharedProfileSC, sharedPVCWithProfileAndUserProvidedCache, sharedPV, podTemplateWithUserProvidedCache},
-			requestObj:     sharedOnlyPod,
-			requestKind:    "Pod",
-			wantResponse:   admission.PatchResponseFromRaw(serialize(t, sharedOnlyPod), serialize(t, sharedOnlyPodWithProfileAndUserProvidedCacheMutated)),
 			enableProfiles: true,
 		},
 	}

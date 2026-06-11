@@ -140,7 +140,6 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	// Classify Pod volumes to check if they are GCSFuse volumes and if they use shared node mount.
 	var hasSharedNodeMount bool
 	var hasStandardMount bool
-	var cacheCreatedByUser bool
 
 	for _, volume := range pod.Spec.Volumes {
 		isGcsfuse, _, volumeAttributes, pv, err := si.isGcsFuseCSIVolume(volume, pod.Namespace)
@@ -179,10 +178,6 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 					return admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q uses shared node mount but its PVC %q is missing a referenced PodTemplate annotation %q", volume.Name, pvc.Name, MounterPodTemplateAnnotation))
 				}
 
-				if volumeExists(podTemplate.Template.Spec.Volumes, SidecarContainerCacheVolumeName) {
-					cacheCreatedByUser = true
-				}
-
 				// Validate that Pod fsGroup matches the requirements of the referenced PVC PodTemplate.
 				if err := si.validateFSGroup(pod, podTemplate); err != nil {
 					klog.Errorf("fsGroup validation failed: %v", err)
@@ -208,7 +203,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 				return admission.Errored(http.StatusBadRequest, err)
 			}
 			if profilesEnabled {
-				if err := ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser, true); err != nil {
+				if err := ModifyPodSpecForGCSFuseProfiles(pod, false, true); err != nil {
 					return admission.Errored(http.StatusBadRequest, err)
 				}
 				marshaledPod, err := json.Marshal(pod)
@@ -339,7 +334,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		pod.Spec.Volumes = append(pod.Spec.Volumes, GetSATokenVolume(audience))
 	}
 
-	cacheCreatedByUser = volumeExists(pod.Spec.Volumes, SidecarContainerCacheVolumeName)
+	cacheCreatedByUser := volumeExists(pod.Spec.Volumes, SidecarContainerCacheVolumeName)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
 	// Inject metadata prefetch sidecar.
