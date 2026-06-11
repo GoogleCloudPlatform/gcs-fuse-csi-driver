@@ -2396,6 +2396,67 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 		},
 	}
 
+	podMismatchSA := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "workload-pod-mismatch-sa", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			ServiceAccountName: "wrong-sa",
+			Volumes: []corev1.Volume{
+				{Name: "shared-vol", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "shared-pvc"}}},
+			},
+		},
+	}
+
+	podMatchSA := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "workload-pod-match-sa", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			ServiceAccountName: "mounter-sa",
+			Volumes: []corev1.Volume{
+				{Name: "shared-vol", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "shared-pvc"}}},
+			},
+		},
+	}
+
+	podMissingSA := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "workload-pod-missing-sa", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			ServiceAccountName: "",
+			Volumes: []corev1.Volume{
+				{Name: "shared-vol", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "shared-pvc"}}},
+			},
+		},
+	}
+
+	podDefaultSA := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "workload-pod-default-sa", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			ServiceAccountName: "default",
+			Volumes: []corev1.Volume{
+				{Name: "shared-vol", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "shared-pvc"}}},
+			},
+		},
+	}
+
+	templateWithSA := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "mounter-template", Namespace: "default"},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{ServiceAccountName: "mounter-sa"},
+		},
+	}
+
+	templateDefaultSA := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "mounter-template", Namespace: "default"},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{ServiceAccountName: "default"},
+		},
+	}
+
+	templateMissingSA := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "mounter-template", Namespace: "default"},
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{ServiceAccountName: ""},
+		},
+	}
+
 	testCases := []struct {
 		name           string
 		objects        []runtime.Object
@@ -2464,6 +2525,48 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 			name:         "Pod is allowed if neither the Pod nor the volume's PodTemplate specify an fsGroup.",
 			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplateNoFSGroup},
 			requestObj:   workloadPodNoFSGroup,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod is rejected if its serviceAccountName does not match the volume's PodTemplate serviceAccountName.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, templateWithSA},
+			requestObj:   podMismatchSA,
+			requestKind:  "Pod",
+			wantResponse: admission.Errored(http.StatusBadRequest, fmt.Errorf("Pod serviceAccountName %q does not match the one specified in volume's PodTemplate %q (%q)", "wrong-sa", "mounter-template", "mounter-sa")),
+		},
+		{
+			name:         "Pod is allowed if its serviceAccountName matches the volume's PodTemplate serviceAccountName.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, templateWithSA},
+			requestObj:   podMatchSA,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod is allowed if both the Pod and the volume's PodTemplate leave serviceAccountName blank.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, templateMissingSA},
+			requestObj:   podMissingSA,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod is allowed if Pod specifies default and the volume's PodTemplate leaves serviceAccountName blank.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, templateMissingSA},
+			requestObj:   podDefaultSA,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod is allowed if Pod leaves serviceAccountName blank and the volume's PodTemplate specifies default.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, templateDefaultSA},
+			requestObj:   podMissingSA,
+			requestKind:  "Pod",
+			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
+		},
+		{
+			name:         "Pod is allowed if both Pod and the volume's PodTemplate specify default serviceAccountName.",
+			objects:      []runtime.Object{sharedPV, sharedPVCWithAnnotation, templateDefaultSA},
+			requestObj:   podDefaultSA,
 			requestKind:  "Pod",
 			wantResponse: admission.Allowed("No sidecar injection required for shared node mount mode."),
 		},

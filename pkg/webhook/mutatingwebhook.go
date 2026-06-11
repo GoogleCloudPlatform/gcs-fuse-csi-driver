@@ -188,6 +188,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 					klog.Errorf("fsGroup validation failed: %v", err)
 					return admission.Errored(http.StatusBadRequest, err)
 				}
+
+				// Validate that Pod serviceAccountName matches the requirements of the referenced PVC PodTemplate.
+				if err := si.validateServiceAccountName(pod, podTemplate); err != nil {
+					klog.Errorf("serviceAccountName validation failed: %v", err)
+					return admission.Errored(http.StatusBadRequest, err)
+				}
 			}
 		} else {
 			hasStandardMount = true
@@ -713,6 +719,24 @@ func (si *SidecarInjector) validateFSGroup(pod *corev1.Pod, podTemplate *corev1.
 
 	if podHasFSGroup {
 		return fmt.Errorf("Pod has fsGroup set, but volume's PodTemplate %q does not specify one (not allowed for shared node mount)", templateName)
+	}
+
+	return nil
+}
+
+// validateServiceAccountName checks if the Pod's serviceAccountName matches the one specified in the volume's referenced mounter PodTemplate.
+func (si *SidecarInjector) validateServiceAccountName(pod *corev1.Pod, podTemplate *corev1.PodTemplate) error {
+	templateSA := podTemplate.Template.Spec.ServiceAccountName
+	if templateSA == "" {
+		templateSA = "default"
+	}
+	podSA := pod.Spec.ServiceAccountName
+	if podSA == "" {
+		podSA = "default"
+	}
+
+	if templateSA != podSA {
+		return fmt.Errorf("Pod serviceAccountName %q does not match the one specified in volume's PodTemplate %q (%q)", podSA, podTemplate.Name, templateSA)
 	}
 
 	return nil
