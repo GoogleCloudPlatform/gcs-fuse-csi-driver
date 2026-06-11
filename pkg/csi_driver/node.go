@@ -730,6 +730,16 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
 	}
 
+	// Check if the staging path is already mounted.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+	if mounted {
+		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
 	// Make the staging path.
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
