@@ -43,6 +43,7 @@ const (
 	testPVC       = "test-pvc"
 	testNamespace = "test-namespace"
 	testPod       = "test-pod"
+	testPodUID    = "test-pod-uid"
 	testImage     = "k8s.gcr.io/pause"
 )
 

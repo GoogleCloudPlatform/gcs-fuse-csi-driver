@@ -76,10 +76,13 @@ const (
 )
 
 var (
-	volumeIDRegEx            = regexp.MustCompile(`:.*$`)
-	targetPathRegexp         = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
-	emptyReplacementRegexp   = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
-	gkeIdentityProviderRegex = regexp.MustCompile(
+	volumeIDRegEx          = regexp.MustCompile(`:.*$`)
+	targetPathRegexp       = regexp.MustCompile(`/var/lib/kubelet/pods/(.*)/volumes/kubernetes\.io~csi/(.*)/mount`)
+	emptyReplacementRegexp = regexp.MustCompile(`kubernetes\.io~csi/(.*)/mount`)
+	StagingPathRegexp      = regexp.MustCompile(`/var/lib/kubelet/plugins/kubernetes\.io/csi/gcsfuse\.csi\.storage\.gke\.io/(.*)/globalmount`)
+	// Used to allow tests to create directories in test root dirs since they do not have permissions to create directories in /var/lib/kubelet
+	stagingPathEmptyReplacementRegexp = regexp.MustCompile(`plugins/kubernetes\.io/csi/gcsfuse\.csi\.storage\.gke\.io/(.*)/globalmount`)
+	gkeIdentityProviderRegex          = regexp.MustCompile(
 		`^https://(?:[a-z0-9-]+-)?container(?:\.sandbox)?\.googleapis\.com/v1/projects/[^/]+/locations/[^/]+/clusters/[^/]+$`,
 	)
 )
@@ -180,6 +183,11 @@ func ParsePodIDVolumeFromTargetpath(targetPath string) (string, string, error) {
 	volume := matched[2]
 
 	return podID, volume, nil
+}
+
+// MounterPodEmptyDirPath constructs the path for the empty directory of a given pod.
+func MounterPodEmptyDirPath(stagingPath string, podUID string) string {
+	return stagingPathEmptyReplacementRegexp.ReplaceAllString(stagingPath, fmt.Sprintf("pods/%s/volumes/kubernetes.io~empty-dir/%v", podUID, SidecarContainerTmpVolumeName))
 }
 
 func PrepareEmptyDir(targetPath string, createEmptyDir bool) (string, error) {

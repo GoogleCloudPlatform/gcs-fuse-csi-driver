@@ -662,10 +662,15 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	// Validate the staging path.
 	stagingPath := req.GetStagingTargetPath()
 	if len(stagingPath) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided")
 	}
+	if matched := util.StagingPathRegexp.FindStringSubmatch(stagingPath); len(matched) < 2 {
+		return nil, status.Errorf(codes.InvalidArgument, "NodeStageVolume Staging Target Path %v does not contain volume information", stagingPath)
+	}
+
 	// Skip NodeStageVolume for sidecar mounted volumes.
 	if !sharedMount(req.GetVolumeContext()) {
 		return &csi.NodeStageVolumeResponse{}, nil
@@ -743,11 +748,16 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	// Make the staging path.
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
-		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
+		return nil, status.Errorf(codes.Internal, "mkdir failed for staging path %q: %v", stagingPath, err)
 	}
 
-	// TODO(FUECHR) Add empty dir creation flow.
-	// TODO(FUECHR) Wait for mounter pod running flow.
+	// Create mounter pod's emptyDir in the tmp volume.
+	emptyDirPath := util.MounterPodEmptyDirPath(stagingPath, string(pod.UID))
+	klog.Infof("NodeStageVolume attempting mkdir for emptyDir path %q", emptyDirPath)
+	if err := os.MkdirAll(emptyDirPath, 0750); err != nil {
+		return nil, status.Errorf(codes.Internal, "mkdir failed for emptyDir path %q: %v", emptyDirPath, err)
+	}
+	// TODO(FUECHR) Wait for the mounter pod to be ready.
 	// TODO(FUECHR) Add start gcsfuse flow.
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 

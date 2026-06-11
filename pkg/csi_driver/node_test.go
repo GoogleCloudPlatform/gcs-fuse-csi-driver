@@ -40,8 +40,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
+
+const testStagingPathStr = "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io/test-volume-id/globalmount"
 
 var testVolumeCapability = &csi.VolumeCapability{
 	AccessType: &csi.VolumeCapability_Mount{
@@ -123,6 +126,20 @@ func setupMountTarget(t *testing.T) (string, func()) {
 		t.Fatalf("failed to setup target path: %v", err)
 	}
 	return testTargetPath, func() { defer os.RemoveAll(base) }
+}
+
+func setupTestDir(t *testing.T, path string) (string, func()) {
+	// Create a temporary directory for the test
+	tempDir := t.TempDir()
+	// Append the full path
+	fullPath := filepath.Join(tempDir, path)
+	// Create the directory path (including any parent directories)
+	err := os.MkdirAll(fullPath, 0755)
+	if err != nil {
+		t.Fatalf("failed to create path: %v", err)
+	}
+	klog.Infof("Created test path %q", fullPath)
+	return fullPath, func() { defer os.RemoveAll(tempDir) }
 }
 
 func TestNodePublishVolume(t *testing.T) {
@@ -227,7 +244,8 @@ func TestNodePublishVolume(t *testing.T) {
 func TestExecuteNodeStageVolume(t *testing.T) {
 	t.Parallel()
 
-	stagingPath, cleanup := setupMountTarget(t)
+	// Setup the staging path for the test.
+	stagingPath, cleanup := setupTestDir(t, testStagingPathStr)
 	defer cleanup()
 
 	nodeID := "test-node" // default from initTestDriver
@@ -297,6 +315,10 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 					},
 				}
 				fakeClientSet = clientset.NewFakeClientset(pod)
+
+				// fakeClientset always overrides the pod uid to nil, so we need to set it manually.
+				pod, _ = fakeClientSet.GetPod(podNamespace, podName)
+				pod.UID = testPodUID
 			} else {
 				fakeClientSet = clientset.NewFakeClientset()
 				fakeClientSet.GetPodErr = apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, podName)
@@ -312,38 +334,26 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 				t.Fatalf("Failed to cast NodeServer to *nodeServer")
 			}
 
-			// Clear the staging path so we can check whether os.MkdirAll was called.
-			// Note: isDirMounted relies on a FakeMounter which simply reads the test case's
-			// mounts array. It doesn't check the physical file system. This allows us to
-			// delete the physical directory here without affecting the mount check.
-			if err := os.RemoveAll(stagingPath); err != nil && !os.IsNotExist(err) {
-				t.Fatalf("failed to remove staging target path: %v", err)
-			}
-
 			_, err := ns.executeNodeStageVolume(context.TODO(), tc.req)
-			if tc.expectErr == nil && err != nil {
-				t.Errorf("got error %q, expected error nil", err)
+			if tc.expectErr == nil {
+				if err != nil {
+					t.Errorf("got error %q, expected error nil", err)
+				}
+				if tc.podExists {
+					if _, err := os.Stat(stagingPath); os.IsNotExist(err) {
+						t.Errorf("expected stagingPath %q to be created, but it was not", stagingPath)
+					}
+					expectedEmptyDirPath := util.MounterPodEmptyDirPath(stagingPath, testPodUID)
+					if _, err := os.Stat(expectedEmptyDirPath); os.IsNotExist(err) {
+						t.Errorf("expected emptyDirPath %q to be created, but it was not", expectedEmptyDirPath)
+					}
+				}
 			}
 			if tc.expectErr != nil {
 				if err == nil {
 					t.Errorf("got error nil, expected error %q", tc.expectErr)
 				} else if !errors.Is(err, tc.expectErr) && err.Error() != tc.expectErr.Error() {
 					t.Errorf("got error %q, expected error %q", err, tc.expectErr)
-				}
-			}
-
-			// Check if staging path was recreated
-			dirExists := false
-			if _, statErr := os.Stat(stagingPath); statErr == nil {
-				dirExists = true
-			}
-			isAlreadyMounted := len(tc.mounts) > 0
-			if tc.expectErr == nil && tc.podExists {
-				if isAlreadyMounted && dirExists {
-					t.Errorf("expected MkdirAll to not be called (mount already exists), but directory was created")
-				}
-				if !isAlreadyMounted && !dirExists {
-					t.Errorf("expected MkdirAll to be called, but directory was not created")
 				}
 			}
 		})
@@ -782,7 +792,8 @@ func TestNodeUnpublishVolume(t *testing.T) {
 func TestNodeStageVolume(t *testing.T) {
 	t.Parallel()
 
-	stagingPath, cleanup := setupMountTarget(t)
+	// Setup the staging path for the test.
+	stagingPath, cleanup := setupTestDir(t, testStagingPathStr)
 	defer cleanup()
 
 	cases := []struct {
