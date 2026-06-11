@@ -31,6 +31,7 @@ import (
 type Config struct {
 	ShouldInjectSAVolume  bool   `json:"-"`
 	EnableGcsfuseProfiles bool   `json:"-"`
+	EnableSharedNodeMount bool   `json:"-"`
 	PodHostNetworkSetting bool   `json:"-"`
 	EnableNumaPinning     bool   `json:"enable-numa-pinning,omitempty"`
 	ContainerImage        string `json:"-"`
