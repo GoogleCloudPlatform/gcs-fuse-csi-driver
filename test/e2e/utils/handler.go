@@ -93,6 +93,7 @@ const (
 	TestWithNativeSidecarEnvVar            = "TEST_WITH_NATIVE_SIDECAR"
 	TestWithSAVolumeInjectionEnvVar        = "TEST_WITH_SA_VOL_INJECTION"
 	TestWithSidecarBucketAccessCheckEnvVar = "TEST_WITH_SIDECAR_BUCKET_ACCESS_CHECK"
+	TestWithErrorFileCleanUpEnvVar         = "TEST_WITH_ERROR_FILE_CLEAN_UP"
 	ClusterNameEnvVar                      = "CLUSTER_NAME"
 	ClusterLocationEnvVar                  = "CLUSTER_LOCATION"
 	ProjectEnvVar                          = "PROJECT"
@@ -272,6 +273,16 @@ func Handle(testParams *TestParameters) error {
 
 	if err = os.Setenv(TestWithSidecarBucketAccessCheckEnvVar, strconv.FormatBool(supportSidecarBucketAccessCheck && testParams.EnableSidecarBucketAccessCheck)); err != nil {
 		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithSidecarBucketAccessCheckEnvVar, err)
+	}
+
+	supportErrorFileCleanUpMinVersionSatisfied, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, "" /*CSI version depends on the master version only*/, errorFileCleanUpMinimumVersion)
+	if err != nil {
+		klog.Fatalf(`managed driver version for error file cleanup support could not be determined: %v`, err)
+	}
+	supportErrorFileCleanUp := !testParams.UseGKEManagedDriver || (testParams.UseGKEManagedDriver && supportErrorFileCleanUpMinVersionSatisfied)
+
+	if err = os.Setenv(TestWithErrorFileCleanUpEnvVar, strconv.FormatBool(supportErrorFileCleanUp)); err != nil {
+		klog.Fatalf(`env variable "%s" could not be set: %v`, TestWithErrorFileCleanUpEnvVar, err)
 	}
 
 	supportsMachineTypeAutoConfig, err := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, supportsMachineTypeAutoConfigMinimumVersion)

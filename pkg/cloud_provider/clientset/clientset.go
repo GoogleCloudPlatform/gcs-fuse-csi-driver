@@ -47,11 +47,13 @@ type Interface interface {
 	ConfigurePVLister(ctx context.Context)
 	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
+	ConfigurePodTemplateLister(ctx context.Context)
 	GetPod(namespace, name string) (*corev1.Pod, error)
 	GetNode(name string) (*corev1.Node, error)
 	GetPV(name string) (*corev1.PersistentVolume, error)
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
+	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
 	ListPV() ([]*corev1.PersistentVolume, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
@@ -69,6 +71,7 @@ type Clientset struct {
 	pvLister                  listersv1.PersistentVolumeLister
 	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
+	podTemplateLister         listersv1.PodTemplateLister
 	informerResyncDurationSec int
 }
 
@@ -249,6 +252,36 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 	c.scLister = scLister
 }
 
+func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
+	trim := func(obj any) (any, error) {
+		podTemplateObj, ok := obj.(*corev1.PodTemplate)
+		if !ok || podTemplateObj == nil {
+			return obj, nil
+		}
+		return &corev1.PodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      podTemplateObj.ObjectMeta.Name,
+				Namespace: podTemplateObj.Namespace,
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: podTemplateObj.Template.Spec,
+			},
+		}, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTransform(trim),
+	)
+	podTemplateLister := informerFactory.Core().V1().PodTemplates().Lister()
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.podTemplateLister = podTemplateLister
+}
+
 func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
 	var err error
 	var rc *rest.Config
@@ -392,6 +425,14 @@ func (c *Clientset) GetSC(name string) (*storagev1.StorageClass, error) {
 	}
 
 	return c.scLister.Get(name)
+}
+
+func (c *Clientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error) {
+	if c.podTemplateLister == nil {
+		return nil, errors.New("pod template informer is not ready")
+	}
+
+	return c.podTemplateLister.PodTemplates(namespace).Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

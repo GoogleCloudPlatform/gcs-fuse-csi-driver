@@ -207,10 +207,11 @@ func TestCreateMounterPodSpec(t *testing.T) {
 		{
 			name: "basic config - should succeed",
 			config: &mounterPodConfig{
-				podName:   "my-mounter-pod",
-				namespace: "my-namespace",
-				nodeID:    "node-123",
-				image:     "gcr.io/my-project/my-image:v1.0.0",
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
 			},
 			want: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -222,7 +223,8 @@ func TestCreateMounterPodSpec(t *testing.T) {
 						"kubernetes.io/hostname": "node-123",
 						"kubernetes.io/os":       "linux",
 					},
-					PriorityClassName: mounterPodPriorityClass,
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
 					Containers: []corev1.Container{
 						{
 							Name:            mounterPodNamePrefix,
@@ -574,6 +576,128 @@ func TestWaitForMounterPodScheduled(t *testing.T) {
 			}
 
 			wg.Wait()
+		})
+	}
+}
+
+func TestMounterPodTemplate(t *testing.T) {
+	namespace := "test-ns"
+	templateName := "my-pod-template"
+
+	existingPodTemplate := clientset.FakePodTemplateConfig{
+		Name: templateName,
+	}
+
+	testCases := []struct {
+		name              string
+		pvc               *corev1.PersistentVolumeClaim
+		initialObjects    []clientset.FakePodTemplateConfig
+		wantPodTemplate   *corev1.PodTemplate
+		wantErr           bool
+		getPodTemplateErr error
+	}{
+		{
+			name: "pvc nil annotation - should return error",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pvc-no-anno",
+					Namespace: namespace,
+				},
+			},
+			wantPodTemplate: nil,
+			wantErr:         true,
+		},
+		{
+			name: "pvc unrelated annotation - should return error",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pvc-other-anno",
+					Namespace: namespace,
+					Annotations: map[string]string{
+						"another.annotation/foo": "bar",
+					},
+				},
+			},
+			wantPodTemplate: nil,
+			wantErr:         true,
+		},
+		{
+			name: "pvc empty annotation - should return error",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pvc-empty-anno",
+					Namespace: namespace,
+					Annotations: map[string]string{
+						"gke-gcsfuse/mounter-pod-template": "",
+					},
+				},
+			},
+			wantPodTemplate: nil,
+			wantErr:         true,
+		},
+		{
+			name: "pod template not found - should return error",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pvc-pt-notfound",
+					Namespace: namespace,
+					Annotations: map[string]string{
+						"gke-gcsfuse/mounter-pod-template": "non-existent-template",
+					},
+				},
+			},
+			initialObjects:    []clientset.FakePodTemplateConfig{existingPodTemplate}, // Seed with a different one
+			wantPodTemplate:   nil,
+			wantErr:           true,
+			getPodTemplateErr: errors.New("pod template not found"),
+		},
+		{
+			name: "pod template found - should return pod template",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pvc-pt-found",
+					Namespace: namespace,
+					Annotations: map[string]string{
+						"gke-gcsfuse/mounter-pod-template": templateName,
+					},
+				},
+			},
+			initialObjects: []clientset.FakePodTemplateConfig{existingPodTemplate},
+			wantPodTemplate: &corev1.PodTemplate{ObjectMeta: metav1.ObjectMeta{
+				Name: templateName,
+			}},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Initialize the fake clientset with any predefined objects
+			fakeClientset := clientset.NewFakeClientset()
+
+			if tc.getPodTemplateErr != nil {
+				fakeClientset.GetPodTemplateErr = tc.getPodTemplateErr
+			}
+
+			for _, podTemplate := range tc.initialObjects {
+				fakeClientset.CreatePodTemplate(podTemplate)
+			}
+
+			gotPodTemplate, err := mounterPodTemplate(fakeClientset, tc.pvc)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("mounterPodTemplate(%v): expected an error but got none", tc.pvc.Name)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("mounterPodTemplate(%v): unexpected error: %v", tc.pvc.Name, err)
+				}
+			}
+
+			if diff := cmp.Diff(tc.wantPodTemplate, gotPodTemplate); diff != "" {
+				t.Errorf("mounterPodTemplate(%v): returned diff (-want +got):\n%s", tc.pvc.Name, diff)
+			}
 		})
 	}
 }
