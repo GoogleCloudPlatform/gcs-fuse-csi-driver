@@ -30,20 +30,23 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
 
 const (
-	testVolumeID  = "test-volume-id"
-	testNodeID    = "test-node-id"
-	testPV        = "test-pv"
-	testPVC       = "test-pvc"
-	testNamespace = "test-namespace"
-	testPod       = "test-pod"
-	testImage     = "k8s.gcr.io/pause"
+	testVolumeID           = "test-volume-id"
+	testNodeID             = "test-node-id"
+	testPV                 = "test-pv"
+	testPVC                = "test-pvc"
+	testMounterPodTemplate = "test-mounter-pod-template"
+	testNamespace          = "test-namespace"
+	testPod                = "test-pod"
+	testImage              = "k8s.gcr.io/pause"
 )
 
 func initTestController(t *testing.T, clientset clientset.Interface) csi.ControllerServer {
@@ -54,6 +57,55 @@ func initTestController(t *testing.T, clientset clientset.Interface) csi.Control
 		t.Fatalf("newControllerServer failed: %v", err)
 	}
 	return cs
+}
+
+type fakeClientsetConfig struct {
+	existingObjects []runtime.Object
+	pvConfig        *clientset.FakePVConfig
+	pvcConfig       *clientset.FakePVCConfig
+	ptConfig        *clientset.FakePodTemplateConfig
+	podConfig       *clientset.FakePodConfig
+}
+
+func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
+	fc := clientset.NewFakeClientset(cfg.existingObjects...)
+	if cfg.pvConfig != nil {
+		fc.CreatePV(*cfg.pvConfig)
+	}
+	if cfg.pvcConfig != nil {
+		fc.CreatePVC(*cfg.pvcConfig)
+	}
+	if cfg.ptConfig != nil {
+		fc.CreatePodTemplate(*cfg.ptConfig)
+	}
+	if cfg.podConfig != nil {
+		fc.CreatePod(*cfg.podConfig)
+	}
+	return fc
+}
+
+func getDefaultFakeClientsetConfig() fakeClientsetConfig {
+	return fakeClientsetConfig{
+		pvConfig: &clientset.FakePVConfig{
+			Name:         testPV,
+			VolumeHandle: testVolumeID,
+			ClaimRef: &corev1.ObjectReference{
+				Name:      testPVC,
+				Namespace: testNamespace,
+			},
+		},
+		pvcConfig: &clientset.FakePVCConfig{
+			Name:      testPVC,
+			Namespace: testNamespace,
+			Annotations: map[string]string{
+				"gke-gcsfuse/mounter-pod-template": testMounterPodTemplate,
+			},
+		},
+		ptConfig: &clientset.FakePodTemplateConfig{
+			Name:      testMounterPodTemplate,
+			Namespace: testNamespace,
+		},
+	}
 }
 
 func TestCreateVolume(t *testing.T) {
@@ -201,13 +253,14 @@ func TestControllerPublishVolume(t *testing.T) {
 	}
 
 	cases := []struct {
-		name          string
-		req           *csi.ControllerPublishVolumeRequest
-		setupFake     func() *clientset.FakeClientset
-		podGetErr     error
-		podCreateErr  error
-		expectErr     bool
-		expectErrCode codes.Code
+		name              string
+		req               *csi.ControllerPublishVolumeRequest
+		setupFake         func() *clientset.FakeClientset
+		podGetErr         error
+		podCreateErr      error
+		expectErr         bool
+		expectErrCode     codes.Code
+		podTemplateGetErr error
 	}{
 		{
 			name: "empty volume ID - should return error",
@@ -291,9 +344,11 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				fc := clientset.NewFakeClientset()
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: nil})
-				return fc
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.pvConfig.ClaimRef = nil
+				cfg.pvcConfig = nil
+				cfg.ptConfig = nil
+				return setupFakeBase(cfg)
 			},
 			expectErr:     true,
 			expectErrCode: codes.Internal,
@@ -309,17 +364,68 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				fc := clientset.NewFakeClientset()
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      testPVC,
-					Namespace: testNamespace,
-				}})
-				return fc
+				return setupFakeBase(getDefaultFakeClientsetConfig())
 			},
 			expectErr: false,
 		},
 		{
-			name: "sharedMount true - mounter pod already exists",
+			name: "sharedMount true - missing mounter pod template annotation - should return error",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.pvcConfig.Annotations = nil
+				return setupFakeBase(cfg)
+			},
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "sharedMount true - pod template doesn't exist - should return error",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.pvcConfig.Annotations["gke-gcsfuse/mounter-pod-template"] = "non-existent-template"
+				return setupFakeBase(cfg)
+			},
+			expectErr:         true,
+			expectErrCode:     codes.NotFound,
+			podTemplateGetErr: apierrors.NewNotFound(schema.GroupResource{}, "pod template not found"),
+		},
+		{
+			name: "sharedMount true - pod template get internal error - should return error",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.pvcConfig.Annotations["gke-gcsfuse/mounter-pod-template"] = "non-existent-template"
+				return setupFakeBase(cfg)
+			},
+			expectErr:         true,
+			expectErrCode:     codes.Internal,
+			podTemplateGetErr: apierrors.NewInternalError(errors.New("internal error")),
+		},
+		{
+			name: "sharedMount true - mounter pod already exists - should return success",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -330,8 +436,9 @@ func TestControllerPublishVolume(t *testing.T) {
 			},
 			setupFake: func() *clientset.FakeClientset {
 				existingPod := makeMounterPod(defaultMounterPodConfig, nil)
-				fc := clientset.NewFakeClientset(existingPod)
-				fc.CreatePod(clientset.FakePodConfig{
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.existingObjects = []runtime.Object{existingPod}
+				cfg.podConfig = &clientset.FakePodConfig{
 					NodeName: testNodeID,
 					PodStatus: &corev1.PodStatus{
 						Conditions: []corev1.PodCondition{
@@ -341,17 +448,13 @@ func TestControllerPublishVolume(t *testing.T) {
 							},
 						},
 					},
-				})
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      testPVC,
-					Namespace: testNamespace,
-				}})
-				return fc
+				}
+				return setupFakeBase(cfg)
 			},
 			expectErr: false,
 		},
 		{
-			name: "sharedMount true - mounter pod being deleted",
+			name: "sharedMount true - mounter pod being deleted - should return error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -362,18 +465,15 @@ func TestControllerPublishVolume(t *testing.T) {
 			},
 			setupFake: func() *clientset.FakeClientset {
 				existingPod := makeMounterPod(defaultMounterPodConfig, &timeNow)
-				fc := clientset.NewFakeClientset(existingPod)
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      testPVC,
-					Namespace: testNamespace,
-				}})
-				return fc
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.existingObjects = []runtime.Object{existingPod}
+				return setupFakeBase(cfg)
 			},
 			expectErr:     true,
 			expectErrCode: codes.Aborted,
 		},
 		{
-			name: "sharedMount true - mounter pod get error",
+			name: "sharedMount true - mounter pod get error - should return error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -383,19 +483,14 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				fc := clientset.NewFakeClientset()
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      testPVC,
-					Namespace: testNamespace,
-				}})
-				return fc
+				return setupFakeBase(getDefaultFakeClientsetConfig())
 			},
 			podGetErr:     errors.New("simulated get error"),
 			expectErr:     true,
 			expectErrCode: codes.Internal,
 		},
 		{
-			name: "sharedMount true - mounter pod create error",
+			name: "sharedMount true - mounter pod create error - should return error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -405,12 +500,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				fc := clientset.NewFakeClientset()
-				fc.CreatePV(clientset.FakePVConfig{Name: testPV, VolumeHandle: testVolumeID, ClaimRef: &corev1.ObjectReference{
-					Name:      testPVC,
-					Namespace: testNamespace,
-				}})
-				return fc
+				return setupFakeBase(getDefaultFakeClientsetConfig())
 			},
 			podCreateErr:  errors.New("simulated create error"),
 			expectErr:     true,
@@ -453,6 +543,10 @@ func TestControllerPublishVolume(t *testing.T) {
 
 					return false, nil, nil
 				})
+			}
+
+			if test.podTemplateGetErr != nil {
+				fc.GetPodTemplateErr = test.podTemplateGetErr
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

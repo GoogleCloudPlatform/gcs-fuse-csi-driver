@@ -28,6 +28,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 )
 
@@ -160,6 +161,9 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	clientset := s.driver.config.K8sClients
 	pv, err := pvFromVolumeID(clientset, volumeID)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if pv.Spec.ClaimRef == nil {
@@ -173,12 +177,29 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	}
 	podNamespace := pvcNamespace
 
+	// Find the PodTemplate from the PVC to allow mounter pod config overrides.
+	pvc, err := clientset.GetPVC(pvcNamespace, pvcName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	podTemplate, err := mounterPodTemplate(clientset, pvc)
+	if err != nil {
+		return nil, err
+	}
+	if podTemplate == nil {
+		return nil, status.Error(codes.Internal, "pod template can't be nil")
+	}
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
-		podName:   podName,
-		namespace: podNamespace,
-		nodeID:    nodeID,
+		podName:            podName,
+		namespace:          podNamespace,
+		serviceAccountName: podTemplate.Template.Spec.ServiceAccountName,
+		nodeID:             nodeID,
 		// TODO(urielguzman): Replace with the actual mounter pod image.
 		image: "k8s.gcr.io/pause",
 	}
