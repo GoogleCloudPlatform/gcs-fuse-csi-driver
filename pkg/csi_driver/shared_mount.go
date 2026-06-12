@@ -27,6 +27,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -48,10 +49,11 @@ var (
 
 // mounterPodConfig holds the configuration parameters required to define and manage a mounter pod.
 type mounterPodConfig struct {
-	podName   string // The name to assign to the mounter pod.
-	nodeID    string // The specific node ID where the pod should be scheduled.
-	namespace string // The Kubernetes namespace in which to create the pod.
-	image     string // The image for the mounter pod binary.
+	podName            string // The name to assign to the mounter pod.
+	nodeID             string // The specific node ID where the pod should be scheduled.
+	namespace          string // The Kubernetes namespace in which to create the pod.
+	image              string // The image for the mounter pod binary.
+	serviceAccountName string // The KSA name for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -197,6 +199,9 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 			},
 		},
 	}
+	if config.serviceAccountName != "" {
+		spec.Spec.ServiceAccountName = config.serviceAccountName
+	}
 	return spec
 }
 
@@ -251,4 +256,27 @@ func waitForMounterPodScheduled(clientset clientset.Interface, ctx context.Conte
 			return status.Errorf(code, "timeout waiting for mounter pod %s/%s to be scheduled to node %q: %v", namespace, podName, nodeID, ctx.Err())
 		}
 	}
+}
+
+// mounterPodTemplate retrieves the referenced mounter PodTemplate for a PVC if the annotation is present.
+func mounterPodTemplate(clientset clientset.Interface, pvc *corev1.PersistentVolumeClaim) (*corev1.PodTemplate, error) {
+	if pvc == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "pvc cannot be nil")
+	}
+	if pvc.Annotations == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "mounter pod template annotation must be provided")
+	}
+	templateName, ok := pvc.Annotations[webhook.MounterPodTemplateAnnotation]
+	if !ok || templateName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "mounter pod template annotation must be provided")
+	}
+
+	podTemplate, err := clientset.GetPodTemplate(pvc.Namespace, templateName)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return podTemplate, nil
 }

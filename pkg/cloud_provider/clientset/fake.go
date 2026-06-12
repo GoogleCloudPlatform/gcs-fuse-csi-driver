@@ -55,9 +55,10 @@ type FakePVConfig struct {
 }
 
 type FakePVCConfig struct {
-	Name       string
-	VolumeName string
-	Namespace  string
+	Name        string
+	VolumeName  string
+	Namespace   string
+	Annotations map[string]string
 }
 
 type FakeSCConfig struct {
@@ -66,24 +67,32 @@ type FakeSCConfig struct {
 	MountOptions []string
 }
 
+type FakePodTemplateConfig struct {
+	Name      string
+	Namespace string
+}
+
 type FakeClientset struct {
-	Client    kubernetes.Interface
-	fakePod   *corev1.Pod
-	fakeNode  *corev1.Node
-	fakePVs   map[string]*corev1.PersistentVolume
-	fakePVCs  map[string]*corev1.PersistentVolumeClaim
-	fakeSCs   map[string]*storagev1.StorageClass
-	ListPVErr error
-	GetPodErr error
+	Client            kubernetes.Interface
+	fakePod           *corev1.Pod
+	fakeNode          *corev1.Node
+	fakePVs           map[string]*corev1.PersistentVolume
+	fakePVCs          map[string]*corev1.PersistentVolumeClaim
+	fakeSCs           map[string]*storagev1.StorageClass
+	fakePodTemplates  map[string]*corev1.PodTemplate
+	ListPVErr         error
+	GetPodErr         error
+	GetPodTemplateErr error
 }
 
 func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
 	fakeK8sClient := fake.NewSimpleClientset(objects...)
 	fakeClientSet := &FakeClientset{
-		Client:   fakeK8sClient,
-		fakePVs:  make(map[string]*corev1.PersistentVolume),
-		fakePVCs: make(map[string]*corev1.PersistentVolumeClaim),
-		fakeSCs:  make(map[string]*storagev1.StorageClass),
+		Client:           fakeK8sClient,
+		fakePVs:          make(map[string]*corev1.PersistentVolume),
+		fakePVCs:         make(map[string]*corev1.PersistentVolumeClaim),
+		fakeSCs:          make(map[string]*storagev1.StorageClass),
+		fakePodTemplates: make(map[string]*corev1.PodTemplate),
 	}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
 	fakeClientSet.CreatePod(FakePodConfig{HostNetworkEnabled: false})
@@ -91,6 +100,7 @@ func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
 	fakeClientSet.CreatePV(FakePVConfig{})
 	fakeClientSet.CreatePVC(FakePVCConfig{})
 	fakeClientSet.CreateSC(FakeSCConfig{})
+	fakeClientSet.CreatePodTemplate(FakePodTemplateConfig{})
 
 	return fakeClientSet
 }
@@ -108,6 +118,8 @@ func (c *FakeClientset) ConfigurePVLister(_ context.Context) {}
 func (c *FakeClientset) ConfigurePVCLister(_ context.Context) {}
 
 func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
+
+func (c *FakeClientset) ConfigurePodTemplateLister(_ context.Context) {}
 
 func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 	config := webhook.FakeConfig()
@@ -198,8 +210,9 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   pvcConfig.Name,
-			Labels: map[string]string{},
+			Name:        pvcConfig.Name,
+			Labels:      map[string]string{},
+			Annotations: pvcConfig.Annotations,
 		},
 	}
 
@@ -221,6 +234,17 @@ func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 	sc.Parameters = scConfig.Parameters
 	sc.Labels = scConfig.Labels
 	c.fakeSCs[sc.Name] = sc
+}
+
+func (c *FakeClientset) CreatePodTemplate(podTemplateConfig FakePodTemplateConfig) {
+	podTemplate := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podTemplateConfig.Name,
+			Namespace: podTemplateConfig.Namespace,
+		},
+	}
+
+	c.fakePodTemplates[podTemplate.Name] = podTemplate
 }
 
 func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
@@ -278,6 +302,17 @@ func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
 	}
 
 	return c.fakeSCs[""], nil
+}
+
+func (c *FakeClientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error) {
+	if c.GetPodTemplateErr != nil {
+		return nil, c.GetPodTemplateErr
+	}
+	if podTemplate, ok := c.fakePodTemplates[name]; ok {
+		return podTemplate, nil
+	}
+
+	return c.fakePodTemplates[""], nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
