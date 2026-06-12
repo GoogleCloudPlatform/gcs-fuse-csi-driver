@@ -21,6 +21,8 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"context"
@@ -42,6 +44,7 @@ const (
 	mounterPodNamePrefix    = "gcsfusecsi-mount"
 	mounterPodPriorityClass = "gcsfusecsi-mount-priority"
 	mounterPodMountDir      = "mount-dir"
+	mounterSocketFile       = "mounter.sock"
 )
 
 var (
@@ -376,5 +379,85 @@ func setResource(target *corev1.ResourceList, override corev1.ResourceList, reso
 		}
 	} else {
 		(*target)[resourceName] = val
+	}
+}
+
+// waitForMounterServer waits for the mounter pod's gRPC server to be ready.
+func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mounterPodNamespace, mounterPodName, podUID string, emptyDirBasePath func(string) string) error {
+	if clientset == nil {
+		return status.Error(codes.Internal, "kubernetes client is uninitialized")
+	}
+	if emptyDirBasePath == nil {
+		return status.Error(codes.Internal, "emptyDirBasePath function is uninitialized")
+	}
+
+	// Construct the mounter socket file path.
+	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), mounterSocketFile)
+	var pod *corev1.Pod
+	var err error
+
+	checkIfReady := func() (bool, error) {
+		// Get the mounter pod status.
+		if pod, err = clientset.GetPod(mounterPodNamespace, mounterPodName); err != nil {
+			// Mounter Pod should exist by this point.
+			if errors.IsNotFound(err) {
+				return false, status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", mounterPodNamespace, mounterPodName)
+			}
+			return false, status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", mounterPodNamespace, mounterPodName, err)
+		}
+
+		// If the pod is not pending or running, it's in an unexpected state.
+		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
+			return false, status.Errorf(codes.Internal, "mounter pod %s/%s found with an unexpected status: %s", mounterPodNamespace, mounterPodName, pod.Status.Phase)
+		}
+
+		// If the pod is pending, retry.
+		if pod.Status.Phase == corev1.PodPending {
+			klog.Infof("Mounter pod %s/%s is still Pending. Retrying...", mounterPodNamespace, mounterPodName)
+			return false, nil
+		}
+
+		// Mounter pod is running, check if the socket file is available.
+		// TODO(FUECHR): Investigate symlink traversal vulnerabilities for os.Stat vs os.Lstat.
+		if _, err = os.Stat(mounterSocketFilePath); err == nil {
+			klog.Infof("Mounter pod %s/%s is running and socket file %q is available.", mounterPodNamespace, mounterPodName, mounterSocketFilePath)
+			return true, nil
+		}
+		if !os.IsNotExist(err) {
+			return false, status.Errorf(codes.Internal, "error checking socket file %q for mounter pod %s/%s: %v", mounterSocketFilePath, mounterPodNamespace, mounterPodName, err)
+		}
+		klog.Infof("Mounter pod %s/%s is running but socket file %q is not yet available. Retrying...", mounterPodNamespace, mounterPodName, mounterSocketFilePath)
+		return false, nil
+	}
+
+	// Check immediately to avoid waiting if the pod and socket are already ready.
+	if ready, err := checkIfReady(); err != nil || ready {
+		return err
+	}
+
+	klog.Infof("Waiting for mounter pod %s/%s to start running and the mounter pod socket file %q to become available. Polling every %s",
+		mounterPodNamespace, mounterPodName, mounterSocketFilePath, mounterPodPollInterval)
+
+	ticker := time.NewTicker(mounterPodPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if ready, err := checkIfReady(); err != nil || ready {
+				return err
+			}
+		case <-ctx.Done():
+			code := codes.DeadlineExceeded
+			if ctx.Err() == context.Canceled {
+				code = codes.Canceled
+			}
+			errMsg := fmt.Sprintf("timeout waiting for mounter pod %s/%s gRPC server to become available at %s: %v",
+				mounterPodNamespace, mounterPodName, mounterSocketFilePath, ctx.Err())
+			if pod != nil { // Catches the case where context is cancelled before GetPod is first called.
+				errMsg += fmt.Sprintf(", pod status: %+v", pod.Status)
+			}
+			return status.Error(code, errMsg)
+		}
 	}
 }

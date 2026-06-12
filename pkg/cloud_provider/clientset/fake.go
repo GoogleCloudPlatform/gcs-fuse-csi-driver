@@ -27,6 +27,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -43,6 +44,7 @@ type FakePodConfig struct {
 	HostNetworkEnabled bool
 	SidecarLimits      corev1.ResourceList
 	DeletionTimestamp  *metav1.Time
+	UID                types.UID
 	PodStatus          *corev1.PodStatus
 	NodeName           string
 }
@@ -139,6 +141,7 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podConfig.Name,
 			Namespace: podConfig.Namespace,
+			UID:       podConfig.UID,
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{

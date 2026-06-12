@@ -726,8 +726,11 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
 	}
 
-	// TODO(FUECHR) Add empty dir creation flow.
-	// TODO(FUECHR) Wait for mounter pod running flow.
+	// Wait for the mounter pod grpc server to be ready.
+	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.EmptyDirBasePath); err != nil {
+		return nil, err
+	}
+
 	// TODO(FUECHR) Add start gcsfuse flow.
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 

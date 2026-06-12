@@ -21,12 +21,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -75,6 +77,7 @@ type GCSDriverConfig struct {
 	FeatureOptions                 *GCSDriverFeatureOptions
 	AssumeGoodSidecarVersion       bool
 	UniverseDomain                 string
+	EmptyDirBasePath               func(podUID string) string
 }
 
 type GCSDriver struct {
@@ -103,6 +106,11 @@ func NewGCSDriver(config *GCSDriverConfig, recorder record.EventRecorder) (*GCSD
 	}
 	if !config.RunController && !config.RunNode {
 		return nil, errors.New("must run at least one controller or node service")
+	}
+	if config.EmptyDirBasePath == nil {
+		config.EmptyDirBasePath = func(podUID string) string {
+			return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+		}
 	}
 
 	driver := &GCSDriver{

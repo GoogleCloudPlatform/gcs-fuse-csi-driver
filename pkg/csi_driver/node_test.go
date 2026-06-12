@@ -40,6 +40,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
 )
 
@@ -235,6 +236,20 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 	podNamespace := "test-ns"
 	podName := createMounterPodName(nodeID, volID)
 
+	kubeletDir := t.TempDir()
+
+	// Create a temporary directory for mounter pod empty dir
+	mounterSocketDirValid := filepath.Join(kubeletDir, "pods", podName, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	validSocketFile := filepath.Join(mounterSocketDirValid, mounterSocketFile)
+	if file, err := os.Create(validSocketFile); err != nil {
+		t.Fatalf("failed to create socket file: %v", err)
+	} else {
+		file.Close()
+	}
+
 	cases := []struct {
 		name      string
 		req       *csi.NodeStageVolumeRequest
@@ -290,13 +305,12 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var fakeClientSet *clientset.FakeClientset
 			if tc.podExists {
-				pod := &corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      podName,
-						Namespace: podNamespace,
-					},
-				}
-				fakeClientSet = clientset.NewFakeClientset(pod)
+				fakeClientSet = clientset.NewFakeClientset()
+				fakeClientSet.CreatePod(clientset.FakePodConfig{
+
+					UID:       types.UID(podName),
+					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+				})
 			} else {
 				fakeClientSet = clientset.NewFakeClientset()
 				fakeClientSet.GetPodErr = apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, podName)
@@ -310,6 +324,9 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 			ns, ok := testEnv.ns.(*nodeServer)
 			if !ok {
 				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.EmptyDirBasePath = func(uid string) string {
+				return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			}
 
 			// Clear the staging path so we can check whether os.MkdirAll was called.
@@ -784,6 +801,23 @@ func TestNodeStageVolume(t *testing.T) {
 
 	stagingPath, cleanup := setupMountTarget(t)
 	defer cleanup()
+	nodeID := "test-node" // default from initTestDriver
+	volID := testVolumeID
+	podName := createMounterPodName(nodeID, volID)
+
+	kubeletDir := t.TempDir()
+
+	// Create a temporary directory for mounter pod empty dir
+	mounterSocketDirValid := filepath.Join(kubeletDir, "pods", podName, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	validSocketFile := filepath.Join(mounterSocketDirValid, mounterSocketFile)
+	if file, err := os.Create(validSocketFile); err != nil {
+		t.Fatalf("failed to create socket file: %v", err)
+	} else {
+		file.Close()
+	}
 
 	cases := []struct {
 		name      string
@@ -937,7 +971,21 @@ func TestNodeStageVolume(t *testing.T) {
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			testEnv := initTestNodeServer(t)
+			fakeClientset := clientset.NewFakeClientset()
+			fakeClientset.CreatePod(clientset.FakePodConfig{
+				UID:       types.UID(podName),
+				PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+			})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientset, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.EmptyDirBasePath = func(uid string) string {
+				return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+			}
+
 			_, err := testEnv.ns.NodeStageVolume(context.TODO(), test.req)
 			if test.expectErr == nil && err != nil {
 				t.Errorf("got error %q, expected error nil", err)
