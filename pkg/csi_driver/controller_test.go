@@ -261,7 +261,7 @@ func TestControllerPublishVolume(t *testing.T) {
 		expectErr         bool
 		expectErrCode     codes.Code
 		podTemplateGetErr error
-    wantPublishContext map[string]string
+        wantPublishContext map[string]string
 	}{
 		{
 			name: "empty volume ID - should return error",
