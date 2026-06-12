@@ -261,6 +261,7 @@ func TestControllerPublishVolume(t *testing.T) {
 		expectErr         bool
 		expectErrCode     codes.Code
 		podTemplateGetErr error
+        wantPublishContext map[string]string
 	}{
 		{
 			name: "empty volume ID - should return error",
@@ -354,7 +355,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			expectErrCode: codes.Internal,
 		},
 		{
-			name: "sharedMount true - mounter pod created successfully",
+			name: "sharedMount true - mounter pod created successfully - should return success",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -365,6 +366,10 @@ func TestControllerPublishVolume(t *testing.T) {
 			},
 			setupFake: func() *clientset.FakeClientset {
 				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
 			expectErr: false,
 		},
@@ -451,10 +456,14 @@ func TestControllerPublishVolume(t *testing.T) {
 				}
 				return setupFakeBase(cfg)
 			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
 			expectErr: false,
 		},
 		{
-			name: "sharedMount true - mounter pod being deleted - should return error",
+			name: "sharedMount true - mounter pod being deleted - should return Aborted error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -473,7 +482,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			expectErrCode: codes.Aborted,
 		},
 		{
-			name: "sharedMount true - mounter pod get error - should return error",
+			name: "sharedMount true - mounter pod get error - should return Internal error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -490,7 +499,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			expectErrCode: codes.Internal,
 		},
 		{
-			name: "sharedMount true - mounter pod create error - should return error",
+			name: "sharedMount true - mounter pod create error - should return Internal error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				NodeId:           testNodeID,
@@ -551,7 +560,7 @@ func TestControllerPublishVolume(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			_, err := s.ControllerPublishVolume(ctx, test.req)
+			resp, err := s.ControllerPublishVolume(ctx, test.req)
 
 			if test.expectErr {
 				if err == nil {
@@ -569,6 +578,9 @@ func TestControllerPublishVolume(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("Expected no error, got: %v", err)
+				}
+				if !reflect.DeepEqual(test.wantPublishContext, resp.PublishContext) {
+					t.Errorf("Expected publish context: %v, got: %v", test.wantPublishContext, resp.PublishContext)
 				}
 			}
 		})

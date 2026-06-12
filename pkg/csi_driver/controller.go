@@ -218,7 +218,14 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 
 	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
 	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.namespace, podConfig.podName, nodeID, volumeID)
-	return &csi.ControllerPublishVolumeResponse{}, nil
+	return &csi.ControllerPublishVolumeResponse{
+		PublishContext: map[string]string{
+			// Pass the mounter pod's namespace and name to subsequent NodeStageVolume and
+			// NodePublishVolume calls to avoid re-computation.
+			PublishContextKeyMounterPodNamespace: podNamespace,
+			PublishContextKeyMounterPodName:      podName,
+		},
+	}, nil
 }
 
 // TODO(urielguzman): implement ControllerUnpublishVolume.
