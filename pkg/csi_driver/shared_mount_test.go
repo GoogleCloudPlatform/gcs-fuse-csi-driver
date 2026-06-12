@@ -21,6 +21,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -70,6 +72,120 @@ func TestSharedMount(t *testing.T) {
 			result := sharedMount(vc)
 			if result != tc.expected {
 				t.Errorf("Expected %v, but got %v", tc.expected, result)
+			}
+		})
+	}
+}
+
+func TestWaitForMounterServer(t *testing.T) {
+	// Do not enable t.Parallel to avoid global data races.
+	oldInterval := mounterPodPollInterval
+	mounterPodPollInterval = 10 * time.Millisecond
+	defer func() { mounterPodPollInterval = oldInterval }()
+
+	// Create a temporary directory for kubelet dir
+	tmpDir := t.TempDir()
+
+	mounterSocketDirValid := filepath.Join(tmpDir, "pods", testPod, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	validSocketFile := filepath.Join(mounterSocketDirValid, mounterSocketFile)
+	if file, err := os.Create(validSocketFile); err != nil {
+		t.Fatalf("failed to create socket file: %v", err)
+	} else {
+		file.Close()
+	}
+
+	podUIDWithoutSocket := "test-pod-uid-missing"
+	mounterSocketDirMissing := filepath.Join(tmpDir, "pods", podUIDWithoutSocket, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	if err := os.MkdirAll(mounterSocketDirMissing, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		podStatus    *corev1.PodStatus
+		getPodErr    error
+		podUID       string
+		timeout      time.Duration
+		expectErr    bool
+		expectedCode codes.Code
+	}{
+		{
+			name:      "pod running and socket exists - should return success",
+			podStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+			podUID:    testPod,
+			timeout:   200 * time.Millisecond,
+			expectErr: false,
+		},
+		{
+			name:         "unexpected pod phase - should return failure",
+			podStatus:    &corev1.PodStatus{Phase: corev1.PodFailed},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.Internal,
+		},
+		{
+			name:         "pod get fails - should return failure",
+			getPodErr:    fmt.Errorf("simulated get pod error"),
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.Internal,
+		},
+		{
+			name:         "context times out, pod pending - should return failure",
+			podStatus:    &corev1.PodStatus{Phase: corev1.PodPending},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.DeadlineExceeded,
+		},
+		{
+			name:         "context times out, pod running but socket missing - should return failure",
+			podStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+			podUID:       podUIDWithoutSocket,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.DeadlineExceeded,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := clientset.NewFakeClientset()
+			if tc.podStatus != nil {
+				fc.CreatePod(clientset.FakePodConfig{PodStatus: tc.podStatus})
+			}
+			if tc.getPodErr != nil {
+				fc.GetPodErr = tc.getPodErr
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), tc.timeout)
+			defer cancel()
+
+			emptyDirBasePath := func(uid string) string {
+				return filepath.Join(tmpDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+			}
+			err := waitForMounterServer(ctx, fc, testNamespace, testPod, tc.podUID, emptyDirBasePath)
+
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("Expected error, but got nil")
+				}
+				st, ok := status.FromError(err)
+				if !ok {
+					t.Errorf("Expected grpc status error, bu got: %v", err)
+				} else if st.Code() != tc.expectedCode {
+					t.Errorf("Expected error code %v, but got %v (error: %v)", tc.expectedCode, st.Code(), err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Expected no error, but got: %v", err)
+				}
 			}
 		})
 	}
