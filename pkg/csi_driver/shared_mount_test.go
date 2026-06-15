@@ -701,3 +701,142 @@ func TestMounterPodTemplate(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteMounterPod(t *testing.T) {
+	oldInterval := mounterPodPollInterval
+	mounterPodPollInterval = 10 * time.Millisecond
+	defer func() { mounterPodPollInterval = oldInterval }()
+
+	podName := "test-mounter-pod"
+	namespace := "test-namespace"
+
+	basePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            podName,
+			Namespace:       namespace,
+			ResourceVersion: "1",
+		},
+	}
+
+	tests := []struct {
+		name                  string
+		initialObjects        []runtime.Object // Objects for the inner fake.Clientset
+		deleteReactionError   error            // Error returned by the Delete reactor
+		getPodShouldDisappear bool             // Whether custom GetPod should start returning NotFound after delete
+		getPodPersistentError error            // Persistent error for custom GetPod
+
+		wantErr      bool
+		wantCode     codes.Code
+		expectDelete bool // Whether a delete call is expected
+	}{
+		{
+			name:                  "pod exists - should be deleted successfully",
+			initialObjects:        []runtime.Object{basePod},
+			getPodShouldDisappear: true, // Simulate NotFound after delete call
+			expectDelete:          true,
+			wantErr:               false,
+		},
+		{
+			name:                  "pod does not exist - should return no-op success",
+			initialObjects:        []runtime.Object{},
+			deleteReactionError:   k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, podName),
+			getPodShouldDisappear: true, // GetPod should also reflect NotFound
+			expectDelete:          true, // Delete is still called
+			wantErr:               false,
+		},
+		{
+			name:                "delete fails with internal error - should return Internal error",
+			initialObjects:      []runtime.Object{basePod},
+			deleteReactionError: k8serrors.NewInternalError(errors.New("simulated delete error")),
+			expectDelete:        true,
+			wantErr:             true,
+			wantCode:            codes.Internal,
+		},
+		{
+			name:                  "pod never disappears (timeout) - should return DeadlineExceeded error",
+			initialObjects:        []runtime.Object{basePod},
+			getPodShouldDisappear: false, // GetPod continues to return the pod
+			expectDelete:          true,
+			wantErr:               true,
+			wantCode:              codes.DeadlineExceeded,
+		},
+		{
+			name:                  "getPod fails during poll with internal error - should return Internal error",
+			initialObjects:        []runtime.Object{basePod},
+			getPodPersistentError: k8serrors.NewInternalError(errors.New("simulated get error")),
+			expectDelete:          true,
+			wantErr:               true,
+			wantCode:              codes.Internal,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond) // Short timeout for testing
+			defer cancel()
+
+			testClientset := clientset.NewFakeClientset(tc.initialObjects...)
+			fakeK8sClient := testClientset.K8sClient().(*fake.Clientset)
+
+			deleteCalled := false
+			// Reactor for Delete
+			fakeK8sClient.PrependReactor("delete", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+				deleteCalled = true
+				if tc.deleteReactionError != nil {
+					return true, nil, tc.deleteReactionError
+				}
+
+				// Simulate the effect on the custom GetPod
+				if tc.getPodShouldDisappear {
+					testClientset.GetPodErr = k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, podName)
+				}
+				return true, nil, nil
+			})
+
+			// Configure initial state of custom GetPod
+			if tc.getPodPersistentError != nil {
+				testClientset.GetPodErr = tc.getPodPersistentError
+			} else {
+				found := false
+				for _, obj := range tc.initialObjects {
+					if pod, ok := obj.(*corev1.Pod); ok && pod.Name == podName && pod.Namespace == namespace {
+						found = true
+						break
+					}
+				}
+				if !found {
+					testClientset.GetPodErr = k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, podName)
+				} else {
+					testClientset.GetPodErr = nil // Pod exists
+				}
+			}
+
+			err := deleteMounterPod(ctx, testClientset, namespace, podName)
+
+			if deleteCalled != tc.expectDelete {
+				t.Errorf("Expected delete call: %v, got: %v", tc.expectDelete, deleteCalled)
+			}
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("deleteMounterPod() succeeded unexpectedly, want error")
+				}
+				st, ok := status.FromError(err)
+				if !ok {
+					// Handle non-status errors if wantCode is not set
+					if tc.wantCode == codes.OK {
+						return
+					}
+					t.Fatalf("deleteMounterPod() returned non-status error %v, want status error with code %v", err, tc.wantCode)
+				}
+				if st.Code() != tc.wantCode {
+					t.Errorf("deleteMounterPod() returned error code %v, want %v (error: %v)", st.Code(), tc.wantCode, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("deleteMounterPod() failed unexpectedly: %v", err)
+				}
+			}
+		})
+	}
+}

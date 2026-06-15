@@ -54,7 +54,8 @@ type Interface interface {
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
 	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
-	ListPV() ([]*corev1.PersistentVolume, error)
+	ListPVs() ([]*corev1.PersistentVolume, error)
+	ListPods() ([]*corev1.Pod, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -366,7 +367,9 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 		c.k8sClients,
 		time.Duration(c.informerResyncDurationSec)*time.Second,
 		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.FieldSelector = "spec.nodeName=" + nodeName
+			if nodeName != "" {
+				options.FieldSelector = "spec.nodeName=" + nodeName
+			}
 		}),
 		informers.WithTransform(trim),
 	)
@@ -402,13 +405,22 @@ func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	return c.pvLister.Get(name)
 }
 
-func (c *Clientset) ListPV() ([]*corev1.PersistentVolume, error) {
+func (c *Clientset) ListPVs() ([]*corev1.PersistentVolume, error) {
 	if c.pvLister == nil {
 		return nil, errors.New("pv informer is not ready")
 	}
 
-	// TODO(urielguzman): Optimize lister to only filter for a specific label.
+	// TODO(urielguzman): Add volumeHandle indexer to reduce O(N) -> O(1) for shared mount ControllerPublishVolume.
 	return c.pvLister.List(labels.Everything())
+}
+
+func (c *Clientset) ListPods() ([]*corev1.Pod, error) {
+	if c.podLister == nil {
+		return nil, errors.New("pod informer is not ready")
+	}
+
+	// TODO(urielguzman): Add podName indexer to reduce O(N) -> O(1) for shared node mount ControllerUnpublishVolume.
+	return c.podLister.List(labels.Everything())
 }
 
 func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
