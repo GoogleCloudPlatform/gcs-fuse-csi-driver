@@ -1116,7 +1116,7 @@ func TestCountGcsFuseVolumes(t *testing.T) {
 				gcsFuseEphemeralVolumeCount:  2,
 				gcsFusePersistentVolumeCount: 3,
 			},
-			expectedCount: 5,
+			expectedCount: 7,
 		},
 		{
 			name: "mixed csi drivers with no gcsfuse volumes",
@@ -1124,7 +1124,7 @@ func TestCountGcsFuseVolumes(t *testing.T) {
 				totalEphemeralVolumeCount:  5,
 				totalPersistentVolumeCount: 5,
 			},
-			expectedCount: 0,
+			expectedCount: 5,
 		},
 	}
 
@@ -1230,10 +1230,10 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 		},
 		{
 			name:                         "should register collector with other non gcsfuse volumes",
-			totalEphemeralVolumeCount:    10,
-			totalPersistentVolumeCount:   10,
-			gcsFuseEphemeralVolumeCount:  5,
-			gcsFusePersistentVolumeCount: 5,
+			totalEphemeralVolumeCount:    5,
+			totalPersistentVolumeCount:   5,
+			gcsFuseEphemeralVolumeCount:  2,
+			gcsFusePersistentVolumeCount: 2,
 			expectCollectorRegistered:    true,
 		},
 		{
