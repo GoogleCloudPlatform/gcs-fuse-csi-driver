@@ -38,6 +38,8 @@ type FakeNodeConfig struct {
 }
 
 type FakePodConfig struct {
+	Name               string
+	Namespace          string
 	HostNetworkEnabled bool
 	SidecarLimits      corev1.ResourceList
 	DeletionTimestamp  *metav1.Time
@@ -79,8 +81,10 @@ type FakeClientset struct {
 	fakePVs           map[string]*corev1.PersistentVolume
 	fakePVCs          map[string]*corev1.PersistentVolumeClaim
 	fakeSCs           map[string]*storagev1.StorageClass
+	fakePods          []*corev1.Pod
 	fakePodTemplates  map[string]*corev1.PodTemplate
 	ListPVErr         error
+	ListPodErr        error
 	GetPodErr         error
 	GetPodTemplateErr error
 }
@@ -93,6 +97,7 @@ func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
 		fakePVCs:         make(map[string]*corev1.PersistentVolumeClaim),
 		fakeSCs:          make(map[string]*storagev1.StorageClass),
 		fakePodTemplates: make(map[string]*corev1.PodTemplate),
+		fakePods:         []*corev1.Pod{},
 	}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
 	fakeClientSet.CreatePod(FakePodConfig{HostNetworkEnabled: false})
@@ -131,8 +136,8 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	c.fakePod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "",
-			Namespace: "",
+			Name:      podConfig.Name,
+			Namespace: podConfig.Namespace,
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -167,6 +172,8 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 	if podConfig.NodeName != "" {
 		c.fakePod.Spec.NodeName = podConfig.NodeName
 	}
+
+	c.fakePods = append(c.fakePods, c.fakePod)
 }
 
 func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
@@ -277,7 +284,7 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	return c.fakePVs[""], nil
 }
 
-func (c *FakeClientset) ListPV() ([]*corev1.PersistentVolume, error) {
+func (c *FakeClientset) ListPVs() ([]*corev1.PersistentVolume, error) {
 	if c.ListPVErr != nil {
 		return nil, c.ListPVErr
 	}
@@ -286,6 +293,13 @@ func (c *FakeClientset) ListPV() ([]*corev1.PersistentVolume, error) {
 		pvs = append(pvs, pv)
 	}
 	return pvs, nil
+}
+
+func (c *FakeClientset) ListPods() ([]*corev1.Pod, error) {
+	if c.ListPodErr != nil {
+		return nil, c.ListPodErr
+	}
+	return c.fakePods, nil
 }
 
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {

@@ -18,6 +18,7 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,9 +26,9 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 )
@@ -159,6 +160,9 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Find the workload namespace where the mounter pod should be created by identifying the PVC
 	// bound to this volume's PV.
 	clientset := s.driver.config.K8sClients
+	// TODO(urielguzman): This implementation requires PVs from the informer's cache, which can
+	// unbounded. When manually testing the feature, we should add a volumeHandle indexer,
+	// so that the lookup can be O(1).
 	pv, err := pvFromVolumeID(clientset, volumeID)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -216,7 +220,6 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return nil, err
 	}
 
-	// TODO(urielguzman): implement ControllerPublishVolume when sharedMount: true.
 	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.namespace, podConfig.podName, nodeID, volumeID)
 	return &csi.ControllerPublishVolumeResponse{
 		PublishContext: map[string]string{
@@ -229,7 +232,56 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 }
 
 // TODO(urielguzman): implement ControllerUnpublishVolume.
-func (s *controllerServer) ControllerUnpublishVolume(_ context.Context, _ *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+func (s *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	// Validate arguments.
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerUnpublishVolume Volume ID must be provided")
+	}
+	nodeID := req.NodeId
+	if len(nodeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerUnpublishVolume Node ID must be provided")
+	}
+
+	// Acquires the lock for the volume on that node only, because we need to support the ability
+	// to publish the same volume onto different nodes concurrently
+	lockingVolumeID := fmt.Sprintf("%s/%s", nodeID, volumeID)
+	if acquired := s.volumeLocks.TryAcquire(lockingVolumeID); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, lockingVolumeID)
+	}
+	defer s.volumeLocks.Release(lockingVolumeID)
+
+	// Delete the mounter pod, if it exists.
+	podName := createMounterPodName(nodeID, volumeID)
+	pods, err := s.driver.config.K8sClients.ListPods()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list pods: %v", err)
+	}
+	// TODO(urielguzman): This implementation requires listing pods from the informer's cache, which can
+	// be max 110 pods per node. When manually testing the feature, we should add a podName indexer,
+	// so that the lookup can be O(1).
+	mounterPods := make([]*corev1.Pod, 0, len(pods))
+	for _, pod := range pods {
+		if pod != nil && pod.Name == podName {
+			mounterPods = append(mounterPods, pod)
+		}
+	}
+	if len(mounterPods) == 0 {
+		klog.Infof("ControllerUnpublishVolume succeeded for volume %q on node %q", volumeID, nodeID)
+		return &csi.ControllerUnpublishVolumeResponse{}, nil
+	}
+	if len(mounterPods) > 1 {
+		// Each nodeID/volumeID pair should match exactly to 1 mounter pod. If there are more than 1 in that node,
+		// this signals an internal bug on how the mounter pods are being handled by the CSI Driver.
+		return nil, status.Errorf(codes.Internal, "expected 1 mounter pod for volume %q on node %q, found: %d", volumeID, nodeID, len(mounterPods))
+	}
+
+	podNamespace := mounterPods[0].Namespace
+	if err := deleteMounterPod(ctx, s.driver.config.K8sClients, podNamespace, podName); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("ControllerUnpublishVolume succeeded for volume %q on node %q", volumeID, nodeID)
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
 

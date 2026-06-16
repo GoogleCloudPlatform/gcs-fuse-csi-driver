@@ -586,3 +586,182 @@ func TestControllerPublishVolume(t *testing.T) {
 		})
 	}
 }
+
+func TestControllerUnpublishVolume(t *testing.T) {
+	oldInterval := mounterPodPollInterval
+	mounterPodPollInterval = 10 * time.Millisecond
+	defer func() { mounterPodPollInterval = oldInterval }()
+
+	mounterPodName := createMounterPodName(testNodeID, testVolumeID)
+
+	testCases := []struct {
+		name string
+		req  *csi.ControllerUnpublishVolumeRequest
+
+		initialFCPods        []clientset.FakePodConfig
+		listPodErr           error
+		deleteReactionError  error // Injected error for the Delete call
+		getPodErrAfterDelete error // Error for clientset.GetPod to return after Delete is called
+
+		wantErr     bool
+		wantErrCode codes.Code
+	}{
+		{
+			name: "valid request - should delete pod successfully",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   testNodeID,
+			},
+			initialFCPods: []clientset.FakePodConfig{
+				{
+					Name:      mounterPodName,
+					Namespace: testNamespace,
+				},
+			},
+			getPodErrAfterDelete: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, mounterPodName),
+			wantErr:              false,
+		},
+		{
+			name: "pod not found - should succeed",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   testNodeID,
+			},
+			initialFCPods: nil, // No mounter pod
+			wantErr:       false,
+		},
+		{
+			name: "empty volume ID - should return error",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: "",
+				NodeId:   testNodeID,
+			},
+			wantErr:     true,
+			wantErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "empty node ID - should return error",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   "",
+			},
+			wantErr:     true,
+			wantErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "list pods fails - should return error",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   testNodeID,
+			},
+			listPodErr:  errors.New("simulated ListPods error"),
+			wantErr:     true,
+			wantErrCode: codes.Internal,
+		},
+		{
+			name: "multiple mounter pods found - should return error",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   testNodeID,
+			},
+			initialFCPods: []clientset.FakePodConfig{
+				{
+					Name:      mounterPodName,
+					Namespace: testNamespace,
+				},
+				{
+					Name:      mounterPodName,
+					Namespace: "another-namespace",
+				},
+			},
+			wantErr:     true,
+			wantErrCode: codes.Internal,
+		},
+		{
+			name: "deleteMounterPod fails with API error - should return error",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   testNodeID,
+			},
+			initialFCPods: []clientset.FakePodConfig{
+				{
+					Name:      mounterPodName,
+					Namespace: testNamespace,
+				},
+			},
+			deleteReactionError: errors.New("simulated delete API error"),
+			wantErr:             true,
+			wantErrCode:         codes.Internal,
+		},
+		{
+			name: "deleteMounterPod times out (pod never deleted) - should return error",
+			req: &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: testVolumeID,
+				NodeId:   testNodeID,
+			},
+			initialFCPods: []clientset.FakePodConfig{
+				{
+					Name:      mounterPodName,
+					Namespace: testNamespace,
+				},
+			},
+			getPodErrAfterDelete: nil, // GetPod continues to find the pod
+			wantErr:              true,
+			wantErrCode:          codes.DeadlineExceeded,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := clientset.NewFakeClientset()
+			fc.ListPodErr = tc.listPodErr
+			for _, pod := range tc.initialFCPods {
+				fc.CreatePod(pod)
+			}
+
+			s := initTestController(t, fc)
+
+			fakeK8sClient := fc.K8sClient().(*fake.Clientset)
+			deleteCalled := false
+			fakeK8sClient.PrependReactor("delete", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+				deleteCalled = true
+				if tc.deleteReactionError != nil {
+					return true, nil, tc.deleteReactionError
+				}
+				// Simulate effect on GetPod for the poller in deleteMounterPod
+				fc.GetPodErr = tc.getPodErrAfterDelete
+				return true, nil, nil
+			})
+
+			// Initial GetPodErr state for deleteMounterPod if delete is not called or fails early
+			if len(tc.initialFCPods) == 0 {
+				fc.GetPodErr = apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, mounterPodName)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			_, err := s.ControllerUnpublishVolume(ctx, tc.req)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Expected error code %v, got nil", tc.wantErrCode)
+				}
+				st, ok := status.FromError(err)
+				if !ok {
+					t.Fatalf("Expected status error with code %v, got non-status error: %v", tc.wantErrCode, err)
+				}
+				if st.Code() != tc.wantErrCode {
+					t.Errorf("Expected error code %v, got %v (error: %v)", tc.wantErrCode, st.Code(), err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+				// Verify delete was called if a pod was expected to be found
+				if len(tc.initialFCPods) > 0 && !deleteCalled && tc.deleteReactionError == nil {
+					t.Errorf("Delete was not called on the mounter pod when it should have been")
+				}
+			}
+		})
+	}
+}

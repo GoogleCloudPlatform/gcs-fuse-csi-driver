@@ -82,7 +82,7 @@ func pvFromVolumeID(clientset clientset.Interface, volumeID string) (*corev1.Per
 	if clientset == nil {
 		return nil, fmt.Errorf("clientset is nil")
 	}
-	pvs, err := clientset.ListPV()
+	pvs, err := clientset.ListPVs()
 	if err != nil {
 		return nil, err
 	}
@@ -279,4 +279,44 @@ func mounterPodTemplate(clientset clientset.Interface, pvc *corev1.PersistentVol
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return podTemplate, nil
+}
+
+// deleteMounterPod handles the deletion of the mounter pod, if it exists.
+// It will retry until it is deleted or return an error if the number of retries have exceeded the limit.
+// deleteMounterPod returns only after mounter pod has terminated and deleted from the API server.
+func deleteMounterPod(ctx context.Context, clientset clientset.Interface, podNamespace, podName string) error {
+	if clientset == nil || clientset.K8sClient() == nil {
+		return status.Error(codes.Internal, "kubernetes client is uninitialized")
+	}
+	if err := clientset.K8sClient().CoreV1().Pods(podNamespace).Delete(ctx, podName, metav1.DeleteOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			// If the pod is not found, it's not an error
+			klog.Infof("Mounter pod %s/%s was already deleted.", podNamespace, podName)
+			return nil
+		}
+		return status.Errorf(codes.Internal, "failed to delete pod %s/%s: %v", podNamespace, podName, err)
+	}
+	pollInterval := mounterPodPollInterval
+	klog.Infof("Waiting for mounter pod %s/%s deletion to complete. Polling every %s",
+		podNamespace, podName, pollInterval)
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			code := codes.DeadlineExceeded
+			if ctx.Err() == context.Canceled {
+				code = codes.Canceled
+			}
+			return status.Errorf(code, "timed out waiting for mounter pod %s/%s to be deleted", podNamespace, podName)
+		case <-ticker.C:
+			if _, err := clientset.GetPod(podNamespace, podName); err != nil {
+				if errors.IsNotFound(err) {
+					klog.Infof("Mounter pod %s/%s was successfully deleted.", podNamespace, podName)
+					return nil
+				}
+				return status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", podNamespace, podName, err)
+			}
+		}
+	}
 }
