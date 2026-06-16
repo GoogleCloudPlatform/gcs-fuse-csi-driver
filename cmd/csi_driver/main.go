@@ -255,13 +255,11 @@ func main() {
 		// TODO(urielguzman): Configure pod lister in the controller for shared node mount.
 		clientset.ConfigurePodLister(ctx, *nodeID)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
-		// Both PVs & PVCs are needed to check count of GCSFuseVolumes
-		clientset.ConfigurePVLister(ctx)
-		clientset.ConfigurePVCLister(ctx)
 
 		if featureOptions.FeatureGCSFuseProfiles.Enabled {
 			// Curently, only the gcsfuse profiles feature actually uses these listers.
 			clientset.ConfigureSCLister(ctx)
+			clientset.ConfigurePVLister(ctx)
 		}
 
 		mounter, err = csimounter.New("", *fuseSocketDir)
