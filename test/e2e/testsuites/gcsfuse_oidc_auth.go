@@ -45,20 +45,20 @@ import (
 )
 
 const (
-	oidcTestPrefix                             = "gcsfuse-csi-oidc"
-	oidcWorkloadIdentityPoolID                 = "gcs-fuse-oidc-pool"
-	oidcWorkloadIdentityProviderID             = "gcs-fuse-oidc-provider"
+	oidcTestPrefix                              = "gcsfuse-csi-oidc"
+	oidcWorkloadIdentityPoolID                  = "gcs-fuse-oidc-pool"
+	oidcWorkloadIdentityProviderID              = "gcs-fuse-oidc-provider"
 	oidcWorkloadIdentityProviderIDMisconfigured = "gcs-fuse-oidc-provider-bad"
-	oidcConfigMapName                          = "workload-identity-credentials"
-	oidcMisconfiguredConfigMapName             = "workload-identity-credentials-bad"
-	oidcNonExistentPoolConfigMapName           = "workload-identity-credentials-nonexistent-pool"
-	oidcCredentialConfigFileName               = "credential-configuration.json"
-	oidcServiceAccountName                     = "gcs-fuse-oidc-ksa"
-	oidcVolumeName                             = "gcs-volume"
-	oidcMountPath                              = "/mnt/gcs"
-	wrongIssuerURI                             = "https://wrong-issuer.example.com"
-	nonExistentPoolID                          = "gcs-fuse-nonexistent-pool"
-	nonExistentProviderID                      = "gcs-fuse-nonexistent-provider"
+	oidcConfigMapName                           = "workload-identity-credentials"
+	oidcMisconfiguredConfigMapName              = "workload-identity-credentials-bad"
+	oidcNonExistentPoolConfigMapName            = "workload-identity-credentials-nonexistent-pool"
+	oidcCredentialConfigFileName                = "credential-configuration.json"
+	oidcServiceAccountName                      = "gcs-fuse-oidc-ksa"
+	oidcVolumeName                              = "gcs-volume"
+	oidcMountPath                               = "/mnt/gcs"
+	wrongIssuerURI                              = "https://wrong-issuer.example.com"
+	nonExistentPoolID                           = "gcs-fuse-nonexistent-pool"
+	nonExistentProviderID                       = "gcs-fuse-nonexistent-provider"
 )
 
 type gcsFuseCSIOIDCTestSuite struct {
