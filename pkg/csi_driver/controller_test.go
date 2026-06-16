@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -262,6 +263,7 @@ func TestControllerPublishVolume(t *testing.T) {
 		expectErrCode      codes.Code
 		podTemplateGetErr  error
 		wantPublishContext map[string]string
+		verifyCreatedPod   func(t *testing.T, pod *corev1.Pod)
 	}{
 		{
 			name: "empty volume ID - should return error",
@@ -372,6 +374,71 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
 			expectErr: false,
+		},
+		{
+			name: "sharedMount true - mounter pod with resource overrides - should create pod with overridden resources",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				// Modify the PodTemplate to include specific resources
+				cfg.ptConfig.Template = corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: mounterPodNamePrefix,
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("150m"),
+										corev1.ResourceMemory: resource.MustParse("128Mi"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("300m"),
+										corev1.ResourceMemory: resource.MustParse("256Mi"),
+									},
+								},
+							},
+						},
+					},
+				}
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if len(pod.Spec.Containers) != 1 {
+					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
+				}
+				container := pod.Spec.Containers[0]
+				if container.Name != mounterPodNamePrefix {
+					t.Errorf("Expected container name %q, got %q", mounterPodNamePrefix, container.Name)
+				}
+
+				expectedResources := corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:              resource.MustParse("150m"),
+						corev1.ResourceMemory:           resource.MustParse("128Mi"),
+						corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"), // Default
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("300m"),
+						corev1.ResourceMemory: resource.MustParse("256Mi"),
+					},
+				}
+
+				if !reflect.DeepEqual(container.Resources, expectedResources) {
+					t.Errorf("Mounter pod resources do not match expected overrides.\nGot: %+v\nWant: %+v", container.Resources, expectedResources)
+				}
+			},
 		},
 		{
 			name: "sharedMount true - missing mounter pod template annotation - should return error",
@@ -522,6 +589,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			s := initTestController(t, fc)
 
 			fakeK8sClient := fc.K8sClient().(*fake.Clientset)
+			var createdPod *corev1.Pod
 
 			if test.podGetErr != nil {
 				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
@@ -536,6 +604,9 @@ func TestControllerPublishVolume(t *testing.T) {
 				fakeK8sClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 					createAction := action.(k8stesting.CreateAction)
 					pod := createAction.GetObject().(*corev1.Pod)
+					createdPod = pod.DeepCopy() // Capture the pod spec for verification
+
+					// Simulate successful creation and scheduling
 					pod.Spec.NodeName = testNodeID
 					pod.Status.Conditions = []corev1.PodCondition{
 						{
@@ -544,13 +615,14 @@ func TestControllerPublishVolume(t *testing.T) {
 						},
 					}
 
-					// Update the fakePod in clientset so GetPod returns it!
 					fc.CreatePod(clientset.FakePodConfig{
+						Name:      pod.Name,
+						Namespace: pod.Namespace,
 						NodeName:  testNodeID,
 						PodStatus: &pod.Status,
 					})
 
-					return false, nil, nil
+					return false, pod, nil // Return false to allow default fake client handling to store the object
 				})
 			}
 
@@ -568,7 +640,6 @@ func TestControllerPublishVolume(t *testing.T) {
 				}
 				st, ok := status.FromError(err)
 				if !ok {
-					// If not a status error, check if any error was expected
 					if test.expectErrCode != codes.Unknown {
 						t.Fatalf("Expected status error with code %v, got non-status error: %v", test.expectErrCode, err)
 					}
@@ -581,6 +652,12 @@ func TestControllerPublishVolume(t *testing.T) {
 				}
 				if !reflect.DeepEqual(test.wantPublishContext, resp.PublishContext) {
 					t.Errorf("Expected publish context: %v, got: %v", test.wantPublishContext, resp.PublishContext)
+				}
+				if test.verifyCreatedPod != nil {
+					if createdPod == nil {
+						t.Fatalf("Expected pod to be created, but it was not captured")
+					}
+					test.verifyCreatedPod(t, createdPod)
 				}
 			}
 		})

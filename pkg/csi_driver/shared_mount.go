@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -49,11 +50,12 @@ var (
 
 // mounterPodConfig holds the configuration parameters required to define and manage a mounter pod.
 type mounterPodConfig struct {
-	podName            string // The name to assign to the mounter pod.
-	nodeID             string // The specific node ID where the pod should be scheduled.
-	namespace          string // The Kubernetes namespace in which to create the pod.
-	image              string // The image for the mounter pod binary.
-	serviceAccountName string // The KSA name for the mounter pod.
+	podName            string                       // The name to assign to the mounter pod.
+	nodeID             string                       // The specific node ID where the pod should be scheduled.
+	namespace          string                       // The Kubernetes namespace in which to create the pod.
+	image              string                       // The image for the mounter pod binary.
+	serviceAccountName string                       // The KSA name for the mounter pod.
+	resources          *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -199,9 +201,13 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 			},
 		},
 	}
+
 	if config.serviceAccountName != "" {
 		spec.Spec.ServiceAccountName = config.serviceAccountName
 	}
+
+	spec.Spec.Containers[0].Resources = *mounterPodResources(config)
+
 	return spec
 }
 
@@ -318,5 +324,57 @@ func deleteMounterPod(ctx context.Context, clientset clientset.Interface, podNam
 				return status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", podNamespace, podName, err)
 			}
 		}
+	}
+}
+
+func mounterPodResources(config *mounterPodConfig) *corev1.ResourceRequirements {
+	// Instantiate maps to avoid nil map assignment panics
+	resources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			// TODO: Change the defaults once we profile the feature.
+			corev1.ResourceMemory:           resource.MustParse("768Mi"),
+			corev1.ResourceCPU:              resource.MustParse("750m"),
+			corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
+		},
+		Limits: corev1.ResourceList{},
+	}
+
+	// Guard against nil configs or nil resources
+	if config == nil || config.resources == nil {
+		return &resources
+	}
+
+	// Set customer overrides, if defined.
+	for resourceName := range config.resources.Requests {
+		setResource(&resources.Requests, config.resources.Requests, resourceName)
+	}
+	for resourceName := range config.resources.Limits {
+		setResource(&resources.Limits, config.resources.Limits, resourceName)
+	}
+
+	return &resources
+}
+
+func setResource(target *corev1.ResourceList, override corev1.ResourceList, resourceName corev1.ResourceName) {
+	if target == nil {
+		return
+	}
+	val, ok := override[resourceName]
+	if !ok {
+		return // No value provided, skip setting
+	}
+
+	// Initialize the underlying map if it's nil and we are inserting a value
+	if *target == nil && !val.IsZero() {
+		*target = make(corev1.ResourceList)
+	}
+
+	// Remove the value if "0" is specified.
+	if val.IsZero() {
+		if *target != nil {
+			delete(*target, resourceName)
+		}
+	} else {
+		(*target)[resourceName] = val
 	}
 }

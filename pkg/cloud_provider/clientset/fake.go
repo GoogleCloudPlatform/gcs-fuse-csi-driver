@@ -72,6 +72,7 @@ type FakeSCConfig struct {
 type FakePodTemplateConfig struct {
 	Name      string
 	Namespace string
+	Template  corev1.PodTemplateSpec
 }
 
 type FakeClientset struct {
@@ -249,6 +250,7 @@ func (c *FakeClientset) CreatePodTemplate(podTemplateConfig FakePodTemplateConfi
 			Name:      podTemplateConfig.Name,
 			Namespace: podTemplateConfig.Namespace,
 		},
+		Template: podTemplateConfig.Template,
 	}
 
 	c.fakePodTemplates[podTemplate.Name] = podTemplate

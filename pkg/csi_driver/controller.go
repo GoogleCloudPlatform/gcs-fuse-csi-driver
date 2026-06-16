@@ -197,12 +197,22 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return nil, status.Error(codes.Internal, "pod template can't be nil")
 	}
 
+	// Extract resources specifically from the container named "gcsfusecsi-mount".
+	var containerResources *corev1.ResourceRequirements
+	for i := range podTemplate.Template.Spec.Containers {
+		if podTemplate.Template.Spec.Containers[i].Name == mounterPodNamePrefix {
+			containerResources = &podTemplate.Template.Spec.Containers[i].Resources
+			break
+		}
+	}
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
 		podName:            podName,
 		namespace:          podNamespace,
 		serviceAccountName: podTemplate.Template.Spec.ServiceAccountName,
+		resources:          containerResources,
 		nodeID:             nodeID,
 		// TODO(urielguzman): Replace with the actual mounter pod image.
 		image: "k8s.gcr.io/pause",
