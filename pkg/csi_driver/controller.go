@@ -197,13 +197,28 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return nil, status.Error(codes.Internal, "pod template can't be nil")
 	}
 
-	// Extract resources specifically from the container named "gcsfusecsi-mount".
+	// Extract overrides specifically from the container named "gcsfusecsi-mount".
 	var containerResources *corev1.ResourceRequirements
+	var containerImage string
+	if s.driver != nil && s.driver.config != nil && s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions != nil {
+		containerImage = s.driver.config.FeatureOptions.SharedMountOptions.MounterPodImage
+	}
 	for i := range podTemplate.Template.Spec.Containers {
-		if podTemplate.Template.Spec.Containers[i].Name == mounterPodNamePrefix {
-			containerResources = &podTemplate.Template.Spec.Containers[i].Resources
-			break
+		container := &podTemplate.Template.Spec.Containers[i]
+		if container.Name != mounterPodNamePrefix {
+			continue
 		}
+		containerResources = &container.Resources
+		if container.Image != "" && container.Image != mounterPodManagedImageKeyword {
+			// If the image isn't the placeholder managed keyword, the user is trying to
+			// override the mounter pod's image.
+			// TODO(urielguzman): Somehow validate image so that only trustworthy repositories are allowed.
+			containerImage = container.Image
+		}
+		break
+	}
+	if containerImage == "" {
+		return nil, status.Error(codes.Internal, "mounter pod image cannot be empty")
 	}
 
 	// Prepare mounter pod config.
@@ -214,8 +229,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		serviceAccountName: podTemplate.Template.Spec.ServiceAccountName,
 		resources:          containerResources,
 		nodeID:             nodeID,
-		// TODO(urielguzman): Replace with the actual mounter pod image.
-		image: "k8s.gcr.io/pause",
+		image:              containerImage,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

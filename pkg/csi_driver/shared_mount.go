@@ -41,10 +41,11 @@ import (
 )
 
 const (
-	mounterPodNamePrefix    = "gcsfusecsi-mount"
-	mounterPodPriorityClass = "gcsfusecsi-mount-priority"
-	mounterPodMountDir      = "mount-dir"
-	mounterSocketFile       = "mounter.sock"
+	mounterPodNamePrefix          = "gcsfusecsi-mount"
+	mounterPodPriorityClass       = "gcsfusecsi-mount-priority"
+	mounterPodMountDir            = "mount-dir"
+	mounterPodSocketFile          = "mounter.sock"
+	mounterPodManagedImageKeyword = "managed"
 )
 
 var (
@@ -392,7 +393,7 @@ func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mo
 	}
 
 	// Construct the mounter socket file path.
-	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), mounterSocketFile)
+	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), mounterPodSocketFile)
 	var pod *corev1.Pod
 	var err error
 

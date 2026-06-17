@@ -392,7 +392,8 @@ func TestControllerPublishVolume(t *testing.T) {
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
-								Name: mounterPodNamePrefix,
+								Name:  mounterPodNamePrefix,
+								Image: mounterPodManagedImageKeyword,
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("150m"),
@@ -437,6 +438,59 @@ func TestControllerPublishVolume(t *testing.T) {
 
 				if !reflect.DeepEqual(container.Resources, expectedResources) {
 					t.Errorf("Mounter pod resources do not match expected overrides.\nGot: %+v\nWant: %+v", container.Resources, expectedResources)
+				}
+
+				// Default image set for testing when no custom image requested by user.
+				expectedImage := testImage
+
+				if !reflect.DeepEqual(container.Image, expectedImage) {
+					t.Errorf("Mounter pod image does not match expected overrides.\nGot: %+v\nWant: %+v", container.Image, expectedImage)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - mounter pod with image override - should create pod with overridden image",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				// Modify the PodTemplate to include specific resources
+				cfg.ptConfig.Template = corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  mounterPodNamePrefix,
+								Image: "gcr.io/some-project/some-random-image/v1.2.3",
+							},
+						},
+					},
+				}
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if len(pod.Spec.Containers) != 1 {
+					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
+				}
+				container := pod.Spec.Containers[0]
+				if container.Name != mounterPodNamePrefix {
+					t.Errorf("Expected container name %q, got %q", mounterPodNamePrefix, container.Name)
+				}
+
+				expectedImage := "gcr.io/some-project/some-random-image/v1.2.3"
+
+				if !reflect.DeepEqual(container.Image, expectedImage) {
+					t.Errorf("Mounter pod image does not match expected overrides.\nGot: %+v\nWant: %+v", container.Image, expectedImage)
 				}
 			},
 		},

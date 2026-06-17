@@ -91,7 +91,7 @@ func TestWaitForMounterServer(t *testing.T) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	validSocketFile := filepath.Join(mounterSocketDirValid, mounterSocketFile)
+	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
 	if file, err := os.Create(validSocketFile); err != nil {
 		t.Fatalf("failed to create socket file: %v", err)
 	} else {

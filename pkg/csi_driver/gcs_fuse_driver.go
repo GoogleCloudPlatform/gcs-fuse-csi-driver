@@ -52,10 +52,15 @@ type GoMemLimitOptions struct {
 	AutoGoMemLimitRatio  float64
 }
 
+type SharedMountOptions struct {
+	MounterPodImage string
+}
+
 type GCSDriverFeatureOptions struct {
 	EnableGCSFuseKernelParams bool
 	FeatureGCSFuseProfiles    *FeatureGCSFuseProfiles
 	GoMemLimitOptions         *GoMemLimitOptions
+	SharedMountOptions        *SharedMountOptions
 }
 
 type GCSDriverConfig struct {
