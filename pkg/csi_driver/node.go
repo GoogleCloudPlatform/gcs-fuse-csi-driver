@@ -468,12 +468,18 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
 			if err = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout); err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
+				klog.Warningf("failed to force unmount target path %q: %v. Retrying with lazy unmount.", targetPath, err)
+				if lazyErr := lazyUnmount(targetPath); lazyErr != nil {
+					return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q (force failed: %v, lazy failed: %v)", targetPath, err, lazyErr)
+				}
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
 			if err = s.mounter.Unmount(targetPath); err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
+				klog.Warningf("failed to unmount target path %q: %v. Retrying with lazy unmount.", targetPath, err)
+				if lazyErr := lazyUnmount(targetPath); lazyErr != nil {
+					return nil, status.Errorf(codes.Internal, "failed to unmount target path %q (unmount failed: %v, lazy failed: %v)", targetPath, err, lazyErr)
+				}
 			}
 		}
 	}
