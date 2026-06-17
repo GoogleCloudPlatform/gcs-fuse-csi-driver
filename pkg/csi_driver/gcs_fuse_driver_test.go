@@ -47,6 +47,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
 			SharedMountOptions: &SharedMountOptions{
 				MounterPodImage: testImage,
+				FuseSocketDir:   "/tmp/fuse-sockets",
 			},
 		},
 	}
@@ -65,19 +66,25 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
-		Name:                     "test-driver",
-		NodeID:                   "test-node",
-		Version:                  "test-version",
-		RunController:            true,
-		RunNode:                  true,
-		StorageServiceManager:    storage.NewFakeServiceManager(),
-		TokenManager:             auth.NewFakeTokenManager(),
-		Mounter:                  fm,
-		NetworkManager:           &fakeNetworkManager{},
-		K8sClients:               clientSet,
-		MetricsManager:           metrics.NewFakeMetricsManager(),
-		WINodeLabelCheck:         wiNodeLabelCheck,
-		FeatureOptions:           &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
+		Name:                  "test-driver",
+		NodeID:                "test-node",
+		Version:               "test-version",
+		RunController:         true,
+		RunNode:               true,
+		StorageServiceManager: storage.NewFakeServiceManager(),
+		TokenManager:          auth.NewFakeTokenManager(),
+		Mounter:               fm,
+		NetworkManager:        &fakeNetworkManager{},
+		K8sClients:            clientSet,
+		MetricsManager:        metrics.NewFakeMetricsManager(),
+		WINodeLabelCheck:      wiNodeLabelCheck,
+		FeatureOptions: &GCSDriverFeatureOptions{
+			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
+			SharedMountOptions: &SharedMountOptions{
+				MounterPodImage: testImage,
+				FuseSocketDir:   "/tmp/fuse-sockets",
+			},
+		},
 		AssumeGoodSidecarVersion: true,
 	}
 	driver, err := NewGCSDriver(config, nil)

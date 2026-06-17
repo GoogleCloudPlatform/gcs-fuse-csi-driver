@@ -24,6 +24,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -246,6 +247,10 @@ func main() {
 		},
 		SharedMountOptions: &driver.SharedMountOptions{
 			MounterPodImage: *mounterPodImage,
+			FuseSocketDir:   *fuseSocketDir,
+			EmptyDirBasePath: func(podUID string) string {
+				return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+			},
 		},
 	}
 

@@ -325,7 +325,7 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 			if !ok {
 				t.Fatalf("Failed to cast NodeServer to *nodeServer")
 			}
-			ns.driver.config.EmptyDirBasePath = func(uid string) string {
+			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
 				return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			}
 
@@ -982,7 +982,7 @@ func TestNodeStageVolume(t *testing.T) {
 			if !ok {
 				t.Fatalf("Failed to cast NodeServer to *nodeServer")
 			}
-			ns.driver.config.EmptyDirBasePath = func(uid string) string {
+			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
 				return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			}
 
@@ -996,6 +996,58 @@ func TestNodeStageVolume(t *testing.T) {
 				} else if !errors.Is(err, test.expectErr) && err.Error() != test.expectErr.Error() {
 					t.Errorf("got error %q, expected error %q", err, test.expectErr)
 				}
+			}
+		})
+	}
+}
+
+func TestMountToNode(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{
+			name:    "successful mount to node - should succeed",
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			podUID := "test-pod-uid"
+			volumeID := "test-volume-id"
+			stagingPath := filepath.Join(t.TempDir(), "var/lib/kubelet/pods", podUID, "volumes/kubernetes.io~csi", volumeID, "mount")
+
+			testEnv := initTestNodeServer(t)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+
+			emptyDirBasePath, err := util.PrepareEmptyDir(stagingPath, true)
+			if err != nil {
+				t.Fatalf("failed to prepare emptyDir path: %v", err)
+			}
+			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
+				return emptyDirBasePath
+			}
+
+			// Create a dummy socket file for the client to connect to
+			socketFile := filepath.Join(emptyDirBasePath, mounterPodSocketFile)
+			if file, err := os.Create(socketFile); err == nil {
+				file.Close()
+			}
+
+			err = ns.mountToNode(ctx, podUID, stagingPath, volumeID)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("mountToNode() error = %v, wantErr %v", err, tc.wantErr)
+			}
+
+			// Verify that the symlink was removed (because it is deferred inside mountToNode)
+			symlink := filepath.Join(ns.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir, mounterPodSocketDir, podUID)
+			if _, err := os.Lstat(symlink); !os.IsNotExist(err) {
+				t.Errorf("expected symlink %q to be removed, but it still exists or had another error", symlink)
 			}
 		})
 	}

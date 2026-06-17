@@ -46,6 +46,7 @@ const (
 	mounterPodMountDir            = "mount-dir"
 	mounterPodSocketFile          = "mounter.sock"
 	mounterPodManagedImageKeyword = "managed"
+	mounterPodSocketDir           = "mount-socket"
 )
 
 var (
