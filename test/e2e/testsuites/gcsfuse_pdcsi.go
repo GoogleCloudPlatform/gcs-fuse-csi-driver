@@ -90,13 +90,18 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	f := framework.NewFrameworkWithCustomTimeouts("dual-csi-volume", storageframework.GetDriverTimeouts(driver))
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
-	init := func() {
+	// init prepares the per-test config and GCS Fuse volume resource.
+	// An optional prefix controls volume attributes (e.g. EnableFileCachePrefix).
+	// Defaults to SkipCSIBucketAccessCheckPrefix so tests work on OSS clusters
+	// where the test pod has no credential configmap annotation.
+	init := func(prefixes ...string) {
 		l = local{}
 		l.config = driver.PrepareTest(ctx, f)
-		// Skip the CSI pre-mount bucket access check so the test works on
-		// OSS clusters where the test pod has no credential configmap annotation.
-		// The WIF IAM binding on the bucket still grants real GCSFuse access.
-		l.config.Prefix = specs.SkipCSIBucketAccessCheckPrefix
+		prefix := specs.SkipCSIBucketAccessCheckPrefix
+		if len(prefixes) > 0 && prefixes[0] != "" {
+			prefix = prefixes[0]
+		}
+		l.config.Prefix = prefix
 		l.gcsFuseResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
@@ -154,8 +159,6 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	//   - GCS Fuse data persists via durable object storage and
 	//     re-authenticates cleanly on the fresh mount.
 	ginkgo.It("should persist PD data and remount GCS Fuse cleanly after pod deletion", func() {
-		// Skip when pd.csi.storage.gke.io is not installed (e.g. OSS clusters
-		// without the GCE PD CSI driver, or non-GCP environments).
 		_, err := f.ClientSet.StorageV1().CSIDrivers().Get(ctx, pdCSIDriverName, metav1.GetOptions{})
 		if err != nil {
 			e2eskipper.Skipf("%s CSIDriver not found, skipping dual-driver test: %v", pdCSIDriverName, err)
@@ -197,7 +200,6 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 
 		ginkgo.By("Deploying Pod-1")
 		tPod1.Create(ctx)
-		defer tPod1.Cleanup(ctx)
 
 		ginkgo.By("Waiting for Pod-1 to be running")
 		tPod1.WaitForRunning(ctx)
@@ -232,13 +234,11 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 		// ── Step 5: Assertions ────────────────────────────────────────────────
 		ginkgo.By("Verifying PD sentinel file persists after pod restart")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("grep 'pd-sentinel-data' %v/pd-sentinel.txt",
-				pdMountPath))
+			fmt.Sprintf("grep 'pd-sentinel-data' %v/pd-sentinel.txt", pdMountPath))
 
 		ginkgo.By("Verifying GCS Fuse sentinel file is readable after fresh remount")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("grep 'gcs-sentinel-data' %v/gcs-sentinel.txt",
-				gcsFuseMountPath))
+			fmt.Sprintf("grep 'gcs-sentinel-data' %v/gcs-sentinel.txt", gcsFuseMountPath))
 	})
 
 	// TC-04: PD-Backed File Cache
@@ -246,14 +246,10 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	// Configure GCS Fuse with a local file cache directory backed by a PD volume.
 	// Read files from the GCS Fuse mount. Expect cached reads to be served from
 	// the PD-backed cache directory, reducing repeated GCS fetch latency.
-	// TC-04: PD-Backed File Cache
 	ginkgo.It("should serve GCS Fuse cached reads from a PD-backed cache directory", func() {
 		skipIfPDCSINotInstalled("PD-backed file cache test")
 
-		// EnableFileCachePrefix sets fileCacheCapacity=100Mi on the GCS Fuse volume.
-		init()
-		l.config.Prefix = specs.EnableFileCachePrefix
-		l.gcsFuseResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+		init(specs.EnableFileCachePrefix)
 		defer cleanup()
 
 		bucketName := l.gcsFuseResource.Pv.Spec.CSI.VolumeHandle
@@ -264,71 +260,85 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 			framework.Failf("driver is not *specs.GCSFuseCSITestDriver, cannot pre-seed GCS object")
 		}
 
-		ginkgo.By(fmt.Sprintf("Pre-seeding test file %q in GCS bucket %q", testFileName, bucketName))
-		gcsfuseDriver.CreateTestFileInBucket(ctx, testFileName, bucketName)
+		ginkgo.By(fmt.Sprintf(
+			"Pre-seeding test file %q in GCS bucket %q",
+			testFileName,
+			bucketName,
+		))
+		gcsfuseDriver.CreateTestFileInBucket(
+			ctx,
+			testFileName,
+			bucketName,
+		)
 
 		pvc, cleanupPVC := createPDPVC("pd-cache-pvc-", "5Gi")
 		defer cleanupPVC()
 
+		// ── Pod-1: populate the cache ─────────────────────────────────────────
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
-		// Override the cache volume with PD PVC instead of emptyDir.
-		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, webhook.SidecarContainerCacheVolumeName, "/cache", false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, webhook.SidecarContainerCacheVolumeName, "", false)
+		// FSGroup 1000 matches the sidecar's GID so it can write to the PD-backed cache volume.
+		tPod.SetNonRootSecurityContext(0, 0, 1000)
 
-		ginkgo.By("Deploying pod with PD-backed GCS Fuse file cache")
+		ginkgo.By("Deploying pod with PD-backed GCS Fuse cache")
 		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for pod to become Running")
 		tPod.WaitForRunning(ctx)
 
-		// Get the cache subfolder name from the pod volume spec.
-		//cacheSubfolder := tPod.GetCacheSubfolder()
-		ginkgo.By("Inspecting cache directory contents")
+		ginkgo.By("Reading test file from GCS Fuse mount to populate PD-backed cache")
 		tPod.VerifyExecInPodSucceed(
 			f,
 			specs.TesterContainerName,
-			"find /cache -type f || true",
+			fmt.Sprintf("cat %v/%v", gcsFuseMountPath, testFileName),
 		)
 
-		ginkgo.By("Reading the test file from GCS Fuse mount (first read — populates cache)")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("cat %v/%v", gcsFuseMountPath, testFileName))
+		ginkgo.By("Deleting Pod-1 to verify PD-backed cache survives pod recreation")
+		tPod.Cleanup(ctx)
 
-		// ginkgo.By("Verifying cache file exists in the PD-backed cache directory")
-		// tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-		//         fmt.Sprintf("grep '%v' /cache/.volumes/%v/gcsfuse-file-cache/%v/%v",
-		//                 testFileName, cacheSubfolder, bucketName, testFileName))
-		ginkgo.By("Inspecting cache directory contents after first read")
-		tPod.VerifyExecInPodSucceed(
+		// ── Pod-2: verify cache persisted on the PD volume ───────────────────
+		ginkgo.By("Recreating pod using the same PD-backed cache PVC")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod2.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, webhook.SidecarContainerCacheVolumeName, "", false)
+		tPod2.SetNonRootSecurityContext(0, 0, 1000)
+
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+
+		ginkgo.By("Waiting for recreated pod to become Running")
+		tPod2.WaitForRunning(ctx)
+
+		ginkgo.By("Reading file again after pod recreation — should be served from PD-backed cache")
+		tPod2.VerifyExecInPodSucceed(
 			f,
 			specs.TesterContainerName,
-			"find /cache -type f || true",
+			fmt.Sprintf("cat %v/%v", gcsFuseMountPath, testFileName),
 		)
-
-		ginkgo.By("Reading the test file again (second read — served from cache)")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("cat %v/%v", gcsFuseMountPath, testFileName))
 	})
-
 	// TC-05: Node Drain — Both Volumes Remount
 	//
 	// With a dual-volume pod running, drain the node it is scheduled on.
-	// Expect the pod to be rescheduled on another node with both PD and
-	// GCS Fuse volumes remounted and data still accessible.
-	// TC-05: Node Drain — Both Volumes Remount
-	ginkgo.It("should remount both PD and GCS Fuse volumes after node drain and pod recreation", func() {
+	// A new pod is created and expected to be scheduled on another node with
+	// both PD and GCS Fuse volumes remounted and data still accessible.
+	ginkgo.It("should allow a newly created pod to remount both PD and GCS Fuse volumes after node drain", func() {
 		skipIfPDCSINotInstalled("node drain remount test")
+
 		init()
 		defer cleanup()
 
 		pvc, cleanupPVC := createPDPVC("node-drain-pd-pvc-", "5Gi")
 		defer cleanupPVC()
+
+		// Create initial pod.
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
 		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, pdVolName, pdMountPath, false)
 
 		ginkgo.By("Deploying pod with both GCS Fuse and PD volumes")
 		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
+
 		tPod.WaitForRunning(ctx)
 
 		ginkgo.By("Writing sentinel data to PD volume before node drain")
@@ -337,8 +347,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 			specs.TesterContainerName,
 			fmt.Sprintf(
 				"echo 'pd-drain-data' > %v/pd-drain.txt && grep 'pd-drain-data' %v/pd-drain.txt",
-				pdMountPath,
-				pdMountPath,
+				pdMountPath, pdMountPath,
 			),
 		)
 
@@ -348,48 +357,41 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 			specs.TesterContainerName,
 			fmt.Sprintf(
 				"echo 'gcs-drain-data' > %v/gcs-drain.txt && grep 'gcs-drain-data' %v/gcs-drain.txt",
-				gcsFuseMountPath,
-				gcsFuseMountPath,
+				gcsFuseMountPath, gcsFuseMountPath,
 			),
 		)
 
-		ginkgo.By("Getting the node the pod is scheduled on")
-		pod, err := f.ClientSet.CoreV1().
-			Pods(f.Namespace.Name).
-			Get(ctx, tPod.GetPodName(), metav1.GetOptions{})
+		ginkgo.By("Getting the node the pod is running on")
+		pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, tPod.GetPodName(), metav1.GetOptions{})
 		framework.ExpectNoError(err)
 
 		nodeName := pod.Spec.NodeName
-		framework.Logf("Pod is scheduled on node %q", nodeName)
+		framework.Logf("Initial pod scheduled on node %q", nodeName)
 
 		ginkgo.By(fmt.Sprintf("Cordoning node %q", nodeName))
-		e2ekubectl.RunKubectlOrDie(
-			f.Namespace.Name,
-			"cordon",
-			nodeName,
-		)
+		e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "cordon", nodeName)
 
 		defer func() {
 			ginkgo.By(fmt.Sprintf("Uncordoning node %q", nodeName))
-			e2ekubectl.RunKubectlOrDie(
-				f.Namespace.Name,
-				"uncordon",
-				nodeName,
-			)
+			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "uncordon", nodeName)
 		}()
 
 		ginkgo.By(fmt.Sprintf("Draining node %q", nodeName))
 		e2ekubectl.RunKubectlOrDie(
 			f.Namespace.Name,
-			"drain",
-			nodeName,
+			"drain", nodeName,
 			"--ignore-daemonsets",
 			"--delete-emptydir-data",
 			"--force",
 			"--timeout=120s",
 		)
-		ginkgo.By("Creating a new pod after node drain")
 
+		// Eagerly cleanup Pod-1 so the RWO PVC detaches before Pod-2 tries to bind.
+		// drain evicts the pod but explicit cleanup ensures the PVC is released.
+		ginkgo.By("Cleaning up Pod-1 to release the RWO PVC before Pod-2 mounts it")
+		tPod.Cleanup(ctx)
+
+		ginkgo.By("Creating a new pod using the same PVC after node drain")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod2.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
 		tPod2.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, pdVolName, pdMountPath, false)
@@ -399,54 +401,33 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 
 		tPod2.WaitForRunning(ctx)
 
-		newPod, err := f.ClientSet.CoreV1().
-			Pods(f.Namespace.Name).
-			Get(ctx, tPod2.GetPodName(), metav1.GetOptions{})
+		newPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, tPod2.GetPodName(), metav1.GetOptions{})
 		framework.ExpectNoError(err)
+		framework.Logf("New pod scheduled on node %q", newPod.Spec.NodeName)
 
-		framework.Logf(
-			"New pod scheduled on node %q",
-			newPod.Spec.NodeName,
+		ginkgo.By("Verifying PD data remains accessible after remount")
+		tPod2.VerifyExecInPodSucceed(
+			f,
+			specs.TesterContainerName,
+			fmt.Sprintf("grep 'pd-drain-data' %v/pd-drain.txt", pdMountPath),
 		)
-		ginkgo.By("Verifying PD sentinel data is still accessible after node drain")
+
+		ginkgo.By("Verifying GCS Fuse data remains accessible after remount")
+		tPod2.VerifyExecInPodSucceed(
+			f,
+			specs.TesterContainerName,
+			fmt.Sprintf("grep 'gcs-drain-data' %v/gcs-drain.txt", gcsFuseMountPath),
+		)
+
+		ginkgo.By("Verifying the new pod is healthy after both volume remounts")
 		tPod2.VerifyExecInPodSucceed(
 			f,
 			specs.TesterContainerName,
 			fmt.Sprintf(
-				"grep 'pd-drain-data' %v/pd-drain.txt",
-				pdMountPath,
-			),
-		)
-
-		ginkgo.By("Verifying GCS Fuse sentinel data is still accessible after node drain")
-		tPod2.VerifyExecInPodSucceed(
-			f,
-			specs.TesterContainerName,
-			fmt.Sprintf(
-				"grep 'gcs-drain-data' %v/gcs-drain.txt",
-				gcsFuseMountPath,
+				"test -f %v/pd-drain.txt && test -f %v/gcs-drain.txt",
+				pdMountPath, gcsFuseMountPath,
 			),
 		)
 	})
 
 }
-
-// // waitForPVCCapacity polls until the PVC's status.capacity.storage reaches at
-// // least the requested quantity or the timeout expires.
-// func waitForPVCCapacity(ctx context.Context, f *framework.Framework, pvcName string, requested resource.Quantity, timeout time.Duration) error {
-//         deadline := time.Now().Add(timeout)
-//         for time.Now().Before(deadline) {
-//                 pvc, err := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(ctx, pvcName, metav1.GetOptions{})
-//                 if err != nil {
-//                         return err
-//                 }
-//                 if cap, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
-//                         if cap.Cmp(requested) >= 0 {
-//                                 return nil
-//                         }
-//                 }
-//                 framework.Logf("PVC %q capacity not yet %v, retrying...", pvcName, requested)
-//                 time.Sleep(5 * time.Second)
-//         }
-//         return fmt.Errorf("PVC %q did not reach capacity %v within %v", pvcName, requested, timeout)
-// }
