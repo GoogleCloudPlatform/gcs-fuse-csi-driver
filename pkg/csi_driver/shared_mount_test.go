@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -199,19 +200,30 @@ func TestPVFromVolumeID(t *testing.T) {
 }
 
 func TestCreateMounterPodSpec(t *testing.T) {
+	// Default resources expected when no overrides are provided
+	defaultResources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory:           resource.MustParse("768Mi"),
+			corev1.ResourceCPU:              resource.MustParse("750m"),
+			corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
+		},
+		Limits: corev1.ResourceList{},
+	}
+
 	tests := []struct {
 		name   string
 		config *mounterPodConfig
 		want   *corev1.Pod
 	}{
 		{
-			name: "basic config - should succeed",
+			name: "basic config - should include default resources",
 			config: &mounterPodConfig{
 				podName:            "my-mounter-pod",
 				namespace:          "my-namespace",
 				serviceAccountName: "my-ksa",
 				nodeID:             "node-123",
 				image:              "gcr.io/my-project/my-image:v1.0.0",
+				// No config.resources override
 			},
 			want: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -232,6 +244,95 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							ImagePullPolicy: corev1.PullAlways,
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
+							},
+							Resources: defaultResources, // Expect default resources
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:             mounterPodMountDir,
+									MountPath:        util.KubeletDir,
+									MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
+								},
+								{
+									Name:      util.SidecarContainerTmpVolumeName,
+									MountPath: util.SidecarContainerTmpVolumePath,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: mounterPodMountDir,
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: util.KubeletDir,
+									Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+								},
+							},
+						},
+						{
+							Name: util.SidecarContainerTmpVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+					},
+					Tolerations: []corev1.Toleration{
+						{
+							Operator: corev1.TolerationOpExists,
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "config with resource overrides - should merge resources",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				resources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1000m"),
+						corev1.ResourceMemory: resource.MustParse("1Gi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("2000m"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					Containers: []corev1.Container{
+						{
+							Name:            mounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:              resource.MustParse("1000m"), // Overridden
+									corev1.ResourceMemory:           resource.MustParse("1Gi"),   // Overridden
+									corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),  // Default
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("2000m"), // Set
+									corev1.ResourceMemory: resource.MustParse("2Gi"),   // Set
+								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -836,6 +937,155 @@ func TestDeleteMounterPod(t *testing.T) {
 				if err != nil {
 					t.Fatalf("deleteMounterPod() failed unexpectedly: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestSetResource(t *testing.T) {
+	tests := []struct {
+		name         string
+		initial      corev1.ResourceList
+		override     corev1.ResourceList
+		resourceName corev1.ResourceName
+		want         corev1.ResourceList
+	}{
+		{
+			name:         "override missing - no change",
+			initial:      corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+			override:     corev1.ResourceList{},
+			resourceName: corev1.ResourceCPU,
+			want:         corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+		{
+			name:         "override is zero - delete resource",
+			initial:      corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Gi")},
+			override:     corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0")},
+			resourceName: corev1.ResourceCPU,
+			want:         corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
+		},
+		{
+			name:         "override has value - update resource",
+			initial:      corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+			override:     corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")},
+			resourceName: corev1.ResourceCPU,
+			want:         corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Deep copy initial map to avoid mutation issues between test iterations
+			target := make(corev1.ResourceList)
+			for k, v := range tc.initial {
+				target[k] = v
+			}
+
+			setResource(&target, tc.override, tc.resourceName)
+
+			if diff := cmp.Diff(tc.want, target); diff != "" {
+				t.Errorf("setResource() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+
+	t.Run("nil target pointer does not panic", func(t *testing.T) {
+		setResource(nil, corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}, corev1.ResourceCPU)
+	})
+
+	t.Run("pointer to nil map does not panic and initializes correctly", func(t *testing.T) {
+		var target corev1.ResourceList // target map is nil
+		setResource(&target, corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}, corev1.ResourceCPU)
+
+		want := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}
+		if diff := cmp.Diff(want, target); diff != "" {
+			t.Errorf("setResource() with pointer to nil map returned unexpected diff (-want +got):\n%s", diff)
+		}
+	})
+}
+
+func TestMounterPodResources(t *testing.T) {
+	defaultRequests := corev1.ResourceList{
+		corev1.ResourceMemory:           resource.MustParse("768Mi"),
+		corev1.ResourceCPU:              resource.MustParse("750m"),
+		corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
+	}
+
+	tests := []struct {
+		name   string
+		config *mounterPodConfig
+		want   *corev1.ResourceRequirements
+	}{
+		{
+			name: "no overrides (nil config resources) - should return defaults",
+			config: &mounterPodConfig{
+				resources: nil,
+			},
+			want: &corev1.ResourceRequirements{
+				Requests: defaultRequests,
+				Limits:   corev1.ResourceList{},
+			},
+		},
+		{
+			name: "override CPU and memory requests - should succeed",
+			config: &mounterPodConfig{
+				resources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("1Gi"),
+					},
+				},
+			},
+			want: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory:           resource.MustParse("1Gi"),
+					corev1.ResourceCPU:              resource.MustParse("1"),
+					corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
+				},
+				Limits: corev1.ResourceList{},
+			},
+		},
+		{
+			name: "set limits without changing requests - should succeed",
+			config: &mounterPodConfig{
+				resources: &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			want: &corev1.ResourceRequirements{
+				Requests: defaultRequests,
+				Limits: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("2Gi"),
+				},
+			},
+		},
+		{
+			name: "override with zero - should delete default request",
+			config: &mounterPodConfig{
+				resources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU: resource.MustParse("0"),
+					},
+				},
+			},
+			want: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory:           resource.MustParse("768Mi"),
+					corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
+				},
+				Limits: corev1.ResourceList{},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mounterPodResources(tc.config)
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("mounterPodResources() returned unexpected diff (-want +got):\n%s", diff)
 			}
 		})
 	}
