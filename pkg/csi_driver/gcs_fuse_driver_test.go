@@ -43,7 +43,12 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 		NetworkManager:        &fakeNetworkManager{},
 		K8sClients:            clientset,
 		MetricsManager:        metrics.NewFakeMetricsManager(),
-		FeatureOptions:        &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}},
+		FeatureOptions: &GCSDriverFeatureOptions{
+			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
+			SharedMountOptions: &SharedMountOptions{
+				MounterPodImage: testImage,
+			},
+		},
 	}
 	driver, err := NewGCSDriver(config, nil)
 	if err != nil {

@@ -44,14 +44,14 @@ import (
 )
 
 const (
-	oidcTestPrefix                              = "gcsfuse-csi-oidc"
-	oidcWorkloadIdentityPoolID                  = "gcs-fuse-oidc-pool"
-	oidcWorkloadIdentityProviderID              = "gcs-fuse-oidc-provider"
-	oidcConfigMapName                           = "workload-identity-credentials"
-	oidcCredentialConfigFileName                = "credential-configuration.json"
-	oidcServiceAccountName                      = "gcs-fuse-oidc-ksa"
-	oidcVolumeName                              = "gcs-volume"
-	oidcMountPath                               = "/mnt/gcs"
+	oidcTestPrefix                 = "gcsfuse-csi-oidc"
+	oidcWorkloadIdentityPoolID     = "gcs-fuse-oidc-pool"
+	oidcWorkloadIdentityProviderID = "gcs-fuse-oidc-provider"
+	oidcConfigMapName              = "workload-identity-credentials"
+	oidcCredentialConfigFileName   = "credential-configuration.json"
+	oidcServiceAccountName         = "gcs-fuse-oidc-ksa"
+	oidcVolumeName                 = "gcs-volume"
+	oidcMountPath                  = "/mnt/gcs"
 )
 
 type gcsFuseCSIOIDCTestSuite struct {

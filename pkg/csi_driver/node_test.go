@@ -243,7 +243,7 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	validSocketFile := filepath.Join(mounterSocketDirValid, mounterSocketFile)
+	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
 	if file, err := os.Create(validSocketFile); err != nil {
 		t.Fatalf("failed to create socket file: %v", err)
 	} else {
@@ -812,7 +812,7 @@ func TestNodeStageVolume(t *testing.T) {
 	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	validSocketFile := filepath.Join(mounterSocketDirValid, mounterSocketFile)
+	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
 	if file, err := os.Create(validSocketFile); err != nil {
 		t.Fatalf("failed to create socket file: %v", err)
 	} else {
