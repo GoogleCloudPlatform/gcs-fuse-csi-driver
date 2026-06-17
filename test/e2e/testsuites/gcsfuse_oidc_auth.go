@@ -367,23 +367,23 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		tPod.WaitForFailedMountError(ctx, "PermissionDenied")
 	}
 
-	ginkgo.It("should successfully mount with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should successfully mount with OIDC authentication", func() {
 		testCaseOIDCMount()
 	})
 
-	ginkgo.It("should store and retain data with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should store and retain data with OIDC authentication", func() {
 		testCaseOIDCStoreData()
 	})
 
-	ginkgo.It("should store data in implicit directory with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should store data in implicit directory with OIDC authentication", func() {
 		testCaseOIDCStoreDataInImplicitDir()
 	})
 
-	ginkgo.It("should fail when OIDC ConfigMap is missing", func() {
+	ginkgo.It("[Feature: OIDC] should fail when OIDC ConfigMap is missing", func() {
 		testCaseOIDCMissingConfigMap()
 	})
 
-	ginkgo.It("should fail when CSI bucket access check is enabled with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should fail when CSI bucket access check is enabled with OIDC authentication", func() {
 		testCaseOIDCWithCSIBucketAccessCheck()
 	})
 
@@ -392,7 +392,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 	// annotation is empty, preventing any fallback to the node's identity.
 	//
 	// TODO: Remove the skip below once the node-identity-fallback security bug is fixed.
-	ginkgo.It("should fail to start pod when WIF credential config is absent and node SA has bucket access", func() {
+	ginkgo.It("[Feature: OIDC] should fail to start pod when WIF credential config is absent and node SA has bucket access", func() {
 		e2eskipper.Skipf("skipping until node-identity-fallback security bug is fixed")
 
 		init(specs.SkipCSIBucketAccessCheckPrefix)
