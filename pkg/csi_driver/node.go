@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,9 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -727,13 +730,75 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Wait for the mounter pod grpc server to be ready.
-	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.EmptyDirBasePath); err != nil {
+	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
 		return nil, err
 	}
 
-	// TODO(FUECHR) Add start gcsfuse flow.
+	podUID := string(pod.UID)
+
+	// Send GRPC to mounter pod to start GCSFuse.
+	if err := s.mountToNode(ctx, podUID, stagingPath, req.GetVolumeId()); err != nil {
+		return nil, err
+	}
+
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
 	klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
 	return &csi.NodeStageVolumeResponse{}, nil
+}
+
+// mountToNode connects to the mounter server, at which point it initializes the GCSFuse process.
+func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string) error {
+	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
+		return status.Errorf(codes.Internal, "shared mount options are not fully configured")
+	}
+
+	if s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath == nil {
+		return status.Errorf(codes.Internal, "empty dir base path must be provided for shared mount")
+	}
+	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
+	socketFile := filepath.Join(emptyDirBasePath, mounterPodSocketFile)
+
+	// Create a symlink to bypass the 108-character limit for Unix domain sockets
+	// when dialing the connection from the Node Server.
+	if s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir == "" {
+		return status.Errorf(codes.Internal, "fuse socket dir must be provided for shared mount")
+	}
+	symlink := filepath.Join(s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir, mounterPodSocketDir, podUID)
+	if err := os.MkdirAll(filepath.Dir(symlink), 0750); err != nil {
+		return status.Errorf(codes.Internal, "failed to create dir for symlink %q: %v", symlink, err)
+	}
+
+	if err := os.Remove(symlink); err != nil && !os.IsNotExist(err) {
+		klog.Errorf("failed to remove stale symlink %q: %v", symlink, err)
+	}
+
+	if err := os.Symlink(socketFile, symlink); err != nil {
+		return status.Errorf(codes.Internal, "failed to create symlink to %q: %v", socketFile, err)
+	}
+	defer os.Remove(symlink)
+
+	// Connect to the socket using the short symlink path.
+	socketPath := fmt.Sprintf("unix:%s", symlink)
+	conn, err := grpc.NewClient(socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		klog.Errorf("Failed to connect to the server: %v", err)
+		return status.Errorf(codes.Internal, "failed to connect to the mounter pod grpc server: %v", err)
+	}
+	klog.Infof("Connected to MounterServer at %s", socketPath)
+	defer conn.Close()
+
+	/*
+		TODO(FUECHR): Implement the mounter client and mount request once we have a mounter service defined.
+		c := mounter.NewMounterClient(conn)
+		if _, err := c.Mount(ctx, &mounter.MountRequest{
+			Mountpoint: stagingPath,
+			VolumeID:   volumeID,
+		}); err != nil {
+			return status.Errorf(codes.Internal, "failed to mount: %v", err)
+		}
+	*/
+
+	klog.Infof("Mount succeeded at staging target path %s", stagingPath)
+	return nil
 }
