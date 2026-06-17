@@ -196,7 +196,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 	}
 
 	// Test 1: Verify that GCS access fails after WIF principal permissions are revoked mid-run.
-	ginkgo.It("should fail GCS access after workload identity federation principal permissions are removed while pod is running", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should fail GCS access after workload identity federation principal permissions are removed while pod is running", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 
 		// OSS: credential ConfigMap doesn't exist at mount time, so the CSI pre-mount
@@ -340,7 +340,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 
 	// Test 2: Verify that a pod whose KSA has WIF bucket access can mount and write,
 	// even when the node SA has no bucket access.
-	ginkgo.It("should successfully mount when pod KSA has WIF bucket access but node SA does not", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should successfully mount when pod KSA has WIF bucket access but node SA does not", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 
 		// Skip the CSI pre-mount bucket access check for both OSS and GKE in this test,
@@ -400,7 +400,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			fmt.Sprintf("dd if=/dev/urandom bs=1M count=1 of=%s/wif-node-test.bin 2>&1", mountPath))
 	})
 
-	ginkgo.It("should isolate workload identity federation access for Kubernetes service accounts with the same name across different namespaces", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should isolate workload identity federation access for Kubernetes service accounts with the same name across different namespaces", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 
 		// OSS: credential ConfigMap doesn't exist at mount time, so the CSI pre-mount
@@ -603,7 +603,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 				"ns-2 pod: %s/%s", ns2.Name, tPodNs2.GetPodName())
 	})
 
-	ginkgo.It("should enforce different GCS bucket permissions for different Kubernetes service accounts", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should enforce different GCS bucket permissions for different Kubernetes service accounts", func() {
 		init(specs.SkipCSIBucketAccessCheckPrefix)
 		defer cleanup()
 
@@ -689,7 +689,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		noAccessPod.WaitForFailedMountError(ctx, "PermissionDenied")
 	})
 
-	ginkgo.It("should successfully authenticate multiple pods using same federation configuration", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should successfully authenticate multiple pods using same federation configuration", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 
 		if isOSS {
@@ -882,7 +882,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		}, 60*time.Second, 3*time.Second).Should(gomega.Succeed())
 	}
 
-	ginkgo.It("should fail when node SA has bucket access but pod KSA does not — confirms no node SA fallback",
+	ginkgo.It("[Feature: workload-identity-federation] should fail when node SA has bucket access but pod KSA does not — confirms no node SA fallback",
 		func() {
 			isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 			if pattern.VolType == storageframework.DynamicPV {
@@ -935,7 +935,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		},
 	)
 
-	ginkgo.It("should fail authentication when KSA is not bound to IAM service account",
+	ginkgo.It("[Feature: workload-identity-federation] should fail authentication when KSA is not bound to IAM service account",
 		func() {
 			isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 			if pattern.VolType == storageframework.DynamicPV {
@@ -982,7 +982,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		},
 	)
 
-	ginkgo.It("should re-authenticate successfully after pod restart using federation", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should re-authenticate successfully after pod restart using federation", func() {
 		init(specs.SkipCSIBucketAccessCheckPrefix)
 		defer cleanup()
 
@@ -1036,7 +1036,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			fmt.Sprintf("ls %v", mountPath))
 	})
 
-	ginkgo.It("should fail GCS access when WI principal has no storage role", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should fail GCS access when WI principal has no storage role", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 		if isOSS {
 			init(specs.SkipCSIBucketAccessCheckPrefix)
@@ -1077,7 +1077,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 		}
 	})
 
-	ginkgo.It("should fail write operations when WI principal has read-only storage role", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should fail write operations when WI principal has read-only storage role", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 		if isOSS {
 			init(specs.SkipCSIBucketAccessCheckPrefix)
@@ -1128,7 +1128,7 @@ func (t *gcsFuseCSIWorkloadIdentityFederationTestSuite) DefineTests(driver stora
 			fmt.Sprintf("echo 'write-test' > %v/wif-write-test.txt", mountPath), 1)
 	})
 
-	ginkgo.It("should fail GCS access when WI principal role is on a different bucket", func() {
+	ginkgo.It("[Feature: workload-identity-federation] should fail GCS access when WI principal role is on a different bucket", func() {
 		isOSS := os.Getenv(utils.IsOSSEnvVar) == "true"
 		if isOSS {
 			init(specs.SkipCSIBucketAccessCheckPrefix)
