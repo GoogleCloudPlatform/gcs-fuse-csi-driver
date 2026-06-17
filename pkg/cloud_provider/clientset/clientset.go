@@ -148,29 +148,18 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		pvObj, ok := obj.(*corev1.PersistentVolume)
-
 		if !ok || pvObj == nil {
 			return obj, nil
 		}
-
-		trimmedPV := &corev1.PersistentVolume{
+		return &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvObj.ObjectMeta.Name,
-				Annotations: pvObj.ObjectMeta.Annotations,
+				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
 			},
 			Spec: corev1.PersistentVolumeSpec{
-				StorageClassName: pvObj.Spec.StorageClassName,
+				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
 			},
-		}
-
-		if pvObj.Spec.CSI != nil {
-			trimmedPV.Spec.PersistentVolumeSource.CSI = &corev1.CSIPersistentVolumeSource{
-				Driver:       pvObj.Spec.CSI.Driver,
-				VolumeHandle: pvObj.Spec.CSI.VolumeHandle,
-			}
-		}
-
-		return trimmedPV, nil
+		}, nil
 	}
 
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
