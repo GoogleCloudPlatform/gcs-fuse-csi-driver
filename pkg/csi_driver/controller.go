@@ -230,6 +230,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		resources:          containerResources,
 		nodeID:             nodeID,
 		image:              containerImage,
+		volumes:            podTemplate.Template.Spec.Volumes,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

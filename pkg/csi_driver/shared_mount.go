@@ -60,6 +60,7 @@ type mounterPodConfig struct {
 	image              string                       // The image for the mounter pod binary.
 	serviceAccountName string                       // The KSA name for the mounter pod.
 	resources          *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
+	volumes            []corev1.Volume              // The volumes for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -175,26 +176,20 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 							Name:      util.SidecarContainerTmpVolumeName,
 							MountPath: util.SidecarContainerTmpVolumePath,
 						},
-					},
-				},
-			},
-			Volumes: []corev1.Volume{
-				{
-					Name: mounterPodMountDir,
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: util.KubeletDir,
-							Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+						{
+							Name:      webhook.SidecarContainerBufferVolumeName,
+							MountPath: webhook.SidecarContainerBufferVolumeMountPath,
 						},
-					},
-				},
-				{
-					Name: util.SidecarContainerTmpVolumeName,
-					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
+						{
+							Name:      webhook.SidecarContainerCacheVolumeName,
+							MountPath: webhook.SidecarContainerCacheVolumeMountPath,
+						},
+						// TODO(urielguzman): Add host network and profiles volume mounts when those features are implemented
+						// for shared mount.
 					},
 				},
 			},
+			Volumes: mounterPodVolumes(config),
 			Tolerations: []corev1.Toleration{
 				{
 					//  https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
@@ -357,6 +352,31 @@ func mounterPodResources(config *mounterPodConfig) *corev1.ResourceRequirements 
 	}
 
 	return &resources
+}
+
+// mounterPodVolumes returns the list of volumes required by the mounter pod.
+// This includes standard GCS FUSE volumes and the host path to the kubelet directory.
+func mounterPodVolumes(config *mounterPodConfig) []corev1.Volume {
+	// Get the gke-gcsfuse-tmp, gke-gcsfuse-buffer, and gke-gcsfuse-cache volumes, and allow
+	// the buffer and cache to be overridden by the PodTemplate volumes.
+	volumes := []corev1.Volume{}
+	volumes = append(volumes, config.volumes...) // Make a copy to avoid mutating the PodTemplate volumes.
+	volumes = append(volumes, webhook.GetSidecarContainerVolumeSpec(config.volumes...)...)
+
+	// Set the /var/lib/kubelet host path, so the mounter pod can mount the staging path to the node.
+	volumes = append(volumes, corev1.Volume{Name: mounterPodMountDir,
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				// TODO(urielguzman): Check if we can use /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
+				// instead, to decrease the host path scope.
+				Path: util.KubeletDir,
+				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+			},
+		}})
+
+	// TODO(urielguzman): Add profiles and host network volumes when those features are implemnented for
+	// shared mount.
+	return volumes
 }
 
 func setResource(target *corev1.ResourceList, override corev1.ResourceList, resourceName corev1.ResourceName) {
