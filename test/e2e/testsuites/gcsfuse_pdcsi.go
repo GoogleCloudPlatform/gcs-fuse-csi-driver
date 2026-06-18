@@ -158,7 +158,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	//   - PD data persists via persistent block volume.
 	//   - GCS Fuse data persists via durable object storage and
 	//     re-authenticates cleanly on the fresh mount.
-	ginkgo.It("should persist PD data and remount GCS Fuse cleanly after pod deletion", func() {
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should persist PD data and remount GCS Fuse cleanly after pod deletion", func() {
 		_, err := f.ClientSet.StorageV1().CSIDrivers().Get(ctx, pdCSIDriverName, metav1.GetOptions{})
 		if err != nil {
 			e2eskipper.Skipf("%s CSIDriver not found, skipping dual-driver test: %v", pdCSIDriverName, err)
@@ -246,7 +246,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	// Configure GCS Fuse with a local file cache directory backed by a PD volume.
 	// Read files from the GCS Fuse mount. Expect cached reads to be served from
 	// the PD-backed cache directory, reducing repeated GCS fetch latency.
-	ginkgo.It("should serve GCS Fuse cached reads from a PD-backed cache directory", func() {
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should serve GCS Fuse cached reads from a PD-backed cache directory", func() {
 		skipIfPDCSINotInstalled("PD-backed file cache test")
 
 		init(specs.EnableFileCachePrefix)
@@ -322,7 +322,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	// With a dual-volume pod running, drain the node it is scheduled on.
 	// A new pod is created and expected to be scheduled on another node with
 	// both PD and GCS Fuse volumes remounted and data still accessible.
-	ginkgo.It("should allow a newly created pod to remount both PD and GCS Fuse volumes after node drain", func() {
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should allow a newly created pod to remount both PD and GCS Fuse volumes after node drain", func() {
 		skipIfPDCSINotInstalled("node drain remount test")
 
 		init()
