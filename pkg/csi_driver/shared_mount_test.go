@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +44,29 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/utils/ptr"
+)
+
+var (
+	testTmpVolume = corev1.Volume{
+		Name: util.SidecarContainerTmpVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	testBuffVolume = corev1.Volume{
+		Name: webhook.SidecarContainerBufferVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	testCacheVolume = corev1.Volume{
+		Name: webhook.SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
 )
 
 func TestSharedMount(t *testing.T) {
@@ -315,6 +340,12 @@ func TestPVFromVolumeID(t *testing.T) {
 	}
 }
 
+func sortVolumes(volumes []corev1.Volume) {
+	sort.Slice(volumes, func(i, j int) bool {
+		return volumes[i].Name < volumes[j].Name
+	})
+}
+
 func TestCreateMounterPodSpec(t *testing.T) {
 	// Default resources expected when no overrides are provided
 	defaultResources := corev1.ResourceRequirements{
@@ -326,20 +357,59 @@ func TestCreateMounterPodSpec(t *testing.T) {
 		Limits: corev1.ResourceList{},
 	}
 
+	// Standard volume mounts expected in the container, IN THE EXACT ORDER as in createMounterPodSpec
+	expectedVolumeMounts := []corev1.VolumeMount{
+		{
+			Name:             mounterPodMountDir,
+			MountPath:        util.KubeletDir,
+			MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
+		},
+		{
+			Name:      util.SidecarContainerTmpVolumeName,
+			MountPath: util.SidecarContainerTmpVolumePath,
+		},
+		{
+			Name:      webhook.SidecarContainerBufferVolumeName,
+			MountPath: webhook.SidecarContainerBufferVolumeMountPath,
+		},
+		{
+			Name:      webhook.SidecarContainerCacheVolumeName,
+			MountPath: webhook.SidecarContainerCacheVolumeMountPath,
+		},
+	}
+
+	// Kubelet HostPath volume always expected
+	kubeletHostPathVolume := corev1.Volume{
+		Name: mounterPodMountDir,
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: util.KubeletDir,
+				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+			},
+		},
+	}
+
+	// Custom volume for override test
+	customBufferVolume := corev1.Volume{
+		Name: webhook.SidecarContainerBufferVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+		},
+	}
+
 	tests := []struct {
 		name   string
 		config *mounterPodConfig
 		want   *corev1.Pod
 	}{
 		{
-			name: "basic config - should include default resources",
+			name: "basic config - should include default volumes and resources",
 			config: &mounterPodConfig{
 				podName:            "my-mounter-pod",
 				namespace:          "my-namespace",
 				serviceAccountName: "my-ksa",
 				nodeID:             "node-123",
 				image:              "gcr.io/my-project/my-image:v1.0.0",
-				// No config.resources override
 			},
 			want: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -361,42 +431,17 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
-							Resources: defaultResources, // Expect default resources
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:             mounterPodMountDir,
-									MountPath:        util.KubeletDir,
-									MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
-								},
-								{
-									Name:      util.SidecarContainerTmpVolumeName,
-									MountPath: util.SidecarContainerTmpVolumePath,
-								},
-							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
 						},
 					},
 					Volumes: []corev1.Volume{
-						{
-							Name: mounterPodMountDir,
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: util.KubeletDir,
-									Type: ptr.To(corev1.HostPathDirectoryOrCreate),
-								},
-							},
-						},
-						{
-							Name: util.SidecarContainerTmpVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
 					},
-					Tolerations: []corev1.Toleration{
-						{
-							Operator: corev1.TolerationOpExists,
-						},
-					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
 				},
 			},
 		},
@@ -414,8 +459,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 						corev1.ResourceMemory: resource.MustParse("1Gi"),
 					},
 					Limits: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("2000m"),
-						corev1.ResourceMemory: resource.MustParse("2Gi"),
+						corev1.ResourceCPU: resource.MustParse("2000m"),
 					},
 				},
 			},
@@ -441,50 +485,68 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:              resource.MustParse("1000m"), // Overridden
-									corev1.ResourceMemory:           resource.MustParse("1Gi"),   // Overridden
-									corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),  // Default
+									corev1.ResourceCPU:              resource.MustParse("1000m"),
+									corev1.ResourceMemory:           resource.MustParse("1Gi"),
+									corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
 								},
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("2000m"), // Set
-									corev1.ResourceMemory: resource.MustParse("2Gi"),   // Set
+									corev1.ResourceCPU: resource.MustParse("2000m"),
 								},
 							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:             mounterPodMountDir,
-									MountPath:        util.KubeletDir,
-									MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
-								},
-								{
-									Name:      util.SidecarContainerTmpVolumeName,
-									MountPath: util.SidecarContainerTmpVolumePath,
-								},
-							},
+							VolumeMounts: expectedVolumeMounts,
 						},
 					},
 					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "config with volume overrides - should use overridden volumes",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				volumes:            []corev1.Volume{customBufferVolume},
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					Containers: []corev1.Container{
 						{
-							Name: mounterPodMountDir,
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: util.KubeletDir,
-									Type: ptr.To(corev1.HostPathDirectoryOrCreate),
-								},
+							Name:            mounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
 							},
-						},
-						{
-							Name: util.SidecarContainerTmpVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
 						},
 					},
-					Tolerations: []corev1.Toleration{
-						{
-							Operator: corev1.TolerationOpExists,
-						},
+					Volumes: []corev1.Volume{
+						customBufferVolume, // Overridden
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
 					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
 				},
 			},
 		},
@@ -492,11 +554,16 @@ func TestCreateMounterPodSpec(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// Sort volumes in the 'want' spec for consistent comparison
+			sortVolumes(tc.want.Spec.Volumes)
+
 			got := createMounterPodSpec(tc.config)
 
-			// Compare the got and want Pod specs using cmp.Diff
+			// Sort volumes in the 'got' spec
+			sortVolumes(got.Spec.Volumes)
+
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("createMounterPodSpec(%v) returned an unexpected diff (-want +got):\n%s", tc.config, diff)
+				t.Errorf("createMounterPodSpec() returned an unexpected diff (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1202,6 +1269,112 @@ func TestMounterPodResources(t *testing.T) {
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("mounterPodResources() returned unexpected diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestMounterPodVolumes(t *testing.T) {
+	// Expected HostPath volume for KubeletDir
+	kubeletHostPathVolume := corev1.Volume{
+		Name: mounterPodMountDir,
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: util.KubeletDir,
+				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+			},
+		},
+	}
+
+	// Custom volumes for override tests
+	customBufferVolume := corev1.Volume{
+		Name: webhook.SidecarContainerBufferVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+		},
+	}
+	customCacheVolume := corev1.Volume{
+		Name: webhook.SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{Path: "/tmp/mycache"},
+		},
+	}
+
+	testCases := []struct {
+		name   string
+		config *mounterPodConfig
+		want   []corev1.Volume
+	}{
+		{
+			name:   "no overrides - should return defaults plus hostpath",
+			config: &mounterPodConfig{},
+			want: []corev1.Volume{
+				testTmpVolume,
+				testBuffVolume,
+				testCacheVolume,
+				kubeletHostPathVolume,
+			},
+		},
+		{
+			name: "override buffer volume - should use custom buffer",
+			config: &mounterPodConfig{
+				volumes: []corev1.Volume{customBufferVolume},
+			},
+			want: []corev1.Volume{
+				testTmpVolume,
+				testCacheVolume,
+				customBufferVolume,
+				kubeletHostPathVolume,
+			},
+		},
+		{
+			name: "override cache volume - should use custom cache",
+			config: &mounterPodConfig{
+				volumes: []corev1.Volume{customCacheVolume},
+			},
+			want: []corev1.Volume{
+				testTmpVolume,
+				testBuffVolume,
+				customCacheVolume,
+				kubeletHostPathVolume,
+			},
+		},
+		{
+			name: "override buffer and cache - should use custom volumes",
+			config: &mounterPodConfig{
+				volumes: []corev1.Volume{customBufferVolume, customCacheVolume},
+			},
+			want: []corev1.Volume{
+				testTmpVolume,
+				customBufferVolume,
+				customCacheVolume,
+				kubeletHostPathVolume,
+			},
+		},
+		{
+			name: "unrelated volumes in config - should be included",
+			config: &mounterPodConfig{
+				volumes: []corev1.Volume{{Name: "extra-vol"}},
+			},
+			want: []corev1.Volume{
+				testTmpVolume,
+				testBuffVolume,
+				testCacheVolume,
+				{Name: "extra-vol"},
+				kubeletHostPathVolume,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mounterPodVolumes(tc.config)
+
+			sortVolumes(got)
+			sortVolumes(tc.want)
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("mounterPodVolumes() returned unexpected diff (-want +got):\n%s", diff)
 			}
 		})
 	}
