@@ -79,6 +79,10 @@ var (
 
 	// GCSFuse kernel params feature.
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
+
+	// GCSFuse shared mount flags.
+	enableSharedMount = flag.Bool("enable-shared-mount", false, "Enable the shared mount feature.")
+
 	// GCSFuse profiles flags.
 	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
 	datafluxParallelism           = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
@@ -246,6 +250,7 @@ func main() {
 			AutoGoMemLimitRatio:  *autoGoMemLimitRatio,
 		},
 		SharedMountOptions: &driver.SharedMountOptions{
+			Enabled:         *enableSharedMount,
 			MounterPodImage: *mounterPodImage,
 			FuseSocketDir:   *fuseSocketDir,
 			EmptyDirBasePath: func(podUID string) string {
@@ -261,7 +266,6 @@ func main() {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
-		// TODO(urielguzman): Configure pod lister in the controller for shared node mount.
 		clientset.ConfigurePodLister(ctx, *nodeID)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
 
@@ -280,6 +284,13 @@ func main() {
 			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport)
 			mm.InitializeHTTPHandler()
 		}
+	}
+
+	if *runController && *enableSharedMount {
+		clientset.ConfigurePVLister(ctx)
+		clientset.ConfigurePVCLister(ctx)
+		clientset.ConfigurePodTemplateLister(ctx)
+		clientset.ConfigurePodLister(ctx, "")
 	}
 
 	config := &driver.GCSDriverConfig{

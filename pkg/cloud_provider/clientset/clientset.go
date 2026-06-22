@@ -173,6 +173,7 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 			},
 			Spec: corev1.PersistentVolumeSpec{
 				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
+				ClaimRef:         pvObj.Spec.ClaimRef,         // Required by the shared node mount feature to identify the bound PVC.
 			},
 		}, nil
 	}
@@ -193,13 +194,20 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		pvcObj, ok := obj.(*corev1.PersistentVolumeClaim)
-		if !ok {
+		if !ok || pvcObj == nil {
 			return obj, nil
+		}
+		var annotations map[string]string
+		if val, ok := pvcObj.ObjectMeta.Annotations[webhook.MounterPodTemplateAnnotation]; ok {
+			annotations = map[string]string{
+				webhook.MounterPodTemplateAnnotation: val,
+			}
 		}
 		return &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      pvcObj.ObjectMeta.Name,
-				Namespace: pvcObj.ObjectMeta.Namespace,
+				Name:        pvcObj.ObjectMeta.Name,
+				Namespace:   pvcObj.ObjectMeta.Namespace,
+				Annotations: annotations, // only store the mounter pod template annotation to optimize memory.
 			},
 			Spec: corev1.PersistentVolumeClaimSpec{
 				VolumeName: pvcObj.Spec.VolumeName,
@@ -224,7 +232,7 @@ func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		scObj, ok := obj.(*storagev1.StorageClass)
-		if !ok {
+		if !ok || scObj == nil {
 			return obj, nil
 		}
 		return &storagev1.StorageClass{

@@ -2157,6 +2157,7 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 	sharedPVWithLabel.Labels = map[string]string{
 		SharedMountLabel: "true",
 	}
+	sharedPVWithLabel.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] = sharedPV.Name
 
 	sharedPVC := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{

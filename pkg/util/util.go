@@ -73,6 +73,7 @@ const (
 	GoMemLimitCgroupPercentage          = 0.95
 	StorageEndpointInternal             = "storage-endpoint-internal"
 	KubeletDir                          = "/var/lib/kubelet"
+	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
 )
 
 var (
