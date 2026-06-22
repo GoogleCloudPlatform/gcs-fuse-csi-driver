@@ -300,11 +300,17 @@ func (c *FakeClientset) ListPVs() ([]*corev1.PersistentVolume, error) {
 	return pvs, nil
 }
 
-func (c *FakeClientset) ListPods() ([]*corev1.Pod, error) {
+func (c *FakeClientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
 	if c.ListPodErr != nil {
 		return nil, c.ListPodErr
 	}
-	return c.fakePods, nil
+	var pods []*corev1.Pod
+	for _, pod := range c.fakePods {
+		if pod != nil && pod.Name == podName {
+			pods = append(pods, pod)
+		}
+	}
+	return pods, nil
 }
 
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
