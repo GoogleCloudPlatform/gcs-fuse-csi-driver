@@ -50,6 +50,7 @@ var (
 	zbFlag           = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
 	profilesFlag     = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
 	kernelParamsFlag = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
+	pdStorageClass   = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
 )
 
 var _ = func() bool {
@@ -64,6 +65,7 @@ var _ = func() bool {
 	framework.RegisterClusterFlags(flag.CommandLine)
 	flag.Parse()
 	framework.AfterReadingAllFlags(&framework.TestContext)
+	testsuites.PDStorageClass = *pdStorageClass
 
 	c, err = clientset.New(framework.TestContext.KubeConfig, 0)
 	if err != nil {
@@ -78,10 +80,21 @@ var _ = func() bool {
 	currentCluster := kubeConfig.CurrentContext
 	framework.Logf("Running test on cluster %s", currentCluster)
 	l := strings.Split(currentCluster, "_")
-	if len(l) < 4 || l[0] != "gke" {
-		klog.Fatalf("Got invalid cluster name %v, please make sure the cluster is created on GKE", currentCluster)
+	isOSS := os.Getenv("IS_OSS") == "true"
+	if !isOSS {
+		if len(l) < 4 || l[0] != "gke" {
+			klog.Fatalf("Got invalid cluster name %v, please make sure the cluster is created on GKE", currentCluster)
+		}
 	}
-	m, err = metadata.NewFakeService(l[1], l[2], l[3], *apiEnv)
+	project := framework.TestContext.CloudConfig.ProjectID
+	zone := framework.TestContext.CloudConfig.Zone
+	cluster := currentCluster
+	if !isOSS {
+		project = l[1]
+		zone = l[2]
+		cluster = l[3]
+	}
+	m, err = metadata.NewFakeService(project, zone, cluster, *apiEnv)
 	if err != nil {
 		klog.Fatalf("Failed to create fake meta data service: %v", err)
 	}
@@ -126,6 +139,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseMountTestSuite,
 			testsuites.InitGcsFuseCSIOIDCTestSuite,
 			testsuites.InitGcsFuseCSICloudProfilerTestSuite,
+			testsuites.InitGcsFuseCSIDualCSIVolumeTestSuite,
 			testsuites.InitGcsFuseCSIWorkloadIdentityFederationTestSuite,
 		}
 
