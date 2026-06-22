@@ -1001,6 +1001,83 @@ func TestNodeStageVolume(t *testing.T) {
 	}
 }
 
+func TestNodeUnstageVolume(t *testing.T) {
+	t.Parallel()
+	stagingPath, cleanup := setupMountTarget(t)
+	defer cleanup()
+
+	cases := []struct {
+		name          string
+		mounts        []mount.MountPoint // already existing mounts
+		req           *csi.NodeUnstageVolumeRequest
+		expectedMount *mount.MountPoint
+		expectErr     error
+	}{
+		{
+			name:   "successful unmount - should return InvalidArgument error",
+			mounts: []mount.MountPoint{{Device: testVolumeID, Path: stagingPath}},
+			req: &csi.NodeUnstageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+			},
+		},
+		{
+			name:      "empty request",
+			req:       nil,
+			expectErr: status.Error(codes.InvalidArgument, "NodeUnstageVolume Request cannot be nil"),
+		},
+		{
+			name: "empty volume ID -  should return InvalidArgument error",
+			req: &csi.NodeUnstageVolumeRequest{
+				VolumeId:          "",
+				StagingTargetPath: stagingPath,
+			},
+			expectErr: status.Error(codes.InvalidArgument, "NodeUnstageVolume Volume ID must be provided"),
+		},
+		{
+			name: "missing staging path - should return InvalidArgument error",
+			req: &csi.NodeUnstageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: "",
+			},
+			expectErr: status.Error(codes.InvalidArgument, "NodeUnstageVolume Staging Target Path must be provided"),
+		},
+		{
+			name: "dir doesn't exist - should succeed",
+			req: &csi.NodeUnstageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: "/node-unstage-dir-not-exists",
+			},
+		},
+		{
+			name: "dir not mounted - should succeed",
+			req: &csi.NodeUnstageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			testEnv := initTestNodeServer(t)
+			if test.mounts != nil {
+				testEnv.fm.MountPoints = test.mounts
+			}
+
+			_, err := testEnv.ns.NodeUnstageVolume(context.TODO(), test.req)
+			if test.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if test.expectErr != nil && !errors.Is(err, test.expectErr) {
+				t.Errorf("got error %q, expected error %q", err, test.expectErr)
+			}
+
+			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
+		})
+	}
+}
+
 func TestMountToNode(t *testing.T) {
 	tests := []struct {
 		name    string
