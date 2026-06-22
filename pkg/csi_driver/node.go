@@ -802,3 +802,54 @@ func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volum
 	klog.Infof("Mount succeeded at staging target path %s", stagingPath)
 	return nil
 }
+
+func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	// Validate arguments.
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Request cannot be nil")
+	}
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Volume ID must be provided")
+	}
+	stagingPath := req.GetStagingTargetPath()
+	if len(stagingPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Staging Target Path must be provided")
+	}
+
+	// Acquire a lock on the staging path instead of volumeID, since we do not want to serialize multiple node unstage calls on the same volume.
+	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
+	}
+	defer s.volumeLocks.Release(stagingPath)
+
+	if err := s.cleanupStagingPath(stagingPath); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("NodeUnstageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
+	return &csi.NodeUnstageVolumeResponse{}, nil
+}
+
+func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
+	// Unmount staging path.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+
+	if mounted {
+		if err = s.mounter.Unmount(stagingPath); err != nil {
+			return status.Errorf(codes.Internal, "failed to unmount staging path %q: %v", stagingPath, err)
+		}
+	} else {
+		klog.Infof("staging path %q was already unmounted", stagingPath)
+	}
+
+	// Cleanup the mount point.
+	if err := mount.CleanupMountPoint(stagingPath, s.mounter, false /* bind mount */); err != nil {
+		return status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", stagingPath, err)
+	}
+
+	return nil
+}
