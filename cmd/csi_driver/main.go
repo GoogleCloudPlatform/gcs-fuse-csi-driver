@@ -190,7 +190,7 @@ func main() {
 		}()
 	}
 
-	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec)
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}

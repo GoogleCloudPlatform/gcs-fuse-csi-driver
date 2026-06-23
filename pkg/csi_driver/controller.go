@@ -278,19 +278,11 @@ func (s *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *c
 
 	// Delete the mounter pod, if it exists.
 	podName := createMounterPodName(nodeID, volumeID)
-	pods, err := s.driver.config.K8sClients.ListPods()
+	mounterPods, err := s.driver.config.K8sClients.GetPodsByName(podName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list pods: %v", err)
 	}
-	// TODO(urielguzman): This implementation requires listing pods from the informer's cache, which can
-	// be max 110 pods per node. When manually testing the feature, we should add a podName indexer,
-	// so that the lookup can be O(1).
-	mounterPods := make([]*corev1.Pod, 0, len(pods))
-	for _, pod := range pods {
-		if pod != nil && pod.Name == podName {
-			mounterPods = append(mounterPods, pod)
-		}
-	}
+
 	if len(mounterPods) == 0 {
 		klog.Infof("ControllerUnpublishVolume succeeded for volume %q on node %q", volumeID, nodeID)
 		return &csi.ControllerUnpublishVolumeResponse{}, nil

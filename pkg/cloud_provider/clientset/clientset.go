@@ -36,8 +36,14 @@ import (
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+)
+
+const (
+	// PodNameIndex is the key for the indexer that indexes pods by their name.
+	PodNameIndex = "podName"
 )
 
 type Interface interface {
@@ -49,13 +55,13 @@ type Interface interface {
 	ConfigureSCLister(ctx context.Context)
 	ConfigurePodTemplateLister(ctx context.Context)
 	GetPod(namespace, name string) (*corev1.Pod, error)
+	GetPodsByName(name string) ([]*corev1.Pod, error)
 	GetNode(name string) (*corev1.Node, error)
 	GetPV(name string) (*corev1.PersistentVolume, error)
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
 	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
 	ListPVs() ([]*corev1.PersistentVolume, error)
-	ListPods() ([]*corev1.Pod, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -68,12 +74,14 @@ type PodInfo struct {
 type Clientset struct {
 	k8sClients                kubernetes.Interface
 	podLister                 listersv1.PodLister
+	podInformer               cache.SharedIndexInformer
 	nodeLister                listersv1.NodeLister
 	pvLister                  listersv1.PersistentVolumeLister
 	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
 	podTemplateLister         listersv1.PodTemplateLister
 	informerResyncDurationSec int
+	runController             bool
 }
 
 const (
@@ -271,7 +279,7 @@ func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
 	c.podTemplateLister = podTemplateLister
 }
 
-func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
+func New(kubeconfigPath string, informerResyncDurationSec int, runController bool) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {
@@ -291,7 +299,16 @@ func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error
 		return nil, fmt.Errorf("failed to configure k8s client: %w", err)
 	}
 
-	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec}, nil
+	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec, runController: runController}, nil
+}
+
+// PodNameIndexFunc is an IndexFunc that indexes pods by their name.
+func PodNameIndexFunc(obj interface{}) ([]string, error) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return []string{}, nil
+	}
+	return []string{pod.Name}, nil
 }
 
 func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
@@ -307,6 +324,10 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
 		podObj, ok := obj.(*corev1.Pod)
 		if !ok {
+			return obj, nil
+		}
+
+		if c.runController {
 			return obj, nil
 		}
 
@@ -363,10 +384,49 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 	)
 	podLister := informerFactory.Core().V1().Pods().Lister()
 
+	if c.runController {
+		podInformer := informerFactory.Core().V1().Pods().Informer()
+		// Add an indexer to allow efficient lookup of pods by name across all namespaces.
+		// This is used by the controller to quickly find specific pods (e.g., mounter pods)
+		// by their known name without needing to iterate through all pods or know the namespace.
+		err := podInformer.AddIndexers(cache.Indexers{
+			PodNameIndex: PodNameIndexFunc,
+		})
+		if err != nil {
+			klog.Fatalf("Failed to add podName indexer: %v", err)
+		}
+		c.podInformer = podInformer
+	}
+
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
 
 	c.podLister = podLister
+}
+
+func (c *Clientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
+	if c.podInformer == nil {
+		return nil, fmt.Errorf("podInformer is not initialized")
+	}
+
+	// objs is a slice of interface{}, each element is a *corev1.Pod
+	objs, err := c.podInformer.GetIndexer().ByIndex(PodNameIndex, podName)
+	if err != nil {
+		return nil, err
+	}
+
+	pods := make([]*corev1.Pod, 0, len(objs))
+	for _, obj := range objs {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			// This should not happen if the indexer is set up correctly,
+			// but good practice to handle nonetheless.
+			return nil, fmt.Errorf("unexpected type in indexer: got %T, want *corev1.Pod", obj)
+		}
+		pods = append(pods, pod)
+	}
+
+	return pods, nil
 }
 
 func (c *Clientset) GetPod(namespace, name string) (*corev1.Pod, error) {
@@ -400,15 +460,6 @@ func (c *Clientset) ListPVs() ([]*corev1.PersistentVolume, error) {
 
 	// TODO(urielguzman): Add volumeHandle indexer to reduce O(N) -> O(1) for shared mount ControllerPublishVolume.
 	return c.pvLister.List(labels.Everything())
-}
-
-func (c *Clientset) ListPods() ([]*corev1.Pod, error) {
-	if c.podLister == nil {
-		return nil, errors.New("pod informer is not ready")
-	}
-
-	// TODO(urielguzman): Add podName indexer to reduce O(N) -> O(1) for shared node mount ControllerUnpublishVolume.
-	return c.podLister.List(labels.Everything())
 }
 
 func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
