@@ -85,23 +85,6 @@ func createMounterPodName(nodeID, volumeID string) string {
 	return fmt.Sprintf("%s-%s", mounterPodNamePrefix, sha1Hash)
 }
 
-// pvFromVolumeID finds the PersistentVolume in the cluster that corresponds to the given CSI volumeID.
-func pvFromVolumeID(clientset clientset.Interface, volumeID string) (*corev1.PersistentVolume, error) {
-	if clientset == nil {
-		return nil, fmt.Errorf("clientset is nil")
-	}
-	pvs, err := clientset.ListPVs()
-	if err != nil {
-		return nil, err
-	}
-	for _, pv := range pvs {
-		if pv != nil && pv.Spec.CSI != nil && pv.Spec.CSI.VolumeHandle == volumeID {
-			return pv, nil
-		}
-	}
-	return nil, fmt.Errorf("no pv found for volumeID: %q", volumeID)
-}
-
 // createMounterPod handles the creation of the mounter pod using the Kubernetes API client.
 func createMounterPod(clientset clientset.Interface, ctx context.Context, config *mounterPodConfig) error {
 	if clientset == nil || clientset.K8sClient() == nil {

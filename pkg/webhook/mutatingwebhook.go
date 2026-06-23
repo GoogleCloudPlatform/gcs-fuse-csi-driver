@@ -108,11 +108,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 
 		// Patch the label to PV if it uses shared node mount.
 		if si.Config.EnableSharedNodeMount && pv.Spec.CSI.VolumeAttributes != nil && pv.Spec.CSI.VolumeAttributes[SharedMountVolumeAttribute] == util.TrueStr {
-			if pv.Labels == nil {
-				pv.Labels = make(map[string]string)
-			}
-			if pv.Labels[SharedMountLabel] != util.TrueStr {
+			if pv.Labels[SharedMountLabel] != util.TrueStr || pv.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] != pv.Name {
+				if pv.Labels == nil {
+					pv.Labels = make(map[string]string)
+				}
 				pv.Labels[SharedMountLabel] = util.TrueStr
+				pv.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] = pv.Name
 				marshaledPV, err := json.Marshal(pv)
 				if err != nil {
 					return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to marshal pv: %w", err))

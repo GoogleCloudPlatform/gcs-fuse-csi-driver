@@ -53,7 +53,7 @@ const (
 func initTestController(t *testing.T, clientset clientset.Interface) csi.ControllerServer {
 	t.Helper()
 	driver := initTestDriver(t, nil, clientset)
-	cs, err := newControllerServer(driver, driver.config.StorageServiceManager, &GCSDriverFeatureOptions{FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{}})
+	cs, err := newControllerServer(driver, driver.config.StorageServiceManager, driver.config.FeatureOptions)
 	if err != nil {
 		t.Fatalf("newControllerServer failed: %v", err)
 	}
@@ -329,7 +329,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
@@ -343,7 +344,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -363,7 +365,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -382,7 +385,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -455,7 +459,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -501,7 +506,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -519,7 +525,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -538,7 +545,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -557,7 +565,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -590,7 +599,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -609,7 +619,8 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
@@ -626,13 +637,28 @@ func TestControllerPublishVolume(t *testing.T) {
 				NodeId:           testNodeID,
 				VolumeCapability: testVolumeCapability,
 				VolumeContext: map[string]string{
-					"sharedMount": "true",
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
 				return setupFakeBase(getDefaultFakeClientsetConfig())
 			},
 			podCreateErr:  errors.New("simulated create error"),
+			expectErr:     true,
+			expectErrCode: codes.Internal,
+		},
+		{
+			name: "sharedMount true - missing pv name in volume context - should return Internal",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount": "true",
+				},
+			},
+			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
 			expectErr:     true,
 			expectErrCode: codes.Internal,
 		},

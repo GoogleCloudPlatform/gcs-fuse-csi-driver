@@ -160,10 +160,12 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Find the workload namespace where the mounter pod should be created by identifying the PVC
 	// bound to this volume's PV.
 	clientset := s.driver.config.K8sClients
-	// TODO(urielguzman): This implementation requires PVs from the informer's cache, which can
-	// unbounded. When manually testing the feature, we should add a volumeHandle indexer,
-	// so that the lookup can be O(1).
-	pv, err := pvFromVolumeID(clientset, volumeID)
+	pvName := vc[util.VolumeContextKeyPVName]
+	if pvName == "" {
+		return nil, status.Errorf(codes.Internal, "PV name not found in VolumeContext (key %q)", util.VolumeContextKeyPVName)
+	}
+	klog.V(6).Infof("ControllerPublishVolume: directly fetching PV %q from VolumeContext for volume %q, context: %v", pvName, volumeID, vc)
+	pv, err := clientset.GetPV(pvName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Error(codes.NotFound, err.Error())

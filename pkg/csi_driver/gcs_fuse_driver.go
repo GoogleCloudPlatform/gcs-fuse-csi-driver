@@ -51,6 +51,7 @@ type GoMemLimitOptions struct {
 }
 
 type SharedMountOptions struct {
+	Enabled         bool
 	MounterPodImage string
 	FuseSocketDir   string
 	// Needed to override the mounter pods emptydir base path, otherwise tests will try to write to var/lib/kubelet which it won't have access to.
@@ -134,12 +135,18 @@ func NewGCSDriver(config *GCSDriverConfig, recorder record.EventRecorder) (*GCSD
 		nscap := []csi.NodeServiceCapability_RPC_Type{
 			csi.NodeServiceCapability_RPC_VOLUME_MOUNT_GROUP,
 		}
+		if config.FeatureOptions != nil && config.FeatureOptions.SharedMountOptions != nil && config.FeatureOptions.SharedMountOptions.Enabled {
+			nscap = append(nscap, csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME)
+		}
 		driver.ns = newNodeServer(driver, config.Mounter)
 		driver.addNodeServiceCapabilities(nscap)
 	}
 	if config.RunController {
 		csc := []csi.ControllerServiceCapability_RPC_Type{
 			csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+		}
+		if config.FeatureOptions != nil && config.FeatureOptions.SharedMountOptions != nil && config.FeatureOptions.SharedMountOptions.Enabled {
+			csc = append(csc, csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME)
 		}
 		driver.addControllerServiceCapabilities(csc)
 
