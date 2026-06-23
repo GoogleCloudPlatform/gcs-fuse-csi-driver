@@ -150,6 +150,9 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      config.podName,
 			Namespace: config.namespace,
+			Labels: map[string]string{
+				webhook.SharedMountLabel: util.TrueStr,
+			},
 		},
 		Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{

@@ -415,6 +415,9 @@ func TestCreateMounterPodSpec(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "my-mounter-pod",
 					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: map[string]string{
@@ -467,6 +470,9 @@ func TestCreateMounterPodSpec(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "my-mounter-pod",
 					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: map[string]string{
@@ -520,6 +526,9 @@ func TestCreateMounterPodSpec(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "my-mounter-pod",
 					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: map[string]string{
