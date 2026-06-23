@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -379,6 +380,10 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 			if nodeName != "" {
 				options.FieldSelector = "spec.nodeName=" + nodeName
 			}
+			if c.runController {
+				// Only track mounter pods when the Pod informer is configured in the controller.
+				options.LabelSelector = fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr)
+			}
 		}),
 		informers.WithTransform(trim),
 	)
@@ -395,6 +400,7 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 		if err != nil {
 			klog.Fatalf("Failed to add podName indexer: %v", err)
 		}
+
 		c.podInformer = podInformer
 	}
 
