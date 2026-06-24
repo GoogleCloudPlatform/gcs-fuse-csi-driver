@@ -20,11 +20,14 @@ package driver
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -63,6 +66,7 @@ const (
 	VolumeContextKeyIdentityPool               = "identityPool"
 	VolumeContextKeyMultiNICIndex              = "multiNICIndex"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
+	VolumeContextSharedNodeMount               = "sharedMount"
 	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
@@ -77,15 +81,19 @@ const (
 	VolumeContextKeyBucketName             = "bucketName"
 	TokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
 	SidecarBucketAccessCheckMinVersion     = "v1.20.0-gke.0"
-	SidecarCloudProfilerMinVersion         = "v1.19.0-gke.0"
+	SidecarCloudProfilerMinVersion         = "v1.23.7-gke.0"
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
+	SidecarAutoGoMemLimitMinVersion        = "v1.23.11-gke.0"
+	StorageEndpointInternalMinVersion      = "v1.23.14-gke.0"
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
+	PublishContextKeyMounterPodName        = "mounter-pod-name"
+	PublishContextKeyMounterPodNamespace   = "mounter-pod-namespace"
 )
 
 var (
@@ -372,6 +380,39 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]stri
 	return args, err
 }
 
+// storageEndpointFromUniverseDomain returns the storage endpoint for the universe domain,
+// in the format storage.UNIVERSE_DOMAIN:443. If no universe domain is provided, googleapis.com
+// will be used as default.
+func storageEndpointFromUniverseDomain(universeDomain string) string {
+	if universeDomain == "" {
+		universeDomain = "googleapis.com"
+	}
+	return fmt.Sprintf("storage.%s:443", universeDomain)
+}
+
+// overrideStorageEndpointInternal adds the storage-endpoint-internal flag to the mountOptions.
+// If it already exists, it will be overridden.
+func overrideStorageEndpointInternal(opts []string, storageEndpoint string) []string {
+	prefix := fmt.Sprintf("%s=", util.StorageEndpointInternal)
+	replacement := fmt.Sprintf("%s%s", prefix, storageEndpoint)
+	newMountOptions := make([]string, 0, len(opts)+1)
+
+	for _, opt := range opts {
+		if strings.HasPrefix(opt, prefix) {
+			if opt != replacement {
+				// Log a warning if we are actively changing an existing value.
+				klog.Warningf("Found flag %q, replaced with %q", opt, replacement)
+			}
+			// Skip adding the old/incorrect flag to the new slice.
+			continue
+		}
+		newMountOptions = append(newMountOptions, opt)
+	}
+
+	// Always append the correct/updated flag at the end.
+	return append(newMountOptions, replacement)
+}
+
 func putExitFile(pod *corev1.Pod, targetPath string) error {
 	podIsTerminating := pod.DeletionTimestamp != nil
 	podRestartPolicyIsNever := pod.Spec.RestartPolicy == corev1.RestartPolicyNever
@@ -420,14 +461,24 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 		}
 
 		exitFilePath := filepath.Dir(emptyDirBasePath) + "/exit"
-		f, err := os.Create(exitFilePath)
-		if err != nil {
-			return fmt.Errorf("failed to put the exit file: %w", err)
-		}
-		f.Close()
+		exitParentDir := filepath.Dir(exitFilePath)
 
-		err = os.Chown(exitFilePath, webhook.NobodyUID, webhook.NobodyGID)
+		// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
+		// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
+		// attacks during subsequent relative operations (using unix.Openat).
+		parentFd, err := unix.Open(exitParentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 		if err != nil {
+			return fmt.Errorf("failed to open parent directory %q: %w", exitParentDir, err)
+		}
+		defer unix.Close(parentFd)
+
+		fd, err := unix.Openat(parentFd, filepath.Base(exitFilePath), unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to securely open exit file: %w", err)
+		}
+		f := os.NewFile(uintptr(fd), exitFilePath)
+		defer f.Close()
+		if err := f.Chown(webhook.NobodyUID, webhook.NobodyGID); err != nil {
 			return fmt.Errorf("failed to change ownership on the exit file: %w", err)
 		}
 	}
@@ -452,21 +503,44 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 		return code, fmt.Errorf("failed to get emptyDir path: %w", err)
 	}
 
-	klog.V(4).Infof("checkGcsFuseErr read file %s", emptyDirBasePath+"/error")
+	errorFilePath := emptyDirBasePath + "/error"
+	klog.V(4).Infof("[Pod %v/%v] checking sidecar container error status", pod.Namespace, pod.Name)
 
-	errMsg, err := os.ReadFile(emptyDirBasePath + "/error")
-	if err != nil && !os.IsNotExist(err) {
-		return code, fmt.Errorf("failed to open error file %q: %w", emptyDirBasePath+"/error", err)
+	parentDir := filepath.Dir(errorFilePath)
+
+	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
+	// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
+	// attacks during subsequent relative operations (using unix.Openat).
+	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return codes.OK, nil
+		}
+		return code, fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
+	}
+	defer unix.Close(parentFd)
+
+	fd, err := unix.Openat(parentFd, filepath.Base(errorFilePath), unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return codes.OK, nil
+		}
+		return code, fmt.Errorf("failed to open error file %q: %w", errorFilePath, err)
 	}
 
-	return extractErrorFromGcsFuseErrorFile(errMsg, err)
+	f := os.NewFile(uintptr(fd), errorFilePath)
+	defer f.Close()
+
+	errMsg, err := io.ReadAll(f)
+	if err != nil {
+		return code, fmt.Errorf("failed to read error file %q: %w", errorFilePath, err)
+	}
+
+	return extractErrorFromGcsFuseErrorFile(errMsg)
 }
 
-func extractErrorFromGcsFuseErrorFile(errMsg []byte, err error) (codes.Code, error) {
-	if err != nil && !os.IsNotExist(err) {
-		return codes.Internal, fmt.Errorf("error occurred while trying to read gcsfuse error file: %w", err)
-	}
-	if err == nil && len(errMsg) > 0 {
+func extractErrorFromGcsFuseErrorFile(errMsg []byte) (codes.Code, error) {
+	if len(errMsg) > 0 {
 		// TODO: We need a standard for scraping errors from GCSFuse.
 		// A change in string format in GCSFuse would break this function.
 		// If we are aware of such change, its also tedious to catch and
@@ -570,6 +644,10 @@ func isManagedSidecarImage(imageName string) bool {
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+	if imageName == "" {
+		return false
+	}
+
 	if d.config.AssumeGoodSidecarVersion {
 		klog.V(4).Infof("Assuming good sidecar version from flag")
 		return true
@@ -603,17 +681,28 @@ func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string
 	absolutePath := filepath.Dir(emptyDirBasePath) + "/" + fileName
 	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %q: %v", absolutePath, flagMap)
 
-	// This file is truncated/cleared if it already exists.
-	f, err := os.Create(absolutePath)
+	parentDir := filepath.Dir(emptyDirBasePath)
+
+	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
+	// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
+	// attacks during subsequent relative operations (using unix.Openat).
+	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("failed to create defaulting-flag file: %w", err)
+		return fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
 	}
+	defer unix.Close(parentFd)
+
+	fd, err := unix.Openat(parentFd, filepath.Base(fileName), unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to securely open defaulting-flag file: %w", err)
+	}
+	f := os.NewFile(uintptr(fd), absolutePath)
+	defer f.Close()
+
 	content := prepareFileContentFromFlagMap(flagMap)
 	if _, err := f.WriteString(content); err != nil {
 		return fmt.Errorf("failed to write defaulting-flag file: %w", err)
 	}
-
-	f.Close()
 
 	return nil
 }
@@ -690,4 +779,17 @@ func transformKeysToSet(inputMap map[string]string) map[string]struct{} {
 		outputSet[key] = struct{}{}
 	}
 	return outputSet
+}
+
+func getInternalMountOptionValue(options []string, key string) string {
+	for i := len(options) - 1; i >= 0; i-- {
+		k, v, found := strings.Cut(options[i], "=")
+		if k == key {
+			if found {
+				return v
+			}
+			return ""
+		}
+	}
+	return ""
 }

@@ -20,6 +20,7 @@ package driver
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,9 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -164,9 +167,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
+	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
 	if vs != nil && !args.skipCSIBucketAccessCheck {
 		if !vs.BucketAccessCheckPassed {
-			storageService, err := s.prepareStorageService(ctx, vc)
+			storageService, err := s.prepareStorageService(ctx, vc, storageEndpoint)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 			}
@@ -180,7 +184,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.config.EnableSidecarBucketAccessCheck && gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion)
+	sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
+	userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
+	userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
+	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
+		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, args.userSpecifiedIdentityProvider != "") {
 		if args.userSpecifiedIdentityProvider != "" {
@@ -190,9 +198,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
-	} else if enableSidecarBucketAccessCheckForSidecarVersion {
+	} else if enableSidecarBucketAccessCheckForSidecarVersion && !userExplicitlyEnabled {
 		//Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheck)})
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=true"})
 	}
 
 	if enableSidecarBucketAccessCheckForSidecarVersion {
@@ -209,12 +217,48 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			util.TokenServerIdentityPoolConst + "=" + identityPool})
 	}
 
-	if args.enableCloudProfilerForSidecar && gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
+	if args.enableCloudProfilerForSidecar && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
 			util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(args.enableCloudProfilerForSidecar),
 			util.PodNameConst + "=" + vc[VolumeContextKeyPodName],
 			util.PodUIDConst + "=" + string(pod.UID),
 		})
+	}
+
+	// Check if the user explicitly provided GOMEMLIMIT flags in their
+	// volume's mountOptions.
+	userProvidedAutoMemLimit := false
+	userProvidedRatio := false
+	for _, opt := range args.fuseMountOptions {
+		if opt == util.EnableAutoGoMemLimitConst || strings.HasPrefix(opt, util.EnableAutoGoMemLimitConst+"=") {
+			userProvidedAutoMemLimit = true
+		}
+		if strings.HasPrefix(opt, util.AutoGoMemLimitRatioConst+"=") {
+			userProvidedRatio = true
+		}
+	}
+
+	// Inject driver defaults if the sidecar supports the GOMEMLIMIT feature.
+	// We evaluate the ratio independently so users who manually opt-in via
+	// mountOptions without specifying a ratio still receive the driver's
+	// default.
+	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarAutoGoMemLimitMinVersion) {
+		var extraOpts []string
+		enableAutoGoMemLimit := s.driver.config.FeatureOptions.GoMemLimitOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions.EnableAutoGoMemLimit
+		if enableAutoGoMemLimit && !userProvidedAutoMemLimit {
+			extraOpts = append(extraOpts, util.EnableAutoGoMemLimitConst+"=true")
+		}
+		//  We check this to prevent injecting the ratio and adding unnecessary
+		// noise to the mount options when the feature is completely disabled.
+		sidecarFeatureWillBeEnabled := enableAutoGoMemLimit || userProvidedAutoMemLimit
+		if !userProvidedRatio && sidecarFeatureWillBeEnabled && s.driver.config.FeatureOptions.GoMemLimitOptions != nil {
+			autoGoMemLimitRatio := s.driver.config.FeatureOptions.GoMemLimitOptions.AutoGoMemLimitRatio
+			extraOpts = append(extraOpts, util.AutoGoMemLimitRatioConst+"="+strconv.FormatFloat(autoGoMemLimitRatio, 'f', -1, 64))
+		}
+
+		if len(extraOpts) > 0 {
+			args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, extraOpts)
+		}
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -267,7 +311,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
-	if gcsFuseSidecarImage != "" && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
+	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
 		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
 		machineType, ok := node.Labels[clientset.MachineTypeKey]
 		if ok {
@@ -347,6 +391,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
+
+	// Pass the universe-aware storage endpoint if the sidecar version supports it.
+	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, StorageEndpointInternalMinVersion) {
+		args.fuseMountOptions = overrideStorageEndpointInternal(args.fuseMountOptions, storageEndpoint)
+	}
+
 	// Start to mount
 	if err = s.mounter.Mount(args.bucketName, targetPath, FuseMountType, args.fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
@@ -380,7 +430,6 @@ func (s *nodeServer) startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidec
 func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage string, vs *util.VolumeState) bool {
 	return vs != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
-		gcsFuseSidecarImage != "" &&
 		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
 }
 
@@ -493,9 +542,9 @@ func (s *nodeServer) setupMultiNIC(args *requestArgs, pod *corev1.Pod, sidecarSu
 }
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
-func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
+func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string, customEndpoint string) (storage.Service, error) {
 	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], "" /*audience*/, false)
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts, customEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
@@ -549,6 +598,15 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	return ""
 }
 
+// countGcsFuseVolumes returns the number of GCSFuse CSI Ephemeral volumes or
+// PersistentVolumeClaims in the given Pod spec. We intentionally do not
+// check to see if the PVC is a GCSFuseCSI PVC because that requires additional
+// API calls or a PVC informer which previously made the node driver OOM.
+// We may end up counting some non-GCSFuse volumes, but that is acceptable
+// since this is only used to determine whether to enable metrics collection
+// on a given pod.
+// TODO(amacaskill): Make sure the PVC is a GCSFuseCSI PVC, without
+// causing an OOM in the node driver at scale.
 func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 	gcsFuseVolumeCount := 0
 
@@ -563,40 +621,235 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 			continue
 		}
 
-		if v.PersistentVolumeClaim == nil {
-			continue
-		}
-
-		// Count persistent gcsfuse volumes
-		pvc, err := s.k8sClients.GetPVC(pod.Namespace, v.PersistentVolumeClaim.ClaimName)
-
-		// A NotFound error is tolerated, but other errors will abort the count and disable metrics.
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				klog.Warningf("pvc %q not found: %v", v.PersistentVolumeClaim.ClaimName, err)
-				continue
-			}
-
-			klog.Errorf("internal error getting PVC %q: %v. Setting GCS Fuse metric count to 0", v.PersistentVolumeClaim.ClaimName, err)
-			return 0, err
-		}
-
-		pv, err := s.k8sClients.GetPV(pvc.Spec.VolumeName)
-
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				klog.Warningf("pv %q not found: %v", pvc.Spec.VolumeName, err)
-				continue
-			}
-
-			klog.Errorf("internal error getting PV %q: %v. Setting GCS Fuse metric count to 0", pvc.Spec.VolumeName, err)
-			return 0, err
-		}
-
-		if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == s.driver.config.Name {
+		if v.PersistentVolumeClaim != nil {
 			gcsFuseVolumeCount++
+			continue
 		}
 	}
 
 	return gcsFuseVolumeCount, nil
+}
+
+func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	// Validate arguments.
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Request cannot be nil")
+	}
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Volume ID must be provided")
+	}
+	if req.GetVolumeCapability() == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Volume capability must be provided")
+	}
+	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	stagingPath := req.GetStagingTargetPath()
+	if len(stagingPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided")
+	}
+	// Skip NodeStageVolume for sidecar mounted volumes.
+	if !sharedMount(req.GetVolumeContext()) {
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
+	publishContext := req.GetPublishContext()
+	if publishContext == nil {
+		return nil, status.Error(codes.InvalidArgument, "publishContext must be provided")
+	}
+
+	podName, ok := publishContext[PublishContextKeyMounterPodName]
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "publishContext must contain mounter pod name")
+	}
+	if podName == "" {
+		return nil, status.Error(codes.InvalidArgument, "mounter pod name in publishContext cannot be empty")
+	}
+
+	podNamespace, ok := publishContext[PublishContextKeyMounterPodNamespace]
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "publishContext must contain mounter pod namespace")
+	}
+	if podNamespace == "" {
+		return nil, status.Error(codes.InvalidArgument, "mounter pod namespace in publishContext cannot be empty")
+	}
+
+	// Acquire a lock on the staging path.
+	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
+	}
+	defer s.volumeLocks.Release(stagingPath)
+
+	resp, err := s.executeNodeStageVolume(ctx, req)
+
+	if err != nil {
+		klog.Errorf("NodeStageVolume failed on staging path %q for volume %q: %v)", stagingPath, volumeID, err)
+	}
+
+	return resp, err
+}
+
+func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	clientset := s.driver.config.K8sClients
+	stagingPath := req.GetStagingTargetPath()
+
+	// Validate staging path and mounter pod information from the request.
+	publishContext := req.GetPublishContext()
+	podName := publishContext[PublishContextKeyMounterPodName]
+	podNamespace := publishContext[PublishContextKeyMounterPodNamespace]
+
+	klog.Infof("Executing NodeStageVolume. Mounter pod: %s/%s, node: %q, volume: %q, staging path: %q", podNamespace, podName, s.driver.config.NodeID, req.GetVolumeId(), stagingPath)
+
+	// Verify mounter pod exists.
+	pod, err := clientset.GetPod(podNamespace, podName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", podNamespace, podName)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", podNamespace, podName, err)
+	}
+	if pod == nil {
+		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
+	}
+
+	// Check if the staging path is already mounted.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+	if mounted {
+		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
+	// Make the staging path.
+	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
+	if err := os.MkdirAll(stagingPath, 0750); err != nil {
+		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
+	}
+
+	// Wait for the mounter pod grpc server to be ready.
+	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
+		return nil, err
+	}
+
+	podUID := string(pod.UID)
+
+	// Send GRPC to mounter pod to start GCSFuse.
+	if err := s.mountToNode(ctx, podUID, stagingPath, req.GetVolumeId()); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
+
+	klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
+	return &csi.NodeStageVolumeResponse{}, nil
+}
+
+// mountToNode connects to the mounter server, at which point it initializes the GCSFuse process.
+func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string) error {
+	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
+		return status.Errorf(codes.Internal, "shared mount options are not fully configured")
+	}
+
+	if s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath == nil {
+		return status.Errorf(codes.Internal, "empty dir base path must be provided for shared mount")
+	}
+	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
+	socketFile := filepath.Join(emptyDirBasePath, mounterPodSocketFile)
+
+	// Create a symlink to bypass the 108-character limit for Unix domain sockets
+	// when dialing the connection from the Node Server.
+	if s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir == "" {
+		return status.Errorf(codes.Internal, "fuse socket dir must be provided for shared mount")
+	}
+	symlink := filepath.Join(s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir, mounterPodSocketDir, podUID)
+	if err := os.MkdirAll(filepath.Dir(symlink), 0750); err != nil {
+		return status.Errorf(codes.Internal, "failed to create dir for symlink %q: %v", symlink, err)
+	}
+
+	if err := os.Remove(symlink); err != nil && !os.IsNotExist(err) {
+		klog.Errorf("failed to remove stale symlink %q: %v", symlink, err)
+	}
+
+	if err := os.Symlink(socketFile, symlink); err != nil {
+		return status.Errorf(codes.Internal, "failed to create symlink to %q: %v", socketFile, err)
+	}
+	defer os.Remove(symlink)
+
+	// Connect to the socket using the short symlink path.
+	socketPath := fmt.Sprintf("unix:%s", symlink)
+	conn, err := grpc.NewClient(socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		klog.Errorf("Failed to connect to the server: %v", err)
+		return status.Errorf(codes.Internal, "failed to connect to the mounter pod grpc server: %v", err)
+	}
+	klog.Infof("Connected to MounterServer at %s", socketPath)
+	defer conn.Close()
+
+	/*
+		TODO(FUECHR): Implement the mounter client and mount request once we have a mounter service defined.
+		c := mounter.NewMounterClient(conn)
+		if _, err := c.Mount(ctx, &mounter.MountRequest{
+			Mountpoint: stagingPath,
+			VolumeID:   volumeID,
+		}); err != nil {
+			return status.Errorf(codes.Internal, "failed to mount: %v", err)
+		}
+	*/
+
+	klog.Infof("Mount succeeded at staging target path %s", stagingPath)
+	return nil
+}
+
+func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	// Validate arguments.
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Request cannot be nil")
+	}
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Volume ID must be provided")
+	}
+	stagingPath := req.GetStagingTargetPath()
+	if len(stagingPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Staging Target Path must be provided")
+	}
+
+	// Acquire a lock on the staging path instead of volumeID, since we do not want to serialize multiple node unstage calls on the same volume.
+	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
+	}
+	defer s.volumeLocks.Release(stagingPath)
+
+	if err := s.cleanupStagingPath(stagingPath); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("NodeUnstageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
+	return &csi.NodeUnstageVolumeResponse{}, nil
+}
+
+func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
+	// Unmount staging path.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+
+	if mounted {
+		if err = s.mounter.Unmount(stagingPath); err != nil {
+			return status.Errorf(codes.Internal, "failed to unmount staging path %q: %v", stagingPath, err)
+		}
+	} else {
+		klog.Infof("staging path %q was already unmounted", stagingPath)
+	}
+
+	// Cleanup the mount point.
+	if err := mount.CleanupMountPoint(stagingPath, s.mounter, false /* bind mount */); err != nil {
+		return status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", stagingPath, err)
+	}
+
+	return nil
 }

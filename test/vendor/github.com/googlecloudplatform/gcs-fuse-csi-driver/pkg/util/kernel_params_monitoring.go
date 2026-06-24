@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -52,12 +53,41 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
+// validateParamValue converts the string value to an integer and checks it against safe bounds.
+func validateParamValue(name ParamName, value string) error {
+	valInt, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf("value %q is not a valid integer", value)
+	}
+
+	// Enforce safe minimum and maximum boundaries for each parameter to prevent node instability.
+	switch name {
+	case MaxReadAheadKb:
+		if valInt < 0 || valInt > 1048576 { // 1 GB
+			return fmt.Errorf("value %d is outside safe bounds for %s", valInt, name)
+		}
+	case MaxBackgroundRequests:
+		if valInt < 1 || valInt > 1000 {
+			return fmt.Errorf("value %d is outside safe bounds for %s", valInt, name)
+		}
+	case CongestionWindowThreshold:
+		if valInt < 0 || valInt > 1000 {
+			return fmt.Errorf("value %d is outside safe bounds for %s", valInt, name)
+		}
+	default:
+		// Fail-closed for unknown parameters
+		return fmt.Errorf("validation rules missing for parameter %s", name)
+	}
+
+	return nil
+}
+
 // checkAndApplyKernelParams checks for the existence of the kernel parameters file,
 // parses the configuration, and applies the parameters to the system if they differ
 // from the current values.
 func checkAndApplyKernelParams(kernelParamsFilePath string, pathForParam map[ParamName]string, logPrefix string) error {
-	// Check for file existence to avoid unnecessary parsing attempts.
-	if _, statErr := os.Stat(kernelParamsFilePath); statErr != nil {
+	// Check for file existence to avoid unnecessary parsing attempts. Use Lstat to prevent following symlinks.
+	if _, statErr := os.Lstat(kernelParamsFilePath); statErr != nil {
 		// If file is missing, wait for the next interval.
 		return nil
 	}
@@ -73,6 +103,13 @@ func checkAndApplyKernelParams(kernelParamsFilePath string, pathForParam map[Par
 			klog.Warningf("%v Unknown parameter name %q found in kernel parameters config for requestID %q. Skipping...", logPrefix, param.Name, config.RequestID)
 			continue
 		}
+
+		param.Value = strings.TrimSpace(param.Value)
+		if err := validateParamValue(param.Name, param.Value); err != nil {
+			klog.Warningf("%v Invalid value for parameter %q (requestID %q): %v. Skipping...", logPrefix, param.Name, config.RequestID, err)
+			continue
+		}
+
 		currValBytes, err := os.ReadFile(path)
 		if err != nil {
 			klog.Warningf("%v Failed to read kernel parameter %q from file path %q: %v", logPrefix, param.Name, path, err)

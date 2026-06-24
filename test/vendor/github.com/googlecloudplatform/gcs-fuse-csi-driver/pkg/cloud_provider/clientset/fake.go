@@ -26,7 +26,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type FakeNodeConfig struct {
@@ -36,21 +39,30 @@ type FakeNodeConfig struct {
 }
 
 type FakePodConfig struct {
+	Name               string
+	Namespace          string
 	HostNetworkEnabled bool
 	SidecarLimits      corev1.ResourceList
+	DeletionTimestamp  *metav1.Time
+	UID                types.UID
+	PodStatus          *corev1.PodStatus
+	NodeName           string
 }
 
 type FakePVConfig struct {
-	Annotations map[string]string
-	SCName      string
-	DriverName  string
-	Name        string
+	Annotations  map[string]string
+	SCName       string
+	DriverName   string
+	Name         string
+	VolumeHandle string
+	ClaimRef     *corev1.ObjectReference
 }
 
 type FakePVCConfig struct {
-	Name       string
-	VolumeName string
-	Namespace  string
+	Name        string
+	VolumeName  string
+	Namespace   string
+	Annotations map[string]string
 }
 
 type FakeSCConfig struct {
@@ -59,19 +71,36 @@ type FakeSCConfig struct {
 	MountOptions []string
 }
 
-type FakeClientset struct {
-	fakePod  *corev1.Pod
-	fakeNode *corev1.Node
-	fakePVs  map[string]*corev1.PersistentVolume
-	fakePVCs map[string]*corev1.PersistentVolumeClaim
-	fakeSCs  map[string]*storagev1.StorageClass
+type FakePodTemplateConfig struct {
+	Name      string
+	Namespace string
+	Template  corev1.PodTemplateSpec
 }
 
-func NewFakeClientset() *FakeClientset {
+type FakeClientset struct {
+	Client            kubernetes.Interface
+	fakePod           *corev1.Pod
+	fakeNode          *corev1.Node
+	fakePVs           map[string]*corev1.PersistentVolume
+	fakePVCs          map[string]*corev1.PersistentVolumeClaim
+	fakeSCs           map[string]*storagev1.StorageClass
+	fakePods          []*corev1.Pod
+	fakePodTemplates  map[string]*corev1.PodTemplate
+	ListPVErr         error
+	ListPodErr        error
+	GetPodErr         error
+	GetPodTemplateErr error
+}
+
+func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
+	fakeK8sClient := fake.NewSimpleClientset(objects...)
 	fakeClientSet := &FakeClientset{
-		fakePVs:  make(map[string]*corev1.PersistentVolume),
-		fakePVCs: make(map[string]*corev1.PersistentVolumeClaim),
-		fakeSCs:  make(map[string]*storagev1.StorageClass),
+		Client:           fakeK8sClient,
+		fakePVs:          make(map[string]*corev1.PersistentVolume),
+		fakePVCs:         make(map[string]*corev1.PersistentVolumeClaim),
+		fakeSCs:          make(map[string]*storagev1.StorageClass),
+		fakePodTemplates: make(map[string]*corev1.PodTemplate),
+		fakePods:         []*corev1.Pod{},
 	}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
 	fakeClientSet.CreatePod(FakePodConfig{HostNetworkEnabled: false})
@@ -79,12 +108,13 @@ func NewFakeClientset() *FakeClientset {
 	fakeClientSet.CreatePV(FakePVConfig{})
 	fakeClientSet.CreatePVC(FakePVCConfig{})
 	fakeClientSet.CreateSC(FakeSCConfig{})
+	fakeClientSet.CreatePodTemplate(FakePodTemplateConfig{})
 
 	return fakeClientSet
 }
 
 func (c *FakeClientset) K8sClient() kubernetes.Interface {
-	return nil
+	return c.Client
 }
 
 func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
@@ -97,6 +127,8 @@ func (c *FakeClientset) ConfigurePVCLister(_ context.Context) {}
 
 func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
 
+func (c *FakeClientset) ConfigurePodTemplateLister(_ context.Context) {}
+
 func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 	config := webhook.FakeConfig()
 
@@ -107,8 +139,9 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	c.fakePod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "",
-			Namespace: "",
+			Name:      podConfig.Name,
+			Namespace: podConfig.Namespace,
+			UID:       podConfig.UID,
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -131,6 +164,20 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 	if podConfig.HostNetworkEnabled {
 		c.fakePod.Spec.HostNetwork = true
 	}
+
+	if podConfig.DeletionTimestamp != nil {
+		c.fakePod.DeletionTimestamp = podConfig.DeletionTimestamp
+	}
+
+	if podConfig.PodStatus != nil {
+		c.fakePod.Status = *podConfig.PodStatus
+	}
+
+	if podConfig.NodeName != "" {
+		c.fakePod.Spec.NodeName = podConfig.NodeName
+	}
+
+	c.fakePods = append(c.fakePods, c.fakePod)
 }
 
 func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
@@ -160,9 +207,11 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 			StorageClassName: pvConfig.SCName,
 			PersistentVolumeSource: corev1.PersistentVolumeSource{
 				CSI: &corev1.CSIPersistentVolumeSource{
-					Driver: pvConfig.DriverName,
+					Driver:       pvConfig.DriverName,
+					VolumeHandle: pvConfig.VolumeHandle,
 				},
 			},
+			ClaimRef: pvConfig.ClaimRef,
 		},
 	}
 
@@ -172,8 +221,9 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   pvcConfig.Name,
-			Labels: map[string]string{},
+			Name:        pvcConfig.Name,
+			Labels:      map[string]string{},
+			Annotations: pvcConfig.Annotations,
 		},
 	}
 
@@ -197,6 +247,18 @@ func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 	c.fakeSCs[sc.Name] = sc
 }
 
+func (c *FakeClientset) CreatePodTemplate(podTemplateConfig FakePodTemplateConfig) {
+	podTemplate := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podTemplateConfig.Name,
+			Namespace: podTemplateConfig.Namespace,
+		},
+		Template: podTemplateConfig.Template,
+	}
+
+	c.fakePodTemplates[podTemplate.Name] = podTemplate
+}
+
 func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
 	if c.fakePod != nil {
 		c.fakePod.Spec.Volumes = append(c.fakePod.Spec.Volumes, volumes...)
@@ -204,6 +266,9 @@ func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
 }
 
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
+	if c.GetPodErr != nil {
+		return nil, c.GetPodErr
+	}
 	c.fakePod.ObjectMeta.Name = name
 	c.fakePod.ObjectMeta.Namespace = namespace
 
@@ -224,6 +289,30 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	return c.fakePVs[""], nil
 }
 
+func (c *FakeClientset) ListPVs() ([]*corev1.PersistentVolume, error) {
+	if c.ListPVErr != nil {
+		return nil, c.ListPVErr
+	}
+	var pvs []*corev1.PersistentVolume
+	for _, pv := range c.fakePVs {
+		pvs = append(pvs, pv)
+	}
+	return pvs, nil
+}
+
+func (c *FakeClientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
+	if c.ListPodErr != nil {
+		return nil, c.ListPodErr
+	}
+	var pods []*corev1.Pod
+	for _, pod := range c.fakePods {
+		if pod != nil && pod.Name == podName {
+			pods = append(pods, pod)
+		}
+	}
+	return pods, nil
+}
+
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
 	if pvc, ok := c.fakePVCs[name]; ok {
 		return pvc, nil
@@ -238,6 +327,17 @@ func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
 	}
 
 	return c.fakeSCs[""], nil
+}
+
+func (c *FakeClientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error) {
+	if c.GetPodTemplateErr != nil {
+		return nil, c.GetPodTemplateErr
+	}
+	if podTemplate, ok := c.fakePodTemplates[name]; ok {
+		return podTemplate, nil
+	}
+
+	return c.fakePodTemplates[""], nil
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
