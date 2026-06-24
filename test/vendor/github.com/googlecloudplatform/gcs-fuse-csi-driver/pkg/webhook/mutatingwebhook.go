@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"cloud.google.com/go/compute/metadata"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
@@ -56,6 +57,11 @@ const (
 	metadataPrefetchMemoryRequestAnnotation          = "gke-gcsfuse/metadata-prefetch-memory-request"
 	GCPWorkloadIdentityCredentialConfigMapAnnotation = "gke-gcsfuse/workload-identity-credential-configmap"
 	NumaPinningAnnotation                            = "gke-gcsfuse/enable-numa-pinning"
+	// AdditionalVolumeMountsAnnotation is used to specify additional volumes to mount into the GCS Fuse sidecar.
+	// The expected format is a comma-separated list of volumeName:mountPath (e.g., "vol1:/path1,vol2:/path2").
+	AdditionalVolumeMountsAnnotation = "gke-gcsfuse/additional-volume-mounts"
+
+	GoogleExternalAccountAllowExecutablesEnvVar = "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES"
 )
 
 var (
@@ -73,13 +79,14 @@ type SidecarInjector struct {
 	PvcLister              listersv1.PersistentVolumeClaimLister
 	PvLister               listersv1.PersistentVolumeLister
 	ScLister               listerstoragev1.StorageClassLister
+	PodTemplateLister      listersv1.PodTemplateLister
 	ServerVersion          *version.Version
 	K8SClient              kubernetes.Interface
 }
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
 func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) admission.Response {
-	if req.Kind.Kind == "PersistentVolume" && si.Config.EnableGcsfuseProfiles { // Currently only handling pvs for gcsfuse profiles
+	if req.Kind.Kind == "PersistentVolume" {
 		pv := &corev1.PersistentVolume{}
 		if err := si.Decoder.Decode(req, pv); err != nil {
 			klog.Errorf("Could not decode PersistentVolume object: %v", err)
@@ -87,10 +94,34 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		}
 		klog.Infof("Mutating webhook is handling PersistentVolume: %s", pv.Name)
 
-		if err := si.validatePersistentVolumeForGCSFuseProfiles(pv); err != nil {
-			klog.Errorf("PersistentVolume validation failed: %v", err)
-			return admission.Errored(http.StatusBadRequest, err)
+		if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != util.GCSFuseCsiDriverName {
+			// Not a gcsfuse CSI driver volume, skip validation/mutation
+			return admission.Allowed(fmt.Sprintf("No mutation Required on PersistentVolume: %s", pv.Name))
 		}
+
+		if si.Config.EnableGcsfuseProfiles {
+			if err := si.validatePersistentVolumeForGCSFuseProfiles(pv); err != nil {
+				klog.Errorf("PersistentVolume validation failed: %v", err)
+				return admission.Errored(http.StatusBadRequest, err)
+			}
+		}
+
+		// Patch the label to PV if it uses shared node mount.
+		if si.Config.EnableSharedNodeMount && pv.Spec.CSI.VolumeAttributes != nil && pv.Spec.CSI.VolumeAttributes[SharedMountVolumeAttribute] == util.TrueStr {
+			if pv.Labels[SharedMountLabel] != util.TrueStr || pv.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] != pv.Name {
+				if pv.Labels == nil {
+					pv.Labels = make(map[string]string)
+				}
+				pv.Labels[SharedMountLabel] = util.TrueStr
+				pv.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] = pv.Name
+				marshaledPV, err := json.Marshal(pv)
+				if err != nil {
+					return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to marshal pv: %w", err))
+				}
+				return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPV)
+			}
+		}
+
 		return admission.Allowed(fmt.Sprintf("No mutation Required on PersistentVolume: %s", pv.Name))
 	}
 
@@ -105,6 +136,92 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 
 	if req.Operation != admissionv1.Create {
 		return admission.Allowed(fmt.Sprintf("No injection required for operation %v.", req.Operation))
+	}
+
+	// Classify Pod volumes to check if they are GCSFuse volumes and if they use shared node mount.
+	var hasSharedNodeMount bool
+	var hasStandardMount bool
+
+	for _, volume := range pod.Spec.Volumes {
+		isGcsfuse, _, volumeAttributes, pv, err := si.isGcsFuseCSIVolume(volume, pod.Namespace)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Warningf("PVC does not exist, skipping volume %q: %v", volume.Name, err)
+				continue
+			}
+			klog.Errorf("Failed to check if volume %q is GCSFuse volume: %v", volume.Name, err)
+			return admission.Errored(http.StatusInternalServerError, err)
+		}
+		if !isGcsfuse {
+			continue
+		}
+
+		isSharedNodeMount := si.Config.EnableSharedNodeMount && pv != nil && volumeAttributes != nil && volumeAttributes[SharedMountVolumeAttribute] == util.TrueStr
+
+		if isSharedNodeMount {
+			hasSharedNodeMount = true
+			if volume.PersistentVolumeClaim != nil {
+				pvc, err := si.GetPVC(pod.Namespace, volume.PersistentVolumeClaim.ClaimName)
+				if err != nil {
+					return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to get PVC %q: %w", volume.PersistentVolumeClaim.ClaimName, err))
+				}
+
+				podTemplate, err := si.getMounterPodTemplate(pod.Namespace, pvc)
+				if err != nil {
+					if apierrors.IsNotFound(err) {
+						klog.Warningf("Skip volume %q verification because the referenced PodTemplate was not found: %v", volume.Name, err)
+						continue
+					}
+					klog.Errorf("failed to get mounter PodTemplate for PVC %q: %v", pvc.Name, err)
+					return admission.Errored(http.StatusInternalServerError, err)
+				}
+				if podTemplate == nil {
+					return admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q uses shared node mount but its PVC %q is missing a referenced PodTemplate annotation %q", volume.Name, pvc.Name, MounterPodTemplateAnnotation))
+				}
+
+				// Validate that Pod fsGroup matches the requirements of the referenced PVC PodTemplate.
+				if err := si.validateFSGroup(pod, podTemplate); err != nil {
+					klog.Errorf("fsGroup validation failed: %v", err)
+					return admission.Errored(http.StatusBadRequest, err)
+				}
+
+				// Validate that Pod serviceAccountName matches the requirements of the referenced PVC PodTemplate.
+				if err := si.validateServiceAccountName(pod, podTemplate); err != nil {
+					klog.Errorf("serviceAccountName validation failed: %v", err)
+					return admission.Errored(http.StatusBadRequest, err)
+				}
+			}
+		} else {
+			hasStandardMount = true
+		}
+	}
+
+	// Prevent mixing shared node mount and standard mount GCSFuse volumes in the same Pod.
+	if hasSharedNodeMount && hasStandardMount {
+		return admission.Errored(http.StatusBadRequest, fmt.Errorf("mixing shared node mount and non-shared node mount GCSFuse volumes in the same Pod is not allowed"))
+	}
+
+	// Handle Pod mutation and validations for shared node mount mode.
+	if hasSharedNodeMount {
+		// Inject profiles label and scheduling gate if storage profiles are enabled and match.
+		if si.Config.EnableGcsfuseProfiles {
+			profilesEnabled, err := si.IsGCSFuseProfilesEnabled(pod)
+			if err != nil {
+				return admission.Errored(http.StatusBadRequest, err)
+			}
+			if profilesEnabled {
+				if err := ModifyPodSpecForGCSFuseProfiles(pod, false, true); err != nil {
+					return admission.Errored(http.StatusBadRequest, err)
+				}
+				marshaledPod, err := json.Marshal(pod)
+				if err != nil {
+					return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal pod: %w", err))
+				}
+				return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
+			}
+		}
+
+		return admission.Allowed("No sidecar injection required for shared node mount mode.")
 	}
 
 	enableGcsfuseVolumes, ok := pod.Annotations[GcsFuseVolumeEnableAnnotation]
@@ -136,27 +253,74 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	var sidecarCredentialConfig *SidecarContainerCredentialConfiguration
 	// Inject GCP workload identity credential config configmap and token.
 	if configMapName, ok := pod.Annotations[GCPWorkloadIdentityCredentialConfigMapAnnotation]; ok && configMapName != "" && si.K8SClient != nil {
-		// Validate that OIDC authentication is not used with hostNetwork pods
-		if pod.Spec.HostNetwork {
-			return admission.Errored(http.StatusBadRequest,
-				fmt.Errorf("OIDC authentication (annotation %q) is not supported for pods with hostNetwork=true. "+
-					"HostNetwork pods use a different authentication mechanism (Google Workload Identity). "+
-					"Please either remove hostNetwork or use standard Workload Identity authentication. ",
-					GCPWorkloadIdentityCredentialConfigMapAnnotation))
-		}
-
 		filename, credentialConfig, err := appendWorkloadCredentialConfigurationVolumes(si.K8SClient, pod, configMapName)
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
 		}
+
+		// Validate that OIDC authentication (file-based) is not used with hostNetwork pods.
+		// Executable-sourced credentials are supported since they do not rely on projected SA token volumes.
+		if pod.Spec.HostNetwork && credentialConfig.CredentialSource.Executable == nil {
+			return admission.Errored(http.StatusBadRequest,
+				fmt.Errorf("OIDC authentication (file-based, annotation %q) is not supported for pods with hostNetwork=true. "+
+					"HostNetwork pods use a different authentication mechanism (Google Workload Identity). "+
+					"Please either remove hostNetwork or use standard Workload Identity authentication. ",
+					GCPWorkloadIdentityCredentialConfigMapAnnotation))
+		}
+		credentialVolumeMounts := []corev1.VolumeMount{
+			{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
+		}
+		var envVars []corev1.EnvVar
+		if credentialConfig.CredentialSource.Executable == nil {
+			mountPath := filepath.Dir(credentialConfig.CredentialSource.File)
+			credentialVolumeMounts = append(credentialVolumeMounts, corev1.VolumeMount{Name: SidecarContainerWITokenVolumeName, MountPath: mountPath})
+		} else {
+			envVars = append(envVars, corev1.EnvVar{Name: GoogleExternalAccountAllowExecutablesEnvVar, Value: "1"})
+		}
+
 		sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{
-			GacEnv: &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
-			CredentialVolumeMounts: []corev1.VolumeMount{
-				{Name: SidecarContainerWITokenVolumeName, MountPath: filepath.Dir(credentialConfig.CredentialSource.File)},
-				{Name: SidecarContainerWICredentialConfigMapVolumeName, MountPath: SidecarContainerWICredentialConfigMapVolumeMountPath},
-			},
+			GacEnv:                 &corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: fmt.Sprintf("%s/%s", SidecarContainerWICredentialConfigMapVolumeMountPath, filename)},
+			CredentialVolumeMounts: credentialVolumeMounts,
+			EnvVars:                envVars,
 		}
 		klog.Infof("Injected GCP workload identity credential configuration configMap %s in namespace %s", configMapName, pod.Namespace)
+	}
+
+	if additionalMounts, ok := pod.Annotations[AdditionalVolumeMountsAnnotation]; ok && additionalMounts != "" {
+		if sidecarCredentialConfig == nil {
+			sidecarCredentialConfig = &SidecarContainerCredentialConfiguration{}
+		}
+		mounts := strings.Split(additionalMounts, ",")
+		for _, mount := range mounts {
+			mount = strings.TrimSpace(mount)
+			if mount == "" {
+				continue
+			}
+			volName, mountPath, found := strings.Cut(mount, ":")
+			if !found {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid format for %s: %q, expected \"volume-name:mount-path\"", AdditionalVolumeMountsAnnotation, mount))
+			}
+			volName = strings.TrimSpace(volName)
+			mountPath = strings.TrimSpace(mountPath)
+
+			if volName == "" || mountPath == "" {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("invalid empty volume name or mount path in %s: %q", AdditionalVolumeMountsAnnotation, mount))
+			}
+
+			if !strings.HasPrefix(mountPath, "/") {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("mount path %q specified in %s is not an absolute path", mountPath, AdditionalVolumeMountsAnnotation))
+			}
+
+			if !volumeExists(pod.Spec.Volumes, volName) {
+				return admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q specified in %s not found in pod spec", volName, AdditionalVolumeMountsAnnotation))
+			}
+
+			sidecarCredentialConfig.CredentialVolumeMounts = append(sidecarCredentialConfig.CredentialVolumeMounts, corev1.VolumeMount{
+				Name:      volName,
+				MountPath: mountPath,
+				ReadOnly:  true,
+			})
+		}
 	}
 
 	// Inject Fuse Side Car container.
@@ -198,7 +362,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		}
 		klog.Infof("Pod %q has at least one volume using gcsfuse profiles", pod.Name)
 		if profilesEnabled {
-			err = ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser)
+			err = ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser, false)
 			if err != nil {
 				return admission.Errored(http.StatusBadRequest, err)
 			}
@@ -251,7 +415,7 @@ func audienceForInjectedSATokenVolume(projectID string, pod *corev1.Pod) string 
 }
 
 // Modifies the pod spec to add gcsfuse profile related features. This includes adding a label, scheduling gate, and placeholder file cache volumes
-func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool) error {
+func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool, isSharedMount bool) error {
 	// Always apply the gcsfuse profile label when gcsfuse profiles are enabled for pod informer's Kubernetes API efficient filtering
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
@@ -278,6 +442,10 @@ func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool) e
 		pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, profilesGate)
 	} else {
 		klog.Warningf("Pod %s/%s already has the %s scheduling gate, skipping injection of gcsfuse profiles scheduling gate.", pod.Namespace, pod.Name, BucketScanPendingSchedulingGate)
+	}
+
+	if isSharedMount {
+		return nil
 	}
 
 	// Inject placeholder file cache volumes
@@ -417,23 +585,25 @@ func appendWorkloadCredentialConfigurationVolumes(client kubernetes.Interface, p
 	}
 	klog.Infof("Parsed the workload identity credential configuration configMap %s in namespace %s %+v", configMapName, pod.Namespace, credConfig)
 
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name: SidecarContainerWITokenVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			Projected: &corev1.ProjectedVolumeSource{
-				Sources: []corev1.VolumeProjection{
-					{
-						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-							Audience:          fmt.Sprintf("https:%s", credConfig.Audience), // Add the "https:" prefix to the audience.
-							ExpirationSeconds: &tokenExpirationSeconds,
-							Path:              filepath.Base(credConfig.CredentialSource.File),
+	if credConfig.CredentialSource.Executable == nil && !volumeExists(pod.Spec.Volumes, SidecarContainerWITokenVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: SidecarContainerWITokenVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: []corev1.VolumeProjection{
+						{
+							ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+								Audience:          fmt.Sprintf("https:%s", credConfig.Audience), // Add the "https:" prefix to the audience.
+								ExpirationSeconds: &tokenExpirationSeconds,
+								Path:              filepath.Base(credConfig.CredentialSource.File),
+							},
 						},
 					},
+					DefaultMode: &defaultMode,
 				},
-				DefaultMode: &defaultMode,
 			},
-		},
-	})
+		})
+	}
 
 	// Secondly try to add workload identity credential configuration configMap as volume.
 	if !checkConfigMapVolumeExists(pod) {
@@ -467,7 +637,10 @@ func checkConfigMapVolumeExists(pod *corev1.Pod) bool {
 type CredentialConfig struct {
 	Audience         string `json:"audience"`
 	CredentialSource struct {
-		File string `json:"file"`
+		File       string `json:"file,omitempty"`
+		Executable *struct {
+			Command string `json:"command"`
+		} `json:"executable,omitempty"`
 	} `json:"credential_source"`
 }
 
@@ -502,4 +675,65 @@ func parseCredentialConfigurationConfigMap(client kubernetes.Interface, pod *cor
 	}
 
 	return filename, &credConfig, nil
+}
+
+// getMounterPodTemplate retrieves the referenced mounter PodTemplate for a PVC if the annotation is present.
+func (si *SidecarInjector) getMounterPodTemplate(namespace string, pvc *corev1.PersistentVolumeClaim) (*corev1.PodTemplate, error) {
+	if pvc.Annotations == nil {
+		return nil, nil
+	}
+	templateName, ok := pvc.Annotations[MounterPodTemplateAnnotation]
+	if !ok || templateName == "" {
+		return nil, nil
+	}
+
+	podTemplate, err := si.GetPodTemplate(namespace, templateName)
+	if err != nil {
+		return nil, err
+	}
+	return podTemplate, nil
+}
+
+// validateFSGroup checks if the Pod's fsGroup matches the one specified in the volume's referenced mounter PodTemplate.
+func (si *SidecarInjector) validateFSGroup(pod *corev1.Pod, podTemplate *corev1.PodTemplate) error {
+	templateName := podTemplate.Name
+	templateHasFSGroup := podTemplate.Template.Spec.SecurityContext != nil && podTemplate.Template.Spec.SecurityContext.FSGroup != nil
+	podHasFSGroup := pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.FSGroup != nil
+
+	// Enforce strict matching between Pod and PodTemplate fsGroup settings to prevent shared mount permission conflicts.
+	if templateHasFSGroup {
+		expectedFSGroup := *podTemplate.Template.Spec.SecurityContext.FSGroup
+		if !podHasFSGroup {
+			return fmt.Errorf("Pod fsGroup is not set, but volume's PodTemplate %q requires fsGroup %d", templateName, expectedFSGroup)
+		}
+		actualFSGroup := *pod.Spec.SecurityContext.FSGroup
+		if actualFSGroup != expectedFSGroup {
+			return fmt.Errorf("Pod fsGroup %d does not match the one specified in volume's PodTemplate %q (%d)", actualFSGroup, templateName, expectedFSGroup)
+		}
+		return nil
+	}
+
+	if podHasFSGroup {
+		return fmt.Errorf("Pod has fsGroup set, but volume's PodTemplate %q does not specify one (not allowed for shared node mount)", templateName)
+	}
+
+	return nil
+}
+
+// validateServiceAccountName checks if the Pod's serviceAccountName matches the one specified in the volume's referenced mounter PodTemplate.
+func (si *SidecarInjector) validateServiceAccountName(pod *corev1.Pod, podTemplate *corev1.PodTemplate) error {
+	templateSA := podTemplate.Template.Spec.ServiceAccountName
+	if templateSA == "" {
+		templateSA = "default"
+	}
+	podSA := pod.Spec.ServiceAccountName
+	if podSA == "" {
+		podSA = "default"
+	}
+
+	if templateSA != podSA {
+		return fmt.Errorf("Pod serviceAccountName %q does not match the one specified in volume's PodTemplate %q (%q)", podSA, podTemplate.Name, templateSA)
+	}
+
+	return nil
 }

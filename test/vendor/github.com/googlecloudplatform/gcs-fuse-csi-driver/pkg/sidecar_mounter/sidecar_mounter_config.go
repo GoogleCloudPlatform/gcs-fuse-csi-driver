@@ -26,7 +26,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
 	"syscall"
 	"time"
 
@@ -70,9 +69,30 @@ type MountConfig struct {
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
 	FileCacheMedium                string                `json:"-"`
 	GcsFuseNumaNode                int                   `json:"-"`
+	CustomEndpoint                 string                `json:"-"`
+	EnableAutoGoMemLimit           bool                  `json:"-"`
+	AutoGoMemLimitRatio            float64               `json:"-"`
+	StorageEndpoint                string                `json:"-"`
 }
 
-// sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
+// EnsureErrWriter safely initializes ErrWriter to the correct writer if it is nil.
+func (mc *MountConfig) EnsureErrWriter() {
+	if mc == nil {
+		return
+	}
+	if mc.ErrWriter != nil {
+		return
+	}
+	if mc.TempDir != "" {
+		mc.ErrWriter = NewErrorWriter(filepath.Join(mc.TempDir, util.ErrorFileName))
+		klog.V(4).Infof("Initialized ErrWriter for volume %q", mc.VolumeName)
+		return
+	}
+	klog.Warningf("ErrWriter initialization failed for volume %q, creating a no-op error writer", mc.VolumeName)
+	mc.ErrWriter = NewErrorWriter("")
+}
+
+// sidecarRetryConfig controls the retry configurations for sidecarRetry behavior for storage service creation and bucket access check.
 type sidecarRetryConfig struct {
 	Duration time.Duration
 	Factor   float64
@@ -117,12 +137,13 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 	tempDir := filepath.Dir(sp)
 	volumeName := filepath.Base(tempDir)
 	mc := MountConfig{
-		VolumeName: volumeName,
-		BufferDir:  filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
-		CacheDir:   filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
-		TempDir:    tempDir,
-		ConfigFile: filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
-		ErrWriter:  NewErrorWriter(filepath.Join(tempDir, "error")),
+		VolumeName:          volumeName,
+		BufferDir:           filepath.Join(webhook.SidecarContainerBufferVolumeMountPath, ".volumes", volumeName),
+		CacheDir:            filepath.Join(webhook.SidecarContainerCacheVolumeMountPath, ".volumes", volumeName),
+		TempDir:             tempDir,
+		ConfigFile:          filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, ".volumes", volumeName, "config.yaml"),
+		ErrWriter:           NewErrorWriter(filepath.Join(tempDir, util.ErrorFileName)),
+		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
 	klog.Infof("connecting to socket %q", sp)
@@ -311,6 +332,23 @@ func (mc *MountConfig) prepareMountArgs() {
 		case util.EnableGCSFuseKernelParams:
 			mc.EnableGCSFuseKernelParams = value == util.TrueStr
 			continue
+
+		case util.EnableAutoGoMemLimitConst:
+			mc.EnableAutoGoMemLimit = value == util.TrueStr
+			continue
+
+		case util.AutoGoMemLimitRatioConst:
+			ratio, err := strconv.ParseFloat(value, 64)
+			if err != nil || ratio <= 0 || ratio > 1 {
+				invalidArgs = append(invalidArgs, arg)
+			} else {
+				mc.AutoGoMemLimitRatio = ratio
+			}
+			continue
+
+		case util.StorageEndpointInternal:
+			mc.StorageEndpoint = value
+			continue
 		}
 
 		if flag == util.GCSFuseAppNameArg {
@@ -352,18 +390,23 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	if mc.EnableCloudProfilerForSidecar {
-		// Inject Cloud Profiler flags supported by gcsfuse.
-		flagMap["enable-cloud-profiler"] = ""
-		flagMap["cloud-profiler-cpu"] = ""
-		flagMap["cloud-profiler-heap"] = ""
-		flagMap["cloud-profiler-goroutines"] = ""
-		flagMap["cloud-profiler-mutex"] = ""
-		flagMap["cloud-profiler-allocated-heap"] = ""
+		enableProfiler := true
+		val, ok := flagMap[util.EnableCloudProfilerConst]
+		if ok {
+			if parsed, err := strconv.ParseBool(val); err == nil && !parsed {
+				enableProfiler = false
+			}
+		}
 
-		// Get Hostname.
-		customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
-		flagMap["cloud-profiler-label"] = customLabel
-		klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)
+		if enableProfiler {
+			// Inject Cloud Profiler flags supported by gcsfuse.
+			flagMap[util.EnableCloudProfilerConst] = ""
+			customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
+			flagMap["cloud-profiler-label"] = customLabel
+			klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)
+		} else {
+			klog.Infof("Cloud Profiler for GCSFuse is disabled via mount options: %s=%s", util.EnableCloudProfilerConst, val)
+		}
 	}
 
 	mc.FlagMap = flagMap

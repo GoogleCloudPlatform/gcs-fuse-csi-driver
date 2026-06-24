@@ -53,16 +53,27 @@ const (
 	FileCacheMediumConst                = "file-cache-medium"
 	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
 	GCSFuseKernelParamsFileName         = "kernel-params.json"
+	ErrorFileName                       = "error"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
+	EnableCloudProfilerConst            = "enable-cloud-profiler"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
+	SidecarContainerTmpVolumePath       = "/gke-gcsfuse-tmp"
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
 	GCSFuseNumaNodeArg                  = "gcs-fuse-numa-node"
 	GCSFuseAppNameArg                   = "app-name"
+	CustomEndpointConfigFileFlag        = "gcs-connection:custom-endpoint"
+	CustomEndpointCLIFlag               = "custom-endpoint"
+	EnableAutoGoMemLimitConst           = "enable-auto-gomemlimit"
+	AutoGoMemLimitRatioConst            = "auto-gomemlimit-ratio"
+	GoMemLimitCgroupPercentage          = 0.95
+	StorageEndpointInternal             = "storage-endpoint-internal"
+	KubeletDir                          = "/var/lib/kubelet"
+	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
 )
 
 var (
@@ -305,6 +316,23 @@ func ParseBool(str string) (bool, error) {
 
 // GetCloudProfilerServiceVersion returns the service version for Cloud Profiler.
 // It returns the provided podName and podUID joined by an underscore.
+// If both podName and podUID are empty, it returns an empty string.
 func GetCloudProfilerServiceVersion(podName, podUID string) string {
+	if podName == "" && podUID == "" {
+		return ""
+	}
 	return fmt.Sprintf("%s_%s", podName, podUID)
+}
+
+// CheckNotSymlink verifies that the given path is not a symbolic link.
+// This is used to prevent TOCTOU symlink takeover attacks.
+func CheckNotSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("failed to stat path %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("security error: path %q is a symlink", path)
+	}
+	return nil
 }

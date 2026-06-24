@@ -31,6 +31,7 @@ import (
 type Config struct {
 	ShouldInjectSAVolume  bool   `json:"-"`
 	EnableGcsfuseProfiles bool   `json:"-"`
+	EnableSharedNodeMount bool   `json:"-"`
 	PodHostNetworkSetting bool   `json:"-"`
 	EnableNumaPinning     bool   `json:"enable-numa-pinning,omitempty"`
 	ContainerImage        string `json:"-"`
@@ -69,7 +70,7 @@ func FakeConfig() *Config {
 }
 
 func FakePrefetchConfig() *Config {
-	return LoadConfig("fake-image", "Always", "10m", "50m", "10Mi", "10Mi", "10Mi", "10Mi")
+	return LoadConfig("fake-image", "Always", "10m", "50m", "10Mi", "250Mi", "10Mi", "0")
 }
 
 func prepareResourceList(c *Config) (corev1.ResourceList, corev1.ResourceList) {

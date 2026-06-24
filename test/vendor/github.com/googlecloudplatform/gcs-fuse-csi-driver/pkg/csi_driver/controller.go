@@ -18,6 +18,7 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,9 +26,10 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 )
 
@@ -125,6 +127,181 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 			Parameters:         req.GetParameters(),
 		},
 	}, nil
+}
+
+func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	// Validate arguments
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerPublishVolume Volume ID must be provided")
+	}
+	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	nodeID := req.GetNodeId()
+	if len(nodeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerPublishVolume Node ID must be provided")
+	}
+
+	// Acquires the lock for the volume on that node only, because we need to support the ability
+	// to publish the same volume onto different nodes concurrently
+	lockingVolumeID := fmt.Sprintf("%s/%s", nodeID, volumeID)
+	if acquired := s.volumeLocks.TryAcquire(lockingVolumeID); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, lockingVolumeID)
+	}
+	defer s.volumeLocks.Release(lockingVolumeID)
+
+	// Skip ControllerPublishVolume if the volume is not using the shared mount feature.
+	vc := req.GetVolumeContext()
+	if !sharedMount(vc) {
+		return &csi.ControllerPublishVolumeResponse{}, nil
+	}
+
+	// Find the workload namespace where the mounter pod should be created by identifying the PVC
+	// bound to this volume's PV.
+	clientset := s.driver.config.K8sClients
+	pvName := vc[util.VolumeContextKeyPVName]
+	if pvName == "" {
+		return nil, status.Errorf(codes.Internal, "PV name not found in VolumeContext (key %q)", util.VolumeContextKeyPVName)
+	}
+	klog.V(6).Infof("ControllerPublishVolume: directly fetching PV %q from VolumeContext for volume %q, context: %v", pvName, volumeID, vc)
+	pv, err := clientset.GetPV(pvName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if pv.Spec.ClaimRef == nil {
+		// The PV should be bound if ControllerPublishVolume is called. Return error since this is unexpected.
+		return nil, status.Errorf(codes.Internal, "pv %q is not bound to any pvc", pv.Name)
+	}
+	pvcName := pv.Spec.ClaimRef.Name
+	pvcNamespace := pv.Spec.ClaimRef.Namespace
+	if pvcNamespace == "" || pvcName == "" {
+		return nil, status.Errorf(codes.Internal, "pv claimRef namespace and name can't be empty, namespace: %q, name: %q", pvcNamespace, pvcName)
+	}
+	podNamespace := pvcNamespace
+
+	// Find the PodTemplate from the PVC to allow mounter pod config overrides.
+	pvc, err := clientset.GetPVC(pvcNamespace, pvcName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	podTemplate, err := mounterPodTemplate(clientset, pvc)
+	if err != nil {
+		return nil, err
+	}
+	if podTemplate == nil {
+		return nil, status.Error(codes.Internal, "pod template can't be nil")
+	}
+
+	// Extract overrides specifically from the container named "gcsfusecsi-mount".
+	var containerResources *corev1.ResourceRequirements
+	var containerImage string
+	if s.driver != nil && s.driver.config != nil && s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions != nil {
+		containerImage = s.driver.config.FeatureOptions.SharedMountOptions.MounterPodImage
+	}
+	for i := range podTemplate.Template.Spec.Containers {
+		container := &podTemplate.Template.Spec.Containers[i]
+		if container.Name != mounterPodNamePrefix {
+			continue
+		}
+		containerResources = &container.Resources
+		if container.Image != "" && container.Image != mounterPodManagedImageKeyword {
+			// If the image isn't the placeholder managed keyword, the user is trying to
+			// override the mounter pod's image.
+			// TODO(urielguzman): Somehow validate image so that only trustworthy repositories are allowed.
+			containerImage = container.Image
+		}
+		break
+	}
+	if containerImage == "" {
+		return nil, status.Error(codes.Internal, "mounter pod image cannot be empty")
+	}
+
+	// Prepare mounter pod config.
+	podName := createMounterPodName(nodeID, volumeID)
+	podConfig := &mounterPodConfig{
+		podName:            podName,
+		namespace:          podNamespace,
+		serviceAccountName: podTemplate.Template.Spec.ServiceAccountName,
+		resources:          containerResources,
+		nodeID:             nodeID,
+		image:              containerImage,
+		volumes:            podTemplate.Template.Spec.Volumes,
+	}
+
+	if err := createMounterPod(clientset, ctx, podConfig); err != nil {
+		return nil, err
+	}
+
+	// Wait until the mounter pod is scheduled to a node.
+	// This ensures that the mounter pod can be scheduled even if there are resource constraints on the node,
+	// such as needing to wait for a regular pod to be evicted first.
+	// Without this check, NodeStageVolume could return an internal error because the mounter pod is not yet scheduled.
+	if err := waitForMounterPodScheduled(clientset, ctx, podNamespace, podName, nodeID); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("ControllerPublishVolume succeeded for mounter pod %s/%s. Node: %q, volume %q", podConfig.namespace, podConfig.podName, nodeID, volumeID)
+	return &csi.ControllerPublishVolumeResponse{
+		PublishContext: map[string]string{
+			// Pass the mounter pod's namespace and name to subsequent NodeStageVolume and
+			// NodePublishVolume calls to avoid re-computation.
+			PublishContextKeyMounterPodNamespace: podNamespace,
+			PublishContextKeyMounterPodName:      podName,
+		},
+	}, nil
+}
+
+// TODO(urielguzman): implement ControllerUnpublishVolume.
+func (s *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	// Validate arguments.
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerUnpublishVolume Volume ID must be provided")
+	}
+	nodeID := req.NodeId
+	if len(nodeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerUnpublishVolume Node ID must be provided")
+	}
+
+	// Acquires the lock for the volume on that node only, because we need to support the ability
+	// to publish the same volume onto different nodes concurrently
+	lockingVolumeID := fmt.Sprintf("%s/%s", nodeID, volumeID)
+	if acquired := s.volumeLocks.TryAcquire(lockingVolumeID); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, lockingVolumeID)
+	}
+	defer s.volumeLocks.Release(lockingVolumeID)
+
+	// Delete the mounter pod, if it exists.
+	podName := createMounterPodName(nodeID, volumeID)
+	mounterPods, err := s.driver.config.K8sClients.GetPodsByName(podName)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list pods: %v", err)
+	}
+
+	if len(mounterPods) == 0 {
+		klog.Infof("ControllerUnpublishVolume succeeded for volume %q on node %q", volumeID, nodeID)
+		return &csi.ControllerUnpublishVolumeResponse{}, nil
+	}
+	if len(mounterPods) > 1 {
+		// Each nodeID/volumeID pair should match exactly to 1 mounter pod. If there are more than 1 in that node,
+		// this signals an internal bug on how the mounter pods are being handled by the CSI Driver.
+		return nil, status.Errorf(codes.Internal, "expected 1 mounter pod for volume %q on node %q, found: %d", volumeID, nodeID, len(mounterPods))
+	}
+
+	podNamespace := mounterPods[0].Namespace
+	if err := deleteMounterPod(ctx, s.driver.config.K8sClients, podNamespace, podName); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("ControllerUnpublishVolume succeeded for volume %q on node %q", volumeID, nodeID)
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
 
 func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -238,7 +415,8 @@ func (s *controllerServer) prepareStorageService(ctx context.Context, secrets ma
 	}
 
 	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(serviceAccountNamespace, serviceAccountName, "", "" /*audience*/, false)
-	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	// TODO(urielguzman): Dynamically fetch the Google Universe if custom endpoint isn't provided.
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts, "")
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
 	}
