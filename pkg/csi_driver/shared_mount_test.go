@@ -227,7 +227,7 @@ func TestCreateMounterPodName(t *testing.T) {
 			name:     "Basic test - should generate name correctly",
 			nodeID:   testNodeID,
 			volumeID: testVolumeID,
-			expected: fmt.Sprintf("%s-f4d1ad31ce3ffcfcada13d5fe95e0f8ddc801bf7", mounterPodNamePrefix),
+			expected: fmt.Sprintf("%s-f4d1ad31ce3ffcfcada13d5fe95e0f8ddc801bf7", util.MounterPodNamePrefix),
 		},
 	}
 	for _, tc := range testCases {
@@ -238,10 +238,10 @@ func TestCreateMounterPodName(t *testing.T) {
 				t.Errorf("Expected pod name %q, but got %q", tc.expected, actual)
 			}
 			// Verify that the generated name contains the prefix and the hash
-			if len(actual) <= len(mounterPodNamePrefix) || actual[:len(mounterPodNamePrefix)] != mounterPodNamePrefix {
-				t.Errorf("Expected pod name to start with %q, but got %q", mounterPodNamePrefix, actual)
+			if len(actual) <= len(util.MounterPodNamePrefix) || actual[:len(util.MounterPodNamePrefix)] != util.MounterPodNamePrefix {
+				t.Errorf("Expected pod name to start with %q, but got %q", util.MounterPodNamePrefix, actual)
 			}
-			if len(actual) != len(mounterPodNamePrefix+"-")+40 { // SHA1 hash is 40 characters long
+			if len(actual) != len(util.MounterPodNamePrefix+"-")+40 { // SHA1 hash is 40 characters long
 				t.Errorf("Expected pod name to have a 40-character SHA1 hash, but got %q", actual)
 			}
 		})
@@ -304,6 +304,12 @@ func TestCreateMounterPodSpec(t *testing.T) {
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
 		},
 	}
+	customCacheVolume := corev1.Volume{
+		Name: webhook.SidecarContainerCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+		},
+	}
 
 	tests := []struct {
 		name   string
@@ -336,7 +342,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 					PriorityClassName:  mounterPodPriorityClass,
 					Containers: []corev1.Container{
 						{
-							Name:            mounterPodNamePrefix,
+							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
 							SecurityContext: &corev1.SecurityContext{
@@ -391,7 +397,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 					PriorityClassName:  mounterPodPriorityClass,
 					Containers: []corev1.Container{
 						{
-							Name:            mounterPodNamePrefix,
+							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
 							SecurityContext: &corev1.SecurityContext{
@@ -447,7 +453,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 					PriorityClassName:  mounterPodPriorityClass,
 					Containers: []corev1.Container{
 						{
-							Name:            mounterPodNamePrefix,
+							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
 							SecurityContext: &corev1.SecurityContext{
@@ -462,6 +468,106 @@ func TestCreateMounterPodSpec(t *testing.T) {
 						testCacheVolume,
 						testTmpVolume,
 						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "config with cache volume overrides - should add cache-created-by-user label",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				volumes:            []corev1.Volume{customCacheVolume},
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount":          "true",
+						"gke-gcsfuse/cache-created-by-user": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						customCacheVolume, // Overridden
+						testTmpVolume,
+						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "profilesEnabled true - should include profile volumes and volume mounts",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				profilesEnabled:    true,
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources: defaultResources,
+							VolumeMounts: append(expectedVolumeMounts,
+								webhook.EphemeralFileCacheVolumeMount,
+								webhook.RamFileCacheVolumeMount,
+							),
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+						webhook.EphemeralFileCacheVolume,
+						webhook.RamFileCacheVolume,
 					},
 					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
 				},

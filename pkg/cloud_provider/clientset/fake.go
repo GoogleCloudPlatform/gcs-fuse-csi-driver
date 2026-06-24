@@ -21,6 +21,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +48,7 @@ type FakePodConfig struct {
 	UID                types.UID
 	PodStatus          *corev1.PodStatus
 	NodeName           string
+	IsMounterPod       bool
 }
 
 type FakePVConfig struct {
@@ -66,6 +68,7 @@ type FakePVCConfig struct {
 }
 
 type FakeSCConfig struct {
+	Name         string
 	Labels       map[string]string
 	Parameters   map[string]string
 	MountOptions []string
@@ -144,9 +147,21 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 			UID:       podConfig.UID,
 		},
 		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				webhook.GetSidecarContainerSpec(config, nil /*credentialConfig*/),
-			},
+			Containers: func() []corev1.Container {
+				if podConfig.IsMounterPod {
+					return []corev1.Container{
+						{
+							Name: util.MounterPodNamePrefix,
+							Resources: corev1.ResourceRequirements{
+								Limits: podConfig.SidecarLimits,
+							},
+						},
+					}
+				}
+				return []corev1.Container{
+					webhook.GetSidecarContainerSpec(config, nil /*credentialConfig*/),
+				}
+			}(),
 			Volumes: webhook.GetSidecarContainerVolumeSpec(),
 		},
 		Status: corev1.PodStatus{
@@ -236,7 +251,7 @@ func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
 func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 	sc := &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "",
+			Name:   scConfig.Name,
 			Labels: map[string]string{},
 		},
 	}

@@ -311,7 +311,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 				return admission.Errored(http.StatusBadRequest, fmt.Errorf("mount path %q specified in %s is not an absolute path", mountPath, AdditionalVolumeMountsAnnotation))
 			}
 
-			if !volumeExists(pod.Spec.Volumes, volName) {
+			if !VolumeExists(pod.Spec.Volumes, volName) {
 				return admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q specified in %s not found in pod spec", volName, AdditionalVolumeMountsAnnotation))
 			}
 
@@ -341,7 +341,7 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		pod.Spec.Volumes = append(pod.Spec.Volumes, GetSATokenVolume(audience))
 	}
 
-	cacheCreatedByUser := volumeExists(pod.Spec.Volumes, SidecarContainerCacheVolumeName)
+	cacheCreatedByUser := VolumeExists(pod.Spec.Volumes, SidecarContainerCacheVolumeName)
 	pod.Spec.Volumes = append(GetSidecarContainerVolumeSpec(pod.Spec.Volumes...), pod.Spec.Volumes...)
 
 	// Inject metadata prefetch sidecar.
@@ -449,33 +449,23 @@ func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool, i
 	}
 
 	// Inject placeholder file cache volumes
-	if !volumeExists(pod.Spec.Volumes, SidecarContainerFileCacheEphemeralDiskVolumeName) {
-		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-			Name:         SidecarContainerFileCacheEphemeralDiskVolumeName,
-			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-		})
+	if !VolumeExists(pod.Spec.Volumes, SidecarContainerFileCacheEphemeralDiskVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, EphemeralFileCacheVolume)
 	} else {
 		klog.Warningf("Pod %s/%s already has a volume named %s, skipping injection of ephemeral file cache volume for gcsfuse sidecar.", pod.Namespace, pod.Name, SidecarContainerFileCacheEphemeralDiskVolumeName)
 	}
-	if !volumeExists(pod.Spec.Volumes, SidecarContainerFileCacheRamDiskVolumeName) {
-		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-			Name: SidecarContainerFileCacheRamDiskVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{
-					Medium: corev1.StorageMediumMemory,
-				},
-			},
-		})
+	if !VolumeExists(pod.Spec.Volumes, SidecarContainerFileCacheRamDiskVolumeName) {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, RamFileCacheVolume)
 	} else {
 		klog.Warningf("Pod %s/%s already has a volume named %s, skipping injection of ram file cache volume for gcsfuse sidecar.", pod.Namespace, pod.Name, SidecarContainerFileCacheRamDiskVolumeName)
 	}
 
 	// Apply file cache volume mounts to side car container
-	mountsToAdd := []corev1.VolumeMount{ephemeralFileCacheVolumeMount, ramFileCacheVolumeMount}
+	mountsToAdd := []corev1.VolumeMount{EphemeralFileCacheVolumeMount, RamFileCacheVolumeMount}
 
 	addMounts := func(c *corev1.Container) {
 		for _, mount := range mountsToAdd {
-			if !volumeMountExists(c.VolumeMounts, mount.Name) {
+			if !VolumeMountExists(c.VolumeMounts, mount.Name) {
 				c.VolumeMounts = append(c.VolumeMounts, mount)
 			} else {
 				klog.Warningf("Pod %s/%s gcsfuse sidecar container already has a volume mount named %s, skipping injection of file cache mount in gcsfuse sidecar.", pod.Namespace, pod.Name, mount.Name)
@@ -561,15 +551,15 @@ func (si *SidecarInjector) IsGCSFuseProfilesEnabled(pod *corev1.Pod) (bool, erro
 	return false, nil
 }
 
-// volumeExists checks if a volume with a specific name already exists in the pod's volumes
-func volumeExists(volumes []corev1.Volume, name string) bool {
+// VolumeExists checks if a volume with a specific name already exists in the pod's volumes
+func VolumeExists(volumes []corev1.Volume, name string) bool {
 	return slices.ContainsFunc(volumes, func(v corev1.Volume) bool {
 		return v.Name == name
 	})
 }
 
-// volumeMountExists checks if a volume mount with a specific name already exists in a slice of volume mounts
-func volumeMountExists(volumeMounts []corev1.VolumeMount, name string) bool {
+// VolumeMountExists checks if a volume mount with a specific name already exists in a slice of volume mounts
+func VolumeMountExists(volumeMounts []corev1.VolumeMount, name string) bool {
 	return slices.ContainsFunc(volumeMounts, func(vm corev1.VolumeMount) bool {
 		return vm.Name == name
 	})
@@ -585,7 +575,7 @@ func appendWorkloadCredentialConfigurationVolumes(client kubernetes.Interface, p
 	}
 	klog.Infof("Parsed the workload identity credential configuration configMap %s in namespace %s %+v", configMapName, pod.Namespace, credConfig)
 
-	if credConfig.CredentialSource.Executable == nil && !volumeExists(pod.Spec.Volumes, SidecarContainerWITokenVolumeName) {
+	if credConfig.CredentialSource.Executable == nil && !VolumeExists(pod.Spec.Volumes, SidecarContainerWITokenVolumeName) {
 		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 			Name: SidecarContainerWITokenVolumeName,
 			VolumeSource: corev1.VolumeSource{

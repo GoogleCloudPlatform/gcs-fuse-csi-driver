@@ -1289,28 +1289,14 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 		Name:         SidecarContainerCacheVolumeName,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 	}
-	expectedEphemeralVolume := corev1.Volume{
-		Name:         SidecarContainerFileCacheEphemeralDiskVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-	}
-	expectedRAMVolume := corev1.Volume{
-		Name: SidecarContainerFileCacheRamDiskVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			Medium: corev1.StorageMediumMemory,
-		}},
-	}
+	expectedEphemeralVolume := EphemeralFileCacheVolume
+	expectedRAMVolume := RamFileCacheVolume
 	expectedDefaultCacheMount := corev1.VolumeMount{
 		Name:      SidecarContainerCacheVolumeName,
 		MountPath: SidecarContainerCacheVolumeMountPath,
 	}
-	expectedEphemeralMount := corev1.VolumeMount{
-		Name:      SidecarContainerFileCacheEphemeralDiskVolumeName,
-		MountPath: SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
-	}
-	expectedRAMMount := corev1.VolumeMount{
-		Name:      SidecarContainerFileCacheRamDiskVolumeName,
-		MountPath: SidecarContainerFileCacheRamDiskVolumeMountPath,
-	}
+	expectedEphemeralMount := EphemeralFileCacheVolumeMount
+	expectedRAMMount := RamFileCacheVolumeMount
 
 	testCases := []struct {
 		name               string

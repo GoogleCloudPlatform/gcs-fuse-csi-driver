@@ -108,12 +108,13 @@ type nodeDetails struct {
 	hasLocalSSDEphemeralStorageAnnotation bool
 }
 
-// podDetaails holds a parsed summary of information about a Pod that are relevant to the recommender.
+// podDetails holds a parsed summary of information about a Pod that are relevant to the recommender.
 type podDetails struct {
-	sidecarLimits *parsedResourceList
-	namespace     string
-	name          string // The name of the Pod.
-	labels        map[string]string
+	containerLimits *parsedResourceList
+	namespace       string
+	name            string // The name of the Pod.
+	containerName   string // The name of the container (sidecar or mounter).
+	labels          map[string]string
 }
 
 // scDetails holds a parsed summary of information about a StorageClass that are relevant to the recommender.
@@ -159,13 +160,14 @@ type recommendation struct {
 
 // BuildProfileConfigParams contains the parameters needed to build a profile configuration.
 type BuildProfileConfigParams struct {
+	VolumeName          string
+	ContainerName       string
 	TargetPath          string
 	Clientset           clientset.Interface
 	VolumeAttributeKeys map[string]struct{}
 	NodeName            string
-	PodNamespace        string
-	PodName             string
 	IsInitContainer     bool
+	Pod                 *corev1.Pod
 }
 
 // MergeVolumeAttributesOnRecommendedMissingKeys returns the a copy of the input map, merged with the profile's.
@@ -182,10 +184,20 @@ func (c *ProfileConfig) MergeVolumeAttributesOnRecommendedMissingKeys(input map[
 // volumeAttributeKeys is used to filter parameters from the StorageClass that should be
 // treated as volume attributes.
 func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error) {
-	// Get the PV name from target path.
-	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(params.TargetPath)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.TargetPath, err)
+	var volumeName string
+	if params.TargetPath != "" {
+		// Get the PV name from target path.
+		var err error
+		_, volumeName, err = util.ParsePodIDVolumeFromTargetpath(params.TargetPath)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get pv name from target path %q: %v", params.TargetPath, err)
+		}
+	} else {
+		volumeName = params.VolumeName
+	}
+
+	if volumeName == "" {
+		return nil, status.Error(codes.Internal, "volume name cannot be empty")
 	}
 
 	// Get the PV object using the PV name.
@@ -251,17 +263,18 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 		return nil, status.Errorf(codes.Internal, "failed to get node details: %v", err)
 	}
 
-	// Get the Pod object using the Pod namespace/name.
-	pod, err := params.Clientset.GetPod(params.PodNamespace, params.PodName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.NotFound, "pod %s/%s not found: %v", params.PodNamespace, params.PodName, err)
-		}
-		return nil, status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", params.PodNamespace, params.PodName, err)
+	containerName := params.ContainerName
+	if containerName == "" {
+		return nil, status.Errorf(codes.Internal, "container name cannot be empty")
+	}
+
+	pod := params.Pod
+	if pod == nil {
+		return nil, status.Errorf(codes.Internal, "pod cannot be nil")
 	}
 
 	// Get the podDetails from the Pod object.
-	podDetails, err := buildPodDetails(params.IsInitContainer, pod)
+	podDetails, err := buildPodDetails(params.IsInitContainer, containerName, pod)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod details: %v", err)
 	}
@@ -291,9 +304,10 @@ type GCSFuseCSIRecommendationLog struct {
 	Severity string `json:"severity"`
 	Message  string `json:"message"`
 	Target   struct {
-		PVName   string `json:"pvName"`
-		NodeName string `json:"nodeName"`
-		PodName  string `json:"podName"`
+		PVName        string `json:"pvName"`
+		NodeName      string `json:"nodeName"`
+		PodName       string `json:"podName"`
+		ContainerName string `json:"containerName,omitempty"`
 	} `json:"target"`
 	InputSignals struct {
 		BucketTotalObjects                   int64  `json:"bucketTotalObjects"`
@@ -306,8 +320,8 @@ type GCSFuseCSIRecommendationLog struct {
 		NodeAllocatableMemoryBytes           int64  `json:"nodeAllocatableMemoryBytes"`
 		NodeAllocatableEphemeralStorageBytes int64  `json:"nodeAllocatableEphemeralStorageBytes"`
 		NodeHasEphemeralStorageLSSD          bool   `json:"nodeHasEphemeralStorageLSSD"`
-		SidecarLimitMemoryBytes              int64  `json:"sidecarLimitMemoryBytes"`
-		SidecarLimitEphemeralStorageBytes    int64  `json:"sidecarLimitEphemeralStorageBytes"`
+		ContainerLimitMemoryBytes            int64  `json:"containerLimitMemoryBytes"`
+		ContainerLimitEphemeralStorageBytes  int64  `json:"containerLimitEphemeralStorageBytes"`
 		FuseBudgetMemoryBytes                int64  `json:"fuseBudgetMemoryBytes"`
 		FuseBudgetEphemeralStorageBytes      int64  `json:"fuseBudgetEphemeralStorageBytes"`
 	} `json:"inputSignals"`
@@ -352,6 +366,7 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	logEntry.Target.PVName = config.pvDetails.name
 	logEntry.Target.NodeName = config.nodeDetails.name
 	logEntry.Target.PodName = fmt.Sprintf("%s/%s", config.podDetails.namespace, config.podDetails.name)
+	logEntry.Target.ContainerName = config.podDetails.containerName
 
 	// Requirements
 	logEntry.InputSignals.RequiredFileCacheBytes = requirement.fileCacheBytes
@@ -370,8 +385,8 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	logEntry.InputSignals.NodeHasEphemeralStorageLSSD = config.nodeDetails.hasLocalSSDEphemeralStorageAnnotation
 
 	// Pod signals
-	logEntry.InputSignals.SidecarLimitMemoryBytes = config.podDetails.sidecarLimits.memoryBytes
-	logEntry.InputSignals.SidecarLimitEphemeralStorageBytes = config.podDetails.sidecarLimits.ephemeralStorageBytes
+	logEntry.InputSignals.ContainerLimitMemoryBytes = config.podDetails.containerLimits.memoryBytes
+	logEntry.InputSignals.ContainerLimitEphemeralStorageBytes = config.podDetails.containerLimits.ephemeralStorageBytes
 
 	// Resource budgets are min(node allocatable, sidecar limit) * allocatable factor, i.e budget available for this resource for the fuse process.
 	logEntry.InputSignals.FuseBudgetMemoryBytes = memoryBudget
@@ -476,13 +491,13 @@ func buildCacheRequirements(pvDetails *pvDetails) *cacheRequirements {
 }
 
 // calculateFuseResourceBudget determines the memory or ephemeral storage budget available for GCS FUSE.
-// It takes the node's allocatable capacity, a factor for FUSE allocation, and an optional sidecar limit.
-func calculateFuseResourceBudget(nodeAllocatable int64, allocatableFactor float64, sidecarLimit int64) int64 {
+// It takes the node's allocatable capacity, a factor for FUSE allocation, and an optional container limit.
+func calculateFuseResourceBudget(nodeAllocatable int64, allocatableFactor float64, containerLimit int64) int64 {
 	budget := nodeAllocatable
-	// If the sidecar has "0" resource limit, then we assume the entire node allocatable is available.
-	// Otherwise, cap the max fuse resource to the sidecar's memory limit.
-	if sidecarLimit > 0 && sidecarLimit < nodeAllocatable {
-		budget = sidecarLimit
+	// If the container has "0" resource limit, then we assume the entire node allocatable is available.
+	// Otherwise, cap the max fuse resource to the container's limit.
+	if containerLimit > 0 && containerLimit < nodeAllocatable {
+		budget = containerLimit
 	}
 	// Return x% of the available budget, determined by the allocatable factor variable.
 	return int64(float64(budget) * allocatableFactor)
@@ -495,14 +510,14 @@ func calculateResourceBudgets(config *ProfileConfig) (int64, int64) {
 	memoryBudget := calculateFuseResourceBudget(
 		config.nodeDetails.nodeAllocatables.memoryBytes,
 		config.scDetails.fuseMemoryAllocatableFactor,
-		config.podDetails.sidecarLimits.memoryBytes,
+		config.podDetails.containerLimits.memoryBytes,
 	)
 
 	// Calculate ephemeral storage budget
 	ephemeralStorageBudget := calculateFuseResourceBudget(
 		config.nodeDetails.nodeAllocatables.ephemeralStorageBytes,
 		config.scDetails.fuseEphemeralStorageAllocatableFactor,
-		config.podDetails.sidecarLimits.ephemeralStorageBytes,
+		config.podDetails.containerLimits.ephemeralStorageBytes,
 	)
 
 	return memoryBudget, ephemeralStorageBudget
@@ -806,32 +821,33 @@ func buildNodeDetails(node *corev1.Node) (*nodeDetails, error) {
 	}, nil
 }
 
-// buildPodDetails extracts resource limit information for the gcsFuse sidecar container
+// buildPodDetails extracts resource limit information for the container
 // from a given corev1.Pod. The isInitContainer boolean specifies whether to look
 // within the Pod's InitContainers or its Containers.
-// It uses gcsFuseSidecarResourceRequirements to find the sidecar's resource requirements
+// It uses getContainerResourceRequirements to find the container's resource requirements
 // and then calls parseResourceList to process the Limits.
 // It returns a pointer to a podDetails struct or an error if parsing the resource limits fails.
-func buildPodDetails(isInitContainer bool, pod *corev1.Pod) (*podDetails, error) {
-	// Get the sidecar limits from the Pod.
-	sidecarLimits, err := parseResourceList(gcsFuseSidecarResourceRequirements(isInitContainer, pod).Limits)
+func buildPodDetails(isInitContainer bool, containerName string, pod *corev1.Pod) (*podDetails, error) {
+	// Get the container limits from the Pod.
+	containerLimits, err := parseResourceList(getContainerResourceRequirements(isInitContainer, pod, containerName).Limits)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse gcsfuse sidecar resource list from pod %q: %v", pod.Name, err)
+		return nil, fmt.Errorf("failed to parse gcsfuse container resource list from pod %q: %v", pod.Name, err)
 	}
 
 	return &podDetails{
-		namespace:     pod.Namespace,
-		name:          pod.Name,
-		sidecarLimits: sidecarLimits,
-		labels:        pod.Labels,
+		namespace:       pod.Namespace,
+		name:            pod.Name,
+		containerName:   containerName,
+		containerLimits: containerLimits,
+		labels:          pod.Labels,
 	}, nil
 }
 
-// gcsFuseSidecarResourceRequirements finds the corev1.ResourceRequirements for the
-// gcsFuse sidecar container within a provided corev1.Pod.
+// getContainerResourceRequirements finds the corev1.ResourceRequirements for the
+// specified container within a provided corev1.Pod.
 // The isInitContainer flag dictates whether the function searches in pod.Spec.InitContainers
 // or pod.Spec.Containers.
-func gcsFuseSidecarResourceRequirements(isInitContainer bool, pod *corev1.Pod) corev1.ResourceRequirements {
+func getContainerResourceRequirements(isInitContainer bool, pod *corev1.Pod, containerName string) corev1.ResourceRequirements {
 	if pod == nil {
 		return corev1.ResourceRequirements{}
 	}
@@ -844,7 +860,7 @@ func gcsFuseSidecarResourceRequirements(isInitContainer bool, pod *corev1.Pod) c
 	}
 
 	for _, container := range containers {
-		if container.Name == webhook.GcsFuseSidecarName {
+		if container.Name == containerName {
 			return container.Resources
 		}
 	}

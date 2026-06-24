@@ -27,6 +27,7 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -57,6 +58,7 @@ func initTestController(t *testing.T, clientset clientset.Interface) csi.Control
 	if err != nil {
 		t.Fatalf("newControllerServer failed: %v", err)
 	}
+	driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = true
 	return cs
 }
 
@@ -66,6 +68,7 @@ type fakeClientsetConfig struct {
 	pvcConfig       *clientset.FakePVCConfig
 	ptConfig        *clientset.FakePodTemplateConfig
 	podConfig       *clientset.FakePodConfig
+	scConfig        *clientset.FakeSCConfig
 }
 
 func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
@@ -81,6 +84,9 @@ func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
 	}
 	if cfg.podConfig != nil {
 		fc.CreatePod(*cfg.podConfig)
+	}
+	if cfg.scConfig != nil {
+		fc.CreateSC(*cfg.scConfig)
 	}
 	return fc
 }
@@ -396,7 +402,7 @@ func TestControllerPublishVolume(t *testing.T) {
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
-								Name:  mounterPodNamePrefix,
+								Name:  util.MounterPodNamePrefix,
 								Image: mounterPodManagedImageKeyword,
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
@@ -424,8 +430,8 @@ func TestControllerPublishVolume(t *testing.T) {
 					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
 				}
 				container := pod.Spec.Containers[0]
-				if container.Name != mounterPodNamePrefix {
-					t.Errorf("Expected container name %q, got %q", mounterPodNamePrefix, container.Name)
+				if container.Name != util.MounterPodNamePrefix {
+					t.Errorf("Expected container name %q, got %q", util.MounterPodNamePrefix, container.Name)
 				}
 
 				expectedResources := corev1.ResourceRequirements{
@@ -470,7 +476,7 @@ func TestControllerPublishVolume(t *testing.T) {
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
-								Name:  mounterPodNamePrefix,
+								Name:  util.MounterPodNamePrefix,
 								Image: "gcr.io/some-project/some-random-image/v1.2.3",
 							},
 						},
@@ -488,8 +494,8 @@ func TestControllerPublishVolume(t *testing.T) {
 					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
 				}
 				container := pod.Spec.Containers[0]
-				if container.Name != mounterPodNamePrefix {
-					t.Errorf("Expected container name %q, got %q", mounterPodNamePrefix, container.Name)
+				if container.Name != util.MounterPodNamePrefix {
+					t.Errorf("Expected container name %q, got %q", util.MounterPodNamePrefix, container.Name)
 				}
 
 				expectedImage := "gcr.io/some-project/some-random-image/v1.2.3"
@@ -661,6 +667,47 @@ func TestControllerPublishVolume(t *testing.T) {
 			setupFake:     func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
 			expectErr:     true,
 			expectErrCode: codes.Internal,
+		},
+		{
+			name: "sharedMount true - profiles feature enabled globally, storage class has profile label - should create pod with profile volumes",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.pvConfig.SCName = "profile-sc"
+				cfg.scConfig = &clientset.FakeSCConfig{
+					Labels: map[string]string{
+						"gke-gcsfuse/profile": "true",
+					},
+				}
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				// The profile volumes must be injected if profilesEnabled was true
+				hasEphemeralVolume := webhook.VolumeExists(pod.Spec.Volumes, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName)
+				hasRamVolume := webhook.VolumeExists(pod.Spec.Volumes, webhook.SidecarContainerFileCacheRamDiskVolumeName)
+				if !hasEphemeralVolume || !hasRamVolume {
+					t.Errorf("Expected profile volumes to be injected, got: ephemeral=%t, ram=%t", hasEphemeralVolume, hasRamVolume)
+				}
+				container := pod.Spec.Containers[0]
+				hasEphemeralMount := webhook.VolumeMountExists(container.VolumeMounts, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName)
+				hasRamMount := webhook.VolumeMountExists(container.VolumeMounts, webhook.SidecarContainerFileCacheRamDiskVolumeName)
+				if !hasEphemeralMount || !hasRamMount {
+					t.Errorf("Expected profile volume mounts to be injected, got: ephemeral=%t, ram=%t", hasEphemeralMount, hasRamMount)
+				}
+			},
 		},
 	}
 	for _, test := range cases {
