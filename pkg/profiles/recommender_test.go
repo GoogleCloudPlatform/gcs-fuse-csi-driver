@@ -1330,88 +1330,101 @@ func TestHasLocalSSDEphemeralStorageAnnotation(t *testing.T) {
 }
 
 func TestBuildCacheRequirements(t *testing.T) {
+	const minMetadataStatCacheBytes = minMetadataStatCacheMBSize * mib
+
 	tests := []struct {
 		name string
 		pv   *pvDetails
 		want *cacheRequirements
 	}{
 		{
-			name: "Non-zero PV details - Should calculate all cache requirements",
+			name: "Sufficient objects - Should calculate all cache requirements",
 			pv: &pvDetails{
-				numObjects:     1000,
+				numObjects:     50000, // Roughly 85MB for flat
 				totalSizeBytes: 10 * mib,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectFlat,
+				metadataStatCacheBytes: 50000 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         10 * mib,
 			},
 		},
 		{
-			name: "Non-zero PV details - Should calculate all cache requirements for HNS bucket",
+			name: "Sufficient objects - Should calculate all cache requirements for HNS bucket",
 			pv: &pvDetails{
-				numObjects:     1000,
+				numObjects:     50000, // Roughly 75MB for HNS
 				totalSizeBytes: 10 * mib,
 				hnsEnabled:     true,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectHNS,
+				metadataStatCacheBytes: 50000 * metadataStatCacheBytesPerObjectHNS,
 				fileCacheBytes:         10 * mib,
 			},
 		},
 		{
 			name: "Zonal bucket - Should disable file cache",
 			pv: &pvDetails{
-				numObjects:     1000,
+				numObjects:     50000,
 				totalSizeBytes: 10 * mib,
 				locationType:   "zone",
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectFlat,
+				metadataStatCacheBytes: 50000 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         0,
 			},
 		},
 		{
 			name: "Zonal bucket case insensitive - Should disable file cache",
 			pv: &pvDetails{
-				numObjects:     1000,
+				numObjects:     50000,
 				totalSizeBytes: 10 * mib,
 				locationType:   "ZoNe",
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 1000 * metadataStatCacheBytesPerObjectFlat,
+				metadataStatCacheBytes: 50000 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         0,
 			},
 		},
 		{
-			name: "Zero numObjects - Should result in zero metadata cache",
+			name: "Zero numObjects - Should use minimum metadata stat cache",
 			pv: &pvDetails{
 				numObjects:     0,
 				totalSizeBytes: 5 * mib,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 0,
+				metadataStatCacheBytes: minMetadataStatCacheBytes,
+				fileCacheBytes:         5 * mib,
+			},
+		},
+		{
+			name: "Small numObjects - Should use minimum metadata stat cache",
+			pv: &pvDetails{
+				numObjects:     1,
+				totalSizeBytes: 5 * mib,
+			},
+			want: &cacheRequirements{
+				metadataStatCacheBytes: minMetadataStatCacheBytes,
 				fileCacheBytes:         5 * mib,
 			},
 		},
 		{
 			name: "Zero totalSizeBytes - Should result in zero file cache",
 			pv: &pvDetails{
-				numObjects:     500,
+				numObjects:     50000,
 				totalSizeBytes: 0,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 500 * metadataStatCacheBytesPerObjectFlat,
+				metadataStatCacheBytes: 50000 * metadataStatCacheBytesPerObjectFlat,
 				fileCacheBytes:         0,
 			},
 		},
 		{
-			name: "All zero PV details - Should result in all zero requirements",
+			name: "All zero PV details - Should use minimum metadata stat cache and zero file cache",
 			pv: &pvDetails{
 				numObjects:     0,
 				totalSizeBytes: 0,
 			},
 			want: &cacheRequirements{
-				metadataStatCacheBytes: 0,
+				metadataStatCacheBytes: minMetadataStatCacheBytes,
 				fileCacheBytes:         0,
 			},
 		},
@@ -1785,14 +1798,16 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 func TestRecommendCacheConfigs(t *testing.T) {
 	// Constants for easier reading
 	objPerStat := metadataStatCacheBytesPerObjectFlat
-	reqStat := 1000 * objPerStat // 1.5MiB
-	reqFile := 100 * mib         // 100 MiB
+	reqStat := 50000 * objPerStat // ~81 MiB
+	reqFile := 100 * mib          // 100 MiB
+	minStatCache := int64(minMetadataStatCacheMBSize * mib)
 
 	// Example config components
-	defaultPV := &pvDetails{numObjects: 1000, totalSizeBytes: reqFile}
+	defaultPV := &pvDetails{numObjects: 50000, totalSizeBytes: reqFile}
+	smallPV := &pvDetails{numObjects: 1, totalSizeBytes: reqFile}
 	defaultSC := &scDetails{fuseMemoryAllocatableFactor: 1.0, fuseEphemeralStorageAllocatableFactor: 1.0}
-	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
-	defaultNode := &nodeDetails{nodeType: "general_purpose"}
+	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
+	defaultNode := &nodeDetails{nodeType: "general_purpose", name: "test-node"}
 
 	tests := []struct {
 		name    string
@@ -1821,6 +1836,31 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			},
 			want: &recommendation{
 				metadataStatCacheBytes: reqStat,
+				fileCacheBytes:         reqFile,
+				fileCacheMedium:        util.MediumRAM,
+			},
+		},
+		{
+			name: "Small PV - Should use minimum stat cache",
+			config: &ProfileConfig{
+				pvDetails: smallPV,
+				scDetails: &scDetails{
+					fuseMemoryAllocatableFactor:           1.0,
+					fuseEphemeralStorageAllocatableFactor: 1.0,
+					fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM}},
+				},
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           minStatCache + reqFile,
+						ephemeralStorageBytes: reqFile,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: defaultPod,
+			},
+			want: &recommendation{
+				metadataStatCacheBytes: minStatCache,
 				fileCacheBytes:         reqFile,
 				fileCacheMedium:        util.MediumRAM,
 			},
@@ -1903,7 +1943,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 		{
 			name: "File cache bytes 0 - Should recommend zero file cache",
 			config: &ProfileConfig{
-				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				pvDetails: &pvDetails{numObjects: 50000, totalSizeBytes: 0},
 				scDetails: &scDetails{
 					fuseMemoryAllocatableFactor:           1.0,
 					fuseEphemeralStorageAllocatableFactor: 1.0,
@@ -2012,20 +2052,22 @@ func TestRecommendCacheConfigs(t *testing.T) {
 func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 	// Constants for easier reading
 	objPerStat := metadataStatCacheBytesPerObjectFlat
-	reqStat := 1000 * objPerStat // 1.5MiB -> 2 MiB
-	fileCacheSize := 100 * mib   // 100 MiB
+	reqStat := 50000 * objPerStat // ~81 MiB -> 82 MiB
+	fileCacheSize := 100 * mib    // 100 MiB
+	minStatCacheMB := int64(minMetadataStatCacheMBSize)
 
 	// Base config components
-	basePV := &pvDetails{numObjects: 1000, totalSizeBytes: fileCacheSize}
+	basePV := &pvDetails{numObjects: 50000, totalSizeBytes: fileCacheSize}
+	smallPV := &pvDetails{numObjects: 1, totalSizeBytes: fileCacheSize}
 	baseSC := &scDetails{
 		mountOptions:                          []string{"implicit-dirs"},
 		fuseMemoryAllocatableFactor:           1.0,
 		fuseEphemeralStorageAllocatableFactor: 1.0,
 		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
 	}
-	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}}
-	podWithCustomCache := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}}
-	baseNode := &nodeDetails{nodeType: "general_purpose"}
+	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
+	podWithCustomCache := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}, name: "test-pod"}
+	baseNode := &nodeDetails{nodeType: "general_purpose", name: "test-node"}
 
 	tests := []struct {
 		name             string
@@ -2051,7 +2093,29 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
+				"file-cache:max-size-mb:100",
+				"file-cache-medium=ram",
+			},
+		},
+		{
+			name: "Small PV - Should use minimum stat cache",
+			config: &ProfileConfig{
+				pvDetails: smallPV,
+				scDetails: baseSC,
+				nodeDetails: &nodeDetails{
+					nodeType: nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{
+						memoryBytes:           mib*minStatCacheMB + fileCacheSize,
+						ephemeralStorageBytes: fileCacheSize,
+					},
+					name: "test-gpu-node",
+				},
+				podDetails: basePod,
+			},
+			wantOptions: []string{
+				"implicit-dirs",
+				"metadata-cache:stat-cache-max-size-mb:34",
 				"file-cache:max-size-mb:100",
 				"file-cache-medium=ram",
 			},
@@ -2074,7 +2138,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 			wantOptions: []string{
 				"implicit-dirs",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 				"file-cache:max-size-mb:100",
 				"file-cache-medium=lssd",
 			},
@@ -2098,13 +2162,13 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:0",
 				"implicit-dirs",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 			},
 		},
 		{
 			name: "Zero file cache required - Should not recommend file cache",
 			config: &ProfileConfig{
-				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				pvDetails: &pvDetails{numObjects: 50000, totalSizeBytes: 0},
 				scDetails: baseSC,
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
@@ -2119,18 +2183,18 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"implicit-dirs",
 				"file-cache:max-size-mb:0",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 			},
 		},
 		{
-			name: "Zero stat cache required - Should disable stat cache",
+			name: "Zero stat cache required - Should use minimum stat cache",
 			config: &ProfileConfig{
-				pvDetails: &pvDetails{numObjects: 1000, totalSizeBytes: 0},
+				pvDetails: &pvDetails{numObjects: 0, totalSizeBytes: 0},
 				scDetails: baseSC,
 				nodeDetails: &nodeDetails{
 					nodeType: nodeTypeGPU,
 					nodeAllocatables: &parsedResourceList{
-						memoryBytes:           0,
+						memoryBytes:           mib * minStatCacheMB,
 						ephemeralStorageBytes: 0,
 					},
 					name: "test-gpu-node",
@@ -2140,7 +2204,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"implicit-dirs",
 				"file-cache:max-size-mb:0",
-				"metadata-cache:stat-cache-max-size-mb:0",
+				"metadata-cache:stat-cache-max-size-mb:34",
 			},
 		},
 		{
@@ -2269,7 +2333,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			},
 			wantOptions: []string{
 				"file-cache:max-size-mb:50",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 			},
 		},
 		{
@@ -2295,7 +2359,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:-1",
 				"implicit-dir",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 			},
 		},
 		{
@@ -2321,7 +2385,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:1000000",
 				"implicit-dir",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 			},
 		},
 		{
@@ -2347,7 +2411,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"file-cache:max-size-mb:42",
 				"implicit-dir",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 			},
 		},
 		{
@@ -2373,7 +2437,7 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 			wantOptions: []string{
 				"implicit-dir",
 				"file-cache:max-size-mb:123",
-				"metadata-cache:stat-cache-max-size-mb:2",
+				"metadata-cache:stat-cache-max-size-mb:82",
 				// No medium
 			},
 		},
