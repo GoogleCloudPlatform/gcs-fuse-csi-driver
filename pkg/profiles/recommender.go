@@ -70,6 +70,10 @@ const (
 	metadataStatCacheBytesPerObjectFlat int64 = 1700
 	// mib represents 1024 * 1024 bytes.
 	mib int64 = 1024 * 1024
+	// The minimum size for the metadata stat cache size. The value is obtained from
+	// https://docs.cloud.google.com/storage/docs/cloud-storage-fuse/cli-options#stat-cache-max-size-mb,
+	// which claims that it's enough to cover up to 20,000 files.
+	minMetadataStatCacheMBSize = 34
 
 	// Mount option names.
 	statCacheConfigFileKey = "metadata-cache:stat-cache-max-size-mb"
@@ -456,6 +460,14 @@ func buildCacheRequirements(pvDetails *pvDetails) *cacheRequirements {
 		statCacheAvgBytesPerFile = metadataStatCacheBytesPerObjectHNS
 	}
 	reqs.metadataStatCacheBytes = pvDetails.numObjects * statCacheAvgBytesPerFile
+	minMetadataStatCacheBytes := mibToBytes(minMetadataStatCacheMBSize)
+
+	if reqs.metadataStatCacheBytes < minMetadataStatCacheBytes {
+		// If the bucket is empty or has very few objects, use a minimum value instead of disabling the metadata stat cache,
+		// since files may be created later.
+		klog.V(6).Infof("Required metadata stat cache bytes %d is smaller than the minimum recommended: %d, using the minimum recommended instead.", reqs.metadataStatCacheBytes, minMetadataStatCacheBytes)
+		reqs.metadataStatCacheBytes = minMetadataStatCacheBytes
+	}
 	if isZonalBucket(pvDetails.locationType) {
 		klog.Infof("Bucket location type is %q, file cache not required. Disabling file cache.", pvDetails.locationType)
 		reqs.fileCacheBytes = 0
