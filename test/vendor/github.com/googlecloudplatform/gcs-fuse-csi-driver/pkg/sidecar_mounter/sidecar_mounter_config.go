@@ -26,7 +26,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
 	"syscall"
 	"time"
 
@@ -70,6 +69,7 @@ type MountConfig struct {
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
 	FileCacheMedium                string                `json:"-"`
 	GcsFuseNumaNode                int                   `json:"-"`
+	CustomEndpoint                 string                `json:"-"`
 }
 
 // sidecarRetryConfig controls the retry configurations for sidecarRetry behivior for storage service creation and bucket access check.
@@ -201,6 +201,10 @@ func (mc *MountConfig) prepareMountArgs() {
 	}
 
 	invalidArgs := []string{}
+
+	if customEndpointVal := util.CustomEndpointFromOpts(mc.Options); customEndpointVal != "" {
+		mc.CustomEndpoint = customEndpointVal
+	}
 
 	mc.GcsFuseNumaNode = -1
 	for _, arg := range mc.Options {
@@ -354,13 +358,6 @@ func (mc *MountConfig) prepareMountArgs() {
 	if mc.EnableCloudProfilerForSidecar {
 		// Inject Cloud Profiler flags supported by gcsfuse.
 		flagMap["enable-cloud-profiler"] = ""
-		flagMap["cloud-profiler-cpu"] = ""
-		flagMap["cloud-profiler-heap"] = ""
-		flagMap["cloud-profiler-goroutines"] = ""
-		flagMap["cloud-profiler-mutex"] = ""
-		flagMap["cloud-profiler-allocated-heap"] = ""
-
-		// Get Hostname.
 		customLabel := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
 		flagMap["cloud-profiler-label"] = customLabel
 		klog.Infof("Setting label in GCSFuse mount options: %q", customLabel)

@@ -114,6 +114,7 @@ type requestArgs struct {
 	optInHostnetworkKSA           bool
 	enableCloudProfilerForSidecar bool
 	multiNICIndex                 int
+	customEndpoint                string
 }
 
 func NewControllerServiceCapability(c csi.ControllerServiceCapability_RPC_Type) *csi.ControllerServiceCapability {
@@ -369,6 +370,9 @@ func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]stri
 
 	args, err := parseVolumeAttributes(fuseMountOptions, vc)
 	args.bucketName = bucketName
+	if customEndpointVal := util.CustomEndpointFromOpts(args.fuseMountOptions); customEndpointVal != "" {
+		args.customEndpoint = customEndpointVal
+	}
 	return args, err
 }
 
@@ -570,6 +574,10 @@ func isManagedSidecarImage(imageName string) bool {
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
+	if imageName == "" {
+		return false
+	}
+
 	if d.config.AssumeGoodSidecarVersion {
 		klog.V(4).Infof("Assuming good sidecar version from flag")
 		return true
