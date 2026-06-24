@@ -40,6 +40,7 @@ import (
 	cpmeta "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -72,6 +73,7 @@ func New(mounterPath string) *Mounter {
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
 	var tokenSource oauth2.TokenSource
@@ -101,6 +103,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service or check bucket access, failed with error: %v", err)
 		}
+	}
+
+	// Clear the GCS Fuse error file after the sidecar bucket access check completes and just before the GCS Fuse mount starts.
+	// This ensures the NodePublish volume will always fail if the error persists until the GCS Fuse mount actually starts.
+	if err := mc.ErrWriter.Clean(); err != nil {
+		klog.Warningf("failed to cleanup error file: %v", err)
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
@@ -141,6 +149,24 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	//nolint: gosec
 	klog.Infof("gcsfuse mounting with %s %v...", cmdName, args)
 	cmd := exec.CommandContext(ctx, cmdName, args...)
+
+	if mc.EnableAutoGoMemLimit {
+		//  Set for the sidecar mounter process
+		appliedLimit, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(mc.AutoGoMemLimitRatio),
+			memlimit.WithProvider(memlimit.FromCgroup),
+		)
+		if err != nil {
+			klog.V(4).Infof("GOMEMLIMIT not set (expected if gke-gcsfuse-sidecar memory limit is unset): %v", err)
+		} else if appliedLimit > 0 {
+			// Export GOMEMLIMIT for the gcsfuse child process.
+			// If appliedLimit is 0, it means GOMEMLIMIT was already set in
+			// the environment or there is no memory limit; in both cases we
+			// should not override.
+			cmd.Env = append(os.Environ(), fmt.Sprintf("GOMEMLIMIT=%d", appliedLimit))
+			klog.Infof("Successfully set GOMEMLIMIT=%d for gcsfuse and sidecar_mounter", appliedLimit)
+		}
+	}
 
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
 	cmd.Stdout = os.Stdout
@@ -460,7 +486,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, tokenSource oa
 	var ss storage.Service
 	ssCreateAndBucketCheckFunc := func(ctx context.Context) (bool, error) {
 		if ss == nil {
-			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
+			ss, err = m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource, mc.StorageEndpoint)
 			if err != nil {
 				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("%q: %v %v, retrying...", util.StorageServiceErrorStr, storage.ParseErrCode(err), err)))
 				return false, nil
@@ -510,6 +536,8 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset clientset.Interface, mc *MountConfig) error {
+	mc.EnsureErrWriter()
+
 	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
 		var tm auth.TokenManager
 		var ssm storage.ServiceManager

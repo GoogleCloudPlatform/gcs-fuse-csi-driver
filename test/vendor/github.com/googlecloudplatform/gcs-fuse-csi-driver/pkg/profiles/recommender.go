@@ -70,6 +70,10 @@ const (
 	metadataStatCacheBytesPerObjectFlat int64 = 1700
 	// mib represents 1024 * 1024 bytes.
 	mib int64 = 1024 * 1024
+	// The minimum size for the metadata stat cache size. The value is obtained from
+	// https://docs.cloud.google.com/storage/docs/cloud-storage-fuse/cli-options#stat-cache-max-size-mb,
+	// which claims that it's enough to cover up to 20,000 files.
+	minMetadataStatCacheMBSize = 34
 
 	// Mount option names.
 	statCacheConfigFileKey = "metadata-cache:stat-cache-max-size-mb"
@@ -189,7 +193,7 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Skip the profiles feature for ephemeral volumes.
-			klog.Warningf("pv %q not found: %v, disabling profiles feature for this volume", volumeName, err)
+			klog.V(6).Infof("pv %q not found: %v, disabling profiles feature for this volume", volumeName, err)
 			return nil, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get pv %q: %v", volumeName, err)
@@ -198,7 +202,7 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	// Get the StorageClassName from the PV object.
 	scName := pv.Spec.StorageClassName
 	if scName == "" {
-		klog.Warningf("pv %q has empty StorageClassName, disabling profiles feature for this volume", pv.Name)
+		klog.V(6).Infof("pv %q has empty StorageClassName, disabling profiles feature for this volume", pv.Name)
 		return nil, nil
 	}
 
@@ -206,14 +210,14 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	sc, err := params.Clientset.GetSC(scName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			klog.Warningf("sc %q not found: %v, disabling profiles feature for this volume", scName, err)
+			klog.V(6).Infof("sc %q not found: %v, disabling profiles feature for this volume", scName, err)
 			return nil, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get StorageClass %q: %v", scName, err)
 	}
 
 	if !profilesutil.IsProfile(sc) {
-		klog.Warningf("sc %q found but missing the profile label: %v, disabling profiles feature for this volume", scName, err)
+		klog.V(6).Infof("sc %q found but missing the profile label: %v, disabling profiles feature for this volume", scName, err)
 		return nil, nil
 	}
 
@@ -456,6 +460,14 @@ func buildCacheRequirements(pvDetails *pvDetails) *cacheRequirements {
 		statCacheAvgBytesPerFile = metadataStatCacheBytesPerObjectHNS
 	}
 	reqs.metadataStatCacheBytes = pvDetails.numObjects * statCacheAvgBytesPerFile
+	minMetadataStatCacheBytes := mibToBytes(minMetadataStatCacheMBSize)
+
+	if reqs.metadataStatCacheBytes < minMetadataStatCacheBytes {
+		// If the bucket is empty or has very few objects, use a minimum value instead of disabling the metadata stat cache,
+		// since files may be created later.
+		klog.V(6).Infof("Required metadata stat cache bytes %d is smaller than the minimum recommended: %d, using the minimum recommended instead.", reqs.metadataStatCacheBytes, minMetadataStatCacheBytes)
+		reqs.metadataStatCacheBytes = minMetadataStatCacheBytes
+	}
 	if isZonalBucket(pvDetails.locationType) {
 		klog.Infof("Bucket location type is %q, file cache not required. Disabling file cache.", pvDetails.locationType)
 		reqs.fileCacheBytes = 0

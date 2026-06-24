@@ -20,7 +20,11 @@ package util
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+
+	"golang.org/x/sys/unix"
 )
 
 // File kernel_params_contract.go defines the strict schema and contract used for
@@ -95,10 +99,29 @@ type KernelParamsConfig struct {
 // It returns error in case of contract mismatch or parsing error.
 // GCSFuse writes this file atomically so it's safe to read this file at any point.
 func parseKernelParamsConfig(kernelParamsFilePath string) (*KernelParamsConfig, error) {
-	data, err := os.ReadFile(kernelParamsFilePath)
+	parentDir := filepath.Dir(kernelParamsFilePath)
+
+	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
+	// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
+	// attacks during subsequent relative operations (using unix.Openat).
+	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
+	}
+	defer unix.Close(parentFd)
+
+	fd, err := unix.Openat(parentFd, filepath.Base(kernelParamsFilePath), unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open kernel params file %q: %w", kernelParamsFilePath, err)
+	}
+	f := os.NewFile(uintptr(fd), kernelParamsFilePath)
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read kernel params file %q: %w", kernelParamsFilePath, err)
 	}
+
 	var config KernelParamsConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal kernel params config: %w", err)
