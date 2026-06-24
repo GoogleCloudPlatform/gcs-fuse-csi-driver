@@ -23,20 +23,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+)
+
+const (
+	// PodNameIndex is the key for the indexer that indexes pods by their name.
+	PodNameIndex = "podName"
 )
 
 type Interface interface {
@@ -46,11 +54,15 @@ type Interface interface {
 	ConfigurePVLister(ctx context.Context)
 	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
+	ConfigurePodTemplateLister(ctx context.Context)
 	GetPod(namespace, name string) (*corev1.Pod, error)
+	GetPodsByName(name string) ([]*corev1.Pod, error)
 	GetNode(name string) (*corev1.Node, error)
 	GetPV(name string) (*corev1.PersistentVolume, error)
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
+	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
+	ListPVs() ([]*corev1.PersistentVolume, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -63,11 +75,14 @@ type PodInfo struct {
 type Clientset struct {
 	k8sClients                kubernetes.Interface
 	podLister                 listersv1.PodLister
+	podInformer               cache.SharedIndexInformer
 	nodeLister                listersv1.NodeLister
 	pvLister                  listersv1.PersistentVolumeLister
 	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
+	podTemplateLister         listersv1.PodTemplateLister
 	informerResyncDurationSec int
+	runController             bool
 }
 
 const (
@@ -148,29 +163,19 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		pvObj, ok := obj.(*corev1.PersistentVolume)
-
 		if !ok || pvObj == nil {
 			return obj, nil
 		}
-
-		trimmedPV := &corev1.PersistentVolume{
+		return &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvObj.ObjectMeta.Name,
-				Annotations: pvObj.ObjectMeta.Annotations,
+				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
 			},
 			Spec: corev1.PersistentVolumeSpec{
-				StorageClassName: pvObj.Spec.StorageClassName,
+				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
+				ClaimRef:         pvObj.Spec.ClaimRef,         // Required by the shared node mount feature to identify the bound PVC.
 			},
-		}
-
-		if pvObj.Spec.CSI != nil {
-			trimmedPV.Spec.PersistentVolumeSource.CSI = &corev1.CSIPersistentVolumeSource{
-				Driver:       pvObj.Spec.CSI.Driver,
-				VolumeHandle: pvObj.Spec.CSI.VolumeHandle,
-			}
-		}
-
-		return trimmedPV, nil
+		}, nil
 	}
 
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
@@ -189,13 +194,20 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		pvcObj, ok := obj.(*corev1.PersistentVolumeClaim)
-		if !ok {
+		if !ok || pvcObj == nil {
 			return obj, nil
+		}
+		var annotations map[string]string
+		if val, ok := pvcObj.ObjectMeta.Annotations[webhook.MounterPodTemplateAnnotation]; ok {
+			annotations = map[string]string{
+				webhook.MounterPodTemplateAnnotation: val,
+			}
 		}
 		return &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      pvcObj.ObjectMeta.Name,
-				Namespace: pvcObj.ObjectMeta.Namespace,
+				Name:        pvcObj.ObjectMeta.Name,
+				Namespace:   pvcObj.ObjectMeta.Namespace,
+				Annotations: annotations, // only store the mounter pod template annotation to optimize memory.
 			},
 			Spec: corev1.PersistentVolumeClaimSpec{
 				VolumeName: pvcObj.Spec.VolumeName,
@@ -220,7 +232,7 @@ func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 	trim := func(obj any) (any, error) {
 		scObj, ok := obj.(*storagev1.StorageClass)
-		if !ok {
+		if !ok || scObj == nil {
 			return obj, nil
 		}
 		return &storagev1.StorageClass{
@@ -246,7 +258,37 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 	c.scLister = scLister
 }
 
-func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
+func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
+	trim := func(obj any) (any, error) {
+		podTemplateObj, ok := obj.(*corev1.PodTemplate)
+		if !ok || podTemplateObj == nil {
+			return obj, nil
+		}
+		return &corev1.PodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      podTemplateObj.ObjectMeta.Name,
+				Namespace: podTemplateObj.Namespace,
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: podTemplateObj.Template.Spec,
+			},
+		}, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithTransform(trim),
+	)
+	podTemplateLister := informerFactory.Core().V1().PodTemplates().Lister()
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.podTemplateLister = podTemplateLister
+}
+
+func New(kubeconfigPath string, informerResyncDurationSec int, runController bool) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {
@@ -266,7 +308,16 @@ func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error
 		return nil, fmt.Errorf("failed to configure k8s client: %w", err)
 	}
 
-	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec}, nil
+	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec, runController: runController}, nil
+}
+
+// PodNameIndexFunc is an IndexFunc that indexes pods by their name.
+func PodNameIndexFunc(obj interface{}) ([]string, error) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return []string{}, nil
+	}
+	return []string{pod.Name}, nil
 }
 
 func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
@@ -282,6 +333,10 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
 		podObj, ok := obj.(*corev1.Pod)
 		if !ok {
+			return obj, nil
+		}
+
+		if c.runController {
 			return obj, nil
 		}
 
@@ -330,16 +385,62 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 		c.k8sClients,
 		time.Duration(c.informerResyncDurationSec)*time.Second,
 		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.FieldSelector = "spec.nodeName=" + nodeName
+			if nodeName != "" {
+				options.FieldSelector = "spec.nodeName=" + nodeName
+			}
+			if c.runController {
+				// Only track mounter pods when the Pod informer is configured in the controller.
+				options.LabelSelector = fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr)
+			}
 		}),
 		informers.WithTransform(trim),
 	)
 	podLister := informerFactory.Core().V1().Pods().Lister()
 
+	if c.runController {
+		podInformer := informerFactory.Core().V1().Pods().Informer()
+		// Add an indexer to allow efficient lookup of pods by name across all namespaces.
+		// This is used by the controller to quickly find specific pods (e.g., mounter pods)
+		// by their known name without needing to iterate through all pods or know the namespace.
+		err := podInformer.AddIndexers(cache.Indexers{
+			PodNameIndex: PodNameIndexFunc,
+		})
+		if err != nil {
+			klog.Fatalf("Failed to add podName indexer: %v", err)
+		}
+
+		c.podInformer = podInformer
+	}
+
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
 
 	c.podLister = podLister
+}
+
+func (c *Clientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
+	if c.podInformer == nil {
+		return nil, fmt.Errorf("podInformer is not initialized")
+	}
+
+	// objs is a slice of interface{}, each element is a *corev1.Pod
+	objs, err := c.podInformer.GetIndexer().ByIndex(PodNameIndex, podName)
+	if err != nil {
+		return nil, err
+	}
+
+	pods := make([]*corev1.Pod, 0, len(objs))
+	for _, obj := range objs {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			// This should not happen if the indexer is set up correctly,
+			// but good practice to handle nonetheless.
+			return nil, fmt.Errorf("unexpected type in indexer: got %T, want *corev1.Pod", obj)
+		}
+		pods = append(pods, pod)
+	}
+
+	return pods, nil
 }
 
 func (c *Clientset) GetPod(namespace, name string) (*corev1.Pod, error) {
@@ -366,6 +467,15 @@ func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	return c.pvLister.Get(name)
 }
 
+func (c *Clientset) ListPVs() ([]*corev1.PersistentVolume, error) {
+	if c.pvLister == nil {
+		return nil, errors.New("pv informer is not ready")
+	}
+
+	// TODO(urielguzman): Add volumeHandle indexer to reduce O(N) -> O(1) for shared mount ControllerPublishVolume.
+	return c.pvLister.List(labels.Everything())
+}
+
 func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
 	if c.pvcLister == nil {
 		return nil, errors.New("pvc informer is not ready")
@@ -380,6 +490,14 @@ func (c *Clientset) GetSC(name string) (*storagev1.StorageClass, error) {
 	}
 
 	return c.scLister.Get(name)
+}
+
+func (c *Clientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error) {
+	if c.podTemplateLister == nil {
+		return nil, errors.New("pod template informer is not ready")
+	}
+
+	return c.podTemplateLister.PodTemplates(namespace).Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
