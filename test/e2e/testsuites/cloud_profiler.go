@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
@@ -34,6 +35,7 @@ import (
 	"google.golang.org/api/option"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -196,33 +198,76 @@ func checkIfProfileExistForServiceAndVersion(ctx context.Context, service *cloud
 	framework.Logf("Checking if profile exists for service %q and version %q", serviceName, version)
 	projectID := os.Getenv(utils.ProjectEnvVar)
 	parent := "projects/" + projectID
-	call := service.Projects.Profiles.List(parent)
 
-	var found bool
-	stopErr := fmt.Errorf("stop iteration")
+	var pageToken string
 	var pageIndex int
 
-	// Use Pages to iterate through all profiles, handling pagination automatically.
-	err := call.Pages(ctx, func(page *cloudprofiler.ListProfilesResponse) error {
+	for {
 		pageIndex++
 		framework.Logf("Scanning page %d of profiles for service %q and version %q", pageIndex, serviceName, version)
+
+		backoff := wait.Backoff{
+			Duration: 5 * time.Second,
+			Factor:   2.0,
+			Cap:      30 * time.Second,
+			Steps:    5,
+			Jitter:   0.1,
+		}
+		var page *cloudprofiler.ListProfilesResponse
+		err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+			call := service.Projects.Profiles.List(parent).Context(ctx)
+			if pageToken != "" {
+				call = call.PageToken(pageToken)
+			}
+			var apiErr error
+			page, apiErr = call.Do()
+			if apiErr != nil {
+				framework.Logf("Failed to list profiles: %v", apiErr)
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			return false, fmt.Errorf("failed to list profiles on page %d: %w", pageIndex, err)
+		}
+
+		if page == nil {
+			return false, fmt.Errorf("received nil page response on page %d", pageIndex)
+		}
+
 		for _, profile := range page.Profiles {
-			if profile.Deployment != nil && profile.Deployment.Target == serviceName && profile.Deployment.Labels != nil && profile.Deployment.Labels["version"] == version {
-				found = true
-				framework.Logf("Found profile for service %q and version %q on page %d", serviceName, version, pageIndex)
-				return stopErr
+			if profile.Deployment != nil {
+				target := profile.Deployment.Target
+				var ver string
+				if profile.Deployment.Labels != nil {
+					ver = profile.Deployment.Labels["version"]
+				}
+
+				// Early stopping logic based on lexicographical sorting.
+				// Cloud Profiler List API returns profiles sorted by service name first, then by version.
+				if target > serviceName {
+					framework.Logf("Early stopping at page %d: current service %q > expected %q", pageIndex, target, serviceName)
+					return false, fmt.Errorf("profile not found (early stop on service)")
+				}
+
+				if target == serviceName {
+					if ver > version {
+						framework.Logf("Early stopping at page %d: current version %q > expected %q", pageIndex, ver, version)
+						return false, fmt.Errorf("profile not found (early stop on version)")
+					}
+					if ver == version {
+						framework.Logf("Found profile for service %q and version %q on page %d", serviceName, version, pageIndex)
+						return true, nil
+					}
+				}
 			}
 		}
-		return nil
-	})
 
-	if err != nil && err != stopErr {
-		return false, err
+		if page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
 	}
 
-	if !found {
-		return false, fmt.Errorf("profile not found for service %q and version %q", serviceName, version)
-	}
-
-	return true, nil
+	return false, fmt.Errorf("profile not found for service %q and version %q after scanning %d pages", serviceName, version, pageIndex)
 }
