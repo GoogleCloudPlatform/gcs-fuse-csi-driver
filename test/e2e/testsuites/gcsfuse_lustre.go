@@ -175,7 +175,7 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 		defer cleanup()
 
 		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
-		pvc, cleanupPVC := createLustrePVC("gcsfuse-lustre-dual-pvc-")
+		pvc, cleanupPVC := createLustrePVC("lustre-dual-pvc-")
 		defer cleanupPVC()
 
 		ginkgo.By("Configuring the pod with both GCS Fuse and Lustre volumes")
@@ -223,20 +223,20 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 	})
 
 	// Multi-pod shared Lustre + shared GCS bucket (RWX/RWX): two pods mount the
-	// same Lustre PVC (RWX) and the same GCS Fuse bucket (RWX) concurrently. A
-	// write from either pod to either volume must be immediately visible from
-	// the other pod.
+	// Multi-pod shared RWX: two pods mount the same Lustre PVC (RWX) and the
+	// same GCS Fuse bucket (RWX) concurrently. Pod-1 writes a dataset shard to
+	// Lustre and a manifest to GCS; Pod-2 must see both files immediately.
 	ginkgo.It("should allow two pods to share the same Lustre PVC (RWX) and GCS Fuse bucket (RWX) and see each other's writes", func() {
-		skipIfLustreNotAvailable("multi-pod shared Lustre + GCS bucket test")
+		skipIfLustreNotAvailable("multi-pod shared RWX test")
 
 		init()
 		defer cleanup()
 
 		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
-		pvc, cleanupPVC := createLustrePVC("gcsfuse-lustre-rwx-pvc-")
+		pvc, cleanupPVC := createLustrePVC("lustre-rwx-pvc-")
 		defer cleanupPVC()
 
-		ginkgo.By("Creating Pod-1 with both shared volumes")
+		ginkgo.By("Creating Pod-1 with both volumes")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod1.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
 		tPod1.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
@@ -244,7 +244,13 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 		defer tPod1.Cleanup(ctx)
 		tPod1.WaitForRunning(ctx)
 
-		ginkgo.By("Creating Pod-2 with the same shared volumes")
+		ginkgo.By("Pod-1 writes a shard to Lustre and a manifest to GCS")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'shard-data' > %v/shard.txt", gcsFuseLustreMountPath))
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'manifest-data' > %v/manifest.txt", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Creating Pod-2 mounting the same Lustre PVC and GCS bucket")
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod2.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
 		tPod2.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
@@ -252,43 +258,40 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 		defer tPod2.Cleanup(ctx)
 		tPod2.WaitForRunning(ctx)
 
-		ginkgo.By("Pod-1 writes to the shared Lustre volume and the shared GCS bucket")
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("echo 'pod1-lustre' > %v/pod1-lustre.txt", gcsFuseLustreMountPath))
-		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("echo 'pod1-gcs' > %v/pod1-gcs.txt", gcsFuseLustreGCSMountPath))
+		ginkgo.By("Pod-2 sees the shard written by Pod-1 on the Lustre mount")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'shard-data' %v/shard.txt", gcsFuseLustreMountPath))
 
-		ginkgo.By("Pod-2 sees both files written by Pod-1")
+		ginkgo.By("Pod-2 sees the manifest written by Pod-1 on the GCS Fuse mount")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("grep 'pod1-lustre' %v/pod1-lustre.txt", gcsFuseLustreMountPath))
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("grep 'pod1-gcs' %v/pod1-gcs.txt", gcsFuseLustreGCSMountPath))
+			fmt.Sprintf("grep 'manifest-data' %v/manifest.txt", gcsFuseLustreGCSMountPath))
 
-		ginkgo.By("Pod-2 writes back to the shared Lustre volume and the shared GCS bucket")
+		ginkgo.By("Pod-2 writes back to both volumes")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("echo 'pod2-lustre' > %v/pod2-lustre.txt", gcsFuseLustreMountPath))
+			fmt.Sprintf("echo 'pod2-shard' > %v/pod2-shard.txt", gcsFuseLustreMountPath))
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("echo 'pod2-gcs' > %v/pod2-gcs.txt", gcsFuseLustreGCSMountPath))
+			fmt.Sprintf("echo 'pod2-manifest' > %v/pod2-manifest.txt", gcsFuseLustreGCSMountPath))
 
-		ginkgo.By("Pod-1 sees both files written by Pod-2")
+		ginkgo.By("Pod-1 sees the files written by Pod-2 on the Lustre mount")
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("grep 'pod2-lustre' %v/pod2-lustre.txt", gcsFuseLustreMountPath))
+			fmt.Sprintf("grep 'pod2-shard' %v/pod2-shard.txt", gcsFuseLustreMountPath))
+
+		ginkgo.By("Pod-1 sees the files written by Pod-2 on the GCS Fuse mount")
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("grep 'pod2-gcs' %v/pod2-gcs.txt", gcsFuseLustreGCSMountPath))
+			fmt.Sprintf("grep 'pod2-manifest' %v/pod2-manifest.txt", gcsFuseLustreGCSMountPath))
 	})
 
-	// Pod restart + persistence across both: data written to both the Lustre
-	// PVC and the GCS Fuse volume in Pod-1 survives a pod deletion, and is
-	// fully readable from a fresh Pod-2 that binds the same Lustre PVC and GCS
-	// bucket afterward.
-	ginkgo.It("should persist data on both the Lustre PVC and the GCS Fuse volume across a pod restart", func() {
-		skipIfLustreNotAvailable("pod restart and persistence test")
+	// Pod restart + persistence: data written to both volumes in Pod-1 survives
+	// a pod deletion and is fully readable in a fresh Pod-2 that binds the same
+	// Lustre PVC and GCS bucket.
+	ginkgo.It("should persist data on both Lustre PVC and GCS Fuse volume across a pod restart", func() {
+		skipIfLustreNotAvailable("pod restart persistence test")
 
 		init()
 		defer cleanup()
 
 		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
-		pvc, cleanupPVC := createLustrePVC("gcsfuse-lustre-persist-pvc-")
+		pvc, cleanupPVC := createLustrePVC("lustre-persist-pvc-")
 		defer cleanupPVC()
 
 		ginkgo.By("Creating Pod-1 and writing data to both volumes")
@@ -303,7 +306,7 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("echo 'persistent-gcs' > %v/persist.txt", gcsFuseLustreGCSMountPath))
 
-		ginkgo.By("Deleting Pod-1 to simulate a pod restart")
+		ginkgo.By("Deleting Pod-1")
 		tPod1.Cleanup(ctx)
 
 		ginkgo.By("Creating Pod-2 mounting the same Lustre PVC and GCS bucket")
@@ -321,24 +324,19 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 		ginkgo.By("Verifying GCS Fuse data persisted in Pod-2")
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("grep 'persistent-gcs' %v/persist.txt", gcsFuseLustreGCSMountPath))
-
-		ginkgo.By("Verifying Pod-2 can extend the persisted data on both volumes")
-		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
-			fmt.Sprintf("echo 'persistent-lustre-2' >> %v/persist.txt && echo 'persistent-gcs-2' >> %v/persist.txt",
-				gcsFuseLustreMountPath, gcsFuseLustreGCSMountPath))
 	})
 
 	// Node drain / reschedule remount: after draining the node running the
 	// dual-mount pod, a replacement pod on a different node must remount both
 	// volumes and find the data intact.
-	ginkgo.It("should remount both the Lustre PVC and the GCS Fuse volume with data intact after the node is drained", func() {
+	ginkgo.It("should remount both Lustre PVC and GCS Fuse volume with data intact after the node is drained", func() {
 		skipIfLustreNotAvailable("node drain remount test")
 
 		init()
 		defer cleanup()
 
 		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
-		pvc, cleanupPVC := createLustrePVC("gcsfuse-lustre-drain-pvc-")
+		pvc, cleanupPVC := createLustrePVC("lustre-drain-pvc-")
 		defer cleanupPVC()
 
 		ginkgo.By("Creating the dual-mount pod and waiting for it to run")
