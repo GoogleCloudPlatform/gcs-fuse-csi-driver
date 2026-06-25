@@ -89,6 +89,7 @@ var _ = func() bool {
 	}
 
 	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
+	testsuites.PDStorageClass = *pdStorageClass
 	return true
 }()
 
