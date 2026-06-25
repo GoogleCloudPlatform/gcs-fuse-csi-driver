@@ -274,4 +274,55 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("grep 'pod2-gcs' %v/pod2-gcs.txt", gcsFuseLustreGCSMountPath))
 	})
+
+	// Pod restart + persistence across both: data written to both the Lustre
+	// PVC and the GCS Fuse volume in Pod-1 survives a pod deletion, and is
+	// fully readable from a fresh Pod-2 that binds the same Lustre PVC and GCS
+	// bucket afterward.
+	ginkgo.It("should persist data on both the Lustre PVC and the GCS Fuse volume across a pod restart", func() {
+		skipIfLustreNotAvailable("pod restart and persistence test")
+
+		init()
+		defer cleanup()
+
+		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
+		pvc, cleanupPVC := createLustrePVC("gcsfuse-lustre-persist-pvc-")
+		defer cleanupPVC()
+
+		ginkgo.By("Creating Pod-1 and writing data to both volumes")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		tPod1.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
+		tPod1.Create(ctx)
+		tPod1.WaitForRunning(ctx)
+
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'persistent-lustre' > %v/persist.txt", gcsFuseLustreMountPath))
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'persistent-gcs' > %v/persist.txt", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Deleting Pod-1 to simulate a pod restart")
+		tPod1.Cleanup(ctx)
+
+		ginkgo.By("Creating Pod-2 mounting the same Lustre PVC and GCS bucket")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		tPod2.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+		tPod2.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying Lustre data persisted in Pod-2")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'persistent-lustre' %v/persist.txt", gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying GCS Fuse data persisted in Pod-2")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'persistent-gcs' %v/persist.txt", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Verifying Pod-2 can extend the persisted data on both volumes")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'persistent-lustre-2' >> %v/persist.txt && echo 'persistent-gcs-2' >> %v/persist.txt",
+				gcsFuseLustreMountPath, gcsFuseLustreGCSMountPath))
+	})
 }
