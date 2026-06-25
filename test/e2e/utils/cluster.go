@@ -41,7 +41,7 @@ var (
 	sidecarBucketAccessCheckMinimumVersion      = version.MustParseGeneric("1.34.1")
 	gcsfuseProfilesMinimumVersion               = version.MustParseGeneric("1.35.1")
 	cloudProfilerMinimumVersion                 = version.MustParseGeneric("1.36.1")
-	errorFileCleanUpMinimumVersion              = version.MustParseGeneric("1.99.99") // Update once the driver is released with the error file cleanup feature
+	errorFileCleanUpMinimumVersion              = version.MustParseGeneric("1.36.0")
 )
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
