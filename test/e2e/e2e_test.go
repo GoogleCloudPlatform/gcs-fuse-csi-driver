@@ -51,7 +51,7 @@ var (
 	profilesFlag       = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
 	kernelParamsFlag   = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
 	pdStorageClass     = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
-	lustreStorageClass = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass for Lustre-backed PVC in lustre gcsfuse data pipeline tests")
+	lustreStorageClass = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass used to dynamically provision Lustre PVCs in the Lustre + GCS Fuse data pipeline and combination tests; if empty, those tests are skipped")
 )
 
 var _ = func() bool {
@@ -133,6 +133,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseCSIWorkloadIdentityFederationTestSuite,
 			testsuites.InitGcsFuseCSIDualCSIVolumeTestSuite,
 			testsuites.InitGcsFuseCSILustreDataPipelineTestSuite,
+			testsuites.InitGcsFuseLustreCombinationTestSuite,
 		}
 
 		if *profilesFlag {
