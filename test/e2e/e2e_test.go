@@ -65,7 +65,7 @@ var _ = func() bool {
 	flag.Parse()
 	framework.AfterReadingAllFlags(&framework.TestContext)
 
-	c, err = clientset.New(framework.TestContext.KubeConfig, 0)
+	c, err = clientset.New(framework.TestContext.KubeConfig, 0, false)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
