@@ -521,4 +521,77 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("mount | grep %v", gcsFuseLustreMountPath))
 	})
+
+	// Cross-mount permission/ownership consistency: the GCS Fuse volume is
+	// mounted with an explicit uid mount option (so GCS Fuse remaps every
+	// file's reported owner to that uid, regardless of which process actually
+	// wrote it), while the Lustre volume is a native POSIX filesystem that
+	// reports the real uid/gid of the writing process. The test copies a file
+	// from each mount to the other and verifies that GCS Fuse continues to
+	// report its configured uid for files copied in from Lustre, and that
+	// Lustre preserves the real process-owner uid/gid for files copied in from
+	// GCS Fuse.
+	ginkgo.It("should preserve or correctly remap ownership and permissions when copying files between the GCS Fuse and Lustre mounts", func() {
+		skipIfLustreNotAvailable("cross-mount permission/ownership consistency test")
+
+		const gcsFuseMappedUID = 1001
+
+		// SkipCSIBucketAccessCheckAndNonRootVolumePrefix mounts the GCS Fuse
+		// volume with "uid=1001", so every file on this mount reports owner
+		// uid 1001 no matter which uid actually wrote it.
+		l = local{}
+		l.config = driver.PrepareTest(ctx, f)
+		l.config.Prefix = specs.SkipCSIBucketAccessCheckAndNonRootVolumePrefix
+		l.gcsFuseResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+		defer cleanup()
+
+		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
+		pvc, cleanupPVC := createLustrePVC("lustre-perm-pvc-")
+		defer cleanupPVC()
+
+		ginkgo.By("Configuring the pod with both GCS Fuse (uid=1001 mapped) and Lustre volumes")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Writing a file on the Lustre mount as the pod's real process owner (root)")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'from-lustre' > %v/from-lustre.txt && chmod 644 %v/from-lustre.txt", gcsFuseLustreMountPath, gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying the Lustre file reports the real process owner uid (0/root)")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test $(stat -c%%u %v/from-lustre.txt) -eq 0", gcsFuseLustreMountPath))
+
+		ginkgo.By("Copying the Lustre-owned file onto the GCS Fuse mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("cp %v/from-lustre.txt %v/from-lustre.txt", gcsFuseLustreMountPath, gcsFuseLustreGCSMountPath))
+
+		ginkgo.By(fmt.Sprintf("Verifying GCS Fuse remaps the copied file's owner to the mounted uid (%d), not the real writer uid", gcsFuseMappedUID))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test $(stat -c%%u %v/from-lustre.txt) -eq %d", gcsFuseLustreGCSMountPath, gcsFuseMappedUID))
+
+		ginkgo.By("Writing a file directly on the GCS Fuse mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'from-gcs' > %v/from-gcs.txt", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By(fmt.Sprintf("Verifying the GCS Fuse file also reports the mounted uid (%d)", gcsFuseMappedUID))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test $(stat -c%%u %v/from-gcs.txt) -eq %d", gcsFuseLustreGCSMountPath, gcsFuseMappedUID))
+
+		ginkgo.By("Copying the GCS Fuse file onto the Lustre mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("cp %v/from-gcs.txt %v/from-gcs.txt", gcsFuseLustreGCSMountPath, gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying Lustre preserves the real process-owner uid (0/root) for the copy, not the GCS Fuse mapped uid")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test $(stat -c%%u %v/from-gcs.txt) -eq 0", gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying file contents survived both cross-mount copies intact")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'from-lustre' %v/from-lustre.txt && grep 'from-gcs' %v/from-gcs.txt",
+				gcsFuseLustreGCSMountPath, gcsFuseLustreMountPath))
+	})
 }
