@@ -475,27 +475,27 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "invalid_target")
 	}
 
-	ginkgo.It("[Feature: OIDC] should successfully mount with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should successfully mount with OIDC authentication", ginkgo.Serial, func() {
 		enableWIFEnforcement()
 		testCaseOIDCMount()
 	})
 
-	ginkgo.It("[Feature: OIDC] should store and retain data with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should store and retain data with OIDC authentication", ginkgo.Serial, func() {
 		enableWIFEnforcement()
 		testCaseOIDCStoreData()
 	})
 
-	ginkgo.It("[Feature: OIDC] should store data in implicit directory with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should store data in implicit directory with OIDC authentication", ginkgo.Serial, func() {
 		enableWIFEnforcement()
 		testCaseOIDCStoreDataInImplicitDir()
 	})
 
-	ginkgo.It("[Feature: OIDC] should fail when OIDC ConfigMap is missing", func() {
+	ginkgo.It("[Feature: OIDC] should fail when OIDC ConfigMap is missing", ginkgo.Serial, func() {
 		enableWIFEnforcement()
 		testCaseOIDCMissingConfigMap()
 	})
 
-	ginkgo.It("[Feature: OIDC] should fail when CSI bucket access check is enabled with OIDC authentication", func() {
+	ginkgo.It("[Feature: OIDC] should fail when CSI bucket access check is enabled with OIDC authentication", ginkgo.Serial, func() {
 		enableWIFEnforcement()
 		testCaseOIDCWithCSIBucketAccessCheck()
 	})
@@ -513,7 +513,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 	// annotation is empty, preventing any fallback to the node's identity.
 	//
 	// TODO: Remove the skip below once the node-identity-fallback security bug is fixed.
-	ginkgo.It("[Feature: OIDC] should fail to start pod when WIF credential config is absent and node SA has bucket access", func() {
+	ginkgo.It("[Feature: OIDC] should fail to start pod when WIF credential config is absent and node SA has bucket access", ginkgo.Serial, func() {
 		enableWIFEnforcement()
 		e2eskipper.Skipf("skipping until node-identity-fallback security bug is fixed")
 
