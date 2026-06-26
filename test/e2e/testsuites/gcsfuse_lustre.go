@@ -26,8 +26,10 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -375,5 +377,148 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("echo 'cache-extended' > %v/extra.txt && grep 'cache-extended' %v/extra.txt",
 				gcsFuseLustreGCSMountPath, gcsFuseLustreGCSMountPath))
+	})
+
+	// Lustre disruption resilience with GCS Fuse unaffected: a NetworkPolicy
+	// blocks egress on port 988 (Lustre wire protocol) from the test namespace
+	// to the provisioned Lustre instance IP, simulating a network partition to
+	// the MDS/OSS. The test verifies that the GCS Fuse mount and its sidecar
+	// remain fully operational during the disruption, then confirms both volumes
+	// recover once the NetworkPolicy is removed.
+	//
+	// Prerequisite: the GKE cluster must have a NetworkPolicy-enforcing CNI
+	// (e.g. Calico or GKE Dataplane V2) enabled.
+	ginkgo.It("should keep GCS Fuse healthy and serving data when Lustre network connectivity is disrupted and recover after connectivity is restored", func() {
+		skipIfLustreNotAvailable("Lustre disruption resilience test")
+
+		init()
+		defer cleanup()
+
+		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
+		pvc, cleanupPVC := createLustrePVC("lustre-disrupt-pvc-")
+		defer cleanupPVC()
+
+		ginkgo.By("Fetching the bound PVC to read its PV name")
+		boundPVC, err := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(ctx, pvc.Name, metav1.GetOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Extracting the Lustre instance IP from the PV volume attributes")
+		pv, err := f.ClientSet.CoreV1().PersistentVolumes().Get(ctx, boundPVC.Spec.VolumeName, metav1.GetOptions{})
+		framework.ExpectNoError(err)
+		lustreIP := pv.Spec.CSI.VolumeAttributes["ip"]
+		if lustreIP == "" {
+			framework.Failf("could not extract Lustre instance IP from PV %s volume attributes; got: %v",
+				pv.Name, pv.Spec.CSI.VolumeAttributes)
+		}
+		framework.Logf("Lustre instance IP: %s", lustreIP)
+
+		ginkgo.By("Configuring the pod with both GCS Fuse and Lustre volumes")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Writing baseline data to both volumes to confirm they are initially healthy")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'gcs-baseline' > %v/baseline.txt", gcsFuseLustreGCSMountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'lustre-baseline' > %v/baseline.txt", gcsFuseLustreMountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'gcs-baseline' %v/baseline.txt && grep 'lustre-baseline' %v/baseline.txt",
+				gcsFuseLustreGCSMountPath, gcsFuseLustreMountPath))
+
+		ginkgo.By(fmt.Sprintf("Applying a NetworkPolicy to block port 988 egress to Lustre IP %s (simulating MDS/OSS network partition)", lustreIP))
+		tcpProto := corev1.ProtocolTCP
+		udpProto := corev1.ProtocolUDP
+		lustreCIDR := lustreIP + "/32"
+		port1 := intstr.FromInt32(1)
+		port989 := intstr.FromInt32(989)
+		endPort987 := int32(987)
+		endPort65535 := int32(65535)
+
+		// The policy allows all egress to non-Lustre destinations (covering GCS,
+		// DNS, k8s API, etc.) and allows non-988 ports to the Lustre IP. Port 988
+		// (Lustre wire protocol) to the Lustre instance IP is left unmatched and
+		// therefore dropped by the namespace-scoped egress restriction.
+		netpol := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "block-lustre-port-",
+				Namespace:    f.Namespace.Name,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{},
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					// Allow all egress to IPs other than the Lustre instance.
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{lustreCIDR}}},
+						},
+					},
+					// Allow egress to the Lustre IP on ports 1–987 (pre-Lustre range).
+					{
+						To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: lustreCIDR}}},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{Protocol: &tcpProto, Port: &port1, EndPort: &endPort987},
+							{Protocol: &udpProto, Port: &port1, EndPort: &endPort987},
+						},
+					},
+					// Allow egress to the Lustre IP on ports 989–65535 (post-Lustre range).
+					{
+						To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: lustreCIDR}}},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{Protocol: &tcpProto, Port: &port989, EndPort: &endPort65535},
+							{Protocol: &udpProto, Port: &port989, EndPort: &endPort65535},
+						},
+					},
+				},
+			},
+		}
+		netpol, err = f.ClientSet.NetworkingV1().NetworkPolicies(f.Namespace.Name).Create(ctx, netpol, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		defer func() {
+			if netpol != nil {
+				_ = f.ClientSet.NetworkingV1().NetworkPolicies(f.Namespace.Name).Delete(
+					ctx, netpol.Name, metav1.DeleteOptions{})
+			}
+		}()
+
+		ginkgo.By("Verifying GCS Fuse mount remains readable while Lustre port 988 is blocked")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'gcs-baseline' %v/baseline.txt", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Verifying GCS Fuse mount remains writable while Lustre port 988 is blocked")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'gcs-during-disruption' > %v/during.txt && grep 'gcs-during-disruption' %v/during.txt",
+				gcsFuseLustreGCSMountPath, gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Verifying the GCS Fuse FUSE mount is still present in the mount table during disruption")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("mount | grep %v", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Removing the NetworkPolicy to restore Lustre port 988 connectivity")
+		framework.ExpectNoError(f.ClientSet.NetworkingV1().NetworkPolicies(f.Namespace.Name).Delete(
+			ctx, netpol.Name, metav1.DeleteOptions{}))
+		netpol = nil // prevent double deletion in deferred cleanup
+
+		ginkgo.By("Waiting 60s for the Lustre client to reconnect after connectivity is restored")
+		time.Sleep(60 * time.Second)
+
+		ginkgo.By("Verifying Lustre mount is readable after recovery")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'lustre-baseline' %v/baseline.txt", gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying Lustre mount is writable after recovery")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'lustre-recovered' > %v/recovery.txt && grep 'lustre-recovered' %v/recovery.txt",
+				gcsFuseLustreMountPath, gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying both mounts are healthy after Lustre recovery")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("mount | grep %v", gcsFuseLustreGCSMountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("mount | grep %v", gcsFuseLustreMountPath))
 	})
 }
