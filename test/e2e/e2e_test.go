@@ -92,6 +92,7 @@ var _ = func() bool {
 
 	testsuites.LustreStorageClass = *lustreStorageClass
 	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
+	testsuites.LustreStorageClass = *lustreStorageClass
 	return true
 }()
 
@@ -134,6 +135,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseCSIWorkloadIdentityFederationTestSuite,
 			testsuites.InitGcsFuseCSIDualCSIVolumeTestSuite,
 			testsuites.InitGcsFuseCSILustreDataPipelineTestSuite,
+			testsuites.InitGcsFuseLustrePerfResilienceTestSuite,
 		}
 
 		if *profilesFlag {
