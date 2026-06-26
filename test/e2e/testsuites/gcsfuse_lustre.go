@@ -53,6 +53,11 @@ const (
 	// provisioning, which can take 10+ minutes for large capacities like
 	// gcsFuseLustrePVCSize.
 	gcsFuseLustrePVCBindTimeout = 20 * time.Minute
+	// gcsFuseLustreSidecarCacheVolName is the well-known volume name injected by
+	// the GCS Fuse webhook for the sidecar's file-cache directory. Pre-defining
+	// this volume in the pod spec causes the webhook to use our PVC instead of
+	// the default node-local emptyDir.
+	gcsFuseLustreSidecarCacheVolName = "gke-gcsfuse-cache"
 )
 
 type gcsFuseLustrePerfResilienceTestSuite struct {
@@ -275,5 +280,100 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 			fmt.Sprintf("mount | grep %v", gcsFuseLustreMountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("mount | grep %v", gcsFuseLustreGCSMountPath))
+	})
+
+	// GCS Fuse file-cache backed by Lustre: the GCS Fuse sidecar's file-cache
+	// volume (gke-gcsfuse-cache) is backed by a Lustre PVC instead of the
+	// default node-local emptyDir. This makes the cache durable across pod
+	// restarts and shareable across nodes. The test verifies that GCS Fuse
+	// reads populate the Lustre-backed cache and that a replacement pod finds
+	// the pre-warmed cache intact.
+	ginkgo.It("should store GCS Fuse file cache on a Lustre-backed volume and serve cache hits from Lustre across pod restarts", func() {
+		skipIfLustreNotAvailable("GCS Fuse file-cache backed by Lustre test")
+
+		// EnableFileCachePrefix provisions the GCS Fuse PV with fileCacheCapacity
+		// set, which tells the sidecar to enable file-level caching.
+		l = local{}
+		l.config = driver.PrepareTest(ctx, f)
+		l.config.Prefix = specs.EnableFileCachePrefix
+		l.gcsFuseResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+		defer cleanup()
+
+		ginkgo.By("Creating a Lustre PVC to back the GCS Fuse sidecar file cache")
+		pvc, cleanupPVC := createLustrePVC("lustre-gcsfuse-cache-pvc-")
+		defer cleanupPVC()
+
+		// The Lustre CSIDriver declares fsGroupPolicy: ReadWriteOnceWithFSType,
+		// so kubelet skips applying fsGroup ownership for this ReadWriteMany PVC.
+		// The Lustre root directory therefore keeps its default root-only
+		// permissions, which blocks the GCS Fuse sidecar (running as non-root)
+		// from creating its cache directory. Open up permissions once, from a
+		// plain pod with no GCS Fuse volumes (so the webhook doesn't inject the
+		// sidecar here), before the sidecar ever touches this volume.
+		ginkgo.By("Opening up permissions on the Lustre-backed cache volume for the non-root GCS Fuse sidecar")
+		permFixPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		permFixPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
+		permFixPod.Create(ctx)
+		permFixPod.WaitForRunning(ctx)
+		permFixPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("chmod 1777 %v", gcsFuseLustreMountPath))
+		permFixPod.Cleanup(ctx)
+
+		ginkgo.By("Creating Pod-1: GCS Fuse with Lustre PVC as the sidecar file-cache backing")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		// Pre-define gke-gcsfuse-cache as the Lustre PVC. The webhook detects this
+		// pre-existing volume and skips injecting its default node-local emptyDir,
+		// so the sidecar writes its cache entries to Lustre instead.
+		tPod1.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreSidecarCacheVolName, "/gcsfuse-cache", false)
+		// Add a second mount path for the same gke-gcsfuse-cache volume (not a
+		// second `volumes:` entry for the PVC) so the test container can inspect
+		// what the sidecar cached there. Declaring the same PVC under two
+		// separate pod.spec.volumes entries instead causes kubelet's volume
+		// reconciler on vanilla kubeadm clusters to never mark the second entry
+		// as mounted, hanging the pod in ContainerCreating indefinitely.
+		tPod1.SetupCacheVolumeMount(gcsFuseLustreMountPath)
+		tPod1.Create(ctx)
+		tPod1.WaitForRunning(ctx)
+
+		ginkgo.By("Pod-1: writing test files to the GCS Fuse mount")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("for i in $(seq 1 5); do echo \"content-${i}\" > %v/file-${i}.txt; done", gcsFuseLustreGCSMountPath))
+
+		ginkgo.By("Pod-1: reading files from GCS Fuse to populate the Lustre-backed file cache")
+		for i := 1; i <= 5; i++ {
+			tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+				fmt.Sprintf("grep 'content-%d' %v/file-%d.txt", i, gcsFuseLustreGCSMountPath, i))
+		}
+
+		ginkgo.By("Pod-1: verifying the Lustre volume contains file cache entries written by the GCS Fuse sidecar")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test $(ls -A %v | wc -l) -gt 0", gcsFuseLustreMountPath))
+
+		ginkgo.By("Deleting Pod-1 to simulate a pod restart")
+		tPod1.Cleanup(ctx)
+
+		ginkgo.By("Creating Pod-2 with the same Lustre PVC as the GCS Fuse file-cache backing")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		tPod2.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreSidecarCacheVolName, "/gcsfuse-cache", false)
+		tPod2.SetupCacheVolumeMount(gcsFuseLustreMountPath)
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+		tPod2.WaitForRunning(ctx)
+
+		ginkgo.By("Pod-2: reading files from GCS Fuse — cache hits now served from the persisted Lustre-backed cache")
+		for i := 1; i <= 5; i++ {
+			tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+				fmt.Sprintf("grep 'content-%d' %v/file-%d.txt", i, gcsFuseLustreGCSMountPath, i))
+		}
+
+		ginkgo.By("Pod-2: verifying the Lustre-backed file cache is still intact and populated")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test $(ls -A %v | wc -l) -gt 0", gcsFuseLustreMountPath))
+
+		ginkgo.By("Pod-2: writing an additional file to GCS Fuse to extend the Lustre-backed cache")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'cache-extended' > %v/extra.txt && grep 'cache-extended' %v/extra.txt",
+				gcsFuseLustreGCSMountPath, gcsFuseLustreGCSMountPath))
 	})
 }
