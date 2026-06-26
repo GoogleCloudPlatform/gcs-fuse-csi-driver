@@ -243,22 +243,9 @@ func checkIfProfileExistForServiceAndVersion(ctx context.Context, service *cloud
 					ver = profile.Deployment.Labels["version"]
 				}
 
-				// Early stopping logic based on lexicographical sorting.
-				// Cloud Profiler List API returns profiles sorted by service name first, then by version.
-				if target > serviceName {
-					framework.Logf("Early stopping at page %d: current service %q > expected %q", pageIndex, target, serviceName)
-					return false, fmt.Errorf("profile not found (early stop on service)")
-				}
-
-				if target == serviceName {
-					if ver > version {
-						framework.Logf("Early stopping at page %d: current version %q > expected %q", pageIndex, ver, version)
-						return false, fmt.Errorf("profile not found (early stop on version)")
-					}
-					if ver == version {
-						framework.Logf("Found profile for service %q and version %q on page %d", serviceName, version, pageIndex)
-						return true, nil
-					}
+				if target == serviceName && ver == version {
+					framework.Logf("Found profile for service %q and version %q on page %d", serviceName, version, pageIndex)
+					return true, nil
 				}
 			}
 		}
