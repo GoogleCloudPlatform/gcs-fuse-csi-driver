@@ -224,4 +224,56 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("mount | grep %v", gcsFuseLustreGCSMountPath))
 	})
+
+	// Mixed I/O pattern: many small-file reads/writes on GCS Fuse run
+	// concurrently with sequential large-file I/O on Lustre. Verifies no
+	// cross-driver resource contention and that both mounts remain healthy.
+	ginkgo.It("should handle concurrent small-file I/O on GCS Fuse and sequential large-file I/O on Lustre without contention", func() {
+		skipIfLustreNotAvailable("mixed I/O pattern test")
+
+		init()
+		defer cleanup()
+
+		ginkgo.By("Creating a dynamically provisioned Lustre PVC")
+		pvc, cleanupPVC := createLustrePVC("lustre-mixedio-pvc-")
+		defer cleanupPVC()
+
+		ginkgo.By("Configuring the pod with both GCS Fuse and Lustre volumes")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseLustreGCSVolName, gcsFuseLustreGCSMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, gcsFuseLustreVolName, gcsFuseLustreMountPath, false)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Running concurrent GCS Fuse small-file writes and Lustre sequential large-file I/O")
+		// Launches 100 small-file writes to GCS Fuse in the background while
+		// simultaneously performing a 512 MB sequential write + read on Lustre,
+		// then waits for the GCS workload to finish before asserting exit codes.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf(
+				"sh -c 'set -e; "+
+					"for i in $(seq 1 100); do echo \"small-${i}\" > %v/small-${i}.txt; done & GCS_PID=$!; "+
+					"dd if=/dev/zero of=%v/seq.bin bs=1M count=512 conv=fsync; "+
+					"dd if=%v/seq.bin of=/dev/null bs=1M; "+
+					"wait $GCS_PID'",
+				gcsFuseLustreGCSMountPath, gcsFuseLustreMountPath, gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying a sample of small files written to GCS Fuse are readable")
+		for _, i := range []int{1, 25, 50, 75, 100} {
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+				fmt.Sprintf("grep 'small-%d' %v/small-%d.txt", i, gcsFuseLustreGCSMountPath, i))
+		}
+
+		ginkgo.By("Verifying the sequential Lustre file is intact")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test -f %v/seq.bin && stat -c%%s %v/seq.bin | grep -q 536870912",
+				gcsFuseLustreMountPath, gcsFuseLustreMountPath))
+
+		ginkgo.By("Verifying both mounts remain healthy after mixed I/O")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("mount | grep %v", gcsFuseLustreMountPath))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("mount | grep %v", gcsFuseLustreGCSMountPath))
+	})
 }
