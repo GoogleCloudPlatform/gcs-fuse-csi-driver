@@ -29,7 +29,16 @@ import (
 	"sigs.k8s.io/boskos/common"
 )
 
-var boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), "http://boskos", "", "")
+func getEnvWithDefault(key, defaultValue string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return defaultValue
+}
+
+var boskosURL = getEnvWithDefault("BOSKOS_URL", "http://boskos")
+var boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), boskosURL, "", "")
+
 
 // getBoskosProject retries acquiring a boskos project until success or timeout.
 func getBoskosProject(resourceType string) *common.Resource {
