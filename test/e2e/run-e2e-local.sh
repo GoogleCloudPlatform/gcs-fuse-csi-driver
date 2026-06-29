@@ -104,5 +104,5 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
             --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params} \
-            --gcsfuse-pr-number=${gcsfuse_pr_number}"
+            ${gcsfuse_pr_number:+--gcsfuse-pr-number=${gcsfuse_pr_number}}"
 eval "$base_cmd"

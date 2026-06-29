@@ -114,7 +114,7 @@ func Handle(testParams *TestParameters) error {
 
 	// Always ensure ProjectID is set and PROJECT env var is exported for all test runs.
 	if testParams.ProjectID == "" {
-		output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+		output, err := gcloudCommand(testParams, "config", "get-value", "project").CombinedOutput()
 		if err != nil {
 			klog.Fatalf("Failed to get gcloud project: %v", err)
 		}
@@ -135,7 +135,7 @@ func Handle(testParams *TestParameters) error {
 	if testParams.ManageClusterLifecycle {
 		if testParams.UseBoskos {
 			// 1. Get the old project ID.
-			output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+			output, err := gcloudCommand(testParams, "config", "get-value", "project").CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err)
 			}
@@ -194,11 +194,11 @@ func Handle(testParams *TestParameters) error {
 		}()
 
 		// Fetch the cluster version.
-		cmd := exec.Command("bash", "-c",
-			fmt.Sprintf("gcloud container clusters describe %s --location %s --project %s --format=\"value(currentMasterVersion)\" --verbosity none",
-				testParams.GkeClusterName,
-				testParams.GkeClusterRegion,
-				testParams.ProjectID))
+		cmd := gcloudCommand(testParams, "container", "clusters", "describe", testParams.GkeClusterName,
+			"--location", testParams.GkeClusterRegion,
+			"--project", testParams.ProjectID,
+			"--format=value(currentMasterVersion)",
+			"--verbosity", "none")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to get cluster version, output: %s, err: %w", string(output), err)

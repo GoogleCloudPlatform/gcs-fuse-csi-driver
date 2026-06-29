@@ -98,5 +98,5 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gke-gcloud-command='${gke_gcloud_command}' \
             --gke-gcloud-args='${gke_gcloud_args}'\
             --deploy-overlay-name=${overlay} \
-            --gcsfuse-pr-number=${gcsfuse_pr_number}"
+            ${gcsfuse_pr_number:+--gcsfuse-pr-number=${gcsfuse_pr_number}}"
 eval "$base_cmd"
