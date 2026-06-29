@@ -39,7 +39,6 @@ func getEnvWithDefault(key, defaultValue string) string {
 var boskosURL = getEnvWithDefault("BOSKOS_URL", "http://boskos")
 var boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), boskosURL, "", "")
 
-
 // getBoskosProject retries acquiring a boskos project until success or timeout.
 func getBoskosProject(resourceType string) *common.Resource {
 	timer := time.NewTimer(30 * time.Minute)
