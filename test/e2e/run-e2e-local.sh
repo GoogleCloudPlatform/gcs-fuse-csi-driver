@@ -19,9 +19,12 @@ set -o xtrace
 set -o nounset
 set -o errexit
 
+export JOB_NAME="${JOB_NAME:-local-e2e-test}"
+
 readonly PKGDIR=$(realpath "$( dirname -- "$0"; )/../..")
 readonly gke_cluster_region=${GKE_CLUSTER_REGION:-us-central1}
-readonly gke_cluster_version=$(kubectl version 2>/dev/null | grep 'Server Version:' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+(-gke\.[0-9]+)?$')
+gke_cluster_version_detected=$(kubectl version 2>/dev/null | grep 'Server Version:' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+(-gke\.[0-9]+)?$' || echo "")
+readonly gke_cluster_version=${E2E_TEST_GKE_CLUSTER_VERSION:-${gke_cluster_version_detected}}
 readonly gke_release_channel=${GKE_RELEASE_CHANNEL:-rapid}
 readonly use_gke_autopilot=${E2E_TEST_USE_GKE_AUTOPILOT:-false}
 readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
@@ -32,6 +35,11 @@ readonly build_gcs_fuse_csi_driver="${E2E_TEST_BUILD_DRIVER:-false}"
 readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
 # Default to dev overlay so that --assume-good-sidecar-version is used.
 readonly overlay="${OVERLAY:-dev}"
+readonly manage_cluster_lifecycle="${E2E_TEST_MANAGE_CLUSTER_LIFECYCLE:-false}"
+readonly use_boskos="${E2E_TEST_USE_BOSKOS:-false}"
+readonly project_id="${E2E_TEST_PROJECT_ID:-}"
+readonly num_nodes="${E2E_TEST_NUM_NODES:-3}"
+readonly boskos_resource_type="${E2E_TEST_BOSKOS_RESOURCE_TYPE:-${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}}"
 
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
 # TODO(amacaskill): Remove oidc from default skip when the test can be run without additional configuration.
@@ -70,6 +78,11 @@ chmod +x "${PKGDIR}/bin/e2e-test-ci"
 base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --pkg-dir=${PKGDIR} \
             --run-in-prow=false \
+            --manage-cluster-lifecycle=${manage_cluster_lifecycle} \
+            --use-boskos=${use_boskos} \
+            --project-id=${project_id} \
+            --number-nodes=${num_nodes} \
+            --boskos-resource-type=${boskos_resource_type} \
             --gke-cluster-region=${gke_cluster_region} \
             --use-gke-autopilot=${use_gke_autopilot} \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \

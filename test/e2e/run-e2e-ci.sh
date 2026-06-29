@@ -32,6 +32,8 @@ readonly ginkgo_skip="${TEST_SKIP:-}"
 readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
 readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-20}"
 readonly boskos_resource_type="${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
+readonly manage_cluster_lifecycle="${E2E_TEST_MANAGE_CLUSTER_LIFECYCLE:-true}"
+readonly use_boskos="${E2E_TEST_USE_BOSKOS:-true}"
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_release_channel=${GKE_RELEASE_CHANNEL:-rapid}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
@@ -70,6 +72,8 @@ chmod +x ${PKGDIR}/bin/e2e-test-ci
 base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --pkg-dir=${PKGDIR} \
             --run-in-prow=true \
+            --manage-cluster-lifecycle=${manage_cluster_lifecycle} \
+            --use-boskos=${use_boskos} \
             --gke-cluster-region=${gke_cluster_region} \
             --use-gke-autopilot=${use_gke_autopilot} \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \

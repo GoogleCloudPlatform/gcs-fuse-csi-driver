@@ -51,8 +51,11 @@ var (
 	gcsFusePrNumber                = flag.String("gcsfuse-pr-number", "", "PR number for gcsfuse to test against")
 
 	// Test infrastructure flags.
-	inProw             = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
-	boskosResourceType = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
+	inProw                 = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
+	boskosResourceType     = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
+	manageClusterLifecycle = flag.Bool("manage-cluster-lifecycle", false, "whether to create and destroy the GKE cluster for the test")
+	useBoskos              = flag.Bool("use-boskos", false, "whether to use Boskos to acquire a project")
+	projectID              = flag.String("project-id", "", "GCP project ID to run e2e tests")
 
 	// Driver flags.
 	imageRegistry          = flag.String("image-registry", "", "name of image to stage to")
@@ -79,11 +82,31 @@ func main() {
 	}
 	flag.Parse()
 
+	explicitFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		explicitFlags[f.Name] = true
+	})
+
 	if *inProw {
-		utils.EnsureVariable(boskosResourceType, true, "'boskos-resource-type' must be set when running in prow")
-		utils.EnsureVariable(gkeClusterRegion, true, "'gke-cluster-region' must be set when running in prow")
-		utils.EnsureVariable(gkeClusterVersion, true, "'gke-cluster-version' must be set when running in prow")
-		utils.EnsureVariable(gkeReleaseChannel, true, "'gke-release-channel' must be set when running in prow")
+		if !explicitFlags["manage-cluster-lifecycle"] {
+			*manageClusterLifecycle = true
+		}
+		if !explicitFlags["use-boskos"] {
+			*useBoskos = true
+		}
+	}
+
+	if *manageClusterLifecycle {
+		utils.EnsureVariable(gkeClusterRegion, true, "'gke-cluster-region' must be set when managing cluster lifecycle")
+		utils.EnsureVariable(gkeClusterVersion, true, "'gke-cluster-version' must be set when managing cluster lifecycle")
+		utils.EnsureVariable(gkeReleaseChannel, true, "'gke-release-channel' must be set when managing cluster lifecycle")
+	}
+
+	if *useBoskos {
+		utils.EnsureVariable(boskosResourceType, true, "'boskos-resource-type' must be set when using Boskos")
+	}
+
+	if *inProw {
 		utils.EnsureVariable(apiEndpointOverride, true, "'api-endpoint-override' must be set")
 		if err := os.Setenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER", *apiEndpointOverride); err != nil {
 			klog.Fatalf("failed to set CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER to %q: %v", *apiEndpointOverride, err.Error())
@@ -94,6 +117,9 @@ func main() {
 		PkgDir:                         *pkgDir,
 		InProw:                         *inProw,
 		BoskosResourceType:             *boskosResourceType,
+		ManageClusterLifecycle:         *manageClusterLifecycle,
+		UseBoskos:                      *useBoskos,
+		ProjectID:                      *projectID,
 		UseGKEManagedDriver:            *useGKEManagedDriver,
 		NodeImageType:                  *nodeImageType,
 		UseGKEAutopilot:                *useGKEAutopilot,
