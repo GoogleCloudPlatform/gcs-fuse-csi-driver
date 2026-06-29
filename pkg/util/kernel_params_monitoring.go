@@ -56,8 +56,8 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 // parses the configuration, and applies the parameters to the system if they differ
 // from the current values.
 func checkAndApplyKernelParams(kernelParamsFilePath string, pathForParam map[ParamName]string, logPrefix string) error {
-	// Check for file existence to avoid unnecessary parsing attempts.
-	if _, statErr := os.Stat(kernelParamsFilePath); statErr != nil {
+	// Check for file existence to avoid unnecessary parsing attempts. Use Lstat to prevent following symlinks.
+	if _, statErr := os.Lstat(kernelParamsFilePath); statErr != nil {
 		// If file is missing, wait for the next interval.
 		return nil
 	}

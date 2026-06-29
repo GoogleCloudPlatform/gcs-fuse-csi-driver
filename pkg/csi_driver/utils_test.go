@@ -19,7 +19,6 @@ package driver
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -41,7 +40,6 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 		testCases := []struct {
 			name                string
 			errorMessage        []byte
-			err                 error
 			expectedCode        codes.Code
 			expectedErrorSubstr string
 		}{
@@ -91,18 +89,6 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 				expectedCode: codes.Internal,
 			},
 			{
-				name:         "internal error passed in",
-				errorMessage: []byte(""),
-				expectedCode: codes.Internal,
-				err:          fmt.Errorf("Some error that occurred trying to read the gcsfuse error file"),
-			},
-			{
-				name:         "no error",
-				errorMessage: []byte(""),
-				expectedCode: codes.OK,
-				err:          os.ErrNotExist,
-			},
-			{
 				name:                "sidecar bucket access checked error bucket does not exist",
 				errorMessage:        []byte(fmt.Sprintf("%v: bucket doesn't exist", util.SidecarBucketAccessCheckErrorPrefix)),
 				expectedCode:        codes.NotFound,
@@ -130,7 +116,7 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			actualCode, err := extractErrorFromGcsFuseErrorFile(tc.errorMessage, tc.err)
+			actualCode, err := extractErrorFromGcsFuseErrorFile(tc.errorMessage)
 			if actualCode != tc.expectedCode {
 				t.Errorf("Got value %v, but expected %v", actualCode, tc.expectedCode)
 			}
