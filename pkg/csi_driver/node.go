@@ -471,12 +471,16 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = s.forceUnmountWithRetry(ctx, targetPath, forceUnmounter); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath, func() error {
+				return forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
+			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
-			if err = s.unmountWithRetry(ctx, targetPath); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath, func() error {
+				return s.mounter.Unmount(targetPath)
+			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
 			}
 		}
@@ -507,32 +511,11 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	return false, nil
 }
 
-func (s *nodeServer) forceUnmountWithRetry(ctx context.Context, targetPath string, forceUnmounter mount.MounterForceUnmounter) error {
+func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, unmountFn func() error) error {
 	var lastErr error
 
 	pollErr := wait.PollUntilContextTimeout(ctx, unmountRetryInterval, unmountRetryTimeout, true, func(ctx context.Context) (bool, error) {
-		lastErr = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
-		if lastErr == nil {
-			return true, nil
-		}
-		klog.Warningf("Failed to force unmount %q: %v. Retrying...", targetPath, lastErr)
-		return false, nil
-	})
-
-	if pollErr != nil {
-		if lastErr != nil {
-			return lastErr
-		}
-		return pollErr
-	}
-	return nil
-}
-
-func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string) error {
-	var lastErr error
-
-	pollErr := wait.PollUntilContextTimeout(ctx, unmountRetryInterval, unmountRetryTimeout, true, func(ctx context.Context) (bool, error) {
-		lastErr = s.mounter.Unmount(targetPath)
+		lastErr = unmountFn()
 		if lastErr == nil {
 			return true, nil
 		}
