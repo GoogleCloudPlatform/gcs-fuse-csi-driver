@@ -90,6 +90,48 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 	}, nil
 }
 
+func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+	// Validate arguments
+	stagingPath := req.GetStagingTargetPath()
+	if len(stagingPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Staging Target Path must be provided")
+	}
+	publishContext := req.GetPublishContext()
+	if publishContext == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Publish Context must be provided")
+	}
+	mounterPodNamespace := publishContext[PublishContextKeyMounterPodNamespace]
+	if len(mounterPodNamespace) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Namespace must be provided")
+	}
+	mounterPodName := publishContext[PublishContextKeyMounterPodName]
+	if len(mounterPodName) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Name must be provided")
+	}
+
+	// Verify mounter pod exists.
+	mounterPod, err := s.k8sClients.GetPod(mounterPodNamespace, mounterPodName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.FailedPrecondition, "failed to get mounter pod: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get mounter pod: %v", err)
+	}
+	if mounterPod == nil {
+		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
+	}
+
+	// NodePublish is guaranteed to be called after NodeStage has waited for mounter pod to become running.
+	// Mounter pod not running at this stage means that the pod started and failed (e.g. killed by Kubelet
+	// during OOMKILL).
+	if mounterPod.Status.Phase != corev1.PodRunning {
+		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
+	}
+
+	// TODO(urielguzman): Implement the rest of the NodePublishVolume logic for shared mount.
+	return &csi.NodePublishVolumeResponse{}, nil
+}
+
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Rate limit NodePublishVolume calls to avoid kube API throttling.
 	if err := s.limiter.Wait(ctx); err != nil {
@@ -102,8 +144,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume target path must be provided")
 	}
 
-	// Get the Pod object.
+	// Switch to shared mount logic if the volume context indicates that shared mount is enabled.
 	vc := req.GetVolumeContext()
+	if sharedMount(vc) {
+		return s.NodePublishVolumeForSharedMount(ctx, req)
+	}
+
+	// Get the Pod object.
 	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
