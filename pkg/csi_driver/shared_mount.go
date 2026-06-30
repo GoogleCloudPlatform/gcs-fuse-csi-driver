@@ -490,3 +490,16 @@ func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mo
 		}
 	}
 }
+
+func checkMounterPodErrorFile(emptyDirPath string) (codes.Code, error) {
+	if emptyDirPath == "" {
+		return codes.Internal, fmt.Errorf("empty dir path is empty")
+	}
+	errorFilePath := filepath.Join(emptyDirPath, util.ErrorFileName)
+	errMsg, err := extractErrorMsgFromGcsFuseErrorFile(errorFilePath)
+	if err != nil {
+		return codes.Internal, err
+	}
+
+	return extractErrorFromGcsFuseErrorFile(errMsg)
+}
