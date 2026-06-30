@@ -776,6 +776,7 @@ func TestNodeUnpublishVolume(t *testing.T) {
 		actions       []mount.FakeAction
 		unmountFunc   func(path string) error
 		expectedMount *mount.MountPoint
+		ctx           context.Context
 		expectErr     error
 	}{
 		{
@@ -836,6 +837,10 @@ func TestNodeUnpublishVolume(t *testing.T) {
 				return fmt.Errorf("umount: %s: target is busy", path)
 			},
 			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath},
+			ctx: func() context.Context {
+				ctx, _ := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				return ctx
+			}(),
 			expectErr:     status.Errorf(codes.Internal, "failed to unmount target path %q: umount: %s: target is busy", testTargetPath, testTargetPath),
 		},
 	}
@@ -850,7 +855,12 @@ func TestNodeUnpublishVolume(t *testing.T) {
 				testEnv.fm.UnmountFunc = test.unmountFunc
 			}
 
-			_, err := testEnv.ns.NodeUnpublishVolume(context.TODO(), test.req)
+			ctx := context.TODO()
+			if test.ctx != nil {
+				ctx = test.ctx
+			}
+
+			_, err := testEnv.ns.NodeUnpublishVolume(ctx, test.req)
 			if test.expectErr == nil && err != nil {
 				t.Errorf("got error %q, expected error nil", err)
 			}
@@ -874,6 +884,7 @@ func TestNodeUnpublishVolumeForceUnmount(t *testing.T) {
 		req                  *csi.NodeUnpublishVolumeRequest
 		unmountWithForceFunc func(target string, umountTimeout time.Duration) error
 		expectedMount        *mount.MountPoint
+		ctx                  context.Context
 		expectErr            error
 	}{
 		{
@@ -905,6 +916,10 @@ func TestNodeUnpublishVolumeForceUnmount(t *testing.T) {
 				return fmt.Errorf("umount: %s: target is busy", target)
 			},
 			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath},
+			ctx: func() context.Context {
+				ctx, _ := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				return ctx
+			}(),
 			expectErr:     status.Errorf(codes.Internal, "failed to force unmount target path %q: umount: %s: target is busy", testTargetPath, testTargetPath),
 		},
 	}
@@ -919,7 +934,12 @@ func TestNodeUnpublishVolumeForceUnmount(t *testing.T) {
 				forceMounter.unmountWithForceFunc = test.unmountWithForceFunc
 			}
 
-			_, err := testEnv.ns.NodeUnpublishVolume(context.TODO(), test.req)
+			ctx := context.TODO()
+			if test.ctx != nil {
+				ctx = test.ctx
+			}
+
+			_, err := testEnv.ns.NodeUnpublishVolume(ctx, test.req)
 			if test.expectErr == nil && err != nil {
 				t.Errorf("got error %q, expected error nil", err)
 			}
