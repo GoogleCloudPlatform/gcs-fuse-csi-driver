@@ -137,9 +137,7 @@ func (t *gcsFuseCSILustreDataPipelineTestSuite) DefineTests(driver storageframew
 	// Lustre instance creation can take several minutes.
 	waitForLustrePVCBound := func(pvcName string) {
 		ginkgo.By(fmt.Sprintf("Waiting for Lustre PVC %q to be Bound (up to 20m)", pvcName))
-		pollCtx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-		defer cancel()
-		framework.ExpectNoError(wait.PollUntilContextTimeout(pollCtx, 10*time.Second, 20*time.Minute, true, func(c context.Context) (bool, error) {
+		framework.ExpectNoError(wait.PollUntilContextTimeout(ctx, 10*time.Second, 20*time.Minute, true, func(c context.Context) (bool, error) {
 			pvc, err := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(c, pvcName, metav1.GetOptions{})
 			if err != nil {
 				return false, err
@@ -265,7 +263,10 @@ func (t *gcsFuseCSILustreDataPipelineTestSuite) DefineTests(driver storageframew
 		}
 
 		ginkgo.By(fmt.Sprintf("Verifying the checkpoint object %q is visible in GCS bucket %q after fsync/close", checkpointFileName, bucketName))
-		downloadPath := fmt.Sprintf("/tmp/%v-downloaded", checkpointFileName)
+		tmpFile, err := os.CreateTemp("", "checkpoint-download-*")
+		framework.ExpectNoError(err)
+		downloadPath := tmpFile.Name()
+		tmpFile.Close()
 		defer os.Remove(downloadPath)
 		framework.ExpectNoError(gcsfuseDriver.DownloadGCSObject(ctx, bucketName, checkpointFileName, downloadPath))
 	})
@@ -341,7 +342,10 @@ func (t *gcsFuseCSILustreDataPipelineTestSuite) DefineTests(driver storageframew
 		ginkgo.By("Verifying all written files are visible in the GCS bucket")
 		bucketName := l.gcsFuseResource.Pv.Spec.CSI.VolumeHandle
 		for _, ph := range pods {
-			downloadPath := fmt.Sprintf("/tmp/%v-downloaded", ph.fileName)
+			tmpFile, err := os.CreateTemp("", "stress-download-*")
+			framework.ExpectNoError(err)
+			downloadPath := tmpFile.Name()
+			tmpFile.Close()
 			defer os.Remove(downloadPath)
 			framework.ExpectNoError(gcsfuseDriver.DownloadGCSObject(ctx, bucketName, ph.fileName, downloadPath))
 		}
@@ -373,11 +377,13 @@ func (t *gcsFuseCSILustreDataPipelineTestSuite) DefineTests(driver storageframew
 		podA.Create(ctx)
 		defer podA.Cleanup(ctx)
 		podA.WaitForRunning(ctx)
+		nodeName := podA.GetNode()
 
 		// Pod B: mounts Lustre only (reuses same PVC — RWX).
 		ginkgo.By("Creating Pod B: Lustre-only")
 		podB := specs.NewTestPod(f.ClientSet, f.Namespace)
 		podB.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, lustreVolName, lustreMountPath, false)
+		podB.SetNodeAffinity(nodeName, true)
 		podB.Create(ctx)
 		defer podB.Cleanup(ctx)
 		podB.WaitForRunning(ctx)
@@ -386,6 +392,7 @@ func (t *gcsFuseCSILustreDataPipelineTestSuite) DefineTests(driver storageframew
 		ginkgo.By("Creating Pod C: GCS Fuse-only")
 		podC := specs.NewTestPod(f.ClientSet, f.Namespace)
 		podC.SetupVolume(l.gcsFuseResource, gcsFuseDataVolName, gcsFuseDataMountPath, false)
+		podC.SetNodeAffinity(nodeName, true)
 		podC.Create(ctx)
 		defer podC.Cleanup(ctx)
 		podC.WaitForRunning(ctx)
