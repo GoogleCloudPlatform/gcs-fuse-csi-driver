@@ -159,38 +159,15 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	//   - GCS Fuse data persists via durable object storage and
 	//     re-authenticates cleanly on the fresh mount.
 	ginkgo.It("[Feature: GCSFuse-PDCSI] should persist PD data and remount GCS Fuse cleanly after pod deletion", func() {
-		_, err := f.ClientSet.StorageV1().CSIDrivers().Get(ctx, pdCSIDriverName, metav1.GetOptions{})
-		if err != nil {
-			e2eskipper.Skipf("%s CSIDriver not found, skipping dual-driver test: %v", pdCSIDriverName, err)
-		}
+		skipIfPDCSINotInstalled("dual-driver test")
 
 		init()
 		defer cleanup()
 
 		// ── Step 1: Create the PD-backed PVC ─────────────────────────────────
 		ginkgo.By(fmt.Sprintf("Creating PD-backed PVC using StorageClass %q", PDStorageClass))
-		scName := PDStorageClass
-		pvc := &corev1.PersistentVolumeClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "pod-restart-pd-pvc-",
-				Namespace:    f.Namespace.Name,
-			},
-			Spec: corev1.PersistentVolumeClaimSpec{
-				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-				StorageClassName: &scName,
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: resource.MustParse("5Gi"),
-					},
-				},
-			},
-		}
-		pvc, err = f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Create(ctx, pvc, metav1.CreateOptions{})
-		framework.ExpectNoError(err)
-		defer func() {
-			framework.ExpectNoError(f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Delete(
-				ctx, pvc.Name, metav1.DeleteOptions{}))
-		}()
+		pvc, cleanupPVC := createPDPVC("pod-restart-pd-pvc-", "5Gi")
+		defer cleanupPVC()
 
 		// ── Step 2: Pod-1 — write sentinel files to both mounts ──────────────
 		ginkgo.By("Configuring Pod-1 with both GCS Fuse and PD volumes")
@@ -361,11 +338,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 			),
 		)
 
-		ginkgo.By("Getting the node the pod is running on")
-		pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, tPod.GetPodName(), metav1.GetOptions{})
-		framework.ExpectNoError(err)
-
-		nodeName := pod.Spec.NodeName
+		nodeName := tPod.GetNode()
 		framework.Logf("Initial pod scheduled on node %q", nodeName)
 
 		ginkgo.By(fmt.Sprintf("Cordoning node %q", nodeName))
@@ -401,9 +374,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 
 		tPod2.WaitForRunning(ctx)
 
-		newPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, tPod2.GetPodName(), metav1.GetOptions{})
-		framework.ExpectNoError(err)
-		framework.Logf("New pod scheduled on node %q", newPod.Spec.NodeName)
+		framework.Logf("New pod scheduled on node %q", tPod2.GetNode())
 
 		ginkgo.By("Verifying PD data remains accessible after remount")
 		tPod2.VerifyExecInPodSucceed(
