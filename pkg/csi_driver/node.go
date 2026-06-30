@@ -430,7 +430,7 @@ func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage s
 		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
 }
 
-func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Validate arguments
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -467,12 +467,12 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = s.forceUnmountWithRetry(targetPath, forceUnmounter); err != nil {
+			if err = s.forceUnmountWithRetry(ctx, targetPath, forceUnmounter); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
-			if err = s.unmountWithRetry(targetPath); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
 			}
 		}
@@ -503,10 +503,10 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	return false, nil
 }
 
-func (s *nodeServer) forceUnmountWithRetry(targetPath string, forceUnmounter mount.MounterForceUnmounter) error {
+func (s *nodeServer) forceUnmountWithRetry(ctx context.Context, targetPath string, forceUnmounter mount.MounterForceUnmounter) error {
 	var lastErr error
 
-	pollErr := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+	pollErr := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		lastErr = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
 		if lastErr == nil {
 			return true, nil
@@ -524,10 +524,10 @@ func (s *nodeServer) forceUnmountWithRetry(targetPath string, forceUnmounter mou
 	return nil
 }
 
-func (s *nodeServer) unmountWithRetry(targetPath string) error {
+func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string) error {
 	var lastErr error
 
-	pollErr := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+	pollErr := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		lastErr = s.mounter.Unmount(targetPath)
 		if lastErr == nil {
 			return true, nil
