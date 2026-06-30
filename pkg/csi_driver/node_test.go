@@ -115,17 +115,17 @@ func initTestNodeServerWithMounter(t *testing.T, mounter mount.Interface) *nodeS
 			Name:      "test-pvc",
 		},
 	})
-	driver := initTestDriver(t, mounter, fakeClient)
-	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
-	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
-		t.Fatalf("failed to create the fake bucket: %v", err)
-	}
-
 	var fakeMounter *mount.FakeMounter
 	if fm, ok := mounter.(*mount.FakeMounter); ok {
 		fakeMounter = fm
 	} else if ffm, ok := mounter.(*fakeForceUnmounter); ok {
 		fakeMounter = ffm.FakeMounter
+	}
+
+	driver := initTestDriver(t, fakeMounter, fakeClient)
+	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+		t.Fatalf("failed to create the fake bucket: %v", err)
 	}
 
 	return &nodeServerTestEnv{
