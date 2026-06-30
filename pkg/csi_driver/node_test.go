@@ -58,19 +58,7 @@ type nodeServerTestEnv struct {
 }
 
 func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
-	t.Helper()
-	mounter := mount.NewFakeMounter([]mount.MountPoint{})
-	driver := initTestDriver(t, mounter)
-	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
-	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
-		t.Fatalf("failed to create the fake bucket: %v", err)
-	}
-
-	return &nodeServerTestEnv{
-		ns:    newNodeServer(driver, mounter),
-		fm:    mounter,
-		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
-	}
+	return initTestNodeServerWithMounter(t, mount.NewFakeMounter([]mount.MountPoint{}))
 }
 
 func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *nodeServerTestEnv {
@@ -102,11 +90,15 @@ func (f *fakeForceUnmounter) UnmountWithForce(target string, umountTimeout time.
 }
 
 func initTestNodeServerWithForceMounter(t *testing.T) (*nodeServerTestEnv, *fakeForceUnmounter) {
-	t.Helper()
 	fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 	mounter := &fakeForceUnmounter{
 		FakeMounter: fakeMounter,
 	}
+	return initTestNodeServerWithMounter(t, mounter), mounter
+}
+
+func initTestNodeServerWithMounter(t *testing.T, mounter mount.Interface) *nodeServerTestEnv {
+	t.Helper()
 	podName := createMounterPodName("test-node", testVolumeID)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -129,11 +121,18 @@ func initTestNodeServerWithForceMounter(t *testing.T) (*nodeServerTestEnv, *fake
 		t.Fatalf("failed to create the fake bucket: %v", err)
 	}
 
+	var fakeMounter *mount.FakeMounter
+	if fm, ok := mounter.(*mount.FakeMounter); ok {
+		fakeMounter = fm
+	} else if ffm, ok := mounter.(*fakeForceUnmounter); ok {
+		fakeMounter = ffm.FakeMounter
+	}
+
 	return &nodeServerTestEnv{
 		ns:    newNodeServer(driver, mounter),
 		fm:    fakeMounter,
 		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
-	}, mounter
+	}
 }
 
 func setupMountTarget(t *testing.T) (string, func()) {
