@@ -151,7 +151,8 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 				if podConfig.IsMounterPod {
 					return []corev1.Container{
 						{
-							Name: util.MounterPodNamePrefix,
+							Name:  util.MounterPodNamePrefix,
+							Image: webhook.FakeConfig().ContainerImage,
 							Resources: corev1.ResourceRequirements{
 								Limits: podConfig.SidecarLimits,
 							},

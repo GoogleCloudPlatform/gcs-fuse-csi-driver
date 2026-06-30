@@ -251,6 +251,84 @@ func TestCreateMounterPodName(t *testing.T) {
 	}
 }
 
+func TestMounterPodImage(t *testing.T) {
+	testCases := []struct {
+		name        string
+		pod         *corev1.Pod
+		expected    string
+		expectError bool
+	}{
+		{
+			name:        "nil pod returns error",
+			pod:         nil,
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name: "pod without mounter container returns error",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "other-container",
+							Image: "nginx:latest",
+						},
+					},
+				},
+			},
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name: "pod with mounter container returns container image",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  util.MounterPodNamePrefix + "-123",
+							Image: "gcr.io/gke-release/gcsfuse-csi-mounter:v1.0.0",
+						},
+					},
+				},
+			},
+			expected:    "gcr.io/gke-release/gcsfuse-csi-mounter:v1.0.0",
+			expectError: false,
+		},
+		{
+			name: "pod with multiple containers returns correct mounter container image",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "sidecar",
+							Image: "sidecar-image:v1",
+						},
+						{
+							Name:  util.MounterPodNamePrefix + "-abc",
+							Image: "mounter-image:v2",
+						},
+					},
+				},
+			},
+			expected:    "mounter-image:v2",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mounterPodImage(tc.pod)
+			if (err != nil) != tc.expectError {
+				t.Errorf("mounterPodImage() error = %v, expectError %v", err, tc.expectError)
+				return
+			}
+			if got != tc.expected {
+				t.Errorf("mounterPodImage() = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
 func sortVolumes(volumes []corev1.Volume) {
 	sort.Slice(volumes, func(i, j int) bool {
 		return volumes[i].Name < volumes[j].Name

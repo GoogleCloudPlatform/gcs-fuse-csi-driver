@@ -327,6 +327,9 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          volID,
 				StagingTargetPath: stagingPath,
+				VolumeContext: map[string]string{
+					util.VolumeContextKeyPVName: volID,
+				},
 				PublishContext: map[string]string{
 					PublishContextKeyMounterPodNamespace: podNamespace,
 					PublishContextKeyMounterPodName:      podName,
@@ -340,6 +343,9 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 			req: &csi.NodeStageVolumeRequest{
 				VolumeId:          volID,
 				StagingTargetPath: stagingPath,
+				VolumeContext: map[string]string{
+					util.VolumeContextKeyPVName: volID,
+				},
 				PublishContext: map[string]string{
 					PublishContextKeyMounterPodNamespace: podNamespace,
 					PublishContextKeyMounterPodName:      podName,
@@ -359,9 +365,9 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 			if tc.podExists {
 				fakeClientSet = clientset.NewFakeClientset()
 				fakeClientSet.CreatePod(clientset.FakePodConfig{
-
-					UID:       types.UID(podName),
-					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+					UID:          types.UID(podName),
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
 				})
 			} else {
 				fakeClientSet = clientset.NewFakeClientset()
@@ -1268,6 +1274,24 @@ func TestMountToNode(t *testing.T) {
 	}
 }
 
+func validateMountOptions(t *testing.T, actualOpts []string, expectedOpts []string, unexpectedOpts []string) {
+	t.Helper()
+	optsMap := make(map[string]bool)
+	for _, opt := range actualOpts {
+		optsMap[opt] = true
+	}
+	for _, expectedOpt := range expectedOpts {
+		if !optsMap[expectedOpt] {
+			t.Errorf("expected option %q not found in actual options %v", expectedOpt, actualOpts)
+		}
+	}
+	for _, unexpectedOpt := range unexpectedOpts {
+		if optsMap[unexpectedOpt] {
+			t.Errorf("unexpected option %q found in actual options %v", unexpectedOpt, actualOpts)
+		}
+	}
+}
+
 func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint, unexpectedOpts []string) {
 	t.Helper()
 	if e == nil {
@@ -1295,23 +1319,7 @@ func validateMountPoint(t *testing.T, fm *mount.FakeMounter, e *mount.MountPoint
 		t.Errorf("got type %q, expected %q", a.Type, e.Type)
 	}
 
-	// Validate expected options are present in actual options.
-	actualOpts := make(map[string]bool)
-	for _, opt := range a.Opts {
-		actualOpts[opt] = true
-	}
-	for _, expectedOpt := range e.Opts {
-		if !actualOpts[expectedOpt] {
-			t.Errorf("expected option %q not found in actual options %v", expectedOpt, a.Opts)
-		}
-	}
-
-	// Validate unexpected options are not present in actual options.
-	for _, unexpectedOpt := range unexpectedOpts {
-		if actualOpts[unexpectedOpt] {
-			t.Errorf("unexpected option %q found in actual options %v", unexpectedOpt, a.Opts)
-		}
-	}
+	validateMountOptions(t, a.Opts, e.Opts, unexpectedOpts)
 }
 
 func TestConcurrentMapWrites(t *testing.T) {
@@ -2497,6 +2505,125 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+func TestNodeStageVolumeEnableGCSFuseKernelParams(t *testing.T) {
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	cases := []struct {
+		name                       string
+		enableKernelParamsFileFlag bool
+		assumeGoodSidecarVersion   bool
+		expectedOptions            []string
+		unexpectedOptions          []string
+	}{
+		{
+			name:                       "feature enabled, mounter pod image supported",
+			enableKernelParamsFileFlag: true,
+			assumeGoodSidecarVersion:   true,
+			expectedOptions:            []string{"enable-gcsfuse-kernel-params=true"},
+		},
+		{
+			name:                       "feature enabled, mounter pod image not supported",
+			enableKernelParamsFileFlag: true,
+			assumeGoodSidecarVersion:   false,
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
+		},
+		{
+			name:                       "feature disabled, mounter pod image supported",
+			enableKernelParamsFileFlag: false,
+			assumeGoodSidecarVersion:   true,
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
+		},
+		{
+			name:                       "feature disabled, mounter pod image not supported",
+			enableKernelParamsFileFlag: false,
+			assumeGoodSidecarVersion:   false,
+			unexpectedOptions:          []string{"enable-gcsfuse-kernel-params=true"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			// Use a short base dir to avoid hitting the 108-character limit for Unix domain sockets.
+			tmpDir, err := os.MkdirTemp("/tmp", "s")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+			t.Cleanup(func() { os.RemoveAll(tmpDir) })
+			socketDir := filepath.Join(tmpDir, "s")
+			emptyDirBasePath := filepath.Join(tmpDir, "e")
+
+			sockFile := filepath.Join(emptyDirBasePath, string(podUID), mounterPodSocketFile)
+			mounterServer := startFakeMounterServer(t, sockFile)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+
+			ns.driver.config.FeatureOptions.EnableGCSFuseKernelParams = tc.enableKernelParamsFileFlag
+			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
+				Enabled:       true,
+				FuseSocketDir: socketDir,
+				EmptyDirBasePath: func(podUID string) string {
+					return filepath.Join(emptyDirBasePath, podUID)
+				},
+			}
+
+			stageReq := &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: testStagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  volID,
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      podName,
+					PublishContextKeyMounterPodNamespace: podNamespace,
+				},
+			}
+
+			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if mounterServer.req == nil {
+				t.Fatalf("expected mounterServer.req to be non-nil, but got nil")
+			}
+			validateMountOptions(t, mounterServer.req.MountOptions, tc.expectedOptions, tc.unexpectedOptions)
 		})
 	}
 }

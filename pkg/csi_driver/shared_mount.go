@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"context"
@@ -76,6 +77,20 @@ func (driver *GCSDriver) sharedMount(vc map[string]string) bool {
 		return true
 	}
 	return false
+}
+
+// mounterPodImage extracts the container image specified for the mounter pod container
+// with name matching MounterPodNamePrefix from the given Pod.
+func mounterPodImage(pod *corev1.Pod) (string, error) {
+	if pod == nil {
+		return "", fmt.Errorf("pod is nil")
+	}
+	for _, container := range pod.Spec.Containers {
+		if strings.HasPrefix(container.Name, util.MounterPodNamePrefix) {
+			return container.Image, nil
+		}
+	}
+	return "", fmt.Errorf("failed to find mounter container with prefix %q", util.MounterPodNamePrefix)
 }
 
 // createMounterPodName returns a unique name for the mounter pod. The name is composed by
