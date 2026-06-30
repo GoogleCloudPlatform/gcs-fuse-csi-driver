@@ -52,7 +52,9 @@ const (
 	FuseMountType                       = "fuse"
 	maxGCSFuseVolumesForMetrics         = 10
 	unmountRetryInterval                = 100 * time.Millisecond
-	unmountRetryTimeout                 = 2 * time.Second
+	// Non-force unmount takes 5s to timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go);
+	// we then retry force unmounting for 2s.
+	unmountRetryTimeout = 7 * time.Second
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
