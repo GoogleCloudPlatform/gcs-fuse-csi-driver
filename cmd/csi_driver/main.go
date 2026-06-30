@@ -291,6 +291,9 @@ func main() {
 		clientset.ConfigurePVCLister(ctx)
 		clientset.ConfigurePodTemplateLister(ctx)
 		clientset.ConfigurePodLister(ctx, "")
+		if featureOptions.FeatureGCSFuseProfiles.Enabled {
+			clientset.ConfigureSCLister(ctx)
+		}
 	}
 
 	config := &driver.GCSDriverConfig{

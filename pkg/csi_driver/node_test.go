@@ -19,6 +19,7 @@ package driver
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -33,15 +34,21 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
 )
 
 var testVolumeCapability = &csi.VolumeCapability{
@@ -51,6 +58,40 @@ var testVolumeCapability = &csi.VolumeCapability{
 	AccessMode: &csi.VolumeCapability_AccessMode{
 		Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
 	},
+}
+
+type fakeMounterServer struct {
+	mounter.UnimplementedMounterServer
+	req *mounter.MountRequest
+}
+
+func (f *fakeMounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (*mounter.MountResponse, error) {
+	f.req = req
+	return &mounter.MountResponse{}, nil
+}
+
+func startFakeMounterServer(t *testing.T, socketFile string) *fakeMounterServer {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(socketFile), 0755); err != nil {
+		t.Fatalf("failed to create dir for socket: %v", err)
+	}
+	_ = os.Remove(socketFile)
+	shortSock := filepath.Join(t.TempDir(), "s.sock")
+	l, err := net.Listen("unix", shortSock)
+	if err != nil {
+		t.Fatalf("failed to listen on socket %q: %v", shortSock, err)
+	}
+	if err := os.Symlink(shortSock, socketFile); err != nil {
+		t.Fatalf("failed to symlink %q to %q: %v", shortSock, socketFile, err)
+	}
+	srv := grpc.NewServer()
+	fs := &fakeMounterServer{}
+	mounter.RegisterMounterServer(srv, fs)
+	go srv.Serve(l)
+	t.Cleanup(func() {
+		srv.Stop()
+	})
+	return fs
 }
 
 type nodeServerTestEnv struct {
@@ -247,11 +288,8 @@ func TestExecuteNodeStageVolume(t *testing.T) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
-	if file, err := os.Create(validSocketFile); err != nil {
-		t.Fatalf("failed to create socket file: %v", err)
-	} else {
-		file.Close()
-	}
+
+	_ = startFakeMounterServer(t, validSocketFile)
 
 	cases := []struct {
 		name      string
@@ -816,16 +854,17 @@ func TestNodeStageVolume(t *testing.T) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
-	if file, err := os.Create(validSocketFile); err != nil {
-		t.Fatalf("failed to create socket file: %v", err)
-	} else {
-		file.Close()
-	}
+
+	fakeServer := startFakeMounterServer(t, validSocketFile)
 
 	cases := []struct {
-		name      string
-		req       *csi.NodeStageVolumeRequest
-		expectErr error
+		name                 string
+		req                  *csi.NodeStageVolumeRequest
+		expectErr            error
+		profilesEnabled      bool
+		pvConfig             *clientset.FakePVConfig
+		scConfig             *clientset.FakeSCConfig
+		expectedMountOptions []string
 	}{
 		{
 			name:      "empty request",
@@ -963,6 +1002,7 @@ func TestNodeStageVolume(t *testing.T) {
 				VolumeCapability:  testVolumeCapability,
 				VolumeContext: map[string]string{
 					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
 				},
 				PublishContext: map[string]string{
 					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
@@ -970,15 +1010,89 @@ func TestNodeStageVolume(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "valid request with sharedMount true and profilesEnabled true",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Mount{
+						Mount: &csi.VolumeCapability_MountVolume{
+							MountFlags: []string{"implicit-dirs"},
+						},
+					},
+					AccessMode: &csi.VolumeCapability_AccessMode{
+						Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+					},
+				},
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			profilesEnabled: true,
+			expectedMountOptions: []string{
+				"implicit-dirs",
+				"file-cache:max-size-mb:1",
+				"file-cache:cache-file-for-range-read:true",
+				"log-severity=trace",
+				"metadata-cache:stat-cache-max-size-mb:34",
+				"file-cache-medium=ram",
+			},
+			pvConfig: &clientset.FakePVConfig{
+				Name:         testVolumeID,
+				VolumeHandle: testVolumeID,
+				SCName:       "test-sc",
+				Annotations: map[string]string{
+					"gke-gcsfuse/bucket-scan-num-objects":      "1000",
+					"gke-gcsfuse/bucket-scan-total-size-bytes": "1000000",
+					"gke-gcsfuse/bucket-scan-location-type":    "regional",
+				},
+			},
+			scConfig: &clientset.FakeSCConfig{
+				Name: "test-sc",
+				Labels: map[string]string{
+					"gke-gcsfuse/profile": "true",
+				},
+				Parameters: map[string]string{
+					"fileCacheForRangeRead": "true",
+				},
+				MountOptions: []string{"log-severity=trace"},
+			},
+		},
 	}
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
+			fakeServer.req = nil // reset before each test
 			fakeClientset := clientset.NewFakeClientset()
-			fakeClientset.CreatePod(clientset.FakePodConfig{
-				UID:       types.UID(podName),
-				PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+			fakeClientset.CreateNode(clientset.FakeNodeConfig{
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("16Gi"),
+					},
+				},
 			})
+			fakeClientset.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    "test-ns",
+				UID:          types.UID(podName),
+				IsMounterPod: true,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				SidecarLimits: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("2Gi"),
+				},
+			})
+			if test.pvConfig != nil {
+				fakeClientset.CreatePV(*test.pvConfig)
+			}
+			if test.scConfig != nil {
+				fakeClientset.CreateSC(*test.scConfig)
+			}
 
 			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientset, false)
 			ns, ok := testEnv.ns.(*nodeServer)
@@ -988,6 +1102,7 @@ func TestNodeStageVolume(t *testing.T) {
 			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
 				return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			}
+			ns.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = test.profilesEnabled
 
 			_, err := testEnv.ns.NodeStageVolume(context.TODO(), test.req)
 			if test.expectErr == nil && err != nil {
@@ -998,6 +1113,17 @@ func TestNodeStageVolume(t *testing.T) {
 					t.Errorf("got error nil, expected error %q", test.expectErr)
 				} else if !errors.Is(err, test.expectErr) && err.Error() != test.expectErr.Error() {
 					t.Errorf("got error %q, expected error %q", err, test.expectErr)
+				}
+			}
+
+			if test.expectErr == nil && test.expectedMountOptions != nil {
+				if fakeServer.req == nil {
+					t.Errorf("expected mounter server to receive request, got nil")
+				} else {
+					opts := cmpopts.SortSlices(func(a, b string) bool { return a < b })
+					if diff := cmp.Diff(test.expectedMountOptions, fakeServer.req.MountOptions, opts); diff != "" {
+						t.Errorf("Mount options mismatch (-want +got):\n%s", diff)
+					}
 				}
 			}
 		})
@@ -1113,13 +1239,11 @@ func TestMountToNode(t *testing.T) {
 				return emptyDirBasePath
 			}
 
-			// Create a dummy socket file for the client to connect to
 			socketFile := filepath.Join(emptyDirBasePath, mounterPodSocketFile)
-			if file, err := os.Create(socketFile); err == nil {
-				file.Close()
-			}
 
-			err = ns.mountToNode(ctx, podUID, stagingPath, volumeID)
+			startFakeMounterServer(t, socketFile)
+
+			err = ns.mountToNode(ctx, podUID, stagingPath, volumeID, nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("mountToNode() error = %v, wantErr %v", err, tc.wantErr)
 			}

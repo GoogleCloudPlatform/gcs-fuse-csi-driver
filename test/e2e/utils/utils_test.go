@@ -178,6 +178,7 @@ func TestParseConfigFlags(t *testing.T) {
 					FileCacheCapacity: "-1Mi",
 					ReadOnly:          false,
 					LogSeverity:       "info",
+					BillingProject:    testProject,
 					MountOptions: []string{
 						"billing-project=" + testProject,
 					},
