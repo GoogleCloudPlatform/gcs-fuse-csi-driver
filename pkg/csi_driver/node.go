@@ -510,7 +510,7 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 func (s *nodeServer) forceUnmountWithRetry(ctx context.Context, targetPath string, forceUnmounter mount.MounterForceUnmounter) error {
 	var lastErr error
 
-	pollErr := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+	pollErr := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 2*time.Second, true, func(ctx context.Context) (bool, error) {
 		lastErr = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
 		if lastErr == nil {
 			return true, nil
@@ -531,7 +531,7 @@ func (s *nodeServer) forceUnmountWithRetry(ctx context.Context, targetPath strin
 func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string) error {
 	var lastErr error
 
-	pollErr := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+	pollErr := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 2*time.Second, true, func(ctx context.Context) (bool, error) {
 		lastErr = s.mounter.Unmount(targetPath)
 		if lastErr == nil {
 			return true, nil
