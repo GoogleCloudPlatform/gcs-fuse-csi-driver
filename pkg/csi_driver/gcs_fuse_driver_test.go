@@ -29,7 +29,7 @@ import (
 	mount "k8s.io/mount-utils"
 )
 
-func initTestDriver(t *testing.T, fm mount.Interface, clientset clientset.Interface) *GCSDriver {
+func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Interface) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
@@ -64,7 +64,7 @@ func initTestDriver(t *testing.T, fm mount.Interface, clientset clientset.Interf
 }
 
 // Helper function for creating node server with a custom FakeClientset
-func initTestDriverWithCustomNodeServer(t *testing.T, fm mount.Interface, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *GCSDriver {
+func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
