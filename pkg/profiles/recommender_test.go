@@ -236,29 +236,25 @@ func (b *PodConfigBuilder) Build() clientset.FakePodConfig {
 
 func TestBuildProfileConfig(t *testing.T) {
 	tests := []struct {
-		name         string
-		targetPath   string
-		pvConfig     clientset.FakePVConfig
-		scConfig     clientset.FakeSCConfig
-		nodeName     string
-		nodeConfig   clientset.FakeNodeConfig
-		podNamespace string
-		podName      string
-		podConfig    clientset.FakePodConfig
-		wantErr      bool
-		wantConfig   *ProfileConfig
+		name       string
+		targetPath string
+		pvConfig   clientset.FakePVConfig
+		scConfig   clientset.FakeSCConfig
+		nodeName   string
+		nodeConfig clientset.FakeNodeConfig
+		podConfig  clientset.FakePodConfig
+		wantErr    bool
+		wantConfig *ProfileConfig
 	}{
 		{
-			name:         "TestBuildProfileConfig - Should build config successfully",
-			targetPath:   testTargetPath,
-			wantErr:      false,
-			pvConfig:     NewPVConfigBuilder().WithName("test-pv").Build(),
-			scConfig:     NewSCConfigBuilder().Build(),
-			nodeName:     "test-node",
-			nodeConfig:   NewNodeConfigBuilder().Build(),
-			podNamespace: "default",
-			podName:      "test-pod",
-			podConfig:    NewPodConfigBuilder().Build(),
+			name:       "TestBuildProfileConfig - Should build config successfully",
+			targetPath: testTargetPath,
+			wantErr:    false,
+			pvConfig:   NewPVConfigBuilder().WithName("test-pv").Build(),
+			scConfig:   NewSCConfigBuilder().Build(),
+			nodeName:   "test-node",
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().Build(),
 			wantConfig: &ProfileConfig{
 				pvDetails: &pvDetails{
 					name:           "test-pv",
@@ -306,9 +302,10 @@ func TestBuildProfileConfig(t *testing.T) {
 					nodeType: "general_purpose",
 				},
 				podDetails: &podDetails{
-					namespace: "default",
-					name:      "test-pod",
-					sidecarLimits: &parsedResourceList{
+					namespace:     "default",
+					name:          "test-pod",
+					containerName: webhook.GcsFuseSidecarName,
+					containerLimits: &parsedResourceList{
 						memoryBytes:           1024 * 1024 * 1024,
 						ephemeralStorageBytes: 10 * 1024 * 1024 * 1024,
 					},
@@ -331,6 +328,16 @@ func TestBuildProfileConfig(t *testing.T) {
 			scConfig:   NewSCConfigBuilder().Build(),
 			nodeConfig: NewNodeConfigBuilder().Build(),
 			podConfig:  NewPodConfigBuilder().Build(),
+			wantErr:    true,
+		},
+		{
+			name:       "TestBuildProfileConfig - Should fail if pod is nil",
+			targetPath: testTargetPath,
+			pvConfig:   NewPVConfigBuilder().WithName("test-pv").Build(),
+			scConfig:   NewSCConfigBuilder().Build(),
+			nodeName:   "test-node",
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  clientset.FakePodConfig{},
 			wantErr:    true,
 		},
 		{
@@ -372,13 +379,18 @@ func TestBuildProfileConfig(t *testing.T) {
 				fakeClient.CreatePod(tt.podConfig)
 			}
 
+			var pod *corev1.Pod
+			if !reflect.DeepEqual(tt.podConfig, clientset.FakePodConfig{}) {
+				pod, _ = fakeClient.GetPod("default", "test-pod")
+			}
+
 			got, err := BuildProfileConfig(&BuildProfileConfigParams{
 				TargetPath:          tt.targetPath,
 				Clientset:           fakeClient,
 				VolumeAttributeKeys: csiDriverVolumeAttributeKeys,
 				NodeName:            tt.nodeName,
-				PodNamespace:        tt.podNamespace,
-				PodName:             tt.podName,
+				ContainerName:       webhook.GcsFuseSidecarName,
+				Pod:                 pod,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -540,9 +552,10 @@ func TestBuildPodDetails(t *testing.T) {
 			},
 			isInitContainer: false,
 			want: &podDetails{
-				namespace: "default",
-				name:      "test-pod",
-				sidecarLimits: &parsedResourceList{
+				namespace:     "default",
+				name:          "test-pod",
+				containerName: webhook.GcsFuseSidecarName,
+				containerLimits: &parsedResourceList{
 					memoryBytes:           256 * 1024 * 1024,
 					ephemeralStorageBytes: 5 * 1024 * 1024 * 1024,
 				},
@@ -564,9 +577,10 @@ func TestBuildPodDetails(t *testing.T) {
 			},
 			isInitContainer: true,
 			want: &podDetails{
-				namespace: "kube-system",
-				name:      "init-pod",
-				sidecarLimits: &parsedResourceList{
+				namespace:     "kube-system",
+				name:          "init-pod",
+				containerName: webhook.GcsFuseSidecarName,
+				containerLimits: &parsedResourceList{
 					memoryBytes:           256 * 1024 * 1024,
 					ephemeralStorageBytes: 5 * 1024 * 1024 * 1024,
 				},
@@ -582,16 +596,17 @@ func TestBuildPodDetails(t *testing.T) {
 			},
 			isInitContainer: false,
 			want: &podDetails{
-				namespace:     "default",
-				name:          "no-sidecar-pod",
-				sidecarLimits: &parsedResourceList{}, // Expect empty
+				namespace:       "default",
+				name:            "no-sidecar-pod",
+				containerName:   webhook.GcsFuseSidecarName,
+				containerLimits: &parsedResourceList{}, // Expect empty
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildPodDetails(tt.isInitContainer, tt.pod)
+			got, err := buildPodDetails(tt.isInitContainer, webhook.GcsFuseSidecarName, tt.pod)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("buildPodDetails() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1180,7 +1195,7 @@ func TestIsTpuNodeByResource(t *testing.T) {
 	}
 }
 
-func TestGcsFuseSidecarResourceRequirements(t *testing.T) {
+func TestGetContainerResourceRequirements(t *testing.T) {
 	limits := corev1.ResourceList{
 		corev1.ResourceMemory:           resource.MustParse("1Gi"),
 		corev1.ResourceEphemeralStorage: resource.MustParse("10Gi"),
@@ -1190,34 +1205,47 @@ func TestGcsFuseSidecarResourceRequirements(t *testing.T) {
 		pod             *corev1.Pod
 		want            corev1.ResourceRequirements
 		isInitContainer bool
+		containerName   string
 	}{
 		{
-			name: "TestGcsFuseSidecarResourceRequirements - Should find sidecar in InitContainers",
+			name: "TestGetContainerResourceRequirements - Should find sidecar in InitContainers",
 			pod: &corev1.Pod{Spec: corev1.PodSpec{
 				InitContainers: []corev1.Container{{Name: webhook.GcsFuseSidecarName, Resources: corev1.ResourceRequirements{Limits: limits}}},
 			}},
 			isInitContainer: true,
+			containerName:   webhook.GcsFuseSidecarName,
 			want:            corev1.ResourceRequirements{Limits: limits},
 		},
 		{
-			name: "TestGcsFuseSidecarResourceRequirements - Should find sidecar in Containers",
+			name: "TestGetContainerResourceRequirements - Should find sidecar in Containers",
 			pod: &corev1.Pod{Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{Name: webhook.GcsFuseSidecarName, Resources: corev1.ResourceRequirements{Limits: limits}}},
 			}},
 			isInitContainer: false,
+			containerName:   webhook.GcsFuseSidecarName,
 			want:            corev1.ResourceRequirements{Limits: limits},
 		},
 		{
-			name: "TestGcsFuseSidecarResourceRequirements - Should return empty for nil pod",
-			pod:  nil,
-			want: corev1.ResourceRequirements{},
+			name: "TestGetContainerResourceRequirements - Should find mounter in Containers",
+			pod: &corev1.Pod{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: util.MounterPodNamePrefix, Resources: corev1.ResourceRequirements{Limits: limits}}},
+			}},
+			isInitContainer: false,
+			containerName:   util.MounterPodNamePrefix,
+			want:            corev1.ResourceRequirements{Limits: limits},
+		},
+		{
+			name:          "TestGetContainerResourceRequirements - Should return empty for nil pod",
+			pod:           nil,
+			containerName: webhook.GcsFuseSidecarName,
+			want:          corev1.ResourceRequirements{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := gcsFuseSidecarResourceRequirements(tt.isInitContainer, tt.pod); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("gcsFuseSidecarResourceRequirements() = %v, want %v", got, tt.want)
+			if got := getContainerResourceRequirements(tt.isInitContainer, tt.pod, tt.containerName); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("getContainerResourceRequirements() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -1521,7 +1549,7 @@ func TestCalculateResourceBudgets(t *testing.T) {
 					fuseEphemeralStorageAllocatableFactor: 0.85,
 				},
 				podDetails: &podDetails{
-					sidecarLimits: &parsedResourceList{
+					containerLimits: &parsedResourceList{
 						memoryBytes:           1 * 1024 * 1024 * 1024,  // 1Gi
 						ephemeralStorageBytes: 10 * 1024 * 1024 * 1024, // 10Gi
 					},
@@ -1546,7 +1574,7 @@ func TestCalculateResourceBudgets(t *testing.T) {
 					fuseEphemeralStorageAllocatableFactor: 0.5,
 				},
 				podDetails: &podDetails{
-					sidecarLimits: &parsedResourceList{
+					containerLimits: &parsedResourceList{
 						memoryBytes:           0,
 						ephemeralStorageBytes: 0,
 					},
@@ -1806,7 +1834,7 @@ func TestRecommendCacheConfigs(t *testing.T) {
 	defaultPV := &pvDetails{numObjects: 50000, totalSizeBytes: reqFile}
 	smallPV := &pvDetails{numObjects: 1, totalSizeBytes: reqFile}
 	defaultSC := &scDetails{fuseMemoryAllocatableFactor: 1.0, fuseEphemeralStorageAllocatableFactor: 1.0}
-	defaultPod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
+	defaultPod := &podDetails{containerLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
 	defaultNode := &nodeDetails{nodeType: "general_purpose", name: "test-node"}
 
 	tests := []struct {
@@ -2065,8 +2093,8 @@ func TestMergeRecommendedMountOptionsOnMissingKeys(t *testing.T) {
 		fuseEphemeralStorageAllocatableFactor: 1.0,
 		fileCacheMediumPriority:               map[string][]string{nodeTypeGPU: {util.MediumRAM, util.MediumLSSD}},
 	}
-	basePod := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
-	podWithCustomCache := &podDetails{sidecarLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}, name: "test-pod"}
+	basePod := &podDetails{containerLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
+	podWithCustomCache := &podDetails{containerLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, labels: map[string]string{"gke-gcsfuse/cache-created-by-user": "true"}, name: "test-pod"}
 	baseNode := &nodeDetails{nodeType: "general_purpose", name: "test-node"}
 
 	tests := []struct {

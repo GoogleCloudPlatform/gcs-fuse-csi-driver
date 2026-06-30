@@ -42,6 +42,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
+
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
 )
 
 const (
@@ -95,6 +97,48 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 	}, nil
 }
 
+func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+	// Validate arguments
+	stagingPath := req.GetStagingTargetPath()
+	if len(stagingPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Staging Target Path must be provided")
+	}
+	publishContext := req.GetPublishContext()
+	if publishContext == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Publish Context must be provided")
+	}
+	mounterPodNamespace := publishContext[PublishContextKeyMounterPodNamespace]
+	if len(mounterPodNamespace) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Namespace must be provided")
+	}
+	mounterPodName := publishContext[PublishContextKeyMounterPodName]
+	if len(mounterPodName) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Name must be provided")
+	}
+
+	// Verify mounter pod exists.
+	mounterPod, err := s.k8sClients.GetPod(mounterPodNamespace, mounterPodName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.FailedPrecondition, "failed to get mounter pod: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get mounter pod: %v", err)
+	}
+	if mounterPod == nil {
+		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
+	}
+
+	// NodePublish is guaranteed to be called after NodeStage has waited for mounter pod to become running.
+	// Mounter pod not running at this stage means that the pod started and failed (e.g. killed by Kubelet
+	// during OOMKILL).
+	if mounterPod.Status.Phase != corev1.PodRunning {
+		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
+	}
+
+	// TODO(urielguzman): Implement the rest of the NodePublishVolume logic for shared mount.
+	return &csi.NodePublishVolumeResponse{}, nil
+}
+
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Rate limit NodePublishVolume calls to avoid kube API throttling.
 	if err := s.limiter.Wait(ctx); err != nil {
@@ -107,8 +151,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume target path must be provided")
 	}
 
-	// Get the Pod object.
+	// Switch to shared mount logic if the volume context indicates that shared mount is enabled.
 	vc := req.GetVolumeContext()
+	if sharedMount(vc) {
+		return s.NodePublishVolumeForSharedMount(ctx, req)
+	}
+
+	// Get the Pod object.
 	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
@@ -123,12 +172,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.V(4).Infof("NodePublishVolume gcsfuse profiles feature is enabled for pod %s/%s", pod.Namespace, pod.Name)
 		profile, err = profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
 			TargetPath:          targetPath,
+			ContainerName:       webhook.GcsFuseSidecarName,
 			Clientset:           s.k8sClients,
 			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
-			PodNamespace:        pod.Namespace,
-			PodName:             pod.Name,
 			NodeName:            s.driver.config.NodeID,
 			IsInitContainer:     isInitContainer,
+			Pod:                 pod,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build profile config: %w", err)
@@ -140,7 +189,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	args, err := parseRequestArguments(req, vc)
+	args, err := parseRequestArguments(req.GetVolumeId(), req.GetReadonly(), req.GetVolumeCapability(), vc)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -770,6 +819,44 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
+	volumeID := req.GetVolumeId()
+	vc := req.GetVolumeContext()
+
+	// Build profile config and merge recommended mount options if storage profiles are enabled.
+	profilesEnabled := s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
+	var profile *profiles.ProfileConfig
+	if profilesEnabled {
+		klog.V(4).Infof("NodeStageVolume gcsfuse profiles feature is enabled for mounter pod %s/%s", podNamespace, podName)
+		profile, err = profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
+			VolumeName:          vc[util.VolumeContextKeyPVName],
+			Clientset:           s.k8sClients,
+			ContainerName:       util.MounterPodNamePrefix,
+			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
+			NodeName:            s.driver.config.NodeID,
+			Pod:                 pod,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build profile config: %w", err)
+		}
+		if profile != nil {
+			// Merge profile VolumeAttributes into the VolumeContext, respecting pre-existing keys.
+			vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
+		}
+	}
+
+	// Validate arguments
+	args, err := parseRequestArguments(volumeID, false, req.GetVolumeCapability(), vc)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse request arguments: %v", err)
+	}
+
+	if profile != nil {
+		args.fuseMountOptions, err = profile.MergeRecommendedMountOptionsOnMissingKeys(args.fuseMountOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
+		}
+	}
+
 	// Make the staging path.
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
@@ -784,7 +871,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	podUID := string(pod.UID)
 
 	// Send GRPC to mounter pod to start GCSFuse.
-	if err := s.mountToNode(ctx, podUID, stagingPath, req.GetVolumeId()); err != nil {
+	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, args.fuseMountOptions); err != nil {
 		return nil, err
 	}
 
@@ -795,7 +882,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 }
 
 // mountToNode connects to the mounter server, at which point it initializes the GCSFuse process.
-func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string) error {
+func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string, mountOptions []string) error {
 	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
 		return status.Errorf(codes.Internal, "shared mount options are not fully configured")
 	}
@@ -835,16 +922,14 @@ func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volum
 	klog.Infof("Connected to MounterServer at %s", socketPath)
 	defer conn.Close()
 
-	/*
-		TODO(FUECHR): Implement the mounter client and mount request once we have a mounter service defined.
-		c := mounter.NewMounterClient(conn)
-		if _, err := c.Mount(ctx, &mounter.MountRequest{
-			Mountpoint: stagingPath,
-			VolumeID:   volumeID,
-		}); err != nil {
-			return status.Errorf(codes.Internal, "failed to mount: %v", err)
-		}
-	*/
+	c := mounter.NewMounterClient(conn)
+	if _, err := c.Mount(ctx, &mounter.MountRequest{
+		MountPoint:   stagingPath,
+		VolumeId:     volumeID,
+		MountOptions: mountOptions,
+	}); err != nil {
+		return err
+	}
 
 	klog.Infof("Mount succeeded at staging target path %s", stagingPath)
 	return nil

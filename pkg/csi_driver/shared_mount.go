@@ -41,7 +41,6 @@ import (
 )
 
 const (
-	mounterPodNamePrefix          = "gcsfusecsi-mount"
 	mounterPodPriorityClass       = "gcsfusecsi-mount-priority"
 	mounterPodMountDir            = "mount-dir"
 	mounterPodSocketFile          = "mounter.sock"
@@ -62,6 +61,7 @@ type mounterPodConfig struct {
 	serviceAccountName string                       // The KSA name for the mounter pod.
 	resources          *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
 	volumes            []corev1.Volume              // The volumes for the mounter pod.
+	profilesEnabled    bool                         // Whether the profiles feature is enabled.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -82,7 +82,7 @@ func createMounterPodName(nodeID, volumeID string) string {
 	io.WriteString(h, str)
 	// Convert the byte slice to a hexadecimal string
 	sha1Hash := fmt.Sprintf("%x", h.Sum(nil))
-	return fmt.Sprintf("%s-%s", mounterPodNamePrefix, sha1Hash)
+	return fmt.Sprintf("%s-%s", util.MounterPodNamePrefix, sha1Hash)
 }
 
 // createMounterPod handles the creation of the mounter pod using the Kubernetes API client.
@@ -129,13 +129,46 @@ func createMounterPod(clientset clientset.Interface, ctx context.Context, config
 
 // createMounterPodSpec returns the pod spec for the mounter pod.
 func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:             mounterPodMountDir,
+			MountPath:        util.KubeletDir,
+			MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
+		},
+		{
+			Name:      util.SidecarContainerTmpVolumeName,
+			MountPath: util.SidecarContainerTmpVolumePath,
+		},
+		{
+			Name:      webhook.SidecarContainerBufferVolumeName,
+			MountPath: webhook.SidecarContainerBufferVolumeMountPath,
+		},
+		{
+			Name:      webhook.SidecarContainerCacheVolumeName,
+			MountPath: webhook.SidecarContainerCacheVolumeMountPath,
+		},
+	}
+	if config.profilesEnabled {
+		if !webhook.VolumeMountExists(volumeMounts, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName) {
+			volumeMounts = append(volumeMounts, webhook.EphemeralFileCacheVolumeMount)
+		}
+		if !webhook.VolumeMountExists(volumeMounts, webhook.SidecarContainerFileCacheRamDiskVolumeName) {
+			volumeMounts = append(volumeMounts, webhook.RamFileCacheVolumeMount)
+		}
+	}
+
+	labels := map[string]string{
+		webhook.SharedMountLabel: util.TrueStr,
+	}
+	if webhook.VolumeExists(config.volumes, webhook.SidecarContainerCacheVolumeName) {
+		labels[webhook.GcsfuseCacheCreatedByUserLabel] = util.TrueStr
+	}
+
 	spec := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      config.podName,
 			Namespace: config.namespace,
-			Labels: map[string]string{
-				webhook.SharedMountLabel: util.TrueStr,
-			},
+			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{
@@ -147,33 +180,13 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 			PriorityClassName: mounterPodPriorityClass,
 			Containers: []corev1.Container{
 				{
-					Name:            mounterPodNamePrefix,
+					Name:            util.MounterPodNamePrefix,
 					Image:           config.image,
 					ImagePullPolicy: corev1.PullAlways,
 					SecurityContext: &corev1.SecurityContext{
 						Privileged: ptr.To(true),
 					},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:             mounterPodMountDir,
-							MountPath:        util.KubeletDir,
-							MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
-						},
-						{
-							Name:      util.SidecarContainerTmpVolumeName,
-							MountPath: util.SidecarContainerTmpVolumePath,
-						},
-						{
-							Name:      webhook.SidecarContainerBufferVolumeName,
-							MountPath: webhook.SidecarContainerBufferVolumeMountPath,
-						},
-						{
-							Name:      webhook.SidecarContainerCacheVolumeName,
-							MountPath: webhook.SidecarContainerCacheVolumeMountPath,
-						},
-						// TODO(urielguzman): Add host network and profiles volume mounts when those features are implemented
-						// for shared mount.
-					},
+					VolumeMounts: volumeMounts,
 				},
 			},
 			Volumes: mounterPodVolumes(config),
@@ -361,8 +374,16 @@ func mounterPodVolumes(config *mounterPodConfig) []corev1.Volume {
 			},
 		}})
 
-	// TODO(urielguzman): Add profiles and host network volumes when those features are implemnented for
+	// TODO(urielguzman): Add host network volumes when those features are implemented for
 	// shared mount.
+	if config.profilesEnabled {
+		if !webhook.VolumeExists(volumes, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName) {
+			volumes = append(volumes, webhook.EphemeralFileCacheVolume)
+		}
+		if !webhook.VolumeExists(volumes, webhook.SidecarContainerFileCacheRamDiskVolumeName) {
+			volumes = append(volumes, webhook.RamFileCacheVolume)
+		}
+	}
 	return volumes
 }
 

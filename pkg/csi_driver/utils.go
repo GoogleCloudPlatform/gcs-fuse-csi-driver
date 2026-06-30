@@ -351,21 +351,21 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 	return args, nil
 }
 
-// parseRequestArguments parses arguments from given NodePublishVolumeRequest.
-func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]string) (requestArgs, error) {
-	bucketName := util.ParseVolumeID(req.GetVolumeId())
+// parseRequestArguments parses volume arguments from the given CSI request parameters.
+func parseRequestArguments(volumeID string, readOnly bool, volumeCapability *csi.VolumeCapability, vc map[string]string) (requestArgs, error) {
+	bucketName := util.ParseVolumeID(volumeID)
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
-			return requestArgs{}, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+			return requestArgs{}, fmt.Errorf("VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
 		}
 	}
 	fuseMountOptions := []string{}
-	if req.GetReadonly() {
+	if readOnly {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
 	}
 
-	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
+	if capMount := volumeCapability.GetMount(); capMount != nil {
 		// Delegate fsGroup to CSI Driver
 		// Set gid, file-mode, and dir-mode for gcsfuse.
 		// Allow users to overwrite these flags.

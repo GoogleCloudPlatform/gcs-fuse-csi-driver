@@ -342,6 +342,10 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 
 		var newContainers []corev1.Container
 		for _, cont := range podObj.Spec.Containers {
+			if cont.Name == util.MounterPodNamePrefix {
+				newContainers = append(newContainers, cont)
+				continue
+			}
 			container := corev1.Container{
 				Name:            cont.Name,
 				SecurityContext: cont.SecurityContext,
