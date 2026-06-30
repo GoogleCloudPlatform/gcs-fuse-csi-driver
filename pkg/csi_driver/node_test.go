@@ -729,7 +729,7 @@ func TestNodeUnpublishVolume(t *testing.T) {
 
 func TestNodeUnpublishVolumeForceUnmount(t *testing.T) {
 	t.Parallel()
-	testTargetPath, cleanup := setupMountTarget(t)
+	testTargetPath, cleanup := setupTestTargetPath(t)
 	defer cleanup()
 
 	cases := []struct {
