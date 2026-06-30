@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -466,12 +467,12 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout); err != nil {
+			if err = s.forceUnmountWithRetry(targetPath, forceUnmounter); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
-			if err = s.mounter.Unmount(targetPath); err != nil {
+			if err = s.unmountWithRetry(targetPath); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
 			}
 		}
@@ -500,6 +501,48 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func (s *nodeServer) forceUnmountWithRetry(targetPath string, forceUnmounter mount.MounterForceUnmounter) error {
+	var lastErr error
+
+	pollErr := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+		lastErr = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
+		if lastErr == nil {
+			return true, nil
+		}
+		klog.Warningf("Failed to force unmount %q: %v. Retrying...", targetPath, lastErr)
+		return false, nil
+	})
+
+	if pollErr != nil {
+		if lastErr != nil {
+			return lastErr
+		}
+		return pollErr
+	}
+	return nil
+}
+
+func (s *nodeServer) unmountWithRetry(targetPath string) error {
+	var lastErr error
+
+	pollErr := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+		lastErr = s.mounter.Unmount(targetPath)
+		if lastErr == nil {
+			return true, nil
+		}
+		klog.Warningf("Failed to unmount %q: %v. Retrying...", targetPath, lastErr)
+		return false, nil
+	})
+
+	if pollErr != nil {
+		if lastErr != nil {
+			return lastErr
+		}
+		return pollErr
+	}
+	return nil
 }
 
 // setupMultiNIC updates args with options for multi NIC configuration.
