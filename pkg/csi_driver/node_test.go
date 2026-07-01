@@ -170,6 +170,17 @@ func setupTestStagingPath(t *testing.T) (string, func()) {
 	return setupTestDir(t, "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io/fake-pv/globalmount")
 }
 
+func createErrorFile(t *testing.T, emptyDirPath, content string) {
+	t.Helper()
+	if err := os.MkdirAll(emptyDirPath, 0755); err != nil {
+		t.Fatalf("failed to create emptyDir path: %v", err)
+	}
+	errorFilePath := filepath.Join(emptyDirPath, util.ErrorFileName)
+	if err := os.WriteFile(errorFilePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create error file: %v", err)
+	}
+}
+
 func TestNodePublishVolume(t *testing.T) {
 	testTargetPath, cleanup := setupTestTargetPath(t)
 	defer cleanup()
@@ -2004,10 +2015,11 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 	podUID := types.UID(podName)
 
 	cases := []struct {
-		name          string
-		reqBuilder    func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest
-		setupClient   func() *clientset.FakeClientset
-		expectErrCode codes.Code
+		name             string
+		reqBuilder       func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest
+		setupClient      func() *clientset.FakeClientset
+		errorFileContent string
+		expectErrCode    codes.Code
 	}{
 		{
 			name: "valid request - should succeed",
@@ -2192,6 +2204,34 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			},
 			expectErrCode: codes.Internal,
 		},
+		{
+			name: "mounter pod error file exists - should return error from file",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+				})
+				return fc
+			},
+			errorFileContent: "gcsfuse failed with error: bucket doesn't exist",
+			expectErrCode:    codes.NotFound,
+		},
 	}
 
 	for _, tc := range cases {
@@ -2207,6 +2247,18 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			ns, ok := testEnv.ns.(*nodeServer)
 			if !ok {
 				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+
+			// Setup EmptyDirBasePath for this test case
+			tempDir := t.TempDir()
+			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
+				return filepath.Join(tempDir, uid)
+			}
+
+			// Create error file if specified
+			if tc.errorFileContent != "" {
+				emptyDirPath := ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(string(podUID))
+				createErrorFile(t, emptyDirPath, tc.errorFileContent)
 			}
 
 			req := tc.reqBuilder(t, testTargetPath, testStagingPath)

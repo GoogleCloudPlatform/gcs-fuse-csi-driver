@@ -123,6 +123,20 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
 	}
 
+	// Surface any GCSFuse error to the user.
+	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
+		return nil, status.Error(codes.Internal, "shared mount options can't be nil")
+	}
+	config := s.driver.config.FeatureOptions.SharedMountOptions
+	if config.EmptyDirBasePath == nil {
+		return nil, status.Error(codes.Internal, "empty dir base path function can't be nil")
+	}
+	emptyDirPath := config.EmptyDirBasePath(string(mounterPod.UID))
+	code, err := checkMounterPodErrorFile(emptyDirPath)
+	if err != nil {
+		return nil, status.Error(code, err.Error())
+	}
+
 	// NodePublish is guaranteed to be called after NodeStage has waited for mounter pod to become running.
 	// Mounter pod not running at this stage means that the pod started and failed (e.g. killed by Kubelet
 	// during OOMKILL).
@@ -856,8 +870,13 @@ func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volum
 		return status.Errorf(codes.Internal, "failed to create dir for symlink %q: %v", symlink, err)
 	}
 
+	// Clear stale files from a previous mount attempt.
+	if err := util.CheckAndDeleteStaleFile(emptyDirBasePath, util.ErrorFileName); err != nil {
+		return status.Errorf(codes.Internal, "failed to check and delete stale error file: %v", err)
+	}
+	// Clear stale symlink from a previous mount attempt. os.Remove operates on symlinks, so it will not remove the target file if the symlink is stale.
 	if err := os.Remove(symlink); err != nil && !os.IsNotExist(err) {
-		klog.Errorf("failed to remove stale symlink %q: %v", symlink, err)
+		return status.Errorf(codes.Internal, "failed to remove stale symlink %q: %v", symlink, err)
 	}
 
 	if err := os.Symlink(socketFile, symlink); err != nil {
