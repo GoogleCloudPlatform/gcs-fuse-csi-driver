@@ -2009,22 +2009,92 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 	t.Parallel()
 
 	nodeID := "test-node"
-	volID := testVolumeID
 	podNamespace := "test-ns"
-	podName := createMounterPodName(nodeID, volID)
+	podName := createMounterPodName(nodeID, testVolumeID)
 	podUID := types.UID(podName)
 
 	cases := []struct {
-		name             string
-		reqBuilder       func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest
-		setupClient      func() *clientset.FakeClientset
-		errorFileContent string
-		expectErrCode    codes.Code
+		name              string
+		reqBuilder        func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest
+		setupClient       func() *clientset.FakeClientset
+		errorFileContent  string
+		targetPathMounted bool
+		expectErrCode     codes.Code
+		expectedBindOpts  []string
 	}{
+		{
+			name: "invalid volume capability - should return InvalidArgument error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+					VolumeId: testVolumeID,
+					VolumeCapability: &csi.VolumeCapability{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_UNKNOWN, // Invalid
+						},
+					},
+				}
+			},
+			setupClient:   func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "missing volume capability - should return InvalidArgument error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+					VolumeId: testVolumeID,
+					// VolumeCapability: testVolumeCapability, // Missing
+				}
+			},
+			setupClient:   func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "missing volume id - should return InvalidArgument error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+					// VolumeId: "", missing volume ID.
+					VolumeCapability: testVolumeCapability,
+				}
+			},
+			setupClient:   func() *clientset.FakeClientset { return clientset.NewFakeClientset() },
+			expectErrCode: codes.InvalidArgument,
+		},
 		{
 			name: "valid request - should succeed",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					VolumeContext: map[string]string{
@@ -2052,7 +2122,9 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "missing staging path - should return InvalidArgument error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
-					TargetPath: targetPath,
+					VolumeId:         testVolumeID,
+					VolumeCapability: testVolumeCapability,
+					TargetPath:       targetPath,
 					// StagingTargetPath: "", // Missing
 					VolumeContext: map[string]string{
 						VolumeContextSharedNodeMount: "true",
@@ -2070,6 +2142,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "missing target path - should return InvalidArgument error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:         testVolumeID,
+					VolumeCapability: testVolumeCapability,
 					// TargetPath:        "", // Missing
 					StagingTargetPath: stagingPath,
 					VolumeContext: map[string]string{
@@ -2088,6 +2162,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "missing publish context - should return InvalidArgument error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					VolumeContext: map[string]string{
@@ -2103,6 +2179,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "missing mounter pod namespace - should return InvalidArgument error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					PublishContext: map[string]string{
@@ -2120,6 +2198,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "missing mounter pod name - should return InvalidArgument error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					PublishContext: map[string]string{
@@ -2137,6 +2217,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "mounter pod not found - should return FailedPrecondition error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					PublishContext: map[string]string{
@@ -2159,6 +2241,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "mounter pod not running - should return Internal error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					PublishContext: map[string]string{
@@ -2186,6 +2270,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "error getting mounter pod - should return Internal error",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					PublishContext: map[string]string{
@@ -2208,6 +2294,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			name: "mounter pod error file exists - should return error from file",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
 					TargetPath:        targetPath,
 					StagingTargetPath: stagingPath,
 					VolumeContext: map[string]string{
@@ -2231,6 +2319,100 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			},
 			errorFileContent: "gcsfuse failed with error: bucket doesn't exist",
 			expectErrCode:    codes.NotFound,
+		},
+		{
+			name: "target path already mounted - should return early success",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+				})
+				return fc
+			},
+			targetPathMounted: true,
+			expectErrCode:     codes.OK,
+		},
+		{
+			name: "target path not mounted - should return successful read-write bind mount",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					Readonly:          false,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+				})
+				return fc
+			},
+			targetPathMounted: false,
+			expectErrCode:     codes.OK,
+			expectedBindOpts:  []string{"bind"},
+		},
+		{
+			name: "target path not mounted - should return successful read-only bind mount",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					Readonly:          true,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+				})
+				return fc
+			},
+			targetPathMounted: false,
+			expectErrCode:     codes.OK,
+			expectedBindOpts:  []string{"bind", "ro"},
 		},
 	}
 
@@ -2261,10 +2443,16 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 				createErrorFile(t, emptyDirPath, tc.errorFileContent)
 			}
 
+			// Configure existing mount states. Staging must always be reported as mounted for verification checks.
+			initialMounts := []mount.MountPoint{
+				{Path: testStagingPath, Device: "fuse"},
+			}
+			if tc.targetPathMounted {
+				initialMounts = append(initialMounts, mount.MountPoint{Path: testTargetPath, Device: "fuse"})
+			}
+			testEnv.fm.MountPoints = initialMounts
+
 			req := tc.reqBuilder(t, testTargetPath, testStagingPath)
-			// Fields not validated by the current function, but needed for other NodePublishVolume calls
-			req.VolumeId = volID
-			req.VolumeCapability = testVolumeCapability
 
 			_, err := ns.NodePublishVolume(context.TODO(), req)
 
@@ -2282,6 +2470,31 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("Got error %q, expected error nil", err)
+				}
+
+				// Verify actual flags captured on the fake mounter match expectations
+				if len(tc.expectedBindOpts) > 0 {
+					var targetBindFound bool
+					for _, mp := range testEnv.fm.MountPoints {
+						if mp.Path == testTargetPath {
+							targetBindFound = true
+							for _, expectedOpt := range tc.expectedBindOpts {
+								hasOpt := false
+								for _, o := range mp.Opts {
+									if o == expectedOpt {
+										hasOpt = true
+										break
+									}
+								}
+								if !hasOpt {
+									t.Errorf("Expected flag %q missing from registered mount context: %v", expectedOpt, mp.Opts)
+								}
+							}
+						}
+					}
+					if !targetBindFound {
+						t.Error("Expected target path to be registered to the mount points map, but none was found")
+					}
 				}
 			}
 		})
