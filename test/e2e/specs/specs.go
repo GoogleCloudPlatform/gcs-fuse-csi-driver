@@ -410,6 +410,27 @@ func (t *TestPod) WaitForLog(ctx context.Context, container string, expectedStri
 	framework.ExpectNoError(err)
 }
 
+// WaitForContainerRunning waits until the named container within the pod is in Running state.
+// Checks both regular and init container statuses to support native sidecar deployments.
+// Use this before WaitForLog when only a specific container (e.g. the gcsfuse sidecar) is
+// expected to start, without waiting for all pod containers to be ready.
+func (t *TestPod) WaitForContainerRunning(ctx context.Context, containerName string) {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, pollTimeoutSlow, true, func(ctx context.Context) (bool, error) {
+		pod, err := t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		allStatuses := append(pod.Status.ContainerStatuses, pod.Status.InitContainerStatuses...)
+		for _, cs := range allStatuses {
+			if cs.Name == containerName && cs.State.Running != nil {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	framework.ExpectNoError(err)
+}
+
 func lookForStringInLogWithoutKubectlWithRetry(ctx context.Context, client clientset.Interface, namespace, podName, container, expectedString string, timeout time.Duration) (string, error) {
 	return RetryWithBackoffOneReturnValue(func() (string, error) {
 		return e2epodooutput.LookForStringInLogWithoutKubectl(ctx, client, namespace, podName, container, expectedString, timeout)

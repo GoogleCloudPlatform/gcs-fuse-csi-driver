@@ -44,14 +44,18 @@ import (
 )
 
 const (
-	oidcTestPrefix                 = "gcsfuse-csi-oidc"
-	oidcWorkloadIdentityPoolID     = "gcs-fuse-oidc-pool"
-	oidcWorkloadIdentityProviderID = "gcs-fuse-oidc-provider"
-	oidcConfigMapName              = "workload-identity-credentials"
-	oidcCredentialConfigFileName   = "credential-configuration.json"
-	oidcServiceAccountName         = "gcs-fuse-oidc-ksa"
-	oidcVolumeName                 = "gcs-volume"
-	oidcMountPath                  = "/mnt/gcs"
+	oidcTestPrefix                   = "gcsfuse-csi-oidc"
+	oidcWorkloadIdentityPoolID       = "gcs-fuse-oidc-pool"
+	oidcWorkloadIdentityProviderID   = "gcs-fuse-oidc-provider"
+	oidcMisconfiguredProviderID      = "gcs-fuse-oidc-bad-provider"
+	oidcNonExistentPoolID            = "gcs-fuse-nonexistent-pool"
+	oidcNonExistentProviderID        = "gcs-fuse-nonexistent-provider"
+	oidcConfigMapName                = "workload-identity-credentials"
+	oidcCredentialConfigFileName     = "credential-configuration.json"
+	oidcServiceAccountName           = "gcs-fuse-oidc-ksa"
+	oidcVolumeName                   = "gcs-volume"
+	oidcMountPath                    = "/mnt/gcs"
+	oidcWrongIssuerURI               = "https://wrong-issuer.example.com"
 )
 
 type gcsFuseCSIOIDCTestSuite struct {
@@ -367,6 +371,96 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 		tPod.WaitForFailedMountError(ctx, "PermissionDenied")
 	}
 
+	// testCaseOIDCMisconfiguredProvider creates a WIF provider with a deliberately wrong
+	// issuer URI so Google STS cannot verify the KSA token's iss claim. The gcsfuse sidecar
+	// is expected to log "Error connecting to the given credential's issuer."
+	testCaseOIDCMisconfiguredProvider := func() {
+		init(specs.SkipCSIBucketAccessCheckPrefix)
+		defer cleanup()
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		gomega.Expect(bucketName).NotTo(gomega.BeEmpty(), "bucketName must be set in volume attributes")
+
+		projectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
+
+		ginkgo.By("Getting GCP project number")
+		projectNumber := getProjectNumber(projectID)
+		gomega.Expect(projectNumber).NotTo(gomega.BeEmpty(), "Failed to get project number")
+
+		ginkgo.By(fmt.Sprintf("Creating workload identity pool: %s", oidcWorkloadIdentityPoolID))
+		createWorkloadIdentityPool(projectID, oidcWorkloadIdentityPoolID)
+
+		ginkgo.By(fmt.Sprintf("Creating workload identity provider with wrong issuer URI: %s", oidcMisconfiguredProviderID))
+		createWorkloadIdentityProvider(projectID, oidcWorkloadIdentityPoolID, oidcMisconfiguredProviderID, oidcWrongIssuerURI)
+
+		ginkgo.By("Generating credential configuration pointing to misconfigured provider")
+		credentialConfig := generateCredentialConfig(projectNumber, oidcWorkloadIdentityPoolID, oidcMisconfiguredProviderID)
+
+		setupOIDCKubernetesResources(credentialConfig)
+		defer cleanupOIDCKubernetesResources()
+
+		grantOIDCBucketAccess(bucketName, projectNumber)
+		defer revokeOIDCBucketAccess(bucketName, projectNumber)
+
+		ginkgo.By("Configuring test pod with misconfigured OIDC provider")
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPod.SetServiceAccount(oidcServiceAccountName)
+		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
+		tPod.SetAnnotations(map[string]string{
+			webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: oidcConfigMapName,
+		})
+
+		ginkgo.By("Deploying test pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for gcsfuse sidecar to start")
+		tPod.WaitForContainerRunning(ctx, webhook.GcsFuseSidecarName)
+
+		ginkgo.By("Checking that the gcsfuse sidecar logs a credential issuer connection error")
+		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "Error connecting to the given credential's issuer")
+	}
+
+	// testCaseOIDCNonExistentProvider uses a credential config that points to a pool and
+	// provider that do not exist in GCP. STS returns invalid_target and the gcsfuse sidecar
+	// logs it accordingly.
+	testCaseOIDCNonExistentProvider := func() {
+		init(specs.SkipCSIBucketAccessCheckPrefix)
+		defer cleanup()
+
+		projectID := os.Getenv(utils.ProjectEnvVar)
+		gomega.Expect(projectID).NotTo(gomega.BeEmpty(), fmt.Sprintf("%s environment variable must be set", utils.ProjectEnvVar))
+
+		ginkgo.By("Getting GCP project number")
+		projectNumber := getProjectNumber(projectID)
+		gomega.Expect(projectNumber).NotTo(gomega.BeEmpty(), "Failed to get project number")
+
+		ginkgo.By("Generating credential configuration pointing to non-existent pool and provider")
+		credentialConfig := generateCredentialConfig(projectNumber, oidcNonExistentPoolID, oidcNonExistentProviderID)
+
+		setupOIDCKubernetesResources(credentialConfig)
+		defer cleanupOIDCKubernetesResources()
+
+		ginkgo.By("Configuring test pod with non-existent OIDC pool/provider")
+		tPod := specs.NewTestPodModifiedSpec(f.ClientSet, f.Namespace, true)
+		tPod.SetServiceAccount(oidcServiceAccountName)
+		tPod.SetupVolume(l.volumeResource, oidcVolumeName, oidcMountPath, false)
+		tPod.SetAnnotations(map[string]string{
+			webhook.GCPWorkloadIdentityCredentialConfigMapAnnotation: oidcConfigMapName,
+		})
+
+		ginkgo.By("Deploying test pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for gcsfuse sidecar to start")
+		tPod.WaitForContainerRunning(ctx, webhook.GcsFuseSidecarName)
+
+		ginkgo.By("Checking that the gcsfuse sidecar logs an invalid_target error")
+		tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "invalid_target")
+	}
+
 	ginkgo.It("[Feature: OIDC] should successfully mount with OIDC authentication", func() {
 		testCaseOIDCMount()
 	})
@@ -385,6 +479,14 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 
 	ginkgo.It("[Feature: OIDC] should fail when CSI bucket access check is enabled with OIDC authentication", func() {
 		testCaseOIDCWithCSIBucketAccessCheck()
+	})
+
+	ginkgo.It("[Feature: OIDC] should fail when WIF provider has a misconfigured issuer URI", func() {
+		testCaseOIDCMisconfiguredProvider()
+	})
+
+	ginkgo.It("[Feature: OIDC] should fail when WIF pool and provider do not exist in GCP", func() {
+		testCaseOIDCNonExistentProvider()
 	})
 
 	// Security scenario: node SA has bucket access but the pod has no WIF credentials.
