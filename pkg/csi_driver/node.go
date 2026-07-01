@@ -98,6 +98,19 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 	if len(stagingPath) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Staging Target Path must be provided")
 	}
+	targetPath := req.GetTargetPath()
+	if len(targetPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Target Path must be provided")
+	}
+	if len(req.GetVolumeId()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Volume ID must be provided")
+	}
+	if req.GetVolumeCapability() == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Volume capability must be provided")
+	}
+	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	publishContext := req.GetPublishContext()
 	if publishContext == nil {
 		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Publish Context must be provided")
@@ -110,6 +123,12 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 	if len(mounterPodName) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Name must be provided")
 	}
+
+	// Acquire a lock on the target path instead of volumeID, since we do not want to serialize multiple node publish calls on the same volume.
+	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
+	}
+	defer s.volumeLocks.Release(targetPath)
 
 	// Verify mounter pod exists.
 	mounterPod, err := s.k8sClients.GetPod(mounterPodNamespace, mounterPodName)
@@ -144,7 +163,43 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
 	}
 
-	// TODO(urielguzman): Implement the rest of the NodePublishVolume logic for shared mount.
+	// Verify staging path mounted.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+	if !mounted {
+		return nil, status.Errorf(codes.Internal, "staging path %s was not found mounted", stagingPath)
+	}
+
+	// Succeed if the target path was already mounted.
+	targetPathMounted, err := s.isDirMounted(targetPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
+	}
+	if targetPathMounted {
+		klog.Infof("NodePublishVolume succeeded on staging path %q to target path %q, mount already exists.", stagingPath, targetPath)
+		return &csi.NodePublishVolumeResponse{}, nil
+	}
+
+	// Create target path dir.
+	klog.Infof("NodePublishVolume attempting mkdir for target path %q", targetPath)
+	if err := os.MkdirAll(targetPath, 0o750); err != nil {
+		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
+	}
+
+	// Prepare mount options specific to the bind mount.
+	bindMountOptions := []string{"bind"}
+	if req.GetReadonly() {
+		bindMountOptions = append(bindMountOptions, "ro")
+	}
+
+	// Bind mount staging path to target path.
+	klog.Infof("NodePublishVolume attempting to bind mount staging path %q to target path %q", stagingPath, targetPath)
+	if err = s.mounter.MountSensitiveWithoutSystemd(stagingPath, targetPath, "", bindMountOptions, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to bind mount staging path %q to target path %q: %v", stagingPath, targetPath, err)
+	}
+
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
