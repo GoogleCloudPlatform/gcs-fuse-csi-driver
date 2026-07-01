@@ -35,7 +35,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -544,6 +543,15 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	return ""
 }
 
+// countGcsFuseVolumes returns the number of GCSFuse CSI Ephemeral volumes or
+// PersistentVolumeClaims in the given Pod spec. We intentionally do not
+// check to see if the PVC is a GCSFuseCSI PVC because that requires additional
+// API calls or a PVC informer which previously made the node driver OOM.
+// We may end up counting some non-GCSFuse volumes, but that is acceptable
+// since this is only used to determine whether to enable metrics collection
+// on a given pod.
+// TODO(amacaskill): Make sure the PVC is a GCSFuseCSI PVC, without
+// causing an OOM in the node driver at scale.
 func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 	gcsFuseVolumeCount := 0
 
@@ -558,38 +566,9 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 			continue
 		}
 
-		if v.PersistentVolumeClaim == nil {
-			continue
-		}
-
-		// Count persistent gcsfuse volumes
-		pvc, err := s.k8sClients.GetPVC(pod.Namespace, v.PersistentVolumeClaim.ClaimName)
-
-		// A NotFound error is tolerated, but other errors will abort the count and disable metrics.
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				klog.Warningf("pvc %q not found: %v", v.PersistentVolumeClaim.ClaimName, err)
-				continue
-			}
-
-			klog.Errorf("internal error getting PVC %q: %v. Setting GCS Fuse metric count to 0", v.PersistentVolumeClaim.ClaimName, err)
-			return 0, err
-		}
-
-		pv, err := s.k8sClients.GetPV(pvc.Spec.VolumeName)
-
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				klog.Warningf("pv %q not found: %v", pvc.Spec.VolumeName, err)
-				continue
-			}
-
-			klog.Errorf("internal error getting PV %q: %v. Setting GCS Fuse metric count to 0", pvc.Spec.VolumeName, err)
-			return 0, err
-		}
-
-		if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == s.driver.config.Name {
+		if v.PersistentVolumeClaim != nil {
 			gcsFuseVolumeCount++
+			continue
 		}
 	}
 
