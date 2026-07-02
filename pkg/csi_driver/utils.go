@@ -86,6 +86,7 @@ const (
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
+	GCSFuseMountRetriesMinVersion          = "v999.999.999-gke.0"
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
 	SidecarAutoGoMemLimitMinVersion        = "v1.23.11-gke.0"
 	StorageEndpointInternalMinVersion      = "v1.23.14-gke.0"

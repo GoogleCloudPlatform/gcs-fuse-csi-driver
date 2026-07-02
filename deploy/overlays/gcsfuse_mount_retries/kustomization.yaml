@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gcs-fuse-csi-driver
+resources:
+- ../../base/setup
+- ../../base/webhook
+- ../../base/node
+transformers:
+- ../../images/stable
+patches:
+- path: project_patch_csi_driver.json
+  target:
+    group: storage.k8s.io
+    kind: CSIDriver
+    name: gcsfuse.csi.storage.gke.io
+    version: v1
+- path: caBundle_patch_MutatingWebhookConfiguration.json
+  target:
+    group: admissionregistration.k8s.io
+    kind: MutatingWebhookConfiguration
+    name: gcsfuse-sidecar-injector.csi.storage.gke.io
+    version: v1
+- path: identity_provider_patch_csi_node.json
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1
+- path: identity_pool_patch_csi_node.json
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1
+- path: wi_node_label_check_patch.json
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1
+- path: ./node_args.yaml
+  target:
+    group: apps
+    kind: DaemonSet
+    name: gcsfusecsi-node
+    version: v1

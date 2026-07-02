@@ -44,6 +44,7 @@ const (
 	// mount options that both CSI mounter and sidecar mounter should understand.
 	DisableMetricsForGKE                = "disable-metrics-for-gke"
 	EnableSidecarBucketAccessCheckConst = "enable-sidecar-bucket-access-check"
+	EnableGCSFuseMountRetries           = "enable-gcsfuse-mount-retries"
 	TokenServerIdentityPoolConst        = "token-server-identity-pool"
 	ServiceAccountNameConst             = "service-account-name"
 	PodNamespaceConst                   = "pod-namespace"

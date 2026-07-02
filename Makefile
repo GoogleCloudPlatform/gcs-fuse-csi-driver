@@ -151,7 +151,7 @@ ifneq ($(GCSFUSE_PR_NUMBER),)
 else ifeq ($(GCSFUSE_TAG), master)
 	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
 else
-	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
+	$(eval GCSFUSE_VERSION=$(shell version=$$(echo ${GCSFUSE_TAG} | sed 's/^v//'); if echo "$$version" | grep -q '^[0-9]'; then echo "$$version"; else commit=$$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | head -n 1 | cut -c1-7); echo "0.0.0-$$version-$$commit"; fi))
 endif
 	@echo "Building GCSFuse from GCSFUSE_TAG ${GCSFUSE_TAG} commit id: $$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | head -n 1 | cut -f1)"
 	docker buildx build \
@@ -167,7 +167,7 @@ endif
 	docker run \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
-		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release && chown $(shell id -u):$(shell id -g) /release/gcsfuse"
 ifeq (${BUILD_ARM}, true)
 	docker buildx build \
 		--load \
@@ -181,7 +181,7 @@ ifeq (${BUILD_ARM}, true)
 	docker run \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
-		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release && chown $(shell id -u):$(shell id -g) /release/gcsfuse"
 endif
 else
 	gcloud storage cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse

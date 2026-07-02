@@ -40,7 +40,8 @@ const (
 	TempDir                    = "/temp-dir"
 	unixSocketBasePath         = "unix://"
 	TokenFileName              = "token.sock" // #nosec G101
-	KernelParamsFileConfigFlag = "file-system:kernel-params-file"
+	KernelParamsFileConfigFlag             = "file-system:kernel-params-file"
+	GcsRetriesEnableMountRetriesConfigFlag = "gcs-retries:enable-mount-retries"
 )
 
 // MountConfig contains the information gcsfuse needs.
@@ -65,6 +66,7 @@ type MountConfig struct {
 	PodName                        string                `json:"-"`
 	PodUID                         string                `json:"-"`
 	EnableSidecarBucketAccessCheck bool                  `json:"-"`
+	EnableMountRetries             bool                  `json:"-"`
 	TokenServerIdentityPool        string                `json:"-"`
 	SidecarRetryConfig             sidecarRetryConfig    `json:"-"`
 	FileCacheMedium                string                `json:"-"`
@@ -123,8 +125,10 @@ var DisallowedFlags = map[string]string{
 	"token-url":                "gcs-auth:token-url",
 	"reuse-token-from-url":     "gcs-auth:reuse-token-from-url",
 	"prometheus-port":          "prometheus-port",
-	"kernel-params-file":       "file-system:kernel-params-file",
-	KernelParamsFileConfigFlag: KernelParamsFileConfigFlag,
+	"kernel-params-file":                   "file-system:kernel-params-file",
+	KernelParamsFileConfigFlag:             KernelParamsFileConfigFlag,
+	"enable-mount-retries":                 GcsRetriesEnableMountRetriesConfigFlag,
+	GcsRetriesEnableMountRetriesConfigFlag: GcsRetriesEnableMountRetriesConfigFlag,
 }
 
 // Fetch the following information from a given socket path:
@@ -296,6 +300,10 @@ func (mc *MountConfig) prepareMountArgs() {
 			mc.EnableSidecarBucketAccessCheck = value == util.TrueStr
 			continue
 
+		case util.EnableGCSFuseMountRetries:
+			mc.EnableMountRetries = value == util.TrueStr || value == ""
+			continue
+
 		case util.PodNamespaceConst:
 			mc.PodNamespace = value
 			continue
@@ -361,6 +369,11 @@ func (mc *MountConfig) prepareMountArgs() {
 	if len(invalidArgs) > 0 {
 		klog.Warningf("got invalid arguments for volume %q: %v. Will discard invalid args and continue to mount.",
 			invalidArgs, mc.VolumeName)
+	}
+
+	if mc.EnableMountRetries {
+		mc.EnableSidecarBucketAccessCheck = false
+		configFileFlagMap[GcsRetriesEnableMountRetriesConfigFlag] = "true"
 	}
 
 	// This flag can only be passed by the CSI driver if the following two things are true:

@@ -286,7 +286,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
 	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
-	if vs != nil && !args.skipCSIBucketAccessCheck {
+	enableMountRetries := s.isGcsFuseMountRetriesFeatureSupported(gcsFuseSidecarImage, vs)
+	if vs != nil && !args.skipCSIBucketAccessCheck && !enableMountRetries {
 		if !vs.BucketAccessCheckPassed {
 			storageService, err := s.prepareStorageService(ctx, vc, storageEndpoint)
 			if err != nil {
@@ -305,7 +306,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
 	userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
 	userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
+	enableSidecarBucketAccessCheckForSidecarVersion := !enableMountRetries &&
+		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
 		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
 	identityProvider := ""
 	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, args.userSpecifiedIdentityProvider != "") {
@@ -501,6 +503,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	// Pass mount retries flag to GCSFuse iff GCSFuse Mount Retries feature is supported.
+	if s.isGcsFuseMountRetriesFeatureSupported(gcsFuseSidecarImage, vs) {
+		// Note: enable-gcsfuse-mount-retries *must* be delimited with an "=" sign, since it's an internal CSI flag.
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseMountRetries + "=true"})
+	}
+
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
 	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, vs) {
 		// Note: enable-gcsfuse-kernel-params *must* be delimeted with an "=" sign, since it's an internal CSI flag.
@@ -549,6 +557,13 @@ func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage s
 	return vs != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
 		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
+}
+
+// isGcsFuseMountRetriesFeatureSupported returns true if the GCSFuse mount retries feature is enabled and supported by sidecar version.
+func (s *nodeServer) isGcsFuseMountRetriesFeatureSupported(gcsFuseSidecarImage string, vs *util.VolumeState) bool {
+	return vs != nil &&
+		s.driver.config.FeatureOptions.EnableGCSFuseMountRetries &&
+		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseMountRetriesMinVersion)
 }
 
 func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {

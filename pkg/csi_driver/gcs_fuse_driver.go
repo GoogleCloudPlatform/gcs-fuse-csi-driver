@@ -60,6 +60,7 @@ type SharedMountOptions struct {
 
 type GCSDriverFeatureOptions struct {
 	EnableGCSFuseKernelParams bool
+	EnableGCSFuseMountRetries bool
 	FeatureGCSFuseProfiles    *FeatureGCSFuseProfiles
 	GoMemLimitOptions         *GoMemLimitOptions
 	SharedMountOptions        *SharedMountOptions

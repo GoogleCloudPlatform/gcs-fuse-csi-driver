@@ -382,6 +382,18 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
 			},
 			{
+				name:                       "GCSFuse Mount Retries - should return false for sidecar version lower than v999.999.999",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.2@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseMountRetriesMinVersion,
+			},
+			{
+				name:                       "GCSFuse Mount Retries - should return true for supported sidecar version >= v999.999.999",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseMountRetriesMinVersion,
+			},
+			{
 				name:                       "storage-endpoint-internal - should return true for supported sidecar version",
 				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.14-gke.2@sha256:abcd",
 				expectedSupported:          true,
