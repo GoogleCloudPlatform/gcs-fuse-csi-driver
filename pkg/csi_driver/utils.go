@@ -18,6 +18,7 @@ limitations under the License.
 package driver
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -506,9 +508,55 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 	errorFilePath := filepath.Join(emptyDirBasePath, util.ErrorFileName)
 	klog.V(4).Infof("[Pod %v/%v] checking sidecar container error status", pod.Namespace, pod.Name)
 
+	return extractStructuredGCSFuseStatusFromErrorFile(errorFilePath)
+}
+
+const GCSFuseStatusPrefix = "GCSFuse Status: "
+
+// GCSFuseStatusLog defines the structured log entry for status logging.
+type GCSFuseStatusLog struct {
+	GRPCCode  codes.Code `json:"grpc_code"`
+	Message   string     `json:"message"`
+	Timestamp time.Time  `json:"timestamp"`
+}
+
+func extractStructuredGCSFuseStatusFromErrorFile(errorFilePath string) (codes.Code, error) {
 	errMsg, err := extractErrorMsgFromGcsFuseErrorFile(errorFilePath)
 	if err != nil {
 		return codes.Internal, err
+	}
+	if len(errMsg) == 0 {
+		return codes.OK, nil
+	}
+
+	lines := strings.Split(string(errMsg), "\n")
+
+	var latestStatus *GCSFuseStatusLog
+
+	for _, line := range lines {
+		_, after, ok := strings.Cut(line, GCSFuseStatusPrefix)
+		if !ok {
+			continue
+		}
+
+		jsonStr := strings.TrimSpace(after)
+		var statusLog GCSFuseStatusLog
+		if err := json.Unmarshal([]byte(jsonStr), &statusLog); err == nil {
+			if latestStatus == nil || !statusLog.Timestamp.Before(latestStatus.Timestamp) {
+				l := statusLog
+				latestStatus = &l
+			}
+		}
+	}
+
+	if latestStatus != nil {
+		if latestStatus.GRPCCode == codes.OK {
+			return codes.OK, nil
+		}
+		if latestStatus.Message != "" {
+			return latestStatus.GRPCCode, errors.New(latestStatus.Message)
+		}
+		return latestStatus.GRPCCode, fmt.Errorf("gcsfuse failed with code: %v", latestStatus.GRPCCode)
 	}
 
 	return extractErrorFromGcsFuseErrorFile(errMsg)

@@ -19,6 +19,8 @@ package driver
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1206,3 +1208,108 @@ func TestGetInternalMountOptionValue(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractStructuredGCSFuseStatusFromErrorFile(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+
+	testCases := []struct {
+		name           string
+		fileContent    string
+		createFile     bool
+		expectedCode   codes.Code
+		expectedErrMsg string
+	}{
+		{
+			name:         "non-existent error file",
+			createFile:   false,
+			expectedCode: codes.OK,
+		},
+		{
+			name:         "empty error file",
+			fileContent:  "",
+			createFile:   true,
+			expectedCode: codes.OK,
+		},
+		{
+			name:           "unstructured error file - bucket doesn't exist",
+			fileContent:    "gcsfuse: bucket doesn't exist",
+			createFile:     true,
+			expectedCode:   codes.NotFound,
+			expectedErrMsg: "gcsfuse failed with error: gcsfuse: bucket doesn't exist",
+		},
+		{
+			name:           "structured status log - InvalidArgument",
+			fileContent:    `GCSFuse Status: {"grpc_code":3,"message":"unknown flag: --invalid-flag","timestamp":"2026-07-02T10:00:00Z"}` + "\n",
+			createFile:     true,
+			expectedCode:   codes.InvalidArgument,
+			expectedErrMsg: "unknown flag: --invalid-flag",
+		},
+		{
+			name:         "structured status log - OK",
+			fileContent:  `GCSFuse Status: {"grpc_code":0,"message":"","timestamp":"2026-07-02T10:00:00Z"}` + "\n",
+			createFile:   true,
+			expectedCode: codes.OK,
+		},
+		{
+			name: "multiple structured status logs - returns latest timestamp",
+			fileContent: `2026/07/02 10:00:00 GCSFuse Status: {"grpc_code":13,"message":"error at 10:00","timestamp":"2026-07-02T10:00:00Z"}` + "\n" +
+				`2026/07/02 10:05:00 GCSFuse Status: {"grpc_code":7,"message":"error at 10:05","timestamp":"2026-07-02T10:05:00Z"}` + "\n" +
+				`2026/07/02 10:02:00 GCSFuse Status: {"grpc_code":3,"message":"error at 10:02","timestamp":"2026-07-02T10:02:00Z"}` + "\n",
+			createFile:     true,
+			expectedCode:   codes.PermissionDenied,
+			expectedErrMsg: "error at 10:05",
+		},
+		{
+			name: "multiple structured status logs ending in OK",
+			fileContent: `2026/07/02 10:00:00 GCSFuse Status: {"grpc_code":13,"message":"temporary failure","timestamp":"2026-07-02T10:00:00Z"}` + "\n" +
+				`2026/07/02 10:01:00 GCSFuse Status: {"grpc_code":0,"message":"","timestamp":"2026-07-02T10:01:00Z"}` + "\n",
+			createFile:   true,
+			expectedCode: codes.OK,
+		},
+		{
+			name: "structured status log with malformed JSON line ignored",
+			fileContent: `GCSFuse Status: invalid json` + "\n" +
+				`GCSFuse Status: {"grpc_code":5,"message":"resource not found","timestamp":"2026-07-02T10:00:00Z"}` + "\n",
+			createFile:     true,
+			expectedCode:   codes.NotFound,
+			expectedErrMsg: "resource not found",
+		},
+		{
+			name:           "large log file with status at tail",
+			fileContent:    strings.Repeat("2026/07/02 10:00:00 normal log line from gcsfuse stderr\n", 5000) + `GCSFuse Status: {"grpc_code":3,"message":"invalid argument in large file","timestamp":"2026-07-02T10:00:00Z"}` + "\n",
+			createFile:     true,
+			expectedCode:   codes.InvalidArgument,
+			expectedErrMsg: "invalid argument in large file",
+		},
+	}
+
+	for i, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			filePath := filepath.Join(tmpDir, fmt.Sprintf("error-file-%d.txt", i))
+			if tc.createFile {
+				if err := os.WriteFile(filePath, []byte(tc.fileContent), 0644); err != nil {
+					t.Fatalf("failed to write test error file: %v", err)
+				}
+			}
+
+			code, err := extractStructuredGCSFuseStatusFromErrorFile(filePath)
+			if code != tc.expectedCode {
+				t.Errorf("got code %v, want %v", code, tc.expectedCode)
+			}
+
+			if tc.expectedErrMsg != "" {
+				if err == nil || err.Error() != tc.expectedErrMsg {
+					t.Errorf("got error %v, want %q", err, tc.expectedErrMsg)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
