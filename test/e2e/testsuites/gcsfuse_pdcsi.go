@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -675,4 +676,78 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 			fmt.Sprintf("echo 'post-snapshot-data' >> %v/data.txt && grep 'post-snapshot-data' %v/data.txt",
 				pdMountPath, pdMountPath))
 	})
+
+	// Online PD resize: a pod has both a PD-backed PVC and a GCS Fuse volume mounted.
+	// The PD PVC is expanded online while the pod is running. The test verifies the
+	// resize completes, the new capacity is visible inside the pod, and the GCS Fuse
+	// mount remains unaffected throughout.
+	ginkgo.It("should expand the PD PVC online without pod restart and without disrupting the GCS Fuse mount", func() {
+		skipIfPDCSINotInstalled("online PD resize test")
+
+		init()
+		defer cleanup()
+
+		pvc, cleanupPVC := createPDPVC("resize-pd-pvc-", "5Gi")
+		defer cleanupPVC()
+
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, pdVolName, pdMountPath, false)
+
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Writing a marker file to the GCS Fuse mount before resize")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'pre-resize-gcs' > %v/gcs-marker.txt", gcsFuseMountPath))
+
+		ginkgo.By("Writing a file to the PD volume before resize")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'pre-resize-pd' > %v/pd-data.txt", pdMountPath))
+
+		ginkgo.By(fmt.Sprintf("Expanding PVC %q from 5Gi to 10Gi", pvc.Name))
+		patch := []byte(`{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}`)
+		pvc, err := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Patch(
+			ctx, pvc.Name, types.MergePatchType, patch, metav1.PatchOptions{},
+		)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for the PVC to reflect the new 10Gi capacity")
+		framework.ExpectNoError(waitForPVCCapacity(ctx, f, pvc.Name, resource.MustParse("10Gi"), pvcResizeTimeout))
+
+		ginkgo.By("Verifying the GCS Fuse mount is still accessible after resize")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'pre-resize-gcs' %v/gcs-marker.txt", gcsFuseMountPath))
+
+		ginkgo.By("Verifying the PD volume data is intact and the mount is still writable after resize")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'pre-resize-pd' %v/pd-data.txt && echo 'post-resize-pd' >> %v/pd-data.txt",
+				pdMountPath, pdMountPath))
+
+		ginkgo.By("Verifying the expanded PD capacity is visible inside the pod")
+		// df reports in 1K blocks; 10Gi ≈ 10485760 KiB. Allow 5% tolerance (~9961472 KiB).
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf(`df %v | awk 'NR==2{if($2 >= 9961472) exit 0; else exit 1}'`, pdMountPath))
+	})
+}
+
+// waitForPVCCapacity polls until the PVC's status.capacity.storage reaches at
+// least the requested quantity or the timeout expires.
+func waitForPVCCapacity(ctx context.Context, f *framework.Framework, pvcName string, requested resource.Quantity, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pvc, err := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(ctx, pvcName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if cap, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
+			if cap.Cmp(requested) >= 0 {
+				return nil
+			}
+		}
+		framework.Logf("PVC %q capacity not yet %v, retrying...", pvcName, requested)
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("PVC %q did not reach capacity %v within %v", pvcName, requested, timeout)
 }
