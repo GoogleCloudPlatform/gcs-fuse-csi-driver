@@ -30,11 +30,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
+	storageutils "k8s.io/kubernetes/test/e2e/storage/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
@@ -589,5 +591,88 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 		ginkgo.By("Verifying the GCS Fuse mount is still accessible after the large transfer")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
 			fmt.Sprintf("test -f %v/%v", gcsFuseMountPath, largeFileName))
+	})
+
+	// Snapshot while mounted: a pod writes to the PD volume while a GCS Fuse volume
+	// is also mounted. A VolumeSnapshot of the PD PVC is triggered mid-run. The test
+	// verifies the snapshot becomes ready and the GCS Fuse mount remains unaffected.
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should create a VolumeSnapshot of the PD PVC without disrupting the GCS Fuse mount", func() {
+		skipIfPDCSINotInstalled("snapshot-while-mounted test")
+
+		dc := f.DynamicClient
+		if _, err := dc.Resource(storageutils.SnapshotClassGVR).List(ctx, metav1.ListOptions{}); err != nil {
+			e2eskipper.Skipf("VolumeSnapshot CRDs not available, skipping snapshot test: %v", err)
+		}
+
+		init()
+		defer cleanup()
+
+		pvc, cleanupPVC := createPDPVC("snapshot-pd-pvc-", "5Gi")
+		defer cleanupPVC()
+
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, pdVolName, pdMountPath, false)
+
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Writing a file to the PD volume to simulate active workload")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'pre-snapshot-data' > %v/data.txt", pdMountPath))
+
+		ginkgo.By("Writing a marker file to the GCS Fuse mount before snapshot")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'gcs-marker' > %v/marker.txt", gcsFuseMountPath))
+
+		ginkgo.By("Creating VolumeSnapshotClass for pd.csi.storage.gke.io")
+		vsClass := storageutils.GenerateSnapshotClassSpec(pdCSIDriverName, map[string]string{}, f.Namespace.Name)
+		vsClass, err := dc.Resource(storageutils.SnapshotClassGVR).Create(ctx, vsClass, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		defer func() {
+			if err := dc.Resource(storageutils.SnapshotClassGVR).Delete(ctx, vsClass.GetName(), metav1.DeleteOptions{}); err != nil {
+				framework.Logf("Failed to delete VolumeSnapshotClass %q: %v", vsClass.GetName(), err)
+			}
+		}()
+
+		ginkgo.By(fmt.Sprintf("Creating VolumeSnapshot of PD PVC %q", pvc.Name))
+		snapshot := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": storageutils.SnapshotAPIVersion,
+				"kind":       "VolumeSnapshot",
+				"metadata": map[string]interface{}{
+					"generateName": "pd-snapshot-",
+					"namespace":    f.Namespace.Name,
+				},
+				"spec": map[string]interface{}{
+					"volumeSnapshotClassName": vsClass.GetName(),
+					"source": map[string]interface{}{
+						"persistentVolumeClaimName": pvc.Name,
+					},
+				},
+			},
+		}
+		snapshot, err = dc.Resource(storageutils.SnapshotGVR).Namespace(f.Namespace.Name).Create(ctx, snapshot, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		defer func() {
+			if err := storageutils.DeleteAndWaitSnapshot(ctx, dc, f.Namespace.Name, snapshot.GetName(), framework.Poll, snapshotReadyTimeout); err != nil {
+				framework.Logf("Failed to delete VolumeSnapshot %q: %v", snapshot.GetName(), err)
+			}
+		}()
+
+		ginkgo.By("Waiting for the VolumeSnapshot to become ready")
+		framework.ExpectNoError(
+			storageutils.WaitForSnapshotReady(ctx, dc, f.Namespace.Name, snapshot.GetName(), framework.Poll, snapshotReadyTimeout),
+		)
+
+		ginkgo.By("Verifying the GCS Fuse mount is still accessible after snapshot")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'gcs-marker' %v/marker.txt", gcsFuseMountPath))
+
+		ginkgo.By("Verifying the PD volume is still writable after snapshot")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'post-snapshot-data' >> %v/data.txt && grep 'post-snapshot-data' %v/data.txt",
+				pdMountPath, pdMountPath))
 	})
 }
