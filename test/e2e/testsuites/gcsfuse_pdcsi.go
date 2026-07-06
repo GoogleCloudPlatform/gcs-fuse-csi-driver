@@ -401,4 +401,68 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 		)
 	})
 
+	// ── Test: Multi-pod sharing of a GCS Fuse volume with isolated PD volumes ──
+	//
+	// Two pods run simultaneously, both mounting the same GCS Fuse volume (RWX)
+	// while each also has its own PD-backed PVC (RWO). The test verifies a
+	// write from one pod to the shared GCS volume becomes visible from the
+	// other, while each pod's PD volume stays isolated and invisible to the
+	// other pod.
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should share GCS Fuse volume writes across two pods while keeping their individual PD volumes isolated", func() {
+		skipIfPDCSINotInstalled("multi-pod sharing test")
+
+		init()
+		defer cleanup()
+
+		pvc1, cleanupPVC1 := createPDPVC("sharing-pd-pvc-1-", "5Gi")
+		defer cleanupPVC1()
+		pvc2, cleanupPVC2 := createPDPVC("sharing-pd-pvc-2-", "5Gi")
+		defer cleanupPVC2()
+
+		ginkgo.By("Deploying the first pod with the shared GCS Fuse volume and its own PD volume")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod1.SetupVolume(&storageframework.VolumeResource{Pvc: pvc1}, pdVolName, pdMountPath, false)
+		tPod1.Create(ctx)
+		defer tPod1.Cleanup(ctx)
+		tPod1.WaitForRunning(ctx)
+
+		ginkgo.By("Deploying the second pod with the same shared GCS Fuse volume and its own PD volume")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod2.SetupVolume(&storageframework.VolumeResource{Pvc: pvc2}, pdVolName, pdMountPath, false)
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+		tPod2.WaitForRunning(ctx)
+
+		ginkgo.By("Writing a file to the shared GCS Fuse volume from the first pod")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'shared-from-pod1' > %v/shared.txt", gcsFuseMountPath))
+
+		ginkgo.By("Verifying the second pod can see the file written by the first pod on the shared GCS volume")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'shared-from-pod1' %v/shared.txt", gcsFuseMountPath))
+
+		ginkgo.By("Writing a file to the shared GCS Fuse volume from the second pod")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'shared-from-pod2' > %v/shared-back.txt", gcsFuseMountPath))
+
+		ginkgo.By("Verifying the first pod can see the file written by the second pod on the shared GCS volume")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'shared-from-pod2' %v/shared-back.txt", gcsFuseMountPath))
+
+		ginkgo.By("Writing a file to each pod's own isolated PD volume")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'pod1-private-pd-data' > %v/private.txt", pdMountPath))
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'pod2-private-pd-data' > %v/private.txt", pdMountPath))
+
+		ginkgo.By("Verifying each pod's PD volume is isolated and not visible to the other pod")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'pod1-private-pd-data' %v/private.txt && ! grep -q 'pod2-private-pd-data' %v/private.txt",
+				pdMountPath, pdMountPath))
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep 'pod2-private-pd-data' %v/private.txt && ! grep -q 'pod1-private-pd-data' %v/private.txt",
+				pdMountPath, pdMountPath))
+	})
 }
