@@ -86,6 +86,14 @@ type SidecarInjector struct {
 
 // Handle injects a gcsfuse sidecar container and a emptyDir to incoming qualified pods.
 func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) admission.Response {
+	if req.Kind.Kind == "Eviction" {
+		if strings.HasPrefix(req.Name, util.MounterPodNamePrefix) {
+			klog.Infof("Blocking eviction request for Mounter Pod: %q in namespace %q", req.Name, req.Namespace)
+			return admission.Denied("Eviction of Mounter Pod is not allowed")
+		}
+		return admission.Allowed(fmt.Sprintf("Eviction allowed for non-Mounter Pod: %q", req.Name))
+	}
+
 	if req.Kind.Kind == "PersistentVolume" {
 		pv := &corev1.PersistentVolume{}
 		if err := si.Decoder.Decode(req, pv); err != nil {
