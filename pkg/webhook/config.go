@@ -35,8 +35,8 @@ type Config struct {
 	PodHostNetworkSetting         bool   `json:"-"`
 	RequireApplicationCredentials bool   `json:"-"`
 	EnableNumaPinning             bool   `json:"enable-numa-pinning,omitempty"`
-	ContainerImage        string `json:"-"`
-	ImagePullPolicy       string `json:"-"`
+	ContainerImage                string `json:"-"`
+	ImagePullPolicy               string `json:"-"`
 	//nolint:tagliatelle
 	CPURequest resource.Quantity `json:"cpu-request,omitempty"`
 	//nolint:tagliatelle

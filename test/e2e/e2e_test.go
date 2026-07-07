@@ -43,18 +43,18 @@ import (
 )
 
 var (
-	err                              error
-	c                                clientset.Interface
-	m                                metadata.Service
-	webhookWIFEnforcementBeforeRun   bool
-	clientProtocol   = flag.String("client-protocol", "http", "the test bucket location")
-	bucketLocation   = flag.String("test-bucket-location", "us-central1", "the test bucket location")
-	skipGcpSaTest    = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
-	apiEnv           = flag.String("api-env", "prod", "cluster API env")
-	zbFlag           = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
-	profilesFlag     = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
-	kernelParamsFlag = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
-	pdStorageClass   = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
+	err                            error
+	c                              clientset.Interface
+	m                              metadata.Service
+	webhookWIFEnforcementBeforeRun bool
+	clientProtocol                 = flag.String("client-protocol", "http", "the test bucket location")
+	bucketLocation                 = flag.String("test-bucket-location", "us-central1", "the test bucket location")
+	skipGcpSaTest                  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
+	apiEnv                         = flag.String("api-env", "prod", "cluster API env")
+	zbFlag                         = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
+	profilesFlag                   = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
+	kernelParamsFlag               = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
+	pdStorageClass                 = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
 )
 
 var _ = func() bool {

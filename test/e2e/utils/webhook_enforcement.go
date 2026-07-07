@@ -33,14 +33,14 @@ import (
 )
 
 const (
-	DriverNamespace        = "gcs-fuse-csi-driver"
-	webhookDeploymentName  = "gcs-fuse-csi-driver-webhook"
-	requireWIFArgTrue      = "--require-wif-credential-configmap=true"
-	requireWIFArgFalse     = "--require-wif-credential-configmap=false"
-	requireAppCredsArgTrue = "--require-application-credentials=true"
+	DriverNamespace         = "gcs-fuse-csi-driver"
+	webhookDeploymentName   = "gcs-fuse-csi-driver-webhook"
+	requireWIFArgTrue       = "--require-wif-credential-configmap=true"
+	requireWIFArgFalse      = "--require-wif-credential-configmap=false"
+	requireAppCredsArgTrue  = "--require-application-credentials=true"
 	requireAppCredsArgFalse = "--require-application-credentials=false"
-	rolloutPollInterval    = 5 * time.Second
-	rolloutTimeout         = 5 * time.Minute
+	rolloutPollInterval     = 5 * time.Second
+	rolloutTimeout          = 5 * time.Minute
 )
 
 // GetWebhookWIFEnforcement reads both enforcement flags from the live webhook deployment.
