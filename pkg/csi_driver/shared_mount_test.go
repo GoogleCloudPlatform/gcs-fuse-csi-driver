@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/mount-utils"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -94,7 +95,9 @@ func TestSharedMount(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			vc := tc.volumeContext
-			result := sharedMount(vc)
+			mounter := mount.NewFakeMounter([]mount.MountPoint{})
+			driver := initTestDriver(t, mounter, clientset.NewFakeClientset())
+			result := driver.sharedMount(vc)
 			if result != tc.expected {
 				t.Errorf("Expected %v, but got %v", tc.expected, result)
 			}

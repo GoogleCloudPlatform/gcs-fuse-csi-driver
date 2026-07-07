@@ -217,7 +217,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Switch to shared mount logic if the volume context indicates that shared mount is enabled.
 	vc := req.GetVolumeContext()
-	if sharedMount(vc) {
+	if s.driver.sharedMount(vc) {
 		return s.NodePublishVolumeForSharedMount(ctx, req)
 	}
 
@@ -768,7 +768,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided")
 	}
 	// Skip NodeStageVolume for sidecar mounted volumes.
-	if !sharedMount(req.GetVolumeContext()) {
+	if !s.driver.sharedMount(req.GetVolumeContext()) {
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 

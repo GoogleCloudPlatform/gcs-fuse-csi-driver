@@ -154,7 +154,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 
 	// Skip ControllerPublishVolume if the volume is not using the shared mount feature.
 	vc := req.GetVolumeContext()
-	if !sharedMount(vc) {
+	if !s.driver.sharedMount(vc) {
 		return &csi.ControllerPublishVolumeResponse{}, nil
 	}
 

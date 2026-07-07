@@ -44,18 +44,18 @@ import (
 )
 
 const (
-	oidcTestPrefix                   = "gcsfuse-csi-oidc"
-	oidcWorkloadIdentityPoolID       = "gcs-fuse-oidc-pool"
-	oidcWorkloadIdentityProviderID   = "gcs-fuse-oidc-provider"
-	oidcMisconfiguredProviderID      = "gcs-fuse-oidc-bad-provider"
-	oidcNonExistentPoolID            = "gcs-fuse-nonexistent-pool"
-	oidcNonExistentProviderID        = "gcs-fuse-nonexistent-provider"
-	oidcConfigMapName                = "workload-identity-credentials"
-	oidcCredentialConfigFileName     = "credential-configuration.json"
-	oidcServiceAccountName           = "gcs-fuse-oidc-ksa"
-	oidcVolumeName                   = "gcs-volume"
-	oidcMountPath                    = "/mnt/gcs"
-	oidcWrongIssuerURI               = "https://wrong-issuer.example.com"
+	oidcTestPrefix                 = "gcsfuse-csi-oidc"
+	oidcWorkloadIdentityPoolID     = "gcs-fuse-oidc-pool"
+	oidcWorkloadIdentityProviderID = "gcs-fuse-oidc-provider"
+	oidcMisconfiguredProviderID    = "gcs-fuse-oidc-bad-provider"
+	oidcNonExistentPoolID          = "gcs-fuse-nonexistent-pool"
+	oidcNonExistentProviderID      = "gcs-fuse-nonexistent-provider"
+	oidcConfigMapName              = "workload-identity-credentials"
+	oidcCredentialConfigFileName   = "credential-configuration.json"
+	oidcServiceAccountName         = "gcs-fuse-oidc-ksa"
+	oidcVolumeName                 = "gcs-volume"
+	oidcMountPath                  = "/mnt/gcs"
+	oidcWrongIssuerURI             = "https://wrong-issuer.example.com"
 )
 
 type gcsFuseCSIOIDCTestSuite struct {
