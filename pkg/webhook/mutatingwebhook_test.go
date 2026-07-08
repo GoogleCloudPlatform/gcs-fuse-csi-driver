@@ -2625,3 +2625,60 @@ func modifySpecWithExecutableWorkloadIdentity(newPod corev1.Pod, configMapName s
 
 	return &newPod
 }
+
+func TestHandleEviction(t *testing.T) {
+	t.Parallel()
+
+	si := SidecarInjector{
+		Decoder: admission.NewDecoder(runtime.NewScheme()),
+	}
+
+	testCases := []struct {
+		name        string
+		podName     string
+		namespace   string
+		wantAllowed bool
+		wantMessage string
+	}{
+		{
+			name:        "Block eviction for mounter pod",
+			podName:     util.MounterPodNamePrefix + "-12345",
+			namespace:   "default",
+			wantAllowed: false,
+			wantMessage: "Eviction of Mounter Pod is not allowed",
+		},
+		{
+			name:        "Allow eviction for non-mounter pod",
+			podName:     "regular-pod-54321",
+			namespace:   "default",
+			wantAllowed: true,
+			wantMessage: "Eviction allowed for non-Mounter Pod: \"regular-pod-54321\"",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Kind: metav1.GroupVersionKind{
+						Group:   "policy",
+						Version: "v1",
+						Kind:    "Eviction",
+					},
+					Name:      tc.podName,
+					Namespace: tc.namespace,
+					Operation: admissionv1.Create,
+				},
+			}
+
+			response := si.Handle(context.Background(), request)
+
+			if response.Allowed != tc.wantAllowed {
+				t.Errorf("expected allowed: %v, got: %v", tc.wantAllowed, response.Allowed)
+			}
+			if tc.wantMessage != "" && !strings.Contains(response.Result.Message, tc.wantMessage) {
+				t.Errorf("expected message to contain %q, got %q", tc.wantMessage, response.Result.Message)
+			}
+		})
+	}
+}
