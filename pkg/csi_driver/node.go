@@ -54,9 +54,12 @@ const (
 	FuseMountType                       = "fuse"
 	maxGCSFuseVolumesForMetrics         = 10
 	unmountRetryInterval                = 100 * time.Millisecond
-	// Non-force unmount takes 5s to timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go);
-	// we then retry force unmounting for 2s.
-	unmountRetryTimeout = 7 * time.Second
+	unmountRetryBackoffFactor           = 2.0
+	unmountRetryJitter                  = 0.1
+	standardUnmountRetryTimeout         = 2 * time.Second
+	standardUnmountRetrySteps           = 5
+	forceUnmountRetryTimeout            = 7 * time.Second
+	forceUnmountRetrySteps              = 6
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -524,14 +527,14 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = s.unmountWithRetry(ctx, targetPath, func() error {
+			if err = s.unmountWithRetry(ctx, targetPath, forceUnmountRetryTimeout, forceUnmountRetrySteps, func() error {
 				return forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
 			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
-			if err = s.unmountWithRetry(ctx, targetPath, func() error {
+			if err = s.unmountWithRetry(ctx, targetPath, standardUnmountRetryTimeout, standardUnmountRetrySteps, func() error {
 				return s.mounter.Unmount(targetPath)
 			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
@@ -564,10 +567,19 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	return false, nil
 }
 
-func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, unmountFn func() error) error {
+func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, timeout time.Duration, steps int, unmountFn func() error) error {
 	var lastErr error
+	childCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	pollErr := wait.PollUntilContextTimeout(ctx, unmountRetryInterval, unmountRetryTimeout, true, func(ctx context.Context) (bool, error) {
+	backoff := wait.Backoff{
+		Duration: unmountRetryInterval,
+		Factor:   unmountRetryBackoffFactor,
+		Jitter:   unmountRetryJitter,
+		Steps:    steps,
+	}
+
+	pollErr := wait.ExponentialBackoffWithContext(childCtx, backoff, func(ctx context.Context) (bool, error) {
 		lastErr = unmountFn()
 		if lastErr == nil {
 			return true, nil
