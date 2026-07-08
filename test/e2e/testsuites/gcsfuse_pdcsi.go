@@ -466,7 +466,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	// the pod starts. The pod mounts both volumes and copies the file from the
 	// GCS mount to the PD mount. The test verifies that the file is readable on
 	// the GCS mount and that the copy on the PD mount has identical content.
-	ginkgo.It("should copy a pre-seeded file from the GCS Fuse mount to a PD-backed volume (GCS to PD data pipeline)", func() {
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should copy a pre-seeded file from the GCS Fuse mount to a PD-backed volume (GCS to PD data pipeline)", func() {
 		skipIfPDCSINotInstalled("GCS-to-PD pipeline test")
 
 		init()
