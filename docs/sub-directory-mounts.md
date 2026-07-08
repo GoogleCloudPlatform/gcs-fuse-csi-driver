@@ -20,7 +20,7 @@ limitations under the License.
 1. Create a bucket
 
     ```bash
-    gcloud create bucket gs://<your-bucket-name> --uniform-bucket-level-access
+    gcloud storage buckets create gs://<your-bucket-name> --uniform-bucket-level-access
     ```
 
 1. Create a namespace `test`
