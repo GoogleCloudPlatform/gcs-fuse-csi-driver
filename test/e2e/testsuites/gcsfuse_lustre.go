@@ -168,7 +168,7 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 	// in a single pod. The test writes to and reads back from each mount
 	// independently, verifying both volumes are accessible and writable
 	// without conflict.
-	ginkgo.It("should mount both a Lustre PVC and a GCS Fuse volume in a single pod and read/write independently on both", func() {
+	ginkgo.It("[Feature: Lustre+GCS] should mount both a Lustre PVC and a GCS Fuse volume in a single pod and read/write independently on both", func() {
 		skipIfLustreNotAvailable("same-pod dual mount + R/W test")
 
 		init()
@@ -226,7 +226,7 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 	// Multi-pod shared RWX: two pods mount the same Lustre PVC (RWX) and the
 	// same GCS Fuse bucket (RWX) concurrently. Pod-1 writes a dataset shard to
 	// Lustre and a manifest to GCS; Pod-2 must see both files immediately.
-	ginkgo.It("should allow two pods to share the same Lustre PVC (RWX) and GCS Fuse bucket (RWX) and see each other's writes", func() {
+	ginkgo.It("[Feature: Lustre+GCS] should allow two pods to share the same Lustre PVC (RWX) and GCS Fuse bucket (RWX) and see each other's writes", func() {
 		skipIfLustreNotAvailable("multi-pod shared RWX test")
 
 		init()
@@ -284,7 +284,7 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 	// Pod restart + persistence: data written to both volumes in Pod-1 survives
 	// a pod deletion and is fully readable in a fresh Pod-2 that binds the same
 	// Lustre PVC and GCS bucket.
-	ginkgo.It("should persist data on both Lustre PVC and GCS Fuse volume across a pod restart", func() {
+	ginkgo.It("[Feature: Lustre+GCS] should persist data on both Lustre PVC and GCS Fuse volume across a pod restart", func() {
 		skipIfLustreNotAvailable("pod restart persistence test")
 
 		init()
@@ -329,7 +329,7 @@ func (t *gcsFuseLustreCombinationTestSuite) DefineTests(driver storageframework.
 	// Node drain / reschedule remount: after draining the node running the
 	// dual-mount pod, a replacement pod on a different node must remount both
 	// volumes and find the data intact.
-	ginkgo.It("should remount both Lustre PVC and GCS Fuse volume with data intact after the node is drained", func() {
+	ginkgo.It("[Feature: Lustre+GCS] should remount both Lustre PVC and GCS Fuse volume with data intact after the node is drained", func() {
 		skipIfLustreNotAvailable("node drain remount test")
 
 		init()
