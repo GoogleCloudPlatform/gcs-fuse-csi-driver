@@ -66,7 +66,12 @@ type mounterPodConfig struct {
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
 // by checking the sharedMount: true volumeAttribute.
-func sharedMount(vc map[string]string) bool {
+func (driver *GCSDriver) sharedMount(vc map[string]string) bool {
+	if driver.config.FeatureOptions == nil ||
+		driver.config.FeatureOptions.SharedMountOptions == nil ||
+		!driver.config.FeatureOptions.SharedMountOptions.Enabled {
+		return false
+	}
 	if v, ok := vc[VolumeContextSharedNodeMount]; ok && v == util.TrueStr {
 		return true
 	}
