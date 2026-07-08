@@ -173,7 +173,7 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 	// Large file / high-throughput transfer: writes a 1 GB file on Lustre,
 	// copies it to GCS Fuse and back, verifies checksums match in both
 	// directions, and confirms both mounts remain stable throughout.
-	ginkgo.It("should transfer a 1GB file between Lustre and GCS Fuse mounts with matching checksums and no mount instability", func() {
+	ginkgo.It("[Feature: Lustre+GCSFuse] should transfer a 1GB file between Lustre and GCS Fuse mounts with matching checksums and no mount instability", func() {
 		skipIfLustreNotAvailable("large file high-throughput transfer test")
 
 		init()
@@ -235,7 +235,7 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 	// Mixed I/O pattern: many small-file reads/writes on GCS Fuse run
 	// concurrently with sequential large-file I/O on Lustre. Verifies no
 	// cross-driver resource contention and that both mounts remain healthy.
-	ginkgo.It("should handle concurrent small-file I/O on GCS Fuse and sequential large-file I/O on Lustre without contention", func() {
+	ginkgo.It("[Feature: Lustre+GCSFuse] should handle concurrent small-file I/O on GCS Fuse and sequential large-file I/O on Lustre without contention", func() {
 		skipIfLustreNotAvailable("mixed I/O pattern test")
 
 		init()
@@ -290,7 +290,7 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 	// restarts and shareable across nodes. The test verifies that GCS Fuse
 	// reads populate the Lustre-backed cache and that a replacement pod finds
 	// the pre-warmed cache intact.
-	ginkgo.It("should store GCS Fuse file cache on a Lustre-backed volume and serve cache hits from Lustre across pod restarts", func() {
+	ginkgo.It("[Feature: Lustre+GCSFuse] should store GCS Fuse file cache on a Lustre-backed volume and serve cache hits from Lustre across pod restarts", func() {
 		skipIfLustreNotAvailable("GCS Fuse file-cache backed by Lustre test")
 
 		// EnableFileCachePrefix provisions the GCS Fuse PV with fileCacheCapacity
@@ -388,7 +388,7 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 	//
 	// Prerequisite: the GKE cluster must have a NetworkPolicy-enforcing CNI
 	// (e.g. Calico or GKE Dataplane V2) enabled.
-	ginkgo.It("should keep GCS Fuse healthy and serving data when Lustre network connectivity is disrupted and recover after connectivity is restored", func() {
+	ginkgo.It("[Feature: Lustre+GCSFuse] should keep GCS Fuse healthy and serving data when Lustre network connectivity is disrupted and recover after connectivity is restored", func() {
 		skipIfLustreNotAvailable("Lustre disruption resilience test")
 
 		init()
@@ -405,6 +405,9 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 		ginkgo.By("Extracting the Lustre instance IP from the PV volume attributes")
 		pv, err := f.ClientSet.CoreV1().PersistentVolumes().Get(ctx, boundPVC.Spec.VolumeName, metav1.GetOptions{})
 		framework.ExpectNoError(err)
+		if pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes == nil {
+			framework.Failf("PV %s does not have CSI volume attributes populated", pv.Name)
+		}
 		lustreIP := pv.Spec.CSI.VolumeAttributes["ip"]
 		if lustreIP == "" {
 			framework.Failf("could not extract Lustre instance IP from PV %s volume attributes; got: %v",
@@ -531,7 +534,7 @@ func (t *gcsFuseLustrePerfResilienceTestSuite) DefineTests(driver storageframewo
 	// report its configured uid for files copied in from Lustre, and that
 	// Lustre preserves the real process-owner uid/gid for files copied in from
 	// GCS Fuse.
-	ginkgo.It("should preserve or correctly remap ownership and permissions when copying files between the GCS Fuse and Lustre mounts", func() {
+	ginkgo.It("[Feature: Lustre+GCSFuse] should preserve or correctly remap ownership and permissions when copying files between the GCS Fuse and Lustre mounts", func() {
 		skipIfLustreNotAvailable("cross-mount permission/ownership consistency test")
 
 		const gcsFuseMappedUID = 1001
