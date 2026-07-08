@@ -46,6 +46,7 @@ import (
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -291,6 +292,7 @@ func createStorageClass(name string, params map[string]string) *storagev1.Storag
 // createPV is a helper function to create a PersistentVolume object.
 func createPV(name, scName, volumeHandle, driver string, mountOptions []string, annotations map[string]string, volAttributes map[string]string) *v1.PersistentVolume {
 	return &v1.PersistentVolume{
+		TypeMeta:   metav1.TypeMeta{Kind: "PersistentVolume", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: annotations},
 		Spec: v1.PersistentVolumeSpec{
 			StorageClassName: scName,
@@ -606,6 +608,8 @@ func TestSyncPV(t *testing.T) {
 	scName := testSCName
 	bucketName := testBucketName
 	basePV := createPV(pvName, scName, bucketName, csiDriverName, nil, nil, nil)
+	basePVTracked := basePV.DeepCopy()
+	basePVTracked.Labels = map[string]string{profileManagedLabelKey: util.TrueStr}
 	relevantSC := createStorageClass(scName, validSCParams)
 	irrelevantSC := createStorageClass("irrelevant-sc", map[string]string{"some": "param"})
 	irrelevantSC.Labels = nil
@@ -719,9 +723,17 @@ func TestSyncPV(t *testing.T) {
 			expectScanCall: true,
 		},
 		{
-			name:           "Patch Error",
+			name:           "Tracking Label Patch Error",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
+			patchErr:       fmt.Errorf("patch failed"),
+			wantErr:        true,
+			expectScanCall: false,
+		},
+		{
+			name:           "Patch Error",
+			key:            pvName,
+			initialObjects: []runtime.Object{basePVTracked.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			patchErr:       fmt.Errorf("patch failed"),
 			wantErr:        true,
@@ -1399,6 +1411,57 @@ func TestPatchPVAnnotations(t *testing.T) {
 	expectedAnnotations := map[string]string{newAnnotationKey: newAnnotationVal}
 	if !reflect.DeepEqual(updatedPV.Annotations, expectedAnnotations) {
 		t.Errorf("Annotations: got %v, want %v", updatedPV.Annotations, expectedAnnotations)
+	}
+}
+
+func TestEnsurePVTrackingLabel(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialLabels  map[string]string
+		expectedLabels map[string]string
+	}{
+		{
+			name:           "No Labels",
+			initialLabels:  nil,
+			expectedLabels: map[string]string{profileManagedLabelKey: util.TrueStr},
+		},
+		{
+			name:           "Labels exist, but not tracked",
+			initialLabels:  map[string]string{"env": "dev"},
+			expectedLabels: map[string]string{"env": "dev", profileManagedLabelKey: util.TrueStr},
+		},
+		{
+			name:           "Tracked label explicitly FALSE",
+			initialLabels:  map[string]string{profileManagedLabelKey: util.FalseStr},
+			expectedLabels: map[string]string{profileManagedLabelKey: util.FalseStr},
+		},
+		{
+			name:           "Tracked label explicitly TRUE (no-op expected)",
+			initialLabels:  map[string]string{profileManagedLabelKey: util.TrueStr},
+			expectedLabels: map[string]string{profileManagedLabelKey: util.TrueStr},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
+			pv.Labels = tc.initialLabels
+			f := newTestFixture(t, pv)
+
+			if err := f.scanner.ensurePVTrackingLabel(context.Background(), pv); err != nil {
+				t.Fatalf("ensurePVTrackingLabel() returned error: %v", err)
+			}
+
+			// Get the updated PV.
+			updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), testPVName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("Failed to get PV: %v", err)
+			}
+
+			if !reflect.DeepEqual(updatedPV.Labels, tc.expectedLabels) {
+				t.Errorf("Labels: got %v, want %v", updatedPV.Labels, tc.expectedLabels)
+			}
+		})
 	}
 }
 
