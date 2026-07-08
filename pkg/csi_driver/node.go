@@ -52,6 +52,8 @@ const (
 	unmountRetryJitter                  = 0.1
 	standardUnmountRetryTimeout         = 2 * time.Second
 	standardUnmountRetrySteps           = 5
+	// Non-force unmount takes 5s to timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go);
+	// we then retry force unmounting for 2s.
 	forceUnmountRetryTimeout            = 7 * time.Second
 	forceUnmountRetrySteps              = 6
 )
