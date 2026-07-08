@@ -681,7 +681,7 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 	// The PD PVC is expanded online while the pod is running. The test verifies the
 	// resize completes, the new capacity is visible inside the pod, and the GCS Fuse
 	// mount remains unaffected throughout.
-	ginkgo.It("should expand the PD PVC online without pod restart and without disrupting the GCS Fuse mount", func() {
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should expand the PD PVC online without pod restart and without disrupting the GCS Fuse mount", func() {
 		skipIfPDCSINotInstalled("online PD resize test")
 
 		init()
