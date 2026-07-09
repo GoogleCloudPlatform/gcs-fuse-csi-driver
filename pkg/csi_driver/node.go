@@ -271,13 +271,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Use target path as an volume identifier because it corresponds to Pods and volumes.
 	// Pods may belong to different namespaces and would need their own bucket access check.
-	// We initialize volumeState iff bucket name is NOT "_", I.e. It's not a dynamic mount.
+	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
 	var vs *util.VolumeState
 	if args.bucketName != "_" {
 		var ok bool
 		if vs, ok = s.volumeStateStore.Load(targetPath); !ok {
-			s.volumeStateStore.Store(targetPath, &util.VolumeState{})
-			vs, _ = s.volumeStateStore.Load(targetPath)
+			vs = &util.VolumeState{}
+			s.volumeStateStore.Store(targetPath, vs)
 		}
 	}
 	// volumeState is safe to access if its not nil for remaining of function since volumeLock prevents
@@ -442,6 +442,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	var podUID, volumeName, emptyDirBasePath string
+	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, vs) {
+		var err error
+		if podUID, volumeName, err = util.ParsePodIDVolumeFromTargetpath(targetPath); err != nil {
+			klog.Warningf("Failed to parse pod ID and volume name from target path %q for kernel params monitor: %v. Monitor will not be started.", targetPath, err)
+		} else if emptyDirBasePath, err = util.PrepareEmptyDir(targetPath, false); err != nil {
+			klog.Warningf("Failed to prepare empty dir from target path %q for kernel params monitor: %v. Monitor will not be started.", targetPath, err)
+		}
+	}
+
 	// Check if the target path is already mounted
 	mounted, err := s.isDirMounted(targetPath)
 	if err != nil {
@@ -474,7 +484,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		// TODO: Check if the socket listener timed out
 
 		// Restart monitoring goroutine if the driver restarts for existing mounts.
-		s.startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidecarImage, vs)
+		if emptyDirBasePath != "" {
+			s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, vs)
+		}
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
@@ -521,34 +533,38 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Start monitoring goroutine for new mounts.
-	s.startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidecarImage, vs)
+	if emptyDirBasePath != "" {
+		s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, vs)
+	}
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", args.bucketName, targetPath)
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
 // startGcsFuseKernelParamsMonitoring starts a single long lived goroutine to monitor the
-// GCSFuse kernel parameters file per target path if the feature is enabled and supported.
-// It uses sync.Once to ensure the monitor is started only once. This monitoring goroutine is
-// stopped in the NodeUnpublishVolume operation.
-func (s *nodeServer) startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidecarImage string, vs *util.VolumeState) {
-	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, vs) {
+// GCSFuse kernel parameters file per mount point if the feature is enabled and supported.
+// It uses sync.Once to ensure the monitor is started only once.
+func (s *nodeServer) startGcsFuseKernelParamsMonitoring(mountPoint, emptyDirBasePath, podUID, volumeName, gcsFuseContainerImage string, vs *util.VolumeState) {
+	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseContainerImage, vs) {
 		vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			vs.GCSFuseKernelMonitorState.CancelFunc = cancel
+			logPrefix := fmt.Sprintf("Kernel Params Monitor[Pod %v, Volume %v]", podUID, volumeName)
+
 			// Fire kernel params monitoring goroutine.
-			go util.MonitorKernelParamsFile(ctx, targetPath, GCSFuseKernelParamsFilePollInterval)
+			go util.MonitorKernelParamsFile(ctx, mountPoint, emptyDirBasePath, logPrefix, GCSFuseKernelParamsFilePollInterval)
 		})
 	}
 }
 
-// isGcsFuseKernelParamsFeatureSupported returns true if the GCSFuse kernel parameters feature is enabled and supported by sidecar version.
+// isGcsFuseKernelParamsFeatureSupported returns true if the GCSFuse kernel parameters feature is enabled and supported by sidecar/mounter version.
 // GCSFuse Kernel Params feature is not applicable for dynamic mounts as a single kernel parameter setting doesn’t apply for different type
 // of buckets that a dynamic mount serves. This feature is only applicable for non-dynamic mounts i.e when volumeState(vs) is not nil.
-func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage string, vs *util.VolumeState) bool {
+func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseContainerImage string, vs *util.VolumeState) bool {
 	return vs != nil &&
+		s.driver.config.FeatureOptions != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
-		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
+		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseContainerImage, GCSFuseKernelParamsMinVersion)
 }
 
 func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -571,7 +587,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	}
 
 	// Stop GCSFuse Kernel Params monitoring.
-	if vs, ok := s.volumeStateStore.Load(targetPath); ok {
+	if vs, ok := s.volumeStateStore.Load(targetPath); ok && vs != nil {
 		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
 			vs.GCSFuseKernelMonitorState.CancelFunc()
 		}
@@ -809,6 +825,12 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 }
 
 func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	if s.driver.config.FeatureOptions == nil ||
+		s.driver.config.FeatureOptions.SharedMountOptions == nil ||
+		s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath == nil {
+		return nil, status.Errorf(codes.Internal, "shared mount options are not fully configured")
+	}
+
 	clientset := s.driver.config.K8sClients
 	stagingPath := req.GetStagingTargetPath()
 
@@ -831,18 +853,12 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
 	}
 
-	// Check if the staging path is already mounted.
-	mounted, err := s.isDirMounted(stagingPath)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
-	}
-	if mounted {
-		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
-		return &csi.NodeStageVolumeResponse{}, nil
-	}
-
 	volumeID := req.GetVolumeId()
 	vc := req.GetVolumeContext()
+	pvName := vc[util.VolumeContextKeyPVName]
+	if pvName == "" {
+		return nil, status.Errorf(codes.Internal, "PV name not found in VolumeContext (key %q)", util.VolumeContextKeyPVName)
+	}
 
 	// Build profile config and merge recommended mount options if storage profiles are enabled.
 	profilesEnabled := s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
@@ -879,6 +895,42 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		}
 	}
 
+	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
+	var vs *util.VolumeState
+	if args.bucketName != "_" {
+		var ok bool
+		if vs, ok = s.volumeStateStore.Load(stagingPath); !ok {
+			vs = &util.VolumeState{}
+			s.volumeStateStore.Store(stagingPath, vs)
+		}
+	}
+
+	mounterPodImage, err := mounterPodImage(pod)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get image of mounter pod %s/%s: %v", podNamespace, podName, err)
+	}
+
+	podUID := string(pod.UID)
+	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
+
+	// Check if the staging path is already mounted.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+	if mounted {
+		// Restart monitoring goroutine if the driver restarts for existing mounts.
+		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, mounterPodImage, vs)
+
+		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
+	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
+	if s.isGcsFuseKernelParamsFeatureSupported(mounterPodImage, vs) {
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseKernelParams + "=true"})
+	}
+
 	// Make the staging path.
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
@@ -886,16 +938,17 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Wait for the mounter pod grpc server to be ready.
-	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
+	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, podUID, s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
 		return nil, err
 	}
-
-	podUID := string(pod.UID)
 
 	// Send GRPC to mounter pod to start GCSFuse.
 	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, args.fuseMountOptions); err != nil {
 		return nil, err
 	}
+
+	// Start monitoring goroutine for new shared mounts.
+	s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, mounterPodImage, vs)
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
@@ -991,6 +1044,14 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 }
 
 func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
+	// Stop GCSFuse Kernel Params monitoring.
+	if vs, ok := s.volumeStateStore.Load(stagingPath); ok && vs != nil {
+		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+			vs.GCSFuseKernelMonitorState.CancelFunc()
+		}
+		s.volumeStateStore.Delete(stagingPath)
+	}
+
 	// Unmount staging path.
 	mounted, err := s.isDirMounted(stagingPath)
 	if err != nil {
