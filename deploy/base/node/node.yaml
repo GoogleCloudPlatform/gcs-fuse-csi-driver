@@ -98,8 +98,11 @@ spec:
                   name: gcsfusecsi-node-config
                   key: universe-domain
           volumeMounts:
-            - name: kubelet-dir
+            - name: kubelet-pods-dir
               mountPath: /var/lib/kubelet/pods
+              mountPropagation: "Bidirectional"
+            - name: kubelet-plugins-dir
+              mountPath: /var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
@@ -144,10 +147,14 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
             type: Directory
-        - name: kubelet-dir
+        - name: kubelet-pods-dir
           hostPath:
             path: /var/lib/kubelet/pods/
             type: Directory
+        - name: kubelet-plugins-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io/
+            type: DirectoryOrCreate
         - name: socket-dir
           hostPath:
             path: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/

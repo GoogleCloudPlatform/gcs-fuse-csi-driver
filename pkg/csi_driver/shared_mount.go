@@ -44,7 +44,7 @@ import (
 const (
 	mounterPodPriorityClass       = "gcsfusecsi-mount-priority"
 	mounterPodMountDir            = "mount-dir"
-	mounterPodSocketFile          = "mounter.sock"
+	MounterPodSocketFile          = "mounter.sock"
 	mounterPodManagedImageKeyword = "managed"
 	mounterPodSocketDir           = "mount-socket"
 )
@@ -155,12 +155,12 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:             mounterPodMountDir,
-			MountPath:        util.KubeletDir,
+			MountPath:        util.KubeletPluginsGCSFuseDir,
 			MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
 		},
 		{
 			Name:      util.SidecarContainerTmpVolumeName,
-			MountPath: util.SidecarContainerTmpVolumePath,
+			MountPath: webhook.SidecarContainerTmpVolumeMountPath,
 		},
 		{
 			Name:      webhook.SidecarContainerBufferVolumeName,
@@ -211,6 +211,7 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 					Name:            util.MounterPodNamePrefix,
 					Image:           config.image,
 					ImagePullPolicy: corev1.PullAlways,
+					Args:            []string{"--enable-shared-mount"},
 					SecurityContext: &corev1.SecurityContext{
 						Privileged: ptr.To(true),
 					},
@@ -399,9 +400,7 @@ func mounterPodVolumes(config *mounterPodConfig) []corev1.Volume {
 	volumes = append(volumes, corev1.Volume{Name: mounterPodMountDir,
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				// TODO(urielguzman): Check if we can use /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
-				// instead, to decrease the host path scope.
-				Path: util.KubeletDir,
+				Path: util.KubeletPluginsGCSFuseDir,
 				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 			},
 		}})
@@ -455,7 +454,7 @@ func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mo
 	}
 
 	// Construct the mounter socket file path.
-	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), mounterPodSocketFile)
+	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), MounterPodSocketFile)
 	var pod *corev1.Pod
 	var err error
 

@@ -49,10 +49,47 @@ var (
 	storageServiceAndBucketAccessFactor   = flag.Float64("storage-service-check-retry-factor", 2.0, "storage service creation and bucket access check exponential retry factor")
 	storageServiceAndBucketAccessJitter   = flag.Float64("storage-service-check-retry-jitter", 0.1, "storage service creation and bucket access check exponential retry jitter")
 	storageServiceAndBucketAccessDuration = flag.Duration("storage-service-check-retry-duration", 5*time.Second, "storage service creation and bucket access check exponential retry initial duration")
+	enableSharedMount                     = flag.Bool("enable-shared-mount", false, "whether to run gcsfuse in a mounter pod")
 
 	// This is set at compile time.
 	version = "unknown"
 )
+
+func runNodeMounter(ctx context.Context, cancel context.CancelFunc, mounter *sidecarmounter.Mounter) {
+	klog.Infof("Running node mounter...")
+	s := driver.NewNonBlockingGRPCServer()
+	ms := sidecarmounter.NewMounterServer(mounter)
+
+	socketFile := filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, driver.MounterPodSocketFile)
+
+	if err := os.Remove(socketFile); err != nil && !os.IsNotExist(err) {
+		klog.Warningf("failed to remove stale socket file %q: %v", socketFile, err)
+	}
+	defer func() {
+		if err := os.Remove(socketFile); err != nil && !os.IsNotExist(err) {
+			klog.Warningf("failed to remove socket file %q on exit: %v", socketFile, err)
+		}
+	}()
+	socketPath := fmt.Sprintf("unix:%s", socketFile)
+
+	s.Start(socketPath, nil, nil, nil, ms)
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
+	klog.Info("Waiting for SIGTERM signal or context cancellation...")
+	select {
+	case <-c:
+		klog.Info("Received SIGTERM signal, waiting for the gcsfuse process to exit...")
+	case <-ctx.Done():
+		klog.Info("Context cancelled, waiting for the gcsfuse process to exit...")
+	}
+
+	cancel()
+	s.Stop()
+	mounter.WaitGroup.Wait()
+	s.Wait()
+	klog.Info("Exiting node mounter...")
+}
 
 func main() {
 	klog.InitFlags(nil)
@@ -60,13 +97,19 @@ func main() {
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 
+	mounter := sidecarmounter.New(*gcsfusePath)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if *enableSharedMount {
+		runNodeMounter(ctx, cancel, mounter)
+		return
+	}
+
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPaths, err := filepath.Glob(socketPathPattern)
 	if err != nil {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
-	mounter := sidecarmounter.New(*gcsfusePath)
-	ctx, cancel := context.WithCancel(context.Background())
 	flagsFromDriver := map[string]string{}
 	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
 	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)

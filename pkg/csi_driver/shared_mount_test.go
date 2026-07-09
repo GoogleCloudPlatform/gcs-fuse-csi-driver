@@ -119,7 +119,7 @@ func TestWaitForMounterServer(t *testing.T) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
+	validSocketFile := filepath.Join(mounterSocketDirValid, MounterPodSocketFile)
 	if file, err := os.Create(validSocketFile); err != nil {
 		t.Fatalf("failed to create socket file: %v", err)
 	} else {
@@ -350,12 +350,12 @@ func TestCreateMounterPodSpec(t *testing.T) {
 	expectedVolumeMounts := []corev1.VolumeMount{
 		{
 			Name:             mounterPodMountDir,
-			MountPath:        util.KubeletDir,
+			MountPath:        util.KubeletPluginsGCSFuseDir,
 			MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
 		},
 		{
 			Name:      util.SidecarContainerTmpVolumeName,
-			MountPath: util.SidecarContainerTmpVolumePath,
+			MountPath: webhook.SidecarContainerTmpVolumeMountPath,
 		},
 		{
 			Name:      webhook.SidecarContainerBufferVolumeName,
@@ -372,7 +372,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 		Name: mounterPodMountDir,
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				Path: util.KubeletDir,
+				Path: util.KubeletPluginsGCSFuseDir,
 				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 			},
 		},
@@ -426,6 +426,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -481,6 +482,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -537,6 +539,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -585,6 +588,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -632,6 +636,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -686,6 +691,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -737,6 +743,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -1484,7 +1491,7 @@ func TestMounterPodVolumes(t *testing.T) {
 		Name: mounterPodMountDir,
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				Path: util.KubeletDir,
+				Path: util.KubeletPluginsGCSFuseDir,
 				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 			},
 		},
