@@ -44,6 +44,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -163,7 +164,7 @@ func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, buc
 // It encapsulates the fake Kubernetes client, listers, recorders, and mock functions.
 type testFixture struct {
 	scanner      *Scanner
-	kubeClient   *fake.Clientset
+	kubeClient   *clientset.FakeClientset
 	pvLister     corelisters.PersistentVolumeLister
 	pvcLister    corelisters.PersistentVolumeClaimLister
 	scLister     storagelisters.StorageClassLister
@@ -239,19 +240,20 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		close(stopCh)
 	})
 
+	fc := clientset.NewFakeClientset()
+	fc.Client = kubeClient
+	fc.FakePVInformer = pvInformer.Informer()
+	fc.FakePVCInformer = pvcInformer.Informer()
+	fc.FakeSCInformer = scInformer.Informer()
+	fc.FakePodInformer = podInformer.Informer()
+
 	// Create the Scanner instance with fake/mock components.
 	s := &Scanner{
-		kubeClient:     kubeClient,
+		k8sClients:     fc,
 		pvLister:       pvInformer.Lister(),
 		pvcLister:      pvcInformer.Lister(),
 		scLister:       scInformer.Lister(),
 		podLister:      podInformer.Lister(),
-		pvSynced:       pvInformer.Informer().HasSynced,
-		pvcSynced:      pvcInformer.Informer().HasSynced,
-		scSynced:       scInformer.Informer().HasSynced,
-		podSynced:      podInformer.Informer().HasSynced,
-		factory:        factory,
-		podFactory:     podFactory,
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		eventRecorder:  recorder,
 		trackedPVs:     make(map[string]syncInfo),
@@ -262,13 +264,13 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 
 	factory.Start(stopCh)
 	podFactory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, s.pvSynced, s.pvcSynced, s.scSynced, s.podSynced) {
+	if !fc.WaitForCacheSync(stopCh) {
 		t.Fatalf("Failed to sync caches")
 	}
 
 	return &testFixture{
 		scanner:      s,
-		kubeClient:   kubeClient,
+		kubeClient:   fc,
 		pvLister:     pvInformer.Lister(),
 		pvcLister:    pvcInformer.Lister(),
 		scLister:     scInformer.Lister(),

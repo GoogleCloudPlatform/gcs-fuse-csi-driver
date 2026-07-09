@@ -31,6 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	storagev1client "k8s.io/client-go/kubernetes/typed/storage/v1"
+	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
 )
 
 type FakeNodeConfig struct {
@@ -81,7 +85,7 @@ type FakePodTemplateConfig struct {
 }
 
 type FakeClientset struct {
-	Client            kubernetes.Interface
+	Client            *fake.Clientset
 	fakePod           *corev1.Pod
 	fakeNode          *corev1.Node
 	fakePVs           map[string]*corev1.PersistentVolume
@@ -93,6 +97,12 @@ type FakeClientset struct {
 	ListPodErr        error
 	GetPodErr         error
 	GetPodTemplateErr error
+
+	// Informers for testing
+	FakePodInformer  cache.SharedIndexInformer
+	FakePVInformer   cache.SharedIndexInformer
+	FakePVCInformer  cache.SharedIndexInformer
+	FakeSCInformer   cache.SharedIndexInformer
 }
 
 func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
@@ -362,4 +372,39 @@ func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string
 
 func (c *FakeClientset) GetGCPServiceAccountName(_ context.Context, _, _ string) (string, error) {
 	return "", nil
+}
+
+func (c *FakeClientset) PodInformer() cache.SharedIndexInformer {
+	return c.FakePodInformer
+}
+
+func (c *FakeClientset) PVInformer() cache.SharedIndexInformer {
+	return c.FakePVInformer
+}
+
+func (c *FakeClientset) PVCInformer() cache.SharedIndexInformer {
+	return c.FakePVCInformer
+}
+
+func (c *FakeClientset) SCInformer() cache.SharedIndexInformer {
+	return c.FakeSCInformer
+}
+
+func (c *FakeClientset) StartInformers(_ <-chan struct{}) {
+}
+
+func (c *FakeClientset) WaitForCacheSync(_ <-chan struct{}) bool {
+	return true
+}
+
+func (c *FakeClientset) PrependReactor(verb, resource string, reaction k8stesting.ReactionFunc) {
+	c.Client.PrependReactor(verb, resource, reaction)
+}
+
+func (c *FakeClientset) CoreV1() corev1client.CoreV1Interface {
+	return c.Client.CoreV1()
+}
+
+func (c *FakeClientset) StorageV1() storagev1client.StorageV1Interface {
+	return c.Client.StorageV1()
 }

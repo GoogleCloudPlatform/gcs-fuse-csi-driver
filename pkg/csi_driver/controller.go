@@ -73,7 +73,7 @@ func newControllerServer(driver *GCSDriver, storageServiceManager storage.Servic
 		features:              featureOptions,
 	}
 	if cs.features.FeatureGCSFuseProfiles.Enabled {
-		s, err := profiles.NewScanner(cs.features.FeatureGCSFuseProfiles.ScannerConfig)
+		s, err := profiles.NewScanner(cs.features.FeatureGCSFuseProfiles.ScannerConfig, cs.driver.config.K8sClients)
 		if err != nil {
 			return nil, err
 		}

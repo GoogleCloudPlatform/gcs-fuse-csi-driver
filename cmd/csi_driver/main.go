@@ -296,6 +296,13 @@ func main() {
 		}
 	}
 
+	clientset.StartInformers(ctx.Done())
+	klog.Info("Waiting for shared informer caches to sync")
+	if !clientset.WaitForCacheSync(ctx.Done()) {
+		klog.Fatalf("failed to wait for shared informer caches to sync")
+	}
+	klog.Info("Shared informer caches synced successfully")
+
 	config := &driver.GCSDriverConfig{
 		Name:                           driver.DefaultName,
 		Version:                        version,

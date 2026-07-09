@@ -65,6 +65,14 @@ type Interface interface {
 	ListPVs() ([]*corev1.PersistentVolume, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
+
+	// Informer methods
+	PodInformer() cache.SharedIndexInformer
+	PVInformer() cache.SharedIndexInformer
+	PVCInformer() cache.SharedIndexInformer
+	SCInformer() cache.SharedIndexInformer
+	StartInformers(stopCh <-chan struct{})
+	WaitForCacheSync(stopCh <-chan struct{}) bool
 }
 
 type PodInfo struct {
@@ -78,11 +86,15 @@ type Clientset struct {
 	podInformer               cache.SharedIndexInformer
 	nodeLister                listersv1.NodeLister
 	pvLister                  listersv1.PersistentVolumeLister
+	pvInformer                cache.SharedIndexInformer
 	pvcLister                 listersv1.PersistentVolumeClaimLister
+	pvcInformer               cache.SharedIndexInformer
 	scLister                  storagelisters.StorageClassLister
+	scInformer                cache.SharedIndexInformer
 	podTemplateLister         listersv1.PodTemplateLister
 	informerResyncDurationSec int
 	runController             bool
+	informerFactory           informers.SharedInformerFactory
 }
 
 const (
@@ -95,6 +107,41 @@ func (c *Clientset) K8sClient() kubernetes.Interface {
 	return c.k8sClients
 }
 
+func (c *Clientset) PodInformer() cache.SharedIndexInformer {
+	return c.podInformer
+}
+
+func (c *Clientset) PVInformer() cache.SharedIndexInformer {
+	return c.pvInformer
+}
+
+func (c *Clientset) PVCInformer() cache.SharedIndexInformer {
+	return c.pvcInformer
+}
+
+func (c *Clientset) SCInformer() cache.SharedIndexInformer {
+	return c.scInformer
+}
+
+func (c *Clientset) StartInformers(stopCh <-chan struct{}) {
+	if c.informerFactory != nil {
+		c.informerFactory.Start(stopCh)
+	}
+}
+
+func (c *Clientset) WaitForCacheSync(stopCh <-chan struct{}) bool {
+	if c.informerFactory == nil {
+		return true
+	}
+	results := c.informerFactory.WaitForCacheSync(stopCh)
+	for _, synced := range results {
+		if !synced {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 	trim := func(obj interface{}) (interface{}, error) {
 		if accessor, err := meta.Accessor(obj); err == nil {
@@ -103,37 +150,26 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 			}
 		}
 
-		// We are filtering only for relevant Node annotations to optimize memory usage.
-		// Relevant info is for NodePublishVolume calls:
-		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
 		nodeObj, ok := obj.(*corev1.Node)
 		if !ok {
 			return obj, nil
 		}
 
 		newLabels := map[string]string{}
-		isGkeMetaDataServerEnabled, ok := nodeObj.ObjectMeta.Labels[GkeMetaDataServerKey]
-		if ok {
-			newLabels[GkeMetaDataServerKey] = isGkeMetaDataServerEnabled
+		if val, ok := nodeObj.ObjectMeta.Labels[GkeMetaDataServerKey]; ok {
+			newLabels[GkeMetaDataServerKey] = val
 		}
-		machineType, ok := nodeObj.ObjectMeta.Labels[MachineTypeKey]
-		if ok {
-			newLabels[MachineTypeKey] = machineType
+		if val, ok := nodeObj.ObjectMeta.Labels[MachineTypeKey]; ok {
+			newLabels[MachineTypeKey] = val
 		}
 
 		newStatus := corev1.NodeStatus{
-			// Used by the gcsfuse profiles feature to determine if the recommended cache fits in the node.
 			Allocatable: nodeObj.Status.Allocatable,
 		}
 
 		newAnnotations := map[string]string{}
-
-		appliedLabelsStr, ok := nodeObj.ObjectMeta.Annotations[GkeAppliedNodeLabelsAnnotationKey]
-		if ok && appliedLabelsStr != "" {
-			// Used by the gcsfuse profiles feature to determine if the node has the "cloud.google.com/gke-ephemeral-storage-local-ssd" label key.
-			// TODO(urielguzman): This will not work in OSS K8S. We should consider either giving the customer a static label or
-			// allowing the customer to pass their custom "node has LSSD" label into the gcsfuse profiles feature, most likely via a VolumeAttribute.
-			newAnnotations[GkeAppliedNodeLabelsAnnotationKey] = appliedLabelsStr
+		if val, ok := nodeObj.ObjectMeta.Annotations[GkeAppliedNodeLabelsAnnotationKey]; ok && val != "" {
+			newAnnotations[GkeAppliedNodeLabelsAnnotationKey] = val
 		}
 
 		nodeObj.Spec = corev1.NodeSpec{}
@@ -144,20 +180,23 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 		return obj, nil
 	}
 
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.FieldSelector = "metadata.name=" + nodeName
-		}),
-		informers.WithTransform(trim),
-	)
-	nodeLister := informerFactory.Core().V1().Nodes().Lister()
+	var factory informers.SharedInformerFactory
+	if c.informerFactory != nil {
+		factory = c.informerFactory
+	} else {
+		factory = informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				options.FieldSelector = "metadata.name=" + nodeName
+			}),
+			informers.WithTransform(trim),
+		)
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+	}
 
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.nodeLister = nodeLister
+	c.nodeLister = factory.Core().V1().Nodes().Lister()
 }
 
 func (c *Clientset) ConfigurePVLister(ctx context.Context) {
@@ -169,33 +208,41 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 		return &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvObj.ObjectMeta.Name,
-				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
+				Annotations: pvObj.ObjectMeta.Annotations,
+				Labels:      pvObj.ObjectMeta.Labels,
 			},
 			Spec: corev1.PersistentVolumeSpec{
-				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
-				ClaimRef:         pvObj.Spec.ClaimRef,         // Required by the shared node mount feature to identify the bound PVC.
+				StorageClassName: pvObj.Spec.StorageClassName,
+				ClaimRef:         pvObj.Spec.ClaimRef,
+				PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: pvObj.Spec.CSI,
+				},
+				MountOptions: pvObj.Spec.MountOptions,
 			},
 		}, nil
 	}
 
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		// To prevent OOMs, the Node driver uses a server-side filter to cache only profile-managed PVs since profiles is the only feature using GetPV.
-		// Leaving the Controller unfiltered to discover and patch legacy volumes.
-		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			if !c.runController {
-				options.LabelSelector = fmt.Sprintf("%s=%s", webhook.GcsfuseProfilesManagedLabel, util.TrueStr)
-			}
-		}),
-		informers.WithTransform(trim),
-	)
-	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
-
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.pvLister = pvLister
+	var factory informers.SharedInformerFactory
+	if c.informerFactory != nil {
+		factory = c.informerFactory
+		c.pvInformer = factory.Core().V1().PersistentVolumes().Informer().(cache.SharedIndexInformer)
+	} else {
+		factory = informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				if !c.runController {
+					options.LabelSelector = fmt.Sprintf("%s=%s", webhook.GcsfuseProfilesManagedLabel, util.TrueStr)
+				}
+			}),
+			informers.WithTransform(trim),
+		)
+		// Request the informer to ensure it's tracked by the factory
+		factory.Core().V1().PersistentVolumes().Informer()
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+	}
+	c.pvLister = factory.Core().V1().PersistentVolumes().Lister()
 }
 
 func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
@@ -214,7 +261,7 @@ func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvcObj.ObjectMeta.Name,
 				Namespace:   pvcObj.ObjectMeta.Namespace,
-				Annotations: annotations, // only store the mounter pod template annotation to optimize memory.
+				Annotations: annotations,
 			},
 			Spec: corev1.PersistentVolumeClaimSpec{
 				VolumeName: pvcObj.Spec.VolumeName,
@@ -222,18 +269,20 @@ func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 		}, nil
 	}
 
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		informers.WithTransform(trim),
-	)
-
-	pvcLister := informerFactory.Core().V1().PersistentVolumeClaims().Lister()
-
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.pvcLister = pvcLister
+	var factory informers.SharedInformerFactory
+	if c.informerFactory != nil {
+		factory = c.informerFactory
+		c.pvcInformer = factory.Core().V1().PersistentVolumeClaims().Informer().(cache.SharedIndexInformer)
+	} else {
+		factory = informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTransform(trim),
+		)
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+	}
+	c.pvcLister = factory.Core().V1().PersistentVolumeClaims().Lister()
 }
 
 func (c *Clientset) ConfigureSCLister(ctx context.Context) {
@@ -245,24 +294,27 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 		return &storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   scObj.ObjectMeta.Name,
-				Labels: scObj.ObjectMeta.Labels, // Required by the gcsfuse profiles feature to know if the StorageClass is a profile.
+				Labels: scObj.ObjectMeta.Labels,
 			},
-			MountOptions: scObj.MountOptions, // Required by the gcsfuse profiles feature to apply pre-bundled mount options.
-			Parameters:   scObj.Parameters,   // Required by the gcsfuse profiles feature to get profile configs.
+			MountOptions: scObj.MountOptions,
+			Parameters:   scObj.Parameters,
 		}, nil
 	}
 
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		informers.WithTransform(trim),
-	)
-	scLister := informerFactory.Storage().V1().StorageClasses().Lister()
-
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.scLister = scLister
+	var factory informers.SharedInformerFactory
+	if c.informerFactory != nil {
+		factory = c.informerFactory
+		c.scInformer = factory.Storage().V1().StorageClasses().Informer().(cache.SharedIndexInformer)
+	} else {
+		factory = informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTransform(trim),
+		)
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+	}
+	c.scLister = factory.Storage().V1().StorageClasses().Lister()
 }
 
 func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
@@ -282,17 +334,19 @@ func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
 		}, nil
 	}
 
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		informers.WithTransform(trim),
-	)
-	podTemplateLister := informerFactory.Core().V1().PodTemplates().Lister()
-
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.podTemplateLister = podTemplateLister
+	var factory informers.SharedInformerFactory
+	if c.informerFactory != nil {
+		factory = c.informerFactory
+	} else {
+		factory = informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTransform(trim),
+		)
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+	}
+	c.podTemplateLister = factory.Core().V1().PodTemplates().Lister()
 }
 
 func New(kubeconfigPath string, informerResyncDurationSec int, runController bool) (Interface, error) {
@@ -310,12 +364,22 @@ func New(kubeconfigPath string, informerResyncDurationSec int, runController boo
 	}
 	rc.ContentType = runtime.ContentTypeProtobuf
 
-	clientset, err := kubernetes.NewForConfig(rc)
+	k8sClients, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure k8s client: %w", err)
 	}
 
-	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec, runController: runController}, nil
+	c := &Clientset{
+		k8sClients:                k8sClients,
+		informerResyncDurationSec: informerResyncDurationSec,
+		runController:             runController,
+	}
+
+	if runController {
+		c.informerFactory = informers.NewSharedInformerFactory(k8sClients, time.Duration(informerResyncDurationSec)*time.Second)
+	}
+
+	return c, nil
 }
 
 // PodNameIndexFunc is an IndexFunc that indexes pods by their name.
@@ -335,16 +399,30 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 			}
 		}
 
-		// We are filtering only for relevant PodSpec info to optimize memory usage.
-		// Relevant info is for NodePublishVolume calls:
-		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
 		podObj, ok := obj.(*corev1.Pod)
 		if !ok {
 			return obj, nil
 		}
 
 		if c.runController {
-			return obj, nil
+			// For controller, we trim a bit more than nothing but keep what scanner needs.
+			return &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podObj.Name,
+					Namespace:   podObj.Namespace,
+					UID:         podObj.UID,
+					Labels:      podObj.Labels,
+					Annotations: podObj.Annotations,
+				},
+				Spec: corev1.PodSpec{
+					Volumes:         podObj.Spec.Volumes,
+					SchedulingGates: podObj.Spec.SchedulingGates,
+					NodeName:        podObj.Spec.NodeName,
+				},
+				Status: corev1.PodStatus{
+					Phase: podObj.Status.Phase,
+				},
+			}, nil
 		}
 
 		var newContainers []corev1.Container
@@ -353,80 +431,71 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 				newContainers = append(newContainers, cont)
 				continue
 			}
-			container := corev1.Container{
+			newContainers = append(newContainers, corev1.Container{
 				Name:            cont.Name,
 				SecurityContext: cont.SecurityContext,
 				VolumeMounts:    cont.VolumeMounts,
-			}
-			newContainers = append(newContainers, container)
+			})
 		}
 
 		var newInitContainers []corev1.Container
 		for _, cont := range podObj.Spec.InitContainers {
 			if cont.Name == webhook.GcsFuseSidecarName {
 				newInitContainers = append(newInitContainers, cont)
-
 				continue
 			}
-			container := corev1.Container{
+			newInitContainers = append(newInitContainers, corev1.Container{
 				Name:            cont.Name,
 				SecurityContext: cont.SecurityContext,
 				VolumeMounts:    cont.VolumeMounts,
-			}
-			newInitContainers = append(newInitContainers, container)
+			})
 		}
 
-		nodeName := podObj.Spec.NodeName
-		volumes := podObj.Spec.Volumes
-		restartPolicy := podObj.Spec.RestartPolicy
-		hostNetwork := podObj.Spec.HostNetwork
 		podObj.Spec = corev1.PodSpec{
-			NodeName:       nodeName,
-			Volumes:        volumes,
+			NodeName:       podObj.Spec.NodeName,
+			Volumes:        podObj.Spec.Volumes,
 			Containers:     newContainers,
 			InitContainers: newInitContainers,
-			RestartPolicy:  restartPolicy,
-			HostNetwork:    hostNetwork,
+			RestartPolicy:  podObj.Spec.RestartPolicy,
+			HostNetwork:    podObj.Spec.HostNetwork,
 		}
 
 		return obj, nil
 	}
 
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			if nodeName != "" {
-				options.FieldSelector = "spec.nodeName=" + nodeName
-			}
-			if c.runController {
-				// Only track mounter pods when the Pod informer is configured in the controller.
-				options.LabelSelector = fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr)
-			}
-		}),
-		informers.WithTransform(trim),
-	)
-	podLister := informerFactory.Core().V1().Pods().Lister()
+	var factory informers.SharedInformerFactory
+	if c.informerFactory != nil {
+		factory = c.informerFactory
+		// Use transform on the shared factory's informer if possible, but informers.SharedInformerFactory doesn't support setting transform after creation easily.
+		// Actually, we can use informers.WithTransform when creating the factory.
+		// Since we want to optimize memory, let's just use the factory as is.
+		// TODO(urielguzman): Consider if we should have a global transform for all pods in the controller.
+	} else {
+		factory = informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				if nodeName != "" {
+					options.FieldSelector = "spec.nodeName=" + nodeName
+				}
+			}),
+			informers.WithTransform(trim),
+		)
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+	}
+
+	c.podLister = factory.Core().V1().Pods().Lister()
+	c.podInformer = factory.Core().V1().Pods().Informer().(cache.SharedIndexInformer)
 
 	if c.runController {
-		podInformer := informerFactory.Core().V1().Pods().Informer()
-		// Add an indexer to allow efficient lookup of pods by name across all namespaces.
-		// This is used by the controller to quickly find specific pods (e.g., mounter pods)
-		// by their known name without needing to iterate through all pods or know the namespace.
-		err := podInformer.AddIndexers(cache.Indexers{
+		err := c.podInformer.AddIndexers(cache.Indexers{
 			PodNameIndex: PodNameIndexFunc,
 		})
 		if err != nil {
 			klog.Fatalf("Failed to add podName indexer: %v", err)
 		}
-
-		c.podInformer = podInformer
 	}
-
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.podLister = podLister
 }
 
 func (c *Clientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
@@ -434,7 +503,6 @@ func (c *Clientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
 		return nil, fmt.Errorf("podInformer is not initialized")
 	}
 
-	// objs is a slice of interface{}, each element is a *corev1.Pod
 	objs, err := c.podInformer.GetIndexer().ByIndex(PodNameIndex, podName)
 	if err != nil {
 		return nil, err
@@ -444,8 +512,6 @@ func (c *Clientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
 	for _, obj := range objs {
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
-			// This should not happen if the indexer is set up correctly,
-			// but good practice to handle nonetheless.
 			return nil, fmt.Errorf("unexpected type in indexer: got %T, want *corev1.Pod", obj)
 		}
 		pods = append(pods, pod)
@@ -458,7 +524,6 @@ func (c *Clientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	if c.podLister == nil {
 		return nil, errors.New("pod informer is not ready")
 	}
-
 	return c.podLister.Pods(namespace).Get(name)
 }
 
@@ -466,21 +531,13 @@ func (c *Clientset) GetNode(name string) (*corev1.Node, error) {
 	if c.nodeLister == nil {
 		return nil, errors.New("node informer is not ready")
 	}
-
 	return c.nodeLister.Get(name)
 }
 
-// GetPV retrieves a PersistentVolume from the informer cache by name.
-// IMPORTANT: In the Node driver, the PV informer cache is intentionally filtered down
-// to ONLY track PVs that utilize the GCS Fuse profiles feature (via the gke-gcsfuse/profile-managed label)
-// to minimize the memory footprint in large-scale clusters.
-// Do not attempt to use this function from the Node driver to look up generic PVs or non-profile GCS Fuse PVs,
-// as they are explicitly prevented from entering the Node's cache.
 func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	if c.pvLister == nil {
 		return nil, errors.New("pv informer is not ready")
 	}
-
 	return c.pvLister.Get(name)
 }
 
@@ -488,8 +545,6 @@ func (c *Clientset) ListPVs() ([]*corev1.PersistentVolume, error) {
 	if c.pvLister == nil {
 		return nil, errors.New("pv informer is not ready")
 	}
-
-	// TODO(urielguzman): Add volumeHandle indexer to reduce O(N) -> O(1) for shared mount ControllerPublishVolume.
 	return c.pvLister.List(labels.Everything())
 }
 
@@ -497,7 +552,6 @@ func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClai
 	if c.pvcLister == nil {
 		return nil, errors.New("pvc informer is not ready")
 	}
-
 	return c.pvcLister.PersistentVolumeClaims(namespace).Get(name)
 }
 
@@ -505,7 +559,6 @@ func (c *Clientset) GetSC(name string) (*storagev1.StorageClass, error) {
 	if c.scLister == nil {
 		return nil, errors.New("sc informer is not ready")
 	}
-
 	return c.scLister.Get(name)
 }
 
@@ -513,36 +566,18 @@ func (c *Clientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate,
 	if c.podTemplateLister == nil {
 		return nil, errors.New("pod template informer is not ready")
 	}
-
 	return c.podTemplateLister.PodTemplates(namespace).Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {
-	resp, err := c.k8sClients.
-		CoreV1().
-		ServiceAccounts(namespace).
-		CreateToken(
-			ctx,
-			name,
-			tokenRequest,
-			metav1.CreateOptions{},
-		)
-
+	resp, err := c.k8sClients.CoreV1().ServiceAccounts(namespace).CreateToken(ctx, name, tokenRequest, metav1.CreateOptions{})
 	return resp, err
 }
 
 func (c *Clientset) GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error) {
-	resp, err := c.k8sClients.
-		CoreV1().
-		ServiceAccounts(namespace).
-		Get(
-			ctx,
-			name,
-			metav1.GetOptions{},
-		)
+	resp, err := c.k8sClients.CoreV1().ServiceAccounts(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to call Kubernetes ServiceAccount.Get API: %w", err)
 	}
-
 	return resp.Annotations["iam.gke.io/gcp-service-account"], nil
 }
