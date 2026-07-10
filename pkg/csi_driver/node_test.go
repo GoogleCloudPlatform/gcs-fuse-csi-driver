@@ -19,6 +19,7 @@ package driver
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -101,8 +103,47 @@ type nodeServerTestEnv struct {
 }
 
 func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
+	return initTestNodeServerWithMounter(t, mount.NewFakeMounter([]mount.MountPoint{}))
+}
+
+func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *nodeServerTestEnv {
 	t.Helper()
 	mounter := mount.NewFakeMounter([]mount.MountPoint{})
+	driver := initTestDriverWithCustomNodeServer(t, mounter, clientSet, wiNodeLabelCheck)
+	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+		t.Fatalf("failed to create the fake bucket: %v", err)
+	}
+
+	return &nodeServerTestEnv{
+		ns:    newNodeServer(driver, mounter),
+		fm:    mounter,
+		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
+	}
+}
+
+type fakeForceUnmounter struct {
+	*mount.FakeMounter
+	unmountWithForceFunc func(target string, umountTimeout time.Duration) error
+}
+
+func (f *fakeForceUnmounter) UnmountWithForce(target string, umountTimeout time.Duration) error {
+	if f.unmountWithForceFunc != nil {
+		return f.unmountWithForceFunc(target, umountTimeout)
+	}
+	return f.FakeMounter.Unmount(target)
+}
+
+func initTestNodeServerWithForceMounter(t *testing.T) (*nodeServerTestEnv, *fakeForceUnmounter) {
+	fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+	mounter := &fakeForceUnmounter{
+		FakeMounter: fakeMounter,
+	}
+	return initTestNodeServerWithMounter(t, mounter), mounter
+}
+
+func initTestNodeServerWithMounter(t *testing.T, mounter mount.Interface) *nodeServerTestEnv {
+	t.Helper()
 	podName := createMounterPodName("test-node", testVolumeID)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -119,7 +160,14 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 			Name:      "test-pvc",
 		},
 	})
-	driver := initTestDriver(t, mounter, fakeClient)
+	var fakeMounter *mount.FakeMounter
+	if fm, ok := mounter.(*mount.FakeMounter); ok {
+		fakeMounter = fm
+	} else if ffm, ok := mounter.(*fakeForceUnmounter); ok {
+		fakeMounter = ffm.FakeMounter
+	}
+
+	driver := initTestDriver(t, fakeMounter, fakeClient)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
@@ -127,23 +175,7 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 
 	return &nodeServerTestEnv{
 		ns:    newNodeServer(driver, mounter),
-		fm:    mounter,
-		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
-	}
-}
-
-func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.FakeClientset, wiNodeLabelCheck bool) *nodeServerTestEnv {
-	t.Helper()
-	mounter := mount.NewFakeMounter([]mount.MountPoint{})
-	driver := initTestDriverWithCustomNodeServer(t, mounter, clientSet, wiNodeLabelCheck)
-	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
-	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
-		t.Fatalf("failed to create the fake bucket: %v", err)
-	}
-
-	return &nodeServerTestEnv{
-		ns:    newNodeServer(driver, mounter),
-		fm:    mounter,
+		fm:    fakeMounter,
 		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
 	}
 }
@@ -800,7 +832,9 @@ func TestNodeUnpublishVolume(t *testing.T) {
 		mounts        []mount.MountPoint // already existing mounts
 		req           *csi.NodeUnpublishVolumeRequest
 		actions       []mount.FakeAction
+		unmountFunc   func(path string) error
 		expectedMount *mount.MountPoint
+		ctx           context.Context
 		expectErr     error
 	}{
 		{
@@ -832,6 +866,41 @@ func TestNodeUnpublishVolume(t *testing.T) {
 				TargetPath: testTargetPath,
 			},
 		},
+		{
+			name:   "retry unmount succeeds eventually",
+			mounts: []mount.MountPoint{{Device: testVolumeID, Path: testTargetPath}},
+			req: &csi.NodeUnpublishVolumeRequest{
+				VolumeId:   testVolumeID,
+				TargetPath: testTargetPath,
+			},
+			unmountFunc: func() func(path string) error {
+				calls := 0
+				return func(path string) error {
+					calls++
+					if calls < 3 {
+						return fmt.Errorf("umount: %s: target is busy", path)
+					}
+					return nil
+				}
+			}(),
+		},
+		{
+			name:   "retry unmount fails after max retries",
+			mounts: []mount.MountPoint{{Device: testVolumeID, Path: testTargetPath}},
+			req: &csi.NodeUnpublishVolumeRequest{
+				VolumeId:   testVolumeID,
+				TargetPath: testTargetPath,
+			},
+			unmountFunc: func(path string) error {
+				return fmt.Errorf("umount: %s: target is busy", path)
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath},
+			ctx: func() context.Context {
+				ctx, _ := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				return ctx
+			}(),
+			expectErr: status.Errorf(codes.Internal, "failed to unmount target path %q: umount: %s: target is busy", testTargetPath, testTargetPath),
+		},
 	}
 
 	for _, test := range cases {
@@ -840,8 +909,95 @@ func TestNodeUnpublishVolume(t *testing.T) {
 			if test.mounts != nil {
 				testEnv.fm.MountPoints = test.mounts
 			}
+			if test.unmountFunc != nil {
+				testEnv.fm.UnmountFunc = test.unmountFunc
+			}
 
-			_, err := testEnv.ns.NodeUnpublishVolume(context.TODO(), test.req)
+			ctx := context.TODO()
+			if test.ctx != nil {
+				ctx = test.ctx
+			}
+
+			_, err := testEnv.ns.NodeUnpublishVolume(ctx, test.req)
+			if test.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if test.expectErr != nil && !errors.Is(err, test.expectErr) {
+				t.Errorf("got error %q, expected error %q", err, test.expectErr)
+			}
+
+			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
+		})
+	}
+}
+
+func TestNodeUnpublishVolumeForceUnmount(t *testing.T) {
+	t.Parallel()
+	testTargetPath, cleanup := setupTestTargetPath(t)
+	defer cleanup()
+
+	cases := []struct {
+		name                 string
+		mounts               []mount.MountPoint
+		req                  *csi.NodeUnpublishVolumeRequest
+		unmountWithForceFunc func(target string, umountTimeout time.Duration) error
+		expectedMount        *mount.MountPoint
+		ctx                  context.Context
+		expectErr            error
+	}{
+		{
+			name:   "retry force unmount succeeds eventually",
+			mounts: []mount.MountPoint{{Device: testVolumeID, Path: testTargetPath}},
+			req: &csi.NodeUnpublishVolumeRequest{
+				VolumeId:   testVolumeID,
+				TargetPath: testTargetPath,
+			},
+			unmountWithForceFunc: func() func(target string, umountTimeout time.Duration) error {
+				calls := 0
+				return func(target string, umountTimeout time.Duration) error {
+					calls++
+					if calls < 3 {
+						return fmt.Errorf("umount: %s: target is busy", target)
+					}
+					return nil
+				}
+			}(),
+		},
+		{
+			name:   "retry force unmount fails after max retries",
+			mounts: []mount.MountPoint{{Device: testVolumeID, Path: testTargetPath}},
+			req: &csi.NodeUnpublishVolumeRequest{
+				VolumeId:   testVolumeID,
+				TargetPath: testTargetPath,
+			},
+			unmountWithForceFunc: func(target string, umountTimeout time.Duration) error {
+				return fmt.Errorf("umount: %s: target is busy", target)
+			},
+			expectedMount: &mount.MountPoint{Device: testVolumeID, Path: testTargetPath},
+			ctx: func() context.Context {
+				ctx, _ := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				return ctx
+			}(),
+			expectErr: status.Errorf(codes.Internal, "failed to force unmount target path %q: umount: %s: target is busy", testTargetPath, testTargetPath),
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			testEnv, forceMounter := initTestNodeServerWithForceMounter(t)
+			if test.mounts != nil {
+				testEnv.fm.MountPoints = test.mounts
+			}
+			if test.unmountWithForceFunc != nil {
+				forceMounter.unmountWithForceFunc = test.unmountWithForceFunc
+			}
+
+			ctx := context.TODO()
+			if test.ctx != nil {
+				ctx = test.ctx
+			}
+
+			_, err := testEnv.ns.NodeUnpublishVolume(ctx, test.req)
 			if test.expectErr == nil && err != nil {
 				t.Errorf("got error %q, expected error nil", err)
 			}
