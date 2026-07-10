@@ -772,6 +772,22 @@ func TestPrepareConfigFile(t *testing.T) {
 			},
 			expectedErr: true,
 		},
+		{
+			name: "should keep dir-mode and file-mode as quoted octal strings, not YAML ints",
+			mc: &MountConfig{
+				ConfigFile: "./test-config-file.yaml",
+				ConfigFileFlagMap: map[string]string{
+					"file-system:dir-mode":  "777",
+					"file-system:file-mode": "666",
+				},
+			},
+			expectedConfig: map[string]interface{}{
+				"file-system": map[string]interface{}{
+					"dir-mode":  "777",
+					"file-mode": "666",
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
