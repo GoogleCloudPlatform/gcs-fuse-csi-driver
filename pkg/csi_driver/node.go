@@ -50,12 +50,15 @@ const (
 	unmountRetryInterval                = 100 * time.Millisecond
 	unmountRetryBackoffFactor           = 2.0
 	unmountRetryJitter                  = 0.1
-	standardUnmountRetryTimeout         = 2 * time.Second
-	standardUnmountRetrySteps           = 5
-	// Non-force unmount takes 5s to timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go);
-	// we then retry force unmounting for 2s.
-	forceUnmountRetryTimeout            = 7 * time.Second
-	forceUnmountRetrySteps              = 6
+	// Standard unmount has no built-in timeout, so we use a short timeout to fail fast.
+	standardUnmountRetryTimeout = 2 * time.Second
+	standardUnmountRetrySteps   = 5
+	// Force unmount attempts include an initial non-force unmount with a
+	// 5 second timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go).
+	// We then retry force unmounting for 2 seconds.
+	// Thus the full timeout is 7 seconds.
+	forceUnmountRetryTimeout = 7 * time.Second
+	forceUnmountRetrySteps   = 6
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -516,6 +519,13 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	return false, nil
 }
 
+// unmountWithRetry retries the unmount operation using exponential backoff.
+// It uses a child context with a timeout to limit the total retry duration,
+// in addition to being limited to the defined number of steps.
+//
+// If the OS unmount system call itself hangs, this function will block
+// on the hung call. It won't be able to interrupt the hung call until the Kubelet cancels the parent
+// context (NodeUnpublishVolume context) and retries the entire operation.
 func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, timeout time.Duration, steps int, unmountFn func() error) error {
 	var lastErr error
 	childCtx, cancel := context.WithTimeout(ctx, timeout)
