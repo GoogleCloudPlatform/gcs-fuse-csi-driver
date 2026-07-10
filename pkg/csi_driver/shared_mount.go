@@ -63,6 +63,9 @@ type mounterPodConfig struct {
 	resources          *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
 	volumes            []corev1.Volume              // The volumes for the mounter pod.
 	profilesEnabled    bool                         // Whether the profiles feature is enabled.
+	hostNetworkEnabled bool                         // Whether hostNetwork is enabled for the mounter pod.
+	tokenAudience      string                       // Token audience for projected service account volume.
+	dnsPolicy          corev1.DNSPolicy             // The DNS policy for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -177,6 +180,10 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 		}
 	}
 
+	if config.hostNetworkEnabled {
+		volumeMounts = append(volumeMounts, webhook.SATokenVolumeMount)
+	}
+
 	labels := map[string]string{
 		webhook.SharedMountLabel: util.TrueStr,
 	}
@@ -198,6 +205,7 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 				"kubernetes.io/os":       "linux",
 			},
 			PriorityClassName: mounterPodPriorityClass,
+			HostNetwork:       config.hostNetworkEnabled,
 			Containers: []corev1.Container{
 				{
 					Name:            util.MounterPodNamePrefix,
@@ -223,6 +231,10 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 
 	if config.serviceAccountName != "" {
 		spec.Spec.ServiceAccountName = config.serviceAccountName
+	}
+
+	if config.dnsPolicy != "" {
+		spec.Spec.DNSPolicy = config.dnsPolicy
 	}
 
 	spec.Spec.Containers[0].Resources = *mounterPodResources(config)
@@ -394,8 +406,10 @@ func mounterPodVolumes(config *mounterPodConfig) []corev1.Volume {
 			},
 		}})
 
-	// TODO(urielguzman): Add host network volumes when those features are implemented for
-	// shared mount.
+	if config.hostNetworkEnabled {
+		volumes = append(volumes, webhook.GetSATokenVolume(config.tokenAudience))
+	}
+
 	if config.profilesEnabled {
 		if !webhook.VolumeExists(volumes, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName) {
 			volumes = append(volumes, webhook.EphemeralFileCacheVolume)

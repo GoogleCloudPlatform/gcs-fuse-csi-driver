@@ -506,6 +506,144 @@ func TestControllerPublishVolume(t *testing.T) {
 			},
 		},
 		{
+			name: "sharedMount true - mounter pod with dnsPolicy override - should create pod with overridden dnsPolicy",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.ptConfig.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if pod.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+					t.Errorf("Expected DNSPolicy %q, got %q", corev1.DNSClusterFirstWithHostNet, pod.Spec.DNSPolicy)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - hostNetwork true with GKE IDP - should set SA token volume with identity pool audience",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":                     "true",
+					util.VolumeContextKeyPVName:       testPV,
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "https://container.googleapis.com/v1/projects/my-proj/locations/us-central1/clusters/my-cluster",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				wantVolume := webhook.GetSATokenVolume("fake.identity.pool")
+				found := false
+				for _, v := range pod.Spec.Volumes {
+					if v.Name == wantVolume.Name {
+						found = true
+						if !reflect.DeepEqual(v, wantVolume) {
+							t.Errorf("SA token volume mismatch.\nGot: %+v\nWant: %+v", v, wantVolume)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("SA token volume %q not found in pod volumes", wantVolume.Name)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - hostNetwork true with custom IDP - should set SA token volume with custom IDP audience",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":                     "true",
+					util.VolumeContextKeyPVName:       testPV,
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "https://custom.identity.provider",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				wantVolume := webhook.GetSATokenVolume("https://custom.identity.provider")
+				found := false
+				for _, v := range pod.Spec.Volumes {
+					if v.Name == wantVolume.Name {
+						found = true
+						if !reflect.DeepEqual(v, wantVolume) {
+							t.Errorf("SA token volume mismatch.\nGot: %+v\nWant: %+v", v, wantVolume)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("SA token volume %q not found in pod volumes", wantVolume.Name)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - hostNetwork true with empty IDP - should default SA token volume with identity pool audience",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":                     "true",
+					util.VolumeContextKeyPVName:       testPV,
+					VolumeContextKeyHostNetworkPodKSA: "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				wantVolume := webhook.GetSATokenVolume("fake.identity.pool")
+				found := false
+				for _, v := range pod.Spec.Volumes {
+					if v.Name == wantVolume.Name {
+						found = true
+						if !reflect.DeepEqual(v, wantVolume) {
+							t.Errorf("SA token volume mismatch.\nGot: %+v\nWant: %+v", v, wantVolume)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("SA token volume %q not found in pod volumes", wantVolume.Name)
+				}
+			},
+		},
+
+		{
 			name: "sharedMount true - missing mounter pod template annotation - should return error",
 			req: &csi.ControllerPublishVolumeRequest{
 				VolumeId:         testVolumeID,

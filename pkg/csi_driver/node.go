@@ -302,38 +302,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
-	userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
-	userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
-	enableSidecarBucketAccessCheckForSidecarVersion := s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarBucketAccessCheckMinVersion) &&
-		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
-	identityProvider := ""
-	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, args.userSpecifiedIdentityProvider != "") {
-		if args.userSpecifiedIdentityProvider != "" {
-			identityProvider = args.userSpecifiedIdentityProvider
-		} else {
-			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
-		}
-		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
-	} else if enableSidecarBucketAccessCheckForSidecarVersion && !userExplicitlyEnabled {
-		//Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=true"})
-	}
-
-	if enableSidecarBucketAccessCheckForSidecarVersion {
-		if identityProvider == "" {
-			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
-			args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
-		}
-		klog.Infof("Got identity provider %s", identityProvider)
-
-		identityPool := s.driver.config.TokenManager.GetIdentityPool()
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
-			util.PodNamespaceConst + "=" + vc[VolumeContextKeyPodNamespace],
-			util.ServiceAccountNameConst + "=" + vc[VolumeContextKeyServiceAccountName],
-			util.TokenServerIdentityPoolConst + "=" + identityPool})
-	}
+	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
 
 	if args.enableCloudProfilerForSidecar && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
@@ -714,8 +683,56 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 			break
 		}
 	}
+	for _, container := range pod.Spec.Containers {
+		if strings.HasPrefix(container.Name, util.MounterPodNamePrefix) {
+			sidecarVersionSupported = s.driver.isSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion)
+
+			break
+		}
+	}
 
 	return tokenVolumeInjected && (sidecarVersionSupported || userInput)
+}
+
+// populateTokenAndBucketAccessCheckOptions populates fuseMountOptions with token server identity provider
+// for host network workloads and bucket access check parameters for both sidecar and shared mount modes.
+func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, image string, vc map[string]string, args *requestArgs, podNamespace, serviceAccountName string) {
+	sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
+	userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
+	userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
+	enableBucketAccessCheckForVersion := s.driver.isSidecarVersionSupportedForGivenFeature(image, SidecarBucketAccessCheckMinVersion) &&
+		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
+	identityProvider := ""
+	userSpecifiedIDP := args.userSpecifiedIdentityProvider
+	if userSpecifiedIDP == "" {
+		userSpecifiedIDP = vc[util.TokenServerIdentityProviderConst]
+	}
+	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, userSpecifiedIDP != "") {
+		if userSpecifiedIDP != "" {
+			identityProvider = userSpecifiedIDP
+		} else {
+			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
+		}
+		klog.V(6).Infof("Populating identity provider %q in mount options", identityProvider)
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.OptInHnw + "=true", util.TokenServerIdentityProviderConst + "=" + identityProvider})
+	} else if enableBucketAccessCheckForVersion && !userExplicitlyEnabled {
+		// Enable sidecar bucket access check only for Workload Identity workloads. This feature consumes additional quota for Host Network pods as we do not have token caching.
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableSidecarBucketAccessCheckConst + "=true"})
+	}
+
+	if enableBucketAccessCheckForVersion {
+		if identityProvider == "" {
+			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
+			args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
+		}
+		klog.Infof("Got identity provider %s", identityProvider)
+
+		identityPool := s.driver.config.TokenManager.GetIdentityPool()
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
+			util.PodNamespaceConst + "=" + podNamespace,
+			util.ServiceAccountNameConst + "=" + serviceAccountName,
+			util.TokenServerIdentityPoolConst + "=" + identityPool})
+	}
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -895,6 +912,13 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		}
 	}
 
+	podImage, err := mounterPodImage(pod)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get image of mounter pod %s/%s: %v", podNamespace, podName, err)
+	}
+
+	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
+
 	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
 	var vs *util.VolumeState
 	if args.bucketName != "_" {
@@ -903,11 +927,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 			vs = &util.VolumeState{}
 			s.volumeStateStore.Store(stagingPath, vs)
 		}
-	}
-
-	mounterPodImage, err := mounterPodImage(pod)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get image of mounter pod %s/%s: %v", podNamespace, podName, err)
 	}
 
 	podUID := string(pod.UID)
@@ -920,14 +939,14 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 	if mounted {
 		// Restart monitoring goroutine if the driver restarts for existing mounts.
-		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, mounterPodImage, vs)
+		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, podImage, vs)
 
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
-	if s.isGcsFuseKernelParamsFeatureSupported(mounterPodImage, vs) {
+	if s.isGcsFuseKernelParamsFeatureSupported(podImage, vs) {
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseKernelParams + "=true"})
 	}
 
@@ -948,7 +967,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Start monitoring goroutine for new shared mounts.
-	s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, mounterPodImage, vs)
+	s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, podImage, vs)
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
