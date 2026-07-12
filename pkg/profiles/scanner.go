@@ -362,7 +362,7 @@ func generateTokenSource(ctx context.Context, configFile *ConfigFile) (oauth2.To
 	} else {
 		klog.Warningf("GOOGLE_APPLICATION_CREDENTIALS env var not set")
 	}
-	klog.Infof("Using DefaultTokenSource %#v", tokenSource)
+	klog.Info("Using DefaultTokenSource")
 
 	return tokenSource, err
 }
