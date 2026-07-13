@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -68,6 +69,7 @@ type Clientset struct {
 	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
 	informerResyncDurationSec int
+	runController             bool
 }
 
 const (
@@ -242,7 +244,7 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 	c.scLister = scLister
 }
 
-func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error) {
+func New(kubeconfigPath string, informerResyncDurationSec int, runController bool) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {
@@ -262,7 +264,7 @@ func New(kubeconfigPath string, informerResyncDurationSec int) (Interface, error
 		return nil, fmt.Errorf("failed to configure k8s client: %w", err)
 	}
 
-	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec}, nil
+	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec, runController: runController}, nil
 }
 
 func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
