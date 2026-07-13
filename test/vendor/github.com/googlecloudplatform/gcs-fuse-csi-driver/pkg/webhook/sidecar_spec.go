@@ -109,12 +109,26 @@ var (
 	}
 
 	// gcsfuse profiles related vars.
-	ramFileCacheVolumeMount = corev1.VolumeMount{
+	EphemeralFileCacheVolume = corev1.Volume{
+		Name:         SidecarContainerFileCacheEphemeralDiskVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+
+	RamFileCacheVolume = corev1.Volume{
+		Name: SidecarContainerFileCacheRamDiskVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{
+				Medium: corev1.StorageMediumMemory,
+			},
+		},
+	}
+
+	RamFileCacheVolumeMount = corev1.VolumeMount{
 		Name:      SidecarContainerFileCacheRamDiskVolumeName,
 		MountPath: SidecarContainerFileCacheRamDiskVolumeMountPath,
 	}
 
-	ephemeralFileCacheVolumeMount = corev1.VolumeMount{
+	EphemeralFileCacheVolumeMount = corev1.VolumeMount{
 		Name:      SidecarContainerFileCacheEphemeralDiskVolumeName,
 		MountPath: SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
 	}

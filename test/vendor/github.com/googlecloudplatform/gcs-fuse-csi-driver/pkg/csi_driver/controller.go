@@ -25,6 +25,7 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
+	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -153,7 +154,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 
 	// Skip ControllerPublishVolume if the volume is not using the shared mount feature.
 	vc := req.GetVolumeContext()
-	if !sharedMount(vc) {
+	if !s.driver.sharedMount(vc) {
 		return &csi.ControllerPublishVolumeResponse{}, nil
 	}
 
@@ -202,12 +203,12 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Extract overrides specifically from the container named "gcsfusecsi-mount".
 	var containerResources *corev1.ResourceRequirements
 	var containerImage string
-	if s.driver != nil && s.driver.config != nil && s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions != nil {
-		containerImage = s.driver.config.FeatureOptions.SharedMountOptions.MounterPodImage
+	if s.features != nil && s.features.SharedMountOptions != nil {
+		containerImage = s.features.SharedMountOptions.MounterPodImage
 	}
 	for i := range podTemplate.Template.Spec.Containers {
 		container := &podTemplate.Template.Spec.Containers[i]
-		if container.Name != mounterPodNamePrefix {
+		if container.Name != util.MounterPodNamePrefix {
 			continue
 		}
 		containerResources = &container.Resources
@@ -223,6 +224,19 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return nil, status.Error(codes.Internal, "mounter pod image cannot be empty")
 	}
 
+	var profilesEnabled bool
+	if s.features != nil && s.features.FeatureGCSFuseProfiles.Enabled && pv.Spec.StorageClassName != "" {
+		sc, err := clientset.GetSC(pv.Spec.StorageClassName)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.Internal, "failed to get StorageClass %q: %v", pv.Spec.StorageClassName, err)
+		}
+		if sc != nil {
+			profilesEnabled = putil.IsProfile(sc)
+		} else {
+			klog.V(6).Infof("failed to determine if StorageClass %q uses profiles: not found", pv.Spec.StorageClassName)
+		}
+	}
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
@@ -233,6 +247,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		nodeID:             nodeID,
 		image:              containerImage,
 		volumes:            podTemplate.Template.Spec.Volumes,
+		profilesEnabled:    profilesEnabled,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

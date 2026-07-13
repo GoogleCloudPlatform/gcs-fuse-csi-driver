@@ -89,7 +89,7 @@ func TestConfigurePVLister(t *testing.T) {
 
 	pvs, err := c.pvLister.List(labels.Everything())
 	if err != nil {
-		t.Fatalf("ListPVs() unexpected error: %v", err)
+		t.Fatalf("c.pvLister.List unexpected error: %v", err)
 	}
 
 	var gotPVNames []string
@@ -100,6 +100,6 @@ func TestConfigurePVLister(t *testing.T) {
 	wantPVNames := []string{"labeled-gcsfuse-pv", "multi-labeled-gcsfuse-pv"}
 	less := func(a, b string) bool { return a < b }
 	if diff := cmp.Diff(wantPVNames, gotPVNames, cmpopts.SortSlices(less)); diff != "" {
-		t.Errorf("ListPVs() PV names mismatch (-want +got):\n%s", diff)
+		t.Errorf("c.pvLister.List PV names mismatch (-want +got):\n%s", diff)
 	}
 }

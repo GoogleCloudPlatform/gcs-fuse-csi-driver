@@ -130,14 +130,8 @@ func checkAndApplyKernelParams(kernelParamsFilePath string, pathForParam map[Par
 
 // MonitorKernelParamsFile monitors the kernel params file and continously enforces
 // kernel parameter changes at regular interval as requested by GCSFuse.
-func MonitorKernelParamsFile(ctx context.Context, targetPath string, interval time.Duration) {
-	podID, volumeName, err := ParsePodIDVolumeFromTargetpath(targetPath)
-	if err != nil {
-		klog.Warningf("Aborting kernel params monitor. Could not parse Pod ID and Volume Name from target path %q: %v", targetPath, err)
-		return
-	}
-	logPrefix := fmt.Sprintf("Kernel Params Monitor[Pod %v, Volume %v]", podID, volumeName)
-
+func MonitorKernelParamsFile(ctx context.Context, mountPoint, emptyDirBasePath, logPrefix string, interval time.Duration) {
+	kernelParamsFilePath := filepath.Join(emptyDirBasePath, GCSFuseKernelParamsFileName)
 	klog.Infof("%v Starting GCSFuse kernel params monitor", logPrefix)
 
 	var terminationError error
@@ -152,14 +146,7 @@ func MonitorKernelParamsFile(ctx context.Context, targetPath string, interval ti
 		}
 	}()
 
-	emptyDirBasePath, err := PrepareEmptyDir(targetPath, false)
-	if err != nil {
-		terminationError = fmt.Errorf("failed to get emptyDir path: %w", err)
-		return
-	}
-	kernelParamsFilePath := filepath.Join(emptyDirBasePath, GCSFuseKernelParamsFileName)
-
-	major, minor, err := getDeviceMajorMinor(targetPath)
+	major, minor, err := getDeviceMajorMinor(mountPoint)
 	if err != nil {
 		terminationError = fmt.Errorf("failed to get device major/minor: %w", err)
 		return
