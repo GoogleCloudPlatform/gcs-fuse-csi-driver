@@ -39,8 +39,11 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
+
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
 )
 
 const (
@@ -50,6 +53,18 @@ const (
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
 	maxGCSFuseVolumesForMetrics         = 10
+	unmountRetryInterval                = 100 * time.Millisecond
+	unmountRetryBackoffFactor           = 2.0
+	unmountRetryJitter                  = 0.1
+	// Standard unmount has no built-in timeout, so we use a short timeout to fail fast.
+	standardUnmountRetryTimeout = 2 * time.Second
+	standardUnmountRetrySteps   = 5
+	// Force unmount attempts include an initial non-force unmount with a
+	// 5 second timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go).
+	// We then retry force unmounting for 2 seconds.
+	// Thus the full timeout is 7 seconds.
+	forceUnmountRetryTimeout = 7 * time.Second
+	forceUnmountRetrySteps   = 6
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -96,6 +111,19 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 	if len(stagingPath) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Staging Target Path must be provided")
 	}
+	targetPath := req.GetTargetPath()
+	if len(targetPath) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Target Path must be provided")
+	}
+	if len(req.GetVolumeId()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Volume ID must be provided")
+	}
+	if req.GetVolumeCapability() == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Volume capability must be provided")
+	}
+	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	publishContext := req.GetPublishContext()
 	if publishContext == nil {
 		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Publish Context must be provided")
@@ -109,6 +137,12 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Name must be provided")
 	}
 
+	// Acquire a lock on the target path instead of volumeID, since we do not want to serialize multiple node publish calls on the same volume.
+	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
+	}
+	defer s.volumeLocks.Release(targetPath)
+
 	// Verify mounter pod exists.
 	mounterPod, err := s.k8sClients.GetPod(mounterPodNamespace, mounterPodName)
 	if err != nil {
@@ -121,6 +155,20 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
 	}
 
+	// Surface any GCSFuse error to the user.
+	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
+		return nil, status.Error(codes.Internal, "shared mount options can't be nil")
+	}
+	config := s.driver.config.FeatureOptions.SharedMountOptions
+	if config.EmptyDirBasePath == nil {
+		return nil, status.Error(codes.Internal, "empty dir base path function can't be nil")
+	}
+	emptyDirPath := config.EmptyDirBasePath(string(mounterPod.UID))
+	code, err := checkMounterPodErrorFile(emptyDirPath)
+	if err != nil {
+		return nil, status.Error(code, err.Error())
+	}
+
 	// NodePublish is guaranteed to be called after NodeStage has waited for mounter pod to become running.
 	// Mounter pod not running at this stage means that the pod started and failed (e.g. killed by Kubelet
 	// during OOMKILL).
@@ -128,7 +176,43 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
 	}
 
-	// TODO(urielguzman): Implement the rest of the NodePublishVolume logic for shared mount.
+	// Verify staging path mounted.
+	mounted, err := s.isDirMounted(stagingPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
+	}
+	if !mounted {
+		return nil, status.Errorf(codes.Internal, "staging path %s was not found mounted", stagingPath)
+	}
+
+	// Succeed if the target path was already mounted.
+	targetPathMounted, err := s.isDirMounted(targetPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
+	}
+	if targetPathMounted {
+		klog.Infof("NodePublishVolume succeeded on staging path %q to target path %q, mount already exists.", stagingPath, targetPath)
+		return &csi.NodePublishVolumeResponse{}, nil
+	}
+
+	// Create target path dir.
+	klog.Infof("NodePublishVolume attempting mkdir for target path %q", targetPath)
+	if err := os.MkdirAll(targetPath, 0o750); err != nil {
+		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
+	}
+
+	// Prepare mount options specific to the bind mount.
+	bindMountOptions := []string{"bind"}
+	if req.GetReadonly() {
+		bindMountOptions = append(bindMountOptions, "ro")
+	}
+
+	// Bind mount staging path to target path.
+	klog.Infof("NodePublishVolume attempting to bind mount staging path %q to target path %q", stagingPath, targetPath)
+	if err = s.mounter.MountSensitiveWithoutSystemd(stagingPath, targetPath, "", bindMountOptions, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to bind mount staging path %q to target path %q: %v", stagingPath, targetPath, err)
+	}
+
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
@@ -146,7 +230,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Switch to shared mount logic if the volume context indicates that shared mount is enabled.
 	vc := req.GetVolumeContext()
-	if sharedMount(vc) {
+	if s.driver.sharedMount(vc) {
 		return s.NodePublishVolumeForSharedMount(ctx, req)
 	}
 
@@ -165,12 +249,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.V(4).Infof("NodePublishVolume gcsfuse profiles feature is enabled for pod %s/%s", pod.Namespace, pod.Name)
 		profile, err = profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
 			TargetPath:          targetPath,
+			ContainerName:       webhook.GcsFuseSidecarName,
 			Clientset:           s.k8sClients,
 			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
-			PodNamespace:        pod.Namespace,
-			PodName:             pod.Name,
 			NodeName:            s.driver.config.NodeID,
 			IsInitContainer:     isInitContainer,
+			Pod:                 pod,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build profile config: %w", err)
@@ -182,7 +266,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	args, err := parseRequestArguments(req, vc)
+	args, err := parseRequestArguments(req.GetVolumeId(), req.GetReadonly(), req.GetVolumeCapability(), vc)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -200,13 +284,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Use target path as an volume identifier because it corresponds to Pods and volumes.
 	// Pods may belong to different namespaces and would need their own bucket access check.
-	// We initialize volumeState iff bucket name is NOT "_", I.e. It's not a dynamic mount.
+	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
 	var vs *util.VolumeState
 	if args.bucketName != "_" {
 		var ok bool
 		if vs, ok = s.volumeStateStore.Load(targetPath); !ok {
-			s.volumeStateStore.Store(targetPath, &util.VolumeState{})
-			vs, _ = s.volumeStateStore.Load(targetPath)
+			vs = &util.VolumeState{}
+			s.volumeStateStore.Store(targetPath, vs)
 		}
 	}
 	// volumeState is safe to access if its not nil for remaining of function since volumeLock prevents
@@ -371,6 +455,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	var podUID, volumeName, emptyDirBasePath string
+	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, vs) {
+		var err error
+		if podUID, volumeName, err = util.ParsePodIDVolumeFromTargetpath(targetPath); err != nil {
+			klog.Warningf("Failed to parse pod ID and volume name from target path %q for kernel params monitor: %v. Monitor will not be started.", targetPath, err)
+		} else if emptyDirBasePath, err = util.PrepareEmptyDir(targetPath, false); err != nil {
+			klog.Warningf("Failed to prepare empty dir from target path %q for kernel params monitor: %v. Monitor will not be started.", targetPath, err)
+		}
+	}
+
 	// Check if the target path is already mounted
 	mounted, err := s.isDirMounted(targetPath)
 	if err != nil {
@@ -403,7 +497,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		// TODO: Check if the socket listener timed out
 
 		// Restart monitoring goroutine if the driver restarts for existing mounts.
-		s.startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidecarImage, vs)
+		if emptyDirBasePath != "" {
+			s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, vs)
+		}
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
@@ -450,37 +546,41 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Start monitoring goroutine for new mounts.
-	s.startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidecarImage, vs)
+	if emptyDirBasePath != "" {
+		s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, vs)
+	}
 	klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q", args.bucketName, targetPath)
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
 // startGcsFuseKernelParamsMonitoring starts a single long lived goroutine to monitor the
-// GCSFuse kernel parameters file per target path if the feature is enabled and supported.
-// It uses sync.Once to ensure the monitor is started only once. This monitoring goroutine is
-// stopped in the NodeUnpublishVolume operation.
-func (s *nodeServer) startGcsFuseKernelParamsMonitoring(targetPath, gcsFuseSidecarImage string, vs *util.VolumeState) {
-	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, vs) {
+// GCSFuse kernel parameters file per mount point if the feature is enabled and supported.
+// It uses sync.Once to ensure the monitor is started only once.
+func (s *nodeServer) startGcsFuseKernelParamsMonitoring(mountPoint, emptyDirBasePath, podUID, volumeName, gcsFuseContainerImage string, vs *util.VolumeState) {
+	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseContainerImage, vs) {
 		vs.GCSFuseKernelMonitorState.StartKernelParamsFileMonitorOnce.Do(func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			vs.GCSFuseKernelMonitorState.CancelFunc = cancel
+			logPrefix := fmt.Sprintf("Kernel Params Monitor[Pod %v, Volume %v]", podUID, volumeName)
+
 			// Fire kernel params monitoring goroutine.
-			go util.MonitorKernelParamsFile(ctx, targetPath, GCSFuseKernelParamsFilePollInterval)
+			go util.MonitorKernelParamsFile(ctx, mountPoint, emptyDirBasePath, logPrefix, GCSFuseKernelParamsFilePollInterval)
 		})
 	}
 }
 
-// isGcsFuseKernelParamsFeatureSupported returns true if the GCSFuse kernel parameters feature is enabled and supported by sidecar version.
+// isGcsFuseKernelParamsFeatureSupported returns true if the GCSFuse kernel parameters feature is enabled and supported by sidecar/mounter version.
 // GCSFuse Kernel Params feature is not applicable for dynamic mounts as a single kernel parameter setting doesn’t apply for different type
 // of buckets that a dynamic mount serves. This feature is only applicable for non-dynamic mounts i.e when volumeState(vs) is not nil.
-func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage string, vs *util.VolumeState) bool {
+func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseContainerImage string, vs *util.VolumeState) bool {
 	return vs != nil &&
+		s.driver.config.FeatureOptions != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
-		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
+		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseContainerImage, GCSFuseKernelParamsMinVersion)
 }
 
-func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Validate arguments
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -500,7 +600,7 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	}
 
 	// Stop GCSFuse Kernel Params monitoring.
-	if vs, ok := s.volumeStateStore.Load(targetPath); ok {
+	if vs, ok := s.volumeStateStore.Load(targetPath); ok && vs != nil {
 		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
 			vs.GCSFuseKernelMonitorState.CancelFunc()
 		}
@@ -517,12 +617,16 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath, forceUnmountRetryTimeout, forceUnmountRetrySteps, func() error {
+				return forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
+			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
-			if err = s.mounter.Unmount(targetPath); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath, standardUnmountRetryTimeout, standardUnmountRetrySteps, func() error {
+				return s.mounter.Unmount(targetPath)
+			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
 			}
 		}
@@ -551,6 +655,43 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// unmountWithRetry retries the unmount operation using exponential backoff.
+// It uses a child context with a timeout to limit the total retry duration,
+// in addition to being limited to the defined number of steps.
+//
+// If the OS unmount system call itself hangs, this function will block
+// on the hung call. It won't be able to interrupt the hung call until the Kubelet cancels the parent
+// context (NodeUnpublishVolume context) and retries the entire operation.
+func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, timeout time.Duration, steps int, unmountFn func() error) error {
+	var lastErr error
+	childCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	backoff := wait.Backoff{
+		Duration: unmountRetryInterval,
+		Factor:   unmountRetryBackoffFactor,
+		Jitter:   unmountRetryJitter,
+		Steps:    steps,
+	}
+
+	pollErr := wait.ExponentialBackoffWithContext(childCtx, backoff, func(ctx context.Context) (bool, error) {
+		lastErr = unmountFn()
+		if lastErr == nil {
+			return true, nil
+		}
+		klog.Warningf("Failed to unmount %q: %v. Retrying...", targetPath, lastErr)
+		return false, nil
+	})
+
+	if pollErr != nil {
+		if lastErr != nil {
+			return lastErr
+		}
+		return pollErr
+	}
+	return nil
 }
 
 // setupMultiNIC updates args with options for multi NIC configuration.
@@ -697,7 +838,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided")
 	}
 	// Skip NodeStageVolume for sidecar mounted volumes.
-	if !sharedMount(req.GetVolumeContext()) {
+	if !s.driver.sharedMount(req.GetVolumeContext()) {
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
@@ -738,6 +879,12 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 }
 
 func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	if s.driver.config.FeatureOptions == nil ||
+		s.driver.config.FeatureOptions.SharedMountOptions == nil ||
+		s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath == nil {
+		return nil, status.Errorf(codes.Internal, "shared mount options are not fully configured")
+	}
+
 	clientset := s.driver.config.K8sClients
 	stagingPath := req.GetStagingTargetPath()
 
@@ -760,14 +907,82 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
 	}
 
+	volumeID := req.GetVolumeId()
+	vc := req.GetVolumeContext()
+	pvName := vc[util.VolumeContextKeyPVName]
+	if pvName == "" {
+		return nil, status.Errorf(codes.Internal, "PV name not found in VolumeContext (key %q)", util.VolumeContextKeyPVName)
+	}
+
+	// Build profile config and merge recommended mount options if storage profiles are enabled.
+	profilesEnabled := s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled
+	var profile *profiles.ProfileConfig
+	if profilesEnabled {
+		klog.V(4).Infof("NodeStageVolume gcsfuse profiles feature is enabled for mounter pod %s/%s", podNamespace, podName)
+		profile, err = profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
+			VolumeName:          vc[util.VolumeContextKeyPVName],
+			Clientset:           s.k8sClients,
+			ContainerName:       util.MounterPodNamePrefix,
+			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
+			NodeName:            s.driver.config.NodeID,
+			Pod:                 pod,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build profile config: %w", err)
+		}
+		if profile != nil {
+			// Merge profile VolumeAttributes into the VolumeContext, respecting pre-existing keys.
+			vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
+		}
+	}
+
+	// Validate arguments
+	args, err := parseRequestArguments(volumeID, false, req.GetVolumeCapability(), vc)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse request arguments: %v", err)
+	}
+
+	if profile != nil {
+		args.fuseMountOptions, err = profile.MergeRecommendedMountOptionsOnMissingKeys(args.fuseMountOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
+		}
+	}
+
+	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
+	var vs *util.VolumeState
+	if args.bucketName != "_" {
+		var ok bool
+		if vs, ok = s.volumeStateStore.Load(stagingPath); !ok {
+			vs = &util.VolumeState{}
+			s.volumeStateStore.Store(stagingPath, vs)
+		}
+	}
+
+	mounterPodImage, err := mounterPodImage(pod)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get image of mounter pod %s/%s: %v", podNamespace, podName, err)
+	}
+
+	podUID := string(pod.UID)
+	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
+
 	// Check if the staging path is already mounted.
 	mounted, err := s.isDirMounted(stagingPath)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
 	}
 	if mounted {
+		// Restart monitoring goroutine if the driver restarts for existing mounts.
+		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, mounterPodImage, vs)
+
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
+	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
+	if s.isGcsFuseKernelParamsFeatureSupported(mounterPodImage, vs) {
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseKernelParams + "=true"})
 	}
 
 	// Make the staging path.
@@ -777,16 +992,17 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Wait for the mounter pod grpc server to be ready.
-	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
+	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, podUID, s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
 		return nil, err
 	}
-
-	podUID := string(pod.UID)
 
 	// Send GRPC to mounter pod to start GCSFuse.
-	if err := s.mountToNode(ctx, podUID, stagingPath, req.GetVolumeId()); err != nil {
+	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, args.fuseMountOptions); err != nil {
 		return nil, err
 	}
+
+	// Start monitoring goroutine for new shared mounts.
+	s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, mounterPodImage, vs)
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
@@ -795,7 +1011,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 }
 
 // mountToNode connects to the mounter server, at which point it initializes the GCSFuse process.
-func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string) error {
+func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string, mountOptions []string) error {
 	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
 		return status.Errorf(codes.Internal, "shared mount options are not fully configured")
 	}
@@ -816,8 +1032,13 @@ func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volum
 		return status.Errorf(codes.Internal, "failed to create dir for symlink %q: %v", symlink, err)
 	}
 
+	// Clear stale files from a previous mount attempt.
+	if err := util.CheckAndDeleteStaleFile(emptyDirBasePath, util.ErrorFileName); err != nil {
+		return status.Errorf(codes.Internal, "failed to check and delete stale error file: %v", err)
+	}
+	// Clear stale symlink from a previous mount attempt. os.Remove operates on symlinks, so it will not remove the target file if the symlink is stale.
 	if err := os.Remove(symlink); err != nil && !os.IsNotExist(err) {
-		klog.Errorf("failed to remove stale symlink %q: %v", symlink, err)
+		return status.Errorf(codes.Internal, "failed to remove stale symlink %q: %v", symlink, err)
 	}
 
 	if err := os.Symlink(socketFile, symlink); err != nil {
@@ -835,16 +1056,14 @@ func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volum
 	klog.Infof("Connected to MounterServer at %s", socketPath)
 	defer conn.Close()
 
-	/*
-		TODO(FUECHR): Implement the mounter client and mount request once we have a mounter service defined.
-		c := mounter.NewMounterClient(conn)
-		if _, err := c.Mount(ctx, &mounter.MountRequest{
-			Mountpoint: stagingPath,
-			VolumeID:   volumeID,
-		}); err != nil {
-			return status.Errorf(codes.Internal, "failed to mount: %v", err)
-		}
-	*/
+	c := mounter.NewMounterClient(conn)
+	if _, err := c.Mount(ctx, &mounter.MountRequest{
+		MountPoint:   stagingPath,
+		VolumeId:     volumeID,
+		MountOptions: mountOptions,
+	}); err != nil {
+		return err
+	}
 
 	klog.Infof("Mount succeeded at staging target path %s", stagingPath)
 	return nil
@@ -879,6 +1098,14 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 }
 
 func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
+	// Stop GCSFuse Kernel Params monitoring.
+	if vs, ok := s.volumeStateStore.Load(stagingPath); ok && vs != nil {
+		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+			vs.GCSFuseKernelMonitorState.CancelFunc()
+		}
+		s.volumeStateStore.Delete(stagingPath)
+	}
+
 	// Unmount staging path.
 	mounted, err := s.isDirMounted(stagingPath)
 	if err != nil {

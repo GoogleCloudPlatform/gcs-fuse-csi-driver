@@ -30,7 +30,6 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -62,7 +61,6 @@ type Interface interface {
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
 	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
-	ListPVs() ([]*corev1.PersistentVolume, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -181,6 +179,13 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
 		c.k8sClients,
 		time.Duration(c.informerResyncDurationSec)*time.Second,
+		// To prevent OOMs, the Node driver uses a server-side filter to cache only profile-managed PVs since profiles is the only feature using GetPV.
+		// Leaving the Controller unfiltered to discover and patch legacy volumes.
+		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			if !c.runController {
+				options.LabelSelector = fmt.Sprintf("%s=%s", webhook.GcsfuseProfilesManagedLabel, util.TrueStr)
+			}
+		}),
 		informers.WithTransform(trim),
 	)
 	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
@@ -342,6 +347,10 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 
 		var newContainers []corev1.Container
 		for _, cont := range podObj.Spec.Containers {
+			if cont.Name == util.MounterPodNamePrefix {
+				newContainers = append(newContainers, cont)
+				continue
+			}
 			container := corev1.Container{
 				Name:            cont.Name,
 				SecurityContext: cont.SecurityContext,
@@ -459,21 +468,18 @@ func (c *Clientset) GetNode(name string) (*corev1.Node, error) {
 	return c.nodeLister.Get(name)
 }
 
+// GetPV retrieves a PersistentVolume from the informer cache by name.
+// IMPORTANT: In the Node driver, the PV informer cache is intentionally filtered down
+// to ONLY track PVs that utilize the GCS Fuse profiles feature (via the gke-gcsfuse/profile-managed label)
+// to minimize the memory footprint in large-scale clusters.
+// Do not attempt to use this function from the Node driver to look up generic PVs or non-profile GCS Fuse PVs,
+// as they are explicitly prevented from entering the Node's cache.
 func (c *Clientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	if c.pvLister == nil {
 		return nil, errors.New("pv informer is not ready")
 	}
 
 	return c.pvLister.Get(name)
-}
-
-func (c *Clientset) ListPVs() ([]*corev1.PersistentVolume, error) {
-	if c.pvLister == nil {
-		return nil, errors.New("pv informer is not ready")
-	}
-
-	// TODO(urielguzman): Add volumeHandle indexer to reduce O(N) -> O(1) for shared mount ControllerPublishVolume.
-	return c.pvLister.List(labels.Everything())
 }
 
 func (c *Clientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {

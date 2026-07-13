@@ -89,7 +89,6 @@ type FakeClientset struct {
 	fakeSCs           map[string]*storagev1.StorageClass
 	fakePods          []*corev1.Pod
 	fakePodTemplates  map[string]*corev1.PodTemplate
-	ListPVErr         error
 	ListPodErr        error
 	GetPodErr         error
 	GetPodTemplateErr error
@@ -303,17 +302,6 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	}
 
 	return c.fakePVs[""], nil
-}
-
-func (c *FakeClientset) ListPVs() ([]*corev1.PersistentVolume, error) {
-	if c.ListPVErr != nil {
-		return nil, c.ListPVErr
-	}
-	var pvs []*corev1.PersistentVolume
-	for _, pv := range c.fakePVs {
-		pvs = append(pvs, pv)
-	}
-	return pvs, nil
 }
 
 func (c *FakeClientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
