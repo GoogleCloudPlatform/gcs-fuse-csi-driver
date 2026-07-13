@@ -237,6 +237,16 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		}
 	}
 
+	hostNetworkEnabled := vc[VolumeContextKeyHostNetworkPodKSA] == util.TrueStr
+	identityProvider := vc[VolumeContextKeyIdentityProvider]
+
+	var tokenAudience string
+	if util.IsGKEIdentityProvider(identityProvider) || identityProvider == "" {
+		tokenAudience = s.driver.config.TokenManager.GetIdentityPool()
+	} else {
+		tokenAudience = identityProvider
+	}
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
@@ -248,6 +258,9 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		image:              containerImage,
 		volumes:            podTemplate.Template.Spec.Volumes,
 		profilesEnabled:    profilesEnabled,
+		hostNetworkEnabled: hostNetworkEnabled,
+		tokenAudience:      tokenAudience,
+		dnsPolicy:          podTemplate.Template.Spec.DNSPolicy,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

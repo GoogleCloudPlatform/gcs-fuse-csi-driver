@@ -654,6 +654,106 @@ func TestCreateMounterPodSpec(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "hostNetworkEnabled true - should set hostNetwork, saToken volume and volumeMount",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				hostNetworkEnabled: true,
+				tokenAudience:      "test-audience",
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					HostNetwork:        true,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources: defaultResources,
+							VolumeMounts: append(expectedVolumeMounts,
+								webhook.SATokenVolumeMount,
+							),
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+						webhook.GetSATokenVolume("test-audience"),
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "custom dnsPolicy specified in config - should set DNSPolicy on pod spec",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				dnsPolicy:          corev1.DNSClusterFirstWithHostNet,
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {

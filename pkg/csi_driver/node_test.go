@@ -35,6 +35,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -2780,6 +2781,123 @@ func TestNodeStageVolumeEnableGCSFuseKernelParams(t *testing.T) {
 				t.Fatalf("expected mounterServer.req to be non-nil, but got nil")
 			}
 			validateMountOptions(t, mounterServer.req.MountOptions, tc.expectedOptions, tc.unexpectedOptions)
+		})
+	}
+}
+
+func TestNodeStageVolumeHostNetwork(t *testing.T) {
+	cases := []struct {
+		name             string
+		userSpecifiedIDP string
+		expectedOptions  []string
+	}{
+		{
+			name:             "mounter pod on host network with ksa opt-in and user-specified identity provider",
+			userSpecifiedIDP: "https://container.googleapis.com/v1/projects/test/locations/test/clusters/test",
+			expectedOptions: []string{
+				"hnw-ksa=true",
+				"token-server-identity-provider=https://container.googleapis.com/v1/projects/test/locations/test/clusters/test",
+			},
+		},
+		{
+			name:             "mounter pod on host network with ksa opt-in and default token manager identity provider",
+			userSpecifiedIDP: "",
+			expectedOptions: []string{
+				"hnw-ksa=true",
+				"token-server-identity-provider=fake.identity.provider",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeID := "test-node"
+			volID := testVolumeID
+			podNamespace := "test-ns"
+			podName := createMounterPodName(nodeID, volID)
+			podUID := types.UID(podName)
+
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			tmpDir, err := os.MkdirTemp("/tmp", "s_hnw")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+			t.Cleanup(func() { os.RemoveAll(tmpDir) })
+			socketDir := filepath.Join(tmpDir, "s")
+			emptyDirBasePath := filepath.Join(tmpDir, "e")
+
+			sockFile := filepath.Join(emptyDirBasePath, string(podUID), mounterPodSocketFile)
+			mounterServer := startFakeMounterServer(t, sockFile)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:               podName,
+				Namespace:          podNamespace,
+				UID:                podUID,
+				PodStatus:          &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod:       true,
+				HostNetworkEnabled: true,
+			})
+			fc.AddPodVolumes([]corev1.Volume{
+				{Name: webhook.SidecarContainerSATokenVolumeName},
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+
+			ns.driver.config.AssumeGoodSidecarVersion = true
+			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
+				Enabled:       true,
+				FuseSocketDir: socketDir,
+				EmptyDirBasePath: func(podUID string) string {
+					return filepath.Join(emptyDirBasePath, podUID)
+				},
+			}
+
+			volContext := map[string]string{
+				VolumeContextSharedNodeMount:      "true",
+				VolumeContextKeyHostNetworkPodKSA: "true",
+				util.VolumeContextKeyPVName:       volID,
+			}
+			if tc.userSpecifiedIDP != "" {
+				volContext[VolumeContextKeyIdentityProvider] = tc.userSpecifiedIDP
+			}
+
+			stageReq := &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: testStagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext:     volContext,
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      podName,
+					PublishContextKeyMounterPodNamespace: podNamespace,
+				},
+			}
+
+			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if mounterServer.req == nil {
+				t.Fatalf("expected mounterServer.req to be non-nil, but got nil")
+			}
+			validateMountOptions(t, mounterServer.req.MountOptions, tc.expectedOptions, nil)
 		})
 	}
 }
