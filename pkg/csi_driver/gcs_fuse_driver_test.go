@@ -29,7 +29,7 @@ import (
 	mount "k8s.io/mount-utils"
 )
 
-func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Interface) *GCSDriver {
+func initTestDriver(t *testing.T, fm *mount.FakeMounter) *GCSDriver {
 	t.Helper()
 	config := &GCSDriverConfig{
 		Name:                  "test-driver",
