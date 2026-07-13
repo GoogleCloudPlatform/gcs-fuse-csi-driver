@@ -99,22 +99,6 @@ func initTestNodeServerWithForceMounter(t *testing.T) (*nodeServerTestEnv, *fake
 
 func initTestNodeServerWithMounter(t *testing.T, mounter mount.Interface) *nodeServerTestEnv {
 	t.Helper()
-	podName := createMounterPodName("test-node", testVolumeID)
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: "test-ns",
-		},
-	}
-	fakeClient := clientset.NewFakeClientset(pod)
-	fakeClient.CreatePV(clientset.FakePVConfig{
-		Name:         "test-pv",
-		VolumeHandle: testVolumeID,
-		ClaimRef: &corev1.ObjectReference{
-			Namespace: "test-ns",
-			Name:      "test-pvc",
-		},
-	})
 	var fakeMounter *mount.FakeMounter
 	if fm, ok := mounter.(*mount.FakeMounter); ok {
 		fakeMounter = fm
@@ -122,7 +106,7 @@ func initTestNodeServerWithMounter(t *testing.T, mounter mount.Interface) *nodeS
 		fakeMounter = ffm.FakeMounter
 	}
 
-	driver := initTestDriver(t, fakeMounter, fakeClient)
+	driver := initTestDriver(t, fakeMounter)
 	s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 	if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 		t.Fatalf("failed to create the fake bucket: %v", err)
@@ -729,7 +713,7 @@ func TestNodeUnpublishVolume(t *testing.T) {
 
 func TestNodeUnpublishVolumeForceUnmount(t *testing.T) {
 	t.Parallel()
-	testTargetPath, cleanup := setupTestTargetPath(t)
+	testTargetPath, cleanup := setupMountTarget(t)
 	defer cleanup()
 
 	cases := []struct {
