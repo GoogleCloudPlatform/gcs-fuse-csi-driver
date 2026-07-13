@@ -25,6 +25,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -86,7 +87,7 @@ func TestConfigurePVLister(t *testing.T) {
 
 	c.ConfigurePVLister(t.Context())
 
-	pvs, err := c.ListPVs()
+	pvs, err := c.pvLister.List(labels.Everything())
 	if err != nil {
 		t.Fatalf("ListPVs() unexpected error: %v", err)
 	}
