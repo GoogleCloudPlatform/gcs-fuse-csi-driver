@@ -25,7 +25,7 @@ This document explains how to manually inject the GCSFuse sidecar container to y
 
 1. Modify your workload spec
 
-    Add the `gke-gcsfuse-sidecar` container to your workload as a regular container, and also add three auxiliary volumes. Make sure the container `gke-gcsfuse-sidecar` is before your workload contianer. Meanwhile, remove the annotation `gke-gcsfuse/volumes: "true"`.
+    Add the `gke-gcsfuse-sidecar` container to your workload as a regular container, and also add three auxiliary volumes. Make sure the container `gke-gcsfuse-sidecar` is before your workload container. Meanwhile, remove the annotation `gke-gcsfuse/volumes: "true"`.
 
     Below is an example. Replace the image signature `xxx` with the value copied in the previous step.
 
