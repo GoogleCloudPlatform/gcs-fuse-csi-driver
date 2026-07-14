@@ -196,7 +196,7 @@ endif
 	docker run \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
-		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release && chown $(shell id -u || echo 0):$(shell id -g || echo 0) /release/gcsfuse"
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release && chown $(shell id -u 2>/dev/null || echo 0):$(shell id -g 2>/dev/null || echo 0) /release/gcsfuse"
 ifeq (${BUILD_ARM}, true)
 	docker buildx build \
 		--load \
@@ -213,7 +213,7 @@ ifeq (${BUILD_ARM}, true)
 	docker run \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
-		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release && chown $(shell id -u || echo 0):$(shell id -g || echo 0) /release/gcsfuse"
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release && chown $(shell id -u 2>/dev/null || echo 0):$(shell id -g 2>/dev/null || echo 0) /release/gcsfuse"
 endif
 else
 	gcloud storage cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
