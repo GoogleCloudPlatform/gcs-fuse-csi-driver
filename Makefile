@@ -346,6 +346,7 @@ sanity-test:
 
 build-e2e-test:
 	cd test && go build -o ../bin/e2e-test-ci ./e2e
+	cd test && go test -c -o ../bin/e2e-test ./e2e
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh
