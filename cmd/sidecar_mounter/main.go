@@ -58,7 +58,7 @@ var (
 func runNodeMounter(ctx context.Context, cancel context.CancelFunc, mounter *sidecarmounter.Mounter) {
 	klog.Infof("Running node mounter...")
 	s := driver.NewNonBlockingGRPCServer()
-	ms := sidecarmounter.NewMounterServer(mounter)
+	ms := sidecarmounter.NewMounterServer(ctx, mounter)
 
 	socketFile := filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, driver.MounterPodSocketFile)
 

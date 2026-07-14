@@ -954,7 +954,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Validate arguments
-	args, err := parseRequestArguments(volumeID, false, req.GetVolumeCapability(), vc)
+	args, err := parseRequestArguments(volumeID, false /* readOnly */, req.GetVolumeCapability(), vc)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse request arguments: %v", err)
 	}
