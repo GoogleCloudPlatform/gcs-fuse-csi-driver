@@ -42,6 +42,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -194,7 +195,7 @@ func main() {
 		}()
 	}
 
-	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController)
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController, *kubeAPIBurst, *kubeAPIQPS)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
@@ -221,6 +222,8 @@ func main() {
 		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
 			Enabled: *enableGCSFuseProfiles,
 			ScannerConfig: &profiles.ScannerConfig{
+				K8SClients: clientset,
+				// TODO(urielguzman): Remove KupeAPI options from here once all informers have been migrated to the clientset.
 				KubeAPIQPS:                       *kubeAPIQPS,
 				KubeAPIBurst:                     *kubeAPIBurst,
 				ResyncPeriod:                     time.Duration(*informerResyncDurationSec) * time.Second,
@@ -261,6 +264,11 @@ func main() {
 
 	var mounter mount.Interface
 	var mm metrics.Manager
+
+	if *enableGCSFuseProfiles {
+		clientset.ConfigureSCLister(ctx)
+	}
+
 	if *runNode {
 		if *nodeID == "" {
 			klog.Fatalf("NodeID cannot be empty for node service")
@@ -269,10 +277,8 @@ func main() {
 		clientset.ConfigurePodLister(ctx, *nodeID)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
 
-		if featureOptions.FeatureGCSFuseProfiles.Enabled {
-			// Curently, only the gcsfuse profiles feature actually uses these listers.
-			clientset.ConfigureSCLister(ctx)
-			clientset.ConfigurePVLister(ctx)
+		if *enableGCSFuseProfiles {
+			clientset.ConfigurePVLister(ctx, nil)
 		}
 
 		mounter, err = csimounter.New("", *fuseSocketDir)
@@ -284,15 +290,26 @@ func main() {
 			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport)
 			mm.InitializeHTTPHandler()
 		}
-	}
-
-	if *runController && *enableSharedMount {
-		clientset.ConfigurePVLister(ctx)
-		clientset.ConfigurePVCLister(ctx)
-		clientset.ConfigurePodTemplateLister(ctx)
-		clientset.ConfigurePodLister(ctx, "")
-		if featureOptions.FeatureGCSFuseProfiles.Enabled {
-			clientset.ConfigureSCLister(ctx)
+	} else if *runController {
+		var pvEventHandlerFuncs *cache.ResourceEventHandlerFuncs
+		if *enableGCSFuseProfiles {
+			s, err := profiles.NewScanner(featureOptions.FeatureGCSFuseProfiles.ScannerConfig)
+			if err != nil {
+				klog.Fatalf("Failed to initialize scanner: %v", err)
+			}
+			pvEventHandlerFuncs = &cache.ResourceEventHandlerFuncs{
+				AddFunc:    s.AddPV,
+				DeleteFunc: s.DeletePV,
+			}
+			featureOptions.FeatureGCSFuseProfiles.Scanner = s
+		}
+		if *enableSharedMount || *enableGCSFuseProfiles {
+			clientset.ConfigurePVLister(ctx, pvEventHandlerFuncs)
+		}
+		if *enableSharedMount {
+			clientset.ConfigurePVCLister(ctx)
+			clientset.ConfigurePodTemplateLister(ctx)
+			clientset.ConfigurePodLister(ctx, "")
 		}
 	}
 

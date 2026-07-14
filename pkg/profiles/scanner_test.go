@@ -44,6 +44,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -159,6 +160,15 @@ func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, buc
 	}
 }
 
+type fakeK8sClients struct {
+	clientset.Interface
+	pvLister corelisters.PersistentVolumeLister
+}
+
+func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
+	return f.pvLister.Get(name)
+}
+
 // testFixture holds the necessary components for testing the Scanner.
 // It encapsulates the fake Kubernetes client, listers, recorders, and mock functions.
 type testFixture struct {
@@ -242,11 +252,9 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 	// Create the Scanner instance with fake/mock components.
 	s := &Scanner{
 		kubeClient:     kubeClient,
-		pvLister:       pvInformer.Lister(),
 		pvcLister:      pvcInformer.Lister(),
 		scLister:       scInformer.Lister(),
 		podLister:      podInformer.Lister(),
-		pvSynced:       pvInformer.Informer().HasSynced,
 		pvcSynced:      pvcInformer.Informer().HasSynced,
 		scSynced:       scInformer.Informer().HasSynced,
 		podSynced:      podInformer.Informer().HasSynced,
@@ -258,11 +266,16 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		datafluxConfig: &DatafluxConfig{}, // Use default or test-specific config
 		scanBucketImpl: fsb.Scan,          // Inject the fake scan function
 		metricManager:  metrics.NewFakePrometheusMetricsManager(),
+		config: &ScannerConfig{
+			K8SClients: &fakeK8sClients{
+				pvLister: pvInformer.Lister(),
+			},
+		},
 	}
 
 	factory.Start(stopCh)
 	podFactory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, s.pvSynced, s.pvcSynced, s.scSynced, s.podSynced) {
+	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, s.pvcSynced, s.scSynced, s.podSynced) {
 		t.Fatalf("Failed to sync caches")
 	}
 
@@ -1177,7 +1190,7 @@ func TestAddPV(t *testing.T) {
 	scValid := createStorageClass(testSCName, validSCParams)
 	f := newTestFixture(t, pvRelevant, scValid)
 
-	f.scanner.addPV(pvRelevant)
+	f.scanner.AddPV(pvRelevant)
 
 	// Expect the PV to be added to the queue and tracked.
 	if f.scanner.queue.Len() != 1 {
@@ -1185,7 +1198,7 @@ func TestAddPV(t *testing.T) {
 	}
 
 	// Adding the same PV again should not change the queue length (it's a set).
-	f.scanner.addPV(pvRelevant)
+	f.scanner.AddPV(pvRelevant)
 	if f.scanner.queue.Len() != 1 {
 		t.Errorf("Queue length after duplicate add: got %d, want 1", f.scanner.queue.Len())
 	}
@@ -1202,7 +1215,7 @@ func TestDeletePV(t *testing.T) {
 	f.scanner.queue.Add(queueKey)
 	f.scanner.trackedPVs[pvName] = syncInfo{}
 
-	f.scanner.deletePV(pv)
+	f.scanner.DeletePV(pv)
 
 	// PV should no longer be in the tracked set.
 	if _, exists := f.scanner.trackedPVs[pvName]; exists {

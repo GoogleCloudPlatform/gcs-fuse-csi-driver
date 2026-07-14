@@ -43,6 +43,7 @@ type FeatureGCSFuseProfiles struct {
 	Enabled                       bool
 	ScannerConfig                 *profiles.ScannerConfig
 	EnableGcsfuseProfilesInternal bool
+	Scanner                       *profiles.Scanner
 }
 
 type GoMemLimitOptions struct {
@@ -257,9 +258,14 @@ func (driver *GCSDriver) Run(ctx context.Context, cancel context.CancelFunc, end
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
 
-	if driver.config.RunController && driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled {
+	if driver.config.RunController &&
+		driver.config.FeatureOptions != nil &&
+		driver.config.FeatureOptions.FeatureGCSFuseProfiles != nil &&
+		driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled &&
+		driver.config.FeatureOptions.FeatureGCSFuseProfiles.Scanner != nil {
 		// Start the scanner in a separate goroutine, respecting the parent context.
-		go driver.cs.(*controllerServer).scanner.Start(ctx, cancel)
+		scanner := driver.config.FeatureOptions.FeatureGCSFuseProfiles.Scanner
+		go scanner.Start(ctx, cancel)
 	}
 
 	<-ctx.Done()

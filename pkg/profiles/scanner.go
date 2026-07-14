@@ -32,6 +32,7 @@ import (
 
 	"github.com/googleapis/gax-go/v2"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/oauth2"
@@ -192,10 +193,11 @@ type DatafluxConfig struct {
 
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
-	KubeAPIQPS                       float64       // QPS limit for Kubernetes API client.
-	KubeAPIBurst                     int           // Burst limit for Kubernetes API client.
-	ResyncPeriod                     time.Duration // Resync period for informers.
-	KubeConfigPath                   string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
+	K8SClients                       clientset.Interface // Kubernetes clientset.
+	KubeAPIQPS                       float64             // QPS limit for Kubernetes API client.
+	KubeAPIBurst                     int                 // Burst limit for Kubernetes API client.
+	ResyncPeriod                     time.Duration       // Resync period for informers.
+	KubeConfigPath                   string              // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
 	CloudConfigPath                  string
 	RateLimiter                      workqueue.TypedRateLimiter[string]
 	DatafluxConfig                   *DatafluxConfig
@@ -241,11 +243,9 @@ type EventInfo struct {
 // Scanner is the main controller structure.
 type Scanner struct {
 	kubeClient           kubernetes.Interface
-	pvLister             v1listers.PersistentVolumeLister
 	pvcLister            v1listers.PersistentVolumeClaimLister
 	scLister             storagelisters.StorageClassLister
 	podLister            v1listers.PodLister
-	pvSynced             cache.InformerSynced
 	pvcSynced            cache.InformerSynced
 	scSynced             cache.InformerSynced
 	podSynced            cache.InformerSynced
@@ -415,8 +415,10 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	}
 
 	// Factory for PV, PVC and SC informers
+	if config.K8SClients == nil {
+		return nil, errors.New("K8SClients must be provided in ScannerConfig")
+	}
 	factory := informers.NewSharedInformerFactory(kubeClient, config.ResyncPeriod)
-	pvInformer := factory.Core().V1().PersistentVolumes()
 	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
 	scInformer := factory.Storage().V1().StorageClasses()
 
@@ -445,11 +447,9 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		kubeClient:     kubeClient,
 		factory:        factory,
 		podFactory:     podFactory,
-		pvLister:       pvInformer.Lister(),
 		pvcLister:      pvcInformer.Lister(),
 		scLister:       scInformer.Lister(),
 		podLister:      podInformer.Lister(),
-		pvSynced:       pvInformer.Informer().HasSynced,
 		pvcSynced:      pvcInformer.Informer().HasSynced,
 		scSynced:       scInformer.Informer().HasSynced,
 		podSynced:      podInformer.Informer().HasSynced,
@@ -463,14 +463,6 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		metricManager:  metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
 		mux:            mux,
 	}
-
-	klog.Info("Setting up event handlers for PersistentVolumes")
-	pvInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    scanner.addPV,
-		DeleteFunc: scanner.deletePV,
-		// UpdateFunc is not required because the scan will be re-triggered
-		// after success with a time delay.
-	})
 
 	klog.Info("Setting up event handlers for Pods")
 	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -550,7 +542,7 @@ func (s *Scanner) run(ctx context.Context) {
 	s.podFactory.Start(stopCh)
 
 	klog.Info("Waiting for informer caches to sync")
-	if !cache.WaitForCacheSync(stopCh, s.pvSynced, s.pvcSynced, s.scSynced, s.podSynced) {
+	if !cache.WaitForCacheSync(stopCh, s.pvcSynced, s.scSynced, s.podSynced) {
 		klog.Error("Failed to wait for caches to sync")
 		return
 	}
@@ -782,7 +774,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			continue
 		}
 
-		pv, err := s.pvLister.Get(pvName)
+		pv, err := s.config.K8SClients.GetPV(pvName)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("PV %q (from PVC %q/%q) for Pod %q not found, this should not happen if PVC is bound", pvName, namespace, pvcName, key)
@@ -945,7 +937,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	syncStartTime := timeNow()
 	klog.Infof("Started syncing PV %q", key)
 
-	pv, err := s.pvLister.Get(key)
+	pv, err := s.config.K8SClients.GetPV(key)
 	if err != nil {
 		// The PV may have already been deleted. This is normal and we should remove it from tracking.
 		if apierrors.IsNotFound(err) {
@@ -1820,8 +1812,8 @@ func (s *Scanner) enqueuePV(pv *v1.PersistentVolume) {
 	s.queue.Add(pvPrefix + key)
 }
 
-// addPV is the add event handler for PersistentVolumes.
-func (s *Scanner) addPV(obj any) {
+// AddPV is the add event handler for PersistentVolumes.
+func (s *Scanner) AddPV(obj any) {
 	pv, ok := obj.(*v1.PersistentVolume)
 	if !ok {
 		klog.Errorf("AddFunc PV: Expected PersistentVolume but got %T", obj)
@@ -1831,9 +1823,9 @@ func (s *Scanner) addPV(obj any) {
 	s.enqueuePV(pv)
 }
 
-// deletePV is the event handler for PersistentVolume Delete events.
+// DeletePV is the event handler for PersistentVolume Delete events.
 // It removes the PV from the workqueue and the internal tracking map.
-func (s *Scanner) deletePV(obj any) {
+func (s *Scanner) DeletePV(obj any) {
 	pv, ok := obj.(*v1.PersistentVolume)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)

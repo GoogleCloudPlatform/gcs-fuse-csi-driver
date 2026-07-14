@@ -85,7 +85,7 @@ func TestConfigurePVLister(t *testing.T) {
 		runController: false,
 	}
 
-	c.ConfigurePVLister(t.Context())
+	c.ConfigurePVLister(t.Context(), nil)
 
 	pvs, err := c.pvLister.List(labels.Everything())
 	if err != nil {

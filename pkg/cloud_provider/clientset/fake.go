@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 )
 
 type FakeNodeConfig struct {
@@ -124,7 +125,7 @@ func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
 
 func (c *FakeClientset) ConfigureNodeLister(_ context.Context, _ string) {}
 
-func (c *FakeClientset) ConfigurePVLister(_ context.Context) {}
+func (c *FakeClientset) ConfigurePVLister(_ context.Context, _ *cache.ResourceEventHandlerFuncs) {}
 
 func (c *FakeClientset) ConfigurePVCLister(_ context.Context) {}
 
