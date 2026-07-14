@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	profilesutil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -50,7 +51,7 @@ type Interface interface {
 	K8sClient() kubernetes.Interface
 	ConfigurePodLister(ctx context.Context, nodeName string)
 	ConfigureNodeLister(ctx context.Context, nodeName string)
-	ConfigurePVLister(ctx context.Context)
+	ConfigurePVLister(ctx context.Context, eventHandlerFuncs *cache.ResourceEventHandlerFuncs)
 	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
 	ConfigurePodTemplateLister(ctx context.Context)
@@ -158,22 +159,72 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 	c.nodeLister = nodeLister
 }
 
-func (c *Clientset) ConfigurePVLister(ctx context.Context) {
+func trimMap(originalMap map[string]string, keysToKeep map[string]bool) map[string]string {
+	if originalMap == nil {
+		return nil
+	}
+	var trimmedMap map[string]string
+	for key := range keysToKeep {
+		if val, ok := originalMap[key]; ok {
+			if trimmedMap == nil {
+				trimmedMap = make(map[string]string)
+			}
+			trimmedMap[key] = val
+		}
+	}
+	return trimmedMap
+}
+
+func (c *Clientset) ConfigurePVLister(ctx context.Context, eventHandlerFuncs *cache.ResourceEventHandlerFuncs) {
+	var annotationsToKeep = map[string]bool{
+		profilesutil.AnnotationStatus:          true,
+		profilesutil.AnnotationNumObjects:      true,
+		profilesutil.AnnotationTotalSize:       true,
+		profilesutil.AnnotationLastUpdatedTime: true,
+		profilesutil.AnnotationLocationType:    true,
+		profilesutil.AnnotationHNSEnabled:      true,
+	}
+	var labelsToKeep = map[string]bool{
+		webhook.GcsfuseProfilesManagedLabel: true,
+	}
+
 	trim := func(obj any) (any, error) {
 		pvObj, ok := obj.(*corev1.PersistentVolume)
 		if !ok || pvObj == nil {
 			return obj, nil
 		}
-		return &corev1.PersistentVolume{
+
+		// Fields shared between the Node and the Controller.
+		pv := &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pvObj.ObjectMeta.Name,
-				Annotations: pvObj.ObjectMeta.Annotations, // Required by the gcsfuse profiles feature to calculate smart cache recommendations.
+				Annotations: trimMap(pvObj.ObjectMeta.Annotations, annotationsToKeep), // Only keep relevant annotations to optimize memory.
+				Labels:      trimMap(pvObj.ObjectMeta.Labels, labelsToKeep),           // Only keep relevant labels to optimize memory.
 			},
 			Spec: corev1.PersistentVolumeSpec{
-				StorageClassName: pvObj.Spec.StorageClassName, // Required by the gcsfuse profiles feature to map PV to SC.
-				ClaimRef:         pvObj.Spec.ClaimRef,         // Required by the shared node mount feature to identify the bound PVC.
+				StorageClassName: pvObj.Spec.StorageClassName, // Required to map PV to SC.
 			},
-		}, nil
+		}
+		if pvObj.Spec.CSI != nil {
+			pv.Spec.CSI = &corev1.CSIPersistentVolumeSource{}
+			if pvObj.Spec.CSI.VolumeAttributes != nil {
+				pv.Spec.CSI.VolumeAttributes = pvObj.Spec.CSI.VolumeAttributes // Required to find the bucket and profile configs.
+			}
+			if c.runController {
+				pv.Spec.CSI.Driver = pvObj.Spec.CSI.Driver             // Required to check if it's a gcsfuse volume
+				pv.Spec.CSI.VolumeHandle = pvObj.Spec.CSI.VolumeHandle // Required to identify the bucket
+			}
+		}
+
+		// Fields only relevant to the Controller.
+		if c.runController {
+			pv.ObjectMeta.UID = pvObj.ObjectMeta.UID                         // Required for the event broadcaster.
+			pv.ObjectMeta.ResourceVersion = pvObj.ObjectMeta.ResourceVersion // Required for the event broadcaster.
+			pv.Spec.MountOptions = pvObj.Spec.MountOptions                   // Required to find only-dir
+			pv.Spec.ClaimRef = pvObj.Spec.ClaimRef                           // Required to find the PVC and its namespace
+		}
+
+		return pv, nil
 	}
 
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
@@ -189,6 +240,10 @@ func (c *Clientset) ConfigurePVLister(ctx context.Context) {
 		informers.WithTransform(trim),
 	)
 	pvLister := informerFactory.Core().V1().PersistentVolumes().Lister()
+
+	if c.runController && eventHandlerFuncs != nil {
+		informerFactory.Core().V1().PersistentVolumes().Informer().AddEventHandler(eventHandlerFuncs)
+	}
 
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
@@ -293,7 +348,7 @@ func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
 	c.podTemplateLister = podTemplateLister
 }
 
-func New(kubeconfigPath string, informerResyncDurationSec int, runController bool) (Interface, error) {
+func New(kubeconfigPath string, informerResyncDurationSec int, runController bool, kubeAPIBurst int, kubeAPIQPS float64) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {
@@ -307,6 +362,12 @@ func New(kubeconfigPath string, informerResyncDurationSec int, runController boo
 		return nil, fmt.Errorf("failed to read kubeconfig: %w", err)
 	}
 	rc.ContentType = runtime.ContentTypeProtobuf
+
+	if runController {
+		rc.QPS = float32(kubeAPIQPS)
+		rc.Burst = kubeAPIBurst
+		klog.Infof("KubeClient QPS: %f, Burst: %d", rc.QPS, rc.Burst)
+	}
 
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {

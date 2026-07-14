@@ -72,13 +72,6 @@ func newControllerServer(driver *GCSDriver, storageServiceManager storage.Servic
 		volumeLocks:           util.NewVolumeLocks(),
 		features:              featureOptions,
 	}
-	if cs.features.FeatureGCSFuseProfiles.Enabled {
-		s, err := profiles.NewScanner(cs.features.FeatureGCSFuseProfiles.ScannerConfig)
-		if err != nil {
-			return nil, err
-		}
-		cs.scanner = s
-	}
 	return cs, nil
 }
 

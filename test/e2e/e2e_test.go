@@ -68,7 +68,7 @@ var _ = func() bool {
 	testsuites.PDStorageClass = *pdStorageClass
 	framework.AfterReadingAllFlags(&framework.TestContext)
 
-	c, err = clientset.New(framework.TestContext.KubeConfig, 0, false)
+	c, err = clientset.New(framework.TestContext.KubeConfig, 0, false, 0, 0)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
