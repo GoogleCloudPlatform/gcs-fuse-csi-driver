@@ -256,7 +256,7 @@ func (driver *GCSDriver) Run(ctx context.Context, cancel context.CancelFunc, end
 	klog.Infof("Running driver: %v", driver.config.Name)
 
 	s := NewNonBlockingGRPCServer()
-	s.Start(endpoint, driver.ids, driver.cs, driver.ns)
+	s.Start(endpoint, driver.ids, driver.cs, driver.ns, nil)
 
 	if driver.config.RunController &&
 		driver.config.FeatureOptions != nil &&

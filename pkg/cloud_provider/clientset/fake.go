@@ -27,7 +27,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -95,8 +94,8 @@ type FakeClientset struct {
 	GetPodTemplateErr error
 }
 
-func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
-	fakeK8sClient := fake.NewSimpleClientset(objects...)
+func NewFakeClientset() *FakeClientset {
+	fakeK8sClient := fake.NewSimpleClientset()
 	fakeClientSet := &FakeClientset{
 		Client:           fakeK8sClient,
 		fakePVs:          make(map[string]*corev1.PersistentVolume),
@@ -120,7 +119,8 @@ func (c *FakeClientset) K8sClient() kubernetes.Interface {
 	return c.Client
 }
 
-func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
+func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string, _ *cache.ResourceEventHandlerFuncs) {
+}
 
 func (c *FakeClientset) ConfigureNodeLister(_ context.Context, _ string) {}
 
@@ -291,6 +291,10 @@ func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	return c.fakePod, nil
 }
 
+func (c *FakeClientset) GetMounterPod(namespace, name string) (*corev1.Pod, error) {
+	return c.GetPod(namespace, name)
+}
+
 func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
 	c.fakeNode.ObjectMeta.Name = name
 
@@ -305,7 +309,7 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	return c.fakePVs[""], nil
 }
 
-func (c *FakeClientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
+func (c *FakeClientset) GetMounterPodsByName(podName string) ([]*corev1.Pod, error) {
 	if c.ListPodErr != nil {
 		return nil, c.ListPodErr
 	}

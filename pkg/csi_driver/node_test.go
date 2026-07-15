@@ -44,7 +44,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
@@ -145,14 +144,7 @@ func initTestNodeServerWithForceMounter(t *testing.T) (*nodeServerTestEnv, *fake
 
 func initTestNodeServerWithMounter(t *testing.T, mounter mount.Interface) *nodeServerTestEnv {
 	t.Helper()
-	podName := createMounterPodName("test-node", testVolumeID)
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: "test-ns",
-		},
-	}
-	fakeClient := clientset.NewFakeClientset(pod)
+	fakeClient := clientset.NewFakeClientset()
 	fakeClient.CreatePV(clientset.FakePVConfig{
 		Name:         "test-pv",
 		VolumeHandle: testVolumeID,

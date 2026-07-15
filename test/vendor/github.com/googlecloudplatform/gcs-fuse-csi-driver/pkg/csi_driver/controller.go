@@ -230,6 +230,16 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		}
 	}
 
+	hostNetworkEnabled := vc[VolumeContextKeyHostNetworkPodKSA] == util.TrueStr
+	identityProvider := vc[VolumeContextKeyIdentityProvider]
+
+	var tokenAudience string
+	if util.IsGKEIdentityProvider(identityProvider) || identityProvider == "" {
+		tokenAudience = s.driver.config.TokenManager.GetIdentityPool()
+	} else {
+		tokenAudience = identityProvider
+	}
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
@@ -241,6 +251,9 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		image:              containerImage,
 		volumes:            podTemplate.Template.Spec.Volumes,
 		profilesEnabled:    profilesEnabled,
+		hostNetworkEnabled: hostNetworkEnabled,
+		tokenAudience:      tokenAudience,
+		dnsPolicy:          podTemplate.Template.Spec.DNSPolicy,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {
@@ -288,7 +301,7 @@ func (s *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *c
 
 	// Delete the mounter pod, if it exists.
 	podName := createMounterPodName(nodeID, volumeID)
-	mounterPods, err := s.driver.config.K8sClients.GetPodsByName(podName)
+	mounterPods, err := s.driver.config.K8sClients.GetMounterPodsByName(podName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list pods: %v", err)
 	}

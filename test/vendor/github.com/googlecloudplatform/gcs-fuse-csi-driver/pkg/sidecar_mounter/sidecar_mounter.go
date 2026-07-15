@@ -131,66 +131,10 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
 	args = append(args, "/dev/fd/3")
 
-	cmdName := m.mounterPath
-	if mc.GcsFuseNumaNode >= 0 && numactlAllowed(ctx, mc.GcsFuseNumaNode) {
-		// A nonnegative numa node has been calculated by the csi driver by looking at network
-		// interface numa information. So we are confident enough to pass it directly to numactl
-		// without further checking.
-		klog.Infof("binding gcsfuse to numa node %d", mc.GcsFuseNumaNode)
-		numactlArgs := []string{
-			fmt.Sprintf("--cpunodebind=%d", mc.GcsFuseNumaNode),
-			fmt.Sprintf("--membind=%d", mc.GcsFuseNumaNode),
-			m.mounterPath,
-		}
-		args = append(numactlArgs, args...)
-		cmdName = "numactl"
-	}
-
-	//nolint: gosec
-	klog.Infof("gcsfuse mounting with %s %v...", cmdName, args)
-	cmd := exec.CommandContext(ctx, cmdName, args...)
-
-	if mc.EnableAutoGoMemLimit {
-		//  Set for the sidecar mounter process
-		appliedLimit, err := memlimit.SetGoMemLimitWithOpts(
-			memlimit.WithRatio(mc.AutoGoMemLimitRatio),
-			memlimit.WithProvider(memlimit.FromCgroup),
-		)
-		if err != nil {
-			klog.V(4).Infof("GOMEMLIMIT not set (expected if gke-gcsfuse-sidecar memory limit is unset): %v", err)
-		} else if appliedLimit > 0 {
-			// Export GOMEMLIMIT for the gcsfuse child process.
-			// If appliedLimit is 0, it means GOMEMLIMIT was already set in
-			// the environment or there is no memory limit; in both cases we
-			// should not override.
-			cmd.Env = append(os.Environ(), fmt.Sprintf("GOMEMLIMIT=%d", appliedLimit))
-			klog.Infof("Successfully set GOMEMLIMIT=%d for gcsfuse and sidecar_mounter", appliedLimit)
-		}
-	}
-
+	cmd := m.prepareMountCommand(ctx, mc, args)
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, mc.ErrWriter)
-	cmd.Cancel = func() error {
-		klog.V(4).Infof("sending SIGTERM to gcsfuse process: %v", cmd)
 
-		return cmd.Process.Signal(syscall.SIGTERM)
-	}
-
-	// when the ctx.Done() is closed,
-	// the main workload containers have exited,
-	// so it is safe to force kill the gcsfuse process.
-	go func(cmd *exec.Cmd) {
-		<-ctx.Done()
-		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
-		time.Sleep(time.Second * 5)
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
-			if err := cmd.Process.Kill(); err != nil {
-				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
-			}
-		}
-	}(cmd)
+	startCleanupMonitor(ctx, cmd)
 
 	m.WaitGroup.Add(1)
 	go func() {
@@ -233,6 +177,80 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	}()
 
 	return nil
+}
+
+// MountToNode uses the mount config to initialize the GCSFuse process for a share node mount architecture.
+// gcsfuseContext is the long running context from the sidecar, this prevents the gcsfuse process from being killed when the NodeStageVolume context (the ctx variable) is canceled.
+func (m *Mounter) MountToNode(ctx context.Context, gcsfuseContext context.Context, mc *MountConfig) error {
+	return status.Errorf(codes.Unimplemented, "method MountToNode not implemented")
+}
+
+func startCleanupMonitor(ctx context.Context, cmd *exec.Cmd) {
+	// when the ctx.Done() is closed,
+	// the main workload containers have exited,
+	// so it is safe to force kill the gcsfuse process.
+	go func(cmd *exec.Cmd) {
+		<-ctx.Done()
+
+		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
+		time.Sleep(time.Second * 5)
+
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
+			if err := cmd.Process.Kill(); err != nil {
+				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
+			}
+		}
+	}(cmd)
+}
+
+// prepareMountCommand prepares the exec.Cmd with optional NUMA node binding using numactl.
+func (m *Mounter) prepareMountCommand(ctx context.Context, mc *MountConfig, args []string) *exec.Cmd {
+	cmdName := m.mounterPath
+	if mc.GcsFuseNumaNode >= 0 && numactlAllowed(ctx, mc.GcsFuseNumaNode) {
+		// A nonnegative numa node has been calculated by the csi driver by looking at network
+		// interface numa information. So we are confident enough to pass it directly to numactl
+		// without further checking.
+		klog.Infof("binding gcsfuse to numa node %d", mc.GcsFuseNumaNode)
+		numactlArgs := []string{
+			fmt.Sprintf("--cpunodebind=%d", mc.GcsFuseNumaNode),
+			fmt.Sprintf("--membind=%d", mc.GcsFuseNumaNode),
+			m.mounterPath,
+		}
+		args = append(numactlArgs, args...)
+		cmdName = "numactl"
+	}
+
+	//nolint: gosec
+	klog.Infof("gcsfuse mounting with %s %v...", cmdName, args)
+	cmd := exec.CommandContext(ctx, cmdName, args...)
+
+	if mc.EnableAutoGoMemLimit {
+		//  Set for the sidecar mounter process
+		appliedLimit, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(mc.AutoGoMemLimitRatio),
+			memlimit.WithProvider(memlimit.FromCgroup),
+		)
+		if err != nil {
+			klog.V(4).Infof("GOMEMLIMIT not set (expected if gke-gcsfuse-sidecar memory limit is unset): %v", err)
+		} else if appliedLimit > 0 {
+			// Export GOMEMLIMIT for the gcsfuse child process.
+			// If appliedLimit is 0, it means GOMEMLIMIT was already set in
+			// the environment or there is no memory limit; in both cases we
+			// should not override.
+			cmd.Env = append(os.Environ(), fmt.Sprintf("GOMEMLIMIT=%d", appliedLimit))
+			klog.Infof("Successfully set GOMEMLIMIT=%d for gcsfuse and sidecar_mounter", appliedLimit)
+		}
+	}
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, mc.ErrWriter)
+	cmd.Cancel = func() error {
+		klog.V(4).Infof("sending SIGTERM to gcsfuse process: %v", cmd)
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+
+	return cmd
 }
 
 func (m *Mounter) fetchTokenSource(saNamespace, saName string, audience string) (oauth2.TokenSource, error) {

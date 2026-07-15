@@ -49,14 +49,15 @@ const (
 
 type Interface interface {
 	K8sClient() kubernetes.Interface
-	ConfigurePodLister(ctx context.Context, nodeName string)
+	ConfigurePodLister(ctx context.Context, nodeName string, eventHandlerFuncs *cache.ResourceEventHandlerFuncs)
 	ConfigureNodeLister(ctx context.Context, nodeName string)
 	ConfigurePVLister(ctx context.Context, eventHandlerFuncs *cache.ResourceEventHandlerFuncs)
 	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
 	ConfigurePodTemplateLister(ctx context.Context)
 	GetPod(namespace, name string) (*corev1.Pod, error)
-	GetPodsByName(name string) ([]*corev1.Pod, error)
+	GetMounterPod(namespace, name string) (*corev1.Pod, error)
+	GetMounterPodsByName(name string) ([]*corev1.Pod, error)
 	GetNode(name string) (*corev1.Node, error)
 	GetPV(name string) (*corev1.PersistentVolume, error)
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
@@ -74,7 +75,8 @@ type PodInfo struct {
 type Clientset struct {
 	k8sClients                kubernetes.Interface
 	podLister                 listersv1.PodLister
-	podInformer               cache.SharedIndexInformer
+	mounterPodLister          listersv1.PodLister
+	mounterPodInformer        cache.SharedIndexInformer
 	nodeLister                listersv1.NodeLister
 	pvLister                  listersv1.PersistentVolumeLister
 	pvcLister                 listersv1.PersistentVolumeClaimLister
@@ -82,6 +84,8 @@ type Clientset struct {
 	podTemplateLister         listersv1.PodTemplateLister
 	informerResyncDurationSec int
 	runController             bool
+	enableGCSFuseProfiles     bool
+	enableSharedMount         bool
 }
 
 const (
@@ -348,7 +352,7 @@ func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
 	c.podTemplateLister = podTemplateLister
 }
 
-func New(kubeconfigPath string, informerResyncDurationSec int, runController bool, kubeAPIBurst int, kubeAPIQPS float64) (Interface, error) {
+func New(kubeconfigPath string, informerResyncDurationSec int, runController bool, kubeAPIBurst int, kubeAPIQPS float64, enableGCSFuseProfiles, enableSharedMount bool) (Interface, error) {
 	var err error
 	var rc *rest.Config
 	if kubeconfigPath != "" {
@@ -374,7 +378,12 @@ func New(kubeconfigPath string, informerResyncDurationSec int, runController boo
 		return nil, fmt.Errorf("failed to configure k8s client: %w", err)
 	}
 
-	return &Clientset{k8sClients: clientset, informerResyncDurationSec: informerResyncDurationSec, runController: runController}, nil
+	return &Clientset{
+		k8sClients:                clientset,
+		informerResyncDurationSec: informerResyncDurationSec,
+		runController:             runController,
+		enableGCSFuseProfiles:     enableGCSFuseProfiles,
+		enableSharedMount:         enableSharedMount}, nil
 }
 
 // PodNameIndexFunc is an IndexFunc that indexes pods by their name.
@@ -386,7 +395,81 @@ func PodNameIndexFunc(obj interface{}) ([]string, error) {
 	return []string{pod.Name}, nil
 }
 
-func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
+func (c *Clientset) configureControllerPodLister(ctx context.Context, nodeName string, eventHandlerFuncs *cache.ResourceEventHandlerFuncs) {
+	// podListerForLabel creates a SharedInformerFactory that filters pods by the given label key.
+	// This is the most memory efficient way to filter pods with different labels on the server side, since Kubernetes
+	// doesn't support label selector OR statements.
+	podListerForLabel := func(ctx context.Context, labelKey string, eventHandlerFuncs *cache.ResourceEventHandlerFuncs, indexers cache.Indexers) (listersv1.PodLister, cache.SharedIndexInformer) {
+		trim := func(obj interface{}) (interface{}, error) {
+			if accessor, err := meta.Accessor(obj); err == nil {
+				if accessor.GetManagedFields() != nil {
+					accessor.SetManagedFields(nil)
+				}
+			}
+
+			// We are filtering only for relevant PodSpec info to optimize memory usage.
+			// Relevant info is for NodePublishVolume calls:
+			// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
+			podObj, ok := obj.(*corev1.Pod)
+			if !ok || podObj == nil {
+				return obj, nil
+			}
+
+			return &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              podObj.ObjectMeta.Name,
+					Namespace:         podObj.ObjectMeta.Namespace,
+					DeletionTimestamp: podObj.DeletionTimestamp, // Needed by shared mount to check if the pod is being deleted.
+				},
+				Spec: corev1.PodSpec{
+					Volumes:         podObj.Spec.Volumes,         // Needed by profiles to check PVs requiring scans.
+					SchedulingGates: podObj.Spec.SchedulingGates, // Needed by profiles to remove scheduling gates.
+					NodeName:        podObj.Spec.NodeName,        // Needed by shared mount to check if the pod is scheduled.
+				},
+				Status: podObj.Status, // Needed by shared mount to check if the pod scheduled.
+			}, nil
+		}
+
+		factory := informers.NewSharedInformerFactoryWithOptions(
+			c.k8sClients,
+			time.Duration(c.informerResyncDurationSec)*time.Second,
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				options.LabelSelector = fmt.Sprintf("%s=%s", labelKey, util.TrueStr)
+			}),
+			informers.WithTransform(trim),
+		)
+		if eventHandlerFuncs != nil {
+			factory.Core().V1().Pods().Informer().AddEventHandler(eventHandlerFuncs)
+		}
+		if indexers != nil {
+			if err := factory.Core().V1().Pods().Informer().AddIndexers(indexers); err != nil {
+				klog.Fatalf("Failed to add indexers: %v", err)
+			}
+		}
+		factory.Start(ctx.Done())
+		factory.WaitForCacheSync(ctx.Done())
+		return factory.Core().V1().Pods().Lister(), factory.Core().V1().Pods().Informer()
+	}
+
+	if c.enableGCSFuseProfiles {
+		c.podLister, _ = podListerForLabel(ctx, webhook.GcsfuseProfilesManagedLabel, eventHandlerFuncs, nil)
+	}
+	if c.enableSharedMount {
+		c.mounterPodLister, c.mounterPodInformer = podListerForLabel(ctx, webhook.SharedMountLabel, nil, cache.Indexers{
+			// Add an indexer to allow efficient lookup of pods by name across all namespaces.
+			// This is used by the controller to quickly find specific pods (e.g., mounter pods)
+			// by their known name without needing to iterate through all pods or know the namespace.
+			PodNameIndex: PodNameIndexFunc,
+		})
+	}
+}
+
+func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string, eventHandlerFuncs *cache.ResourceEventHandlerFuncs) {
+	if c.runController {
+		c.configureControllerPodLister(ctx, nodeName, eventHandlerFuncs)
+		return
+	}
+
 	trim := func(obj interface{}) (interface{}, error) {
 		if accessor, err := meta.Accessor(obj); err == nil {
 			if accessor.GetManagedFields() != nil {
@@ -398,11 +481,7 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 		// Relevant info is for NodePublishVolume calls:
 		// https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/blob/547cab9a9aea4cdbda581885880020fb9266dc03/pkg/csi_driver/node.go#L85
 		podObj, ok := obj.(*corev1.Pod)
-		if !ok {
-			return obj, nil
-		}
-
-		if c.runController {
+		if !ok || podObj == nil {
 			return obj, nil
 		}
 
@@ -458,43 +537,27 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string) {
 			if nodeName != "" {
 				options.FieldSelector = "spec.nodeName=" + nodeName
 			}
-			if c.runController {
-				// Only track mounter pods when the Pod informer is configured in the controller.
-				options.LabelSelector = fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr)
-			}
 		}),
 		informers.WithTransform(trim),
 	)
-	podLister := informerFactory.Core().V1().Pods().Lister()
-
-	if c.runController {
-		podInformer := informerFactory.Core().V1().Pods().Informer()
-		// Add an indexer to allow efficient lookup of pods by name across all namespaces.
-		// This is used by the controller to quickly find specific pods (e.g., mounter pods)
-		// by their known name without needing to iterate through all pods or know the namespace.
-		err := podInformer.AddIndexers(cache.Indexers{
-			PodNameIndex: PodNameIndexFunc,
-		})
-		if err != nil {
-			klog.Fatalf("Failed to add podName indexer: %v", err)
-		}
-
-		c.podInformer = podInformer
-	}
 
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.podLister = podLister
+	c.podLister = informerFactory.Core().V1().Pods().Lister()
 }
 
-func (c *Clientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
-	if c.podInformer == nil {
-		return nil, fmt.Errorf("podInformer is not initialized")
+// GetMounterPodsByName retrieves all mounter pods with the given name across all namespaces.
+// This function is used to find mounter pods that are labeled with the shared mount label.
+// It is important to note that this function only retrieves pods that are labeled with the shared mount label,
+// and is currently only initialized in the controller. When getting the mounter pod from the node driver, call GetPod instead, which tracks
+// all pods, including the mounter pods.
+func (c *Clientset) GetMounterPodsByName(podName string) ([]*corev1.Pod, error) {
+	if c.mounterPodInformer == nil {
+		return nil, fmt.Errorf("mounterPodInformer is not initialized")
 	}
 
 	// objs is a slice of interface{}, each element is a *corev1.Pod
-	objs, err := c.podInformer.GetIndexer().ByIndex(PodNameIndex, podName)
+	objs, err := c.mounterPodInformer.GetIndexer().ByIndex(PodNameIndex, podName)
 	if err != nil {
 		return nil, err
 	}
@@ -519,6 +582,19 @@ func (c *Clientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	}
 
 	return c.podLister.Pods(namespace).Get(name)
+}
+
+// GetMounterPod retrieves a mounter pod from the informer cache by namespace and name.
+// This function is used to check if a mounter pod exists and its status.
+// It is important to note that this function only retrieves pods that are labeled with the shared mount label,
+// and is currently only initialized in the controller. When getting the mounter pod from the node driver, call GetPod instead, which tracks
+// all pods, including the mounter pods.
+func (c *Clientset) GetMounterPod(namespace, name string) (*corev1.Pod, error) {
+	if c.mounterPodLister == nil {
+		return nil, errors.New("mounter pod informer is not ready")
+	}
+
+	return c.mounterPodLister.Pods(namespace).Get(name)
 }
 
 func (c *Clientset) GetNode(name string) (*corev1.Node, error) {

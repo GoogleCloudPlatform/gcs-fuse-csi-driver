@@ -301,7 +301,7 @@ func (s *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *c
 
 	// Delete the mounter pod, if it exists.
 	podName := createMounterPodName(nodeID, volumeID)
-	mounterPods, err := s.driver.config.K8sClients.GetPodsByName(podName)
+	mounterPods, err := s.driver.config.K8sClients.GetMounterPodsByName(podName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list pods: %v", err)
 	}

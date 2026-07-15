@@ -162,11 +162,16 @@ func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, buc
 
 type fakeK8sClients struct {
 	clientset.Interface
-	pvLister corelisters.PersistentVolumeLister
+	pvLister  corelisters.PersistentVolumeLister
+	podLister corelisters.PodLister
 }
 
 func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
 	return f.pvLister.Get(name)
+}
+
+func (f *fakeK8sClients) GetPod(namespace, name string) (*v1.Pod, error) {
+	return f.podLister.Pods(namespace).Get(name)
 }
 
 // testFixture holds the necessary components for testing the Scanner.
@@ -195,19 +200,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 	pvInformer := factory.Core().V1().PersistentVolumes()
 	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
 	scInformer := factory.Storage().V1().StorageClasses()
-
-	// Factory for Pod informer
-	podLabelSelector := fmt.Sprintf("%s=%s", profileManagedLabelKey, profileManagedLabelValue)
-	tweakFunc := func(options *metav1.ListOptions) {
-		options.LabelSelector = podLabelSelector
-	}
-	podFactory := informers.NewSharedInformerFactoryWithOptions(
-		kubeClient,
-		0, // No resync period for tests
-		informers.WithTweakListOptions(tweakFunc),
-		informers.WithTransform(trimPodObject),
-	)
-	podInformer := podFactory.Core().V1().Pods()
+	podInformer := factory.Core().V1().Pods()
 
 	// Manually add initial objects to the informer indexers to ensure they are available in listers.
 	for _, obj := range initialObjects {
@@ -225,12 +218,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 				t.Fatalf("Failed to add SC to indexer: %v", err)
 			}
 		case *v1.Pod:
-			// Must apply transform before adding to indexer to mimic real behavior
-			trimmedObj, err := trimPodObject(obj)
-			if err != nil {
-				t.Fatalf("Failed to transform Pod: %v", err)
-			}
-			if err := podInformer.Informer().GetIndexer().Add(trimmedObj); err != nil {
+			if err := podInformer.Informer().GetIndexer().Add(obj); err != nil {
 				t.Fatalf("Failed to add Pod to indexer: %v", err)
 			}
 		}
@@ -254,12 +242,9 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		kubeClient:     kubeClient,
 		pvcLister:      pvcInformer.Lister(),
 		scLister:       scInformer.Lister(),
-		podLister:      podInformer.Lister(),
 		pvcSynced:      pvcInformer.Informer().HasSynced,
 		scSynced:       scInformer.Informer().HasSynced,
-		podSynced:      podInformer.Informer().HasSynced,
 		factory:        factory,
-		podFactory:     podFactory,
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		eventRecorder:  recorder,
 		trackedPVs:     make(map[string]syncInfo),
@@ -268,14 +253,14 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		metricManager:  metrics.NewFakePrometheusMetricsManager(),
 		config: &ScannerConfig{
 			K8SClients: &fakeK8sClients{
-				pvLister: pvInformer.Lister(),
+				pvLister:  pvInformer.Lister(),
+				podLister: podInformer.Lister(),
 			},
 		},
 	}
 
 	factory.Start(stopCh)
-	podFactory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, s.pvcSynced, s.scSynced, s.podSynced) {
+	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, s.pvcSynced, s.scSynced, podInformer.Informer().HasSynced) {
 		t.Fatalf("Failed to sync caches")
 	}
 
@@ -1233,7 +1218,7 @@ func TestAddPod(t *testing.T) {
 	pod := createPod(testPodName, testNamespace, nil, podLabels, false)
 	f := newTestFixture(t, pod)
 
-	f.scanner.addPod(pod)
+	f.scanner.AddPod(pod)
 
 	if f.scanner.queue.Len() != 1 {
 		t.Errorf("Queue length: got %d, want 1", f.scanner.queue.Len())
@@ -1253,7 +1238,7 @@ func TestDeletePod(t *testing.T) {
 	f.scanner.queue.AddRateLimited(queueKey)
 	// NumRequeues check can be flaky with fake rate limiters, so we don't assert on it.
 
-	f.scanner.deletePod(pod)
+	f.scanner.DeletePod(pod)
 
 	// After deletePod, the key should be "forgotten", resetting its rate limiting.
 	if f.scanner.queue.NumRequeues(queueKey) != 0 {

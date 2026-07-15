@@ -116,9 +116,8 @@ func createMounterPod(clientset clientset.Interface, ctx context.Context, config
 	if config == nil {
 		return status.Error(codes.Internal, "mounter pod config cannot be nil")
 	}
-	// Check if the mounter pod already exists, but was marked for deletion.
-	// This requires calling the API server directly to retrieve the most up-to-date pod status.
-	pod, err := clientset.K8sClient().CoreV1().Pods(config.namespace).Get(ctx, config.podName, metav1.GetOptions{})
+	// Check if the mounter pod already exists.
+	pod, err := clientset.GetMounterPod(config.namespace, config.podName)
 	if err != nil && !errors.IsNotFound(err) {
 		return status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", config.namespace, config.podName, err)
 	}
@@ -250,7 +249,7 @@ func waitForMounterPodScheduled(clientset clientset.Interface, ctx context.Conte
 	}
 
 	checkIfScheduled := func() (bool, error) {
-		pod, err := clientset.GetPod(namespace, podName)
+		pod, err := clientset.GetMounterPod(namespace, podName)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return false, nil
@@ -348,7 +347,7 @@ func deleteMounterPod(ctx context.Context, clientset clientset.Interface, podNam
 			}
 			return status.Errorf(code, "timed out waiting for mounter pod %s/%s to be deleted", podNamespace, podName)
 		case <-ticker.C:
-			if _, err := clientset.GetPod(podNamespace, podName); err != nil {
+			if _, err := clientset.GetMounterPod(podNamespace, podName); err != nil {
 				if errors.IsNotFound(err) {
 					klog.Infof("Mounter pod %s/%s was successfully deleted.", podNamespace, podName)
 					return nil

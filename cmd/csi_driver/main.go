@@ -195,7 +195,7 @@ func main() {
 		}()
 	}
 
-	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController, *kubeAPIBurst, *kubeAPIQPS)
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController, *kubeAPIBurst, *kubeAPIQPS, *enableGCSFuseProfiles, *enableSharedMount)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
@@ -274,7 +274,7 @@ func main() {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
-		clientset.ConfigurePodLister(ctx, *nodeID)
+		clientset.ConfigurePodLister(ctx, *nodeID, nil)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
 
 		if *enableGCSFuseProfiles {
@@ -292,6 +292,7 @@ func main() {
 		}
 	} else if *runController {
 		var pvEventHandlerFuncs *cache.ResourceEventHandlerFuncs
+		var podEventHandlerFuncs *cache.ResourceEventHandlerFuncs
 		if *enableGCSFuseProfiles {
 			s, err := profiles.NewScanner(featureOptions.FeatureGCSFuseProfiles.ScannerConfig)
 			if err != nil {
@@ -301,15 +302,19 @@ func main() {
 				AddFunc:    s.AddPV,
 				DeleteFunc: s.DeletePV,
 			}
+			podEventHandlerFuncs = &cache.ResourceEventHandlerFuncs{
+				AddFunc:    s.AddPod,
+				DeleteFunc: s.DeletePod,
+			}
 			featureOptions.FeatureGCSFuseProfiles.Scanner = s
 		}
 		if *enableSharedMount || *enableGCSFuseProfiles {
 			clientset.ConfigurePVLister(ctx, pvEventHandlerFuncs)
+			clientset.ConfigurePodLister(ctx, "", podEventHandlerFuncs)
 		}
 		if *enableSharedMount {
 			clientset.ConfigurePVCLister(ctx)
 			clientset.ConfigurePodTemplateLister(ctx)
-			clientset.ConfigurePodLister(ctx, "")
 		}
 	}
 

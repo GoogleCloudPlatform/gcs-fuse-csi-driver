@@ -103,7 +103,7 @@ var (
 		MountPath: SidecarContainerCacheVolumeMountPath,
 	}
 
-	saTokenVolumeMount = corev1.VolumeMount{
+	SATokenVolumeMount = corev1.VolumeMount{
 		Name:      SidecarContainerSATokenVolumeName,
 		MountPath: SidecarContainerSATokenVolumeMountPath,
 	}
@@ -154,7 +154,7 @@ func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCreden
 	volumeMounts := []corev1.VolumeMount{TmpVolumeMount, buffVolumeMount, cacheVolumeMount}
 	// Inject SA token only for Host Network pods
 	if c.PodHostNetworkSetting && c.ShouldInjectSAVolume {
-		volumeMounts = append(volumeMounts, saTokenVolumeMount)
+		volumeMounts = append(volumeMounts, SATokenVolumeMount)
 	}
 
 	container := corev1.Container{
