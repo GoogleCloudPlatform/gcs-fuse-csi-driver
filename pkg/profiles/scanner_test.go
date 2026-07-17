@@ -164,6 +164,7 @@ type fakeK8sClients struct {
 	clientset.Interface
 	pvLister  corelisters.PersistentVolumeLister
 	podLister corelisters.PodLister
+	scLister  storagelisters.StorageClassLister
 }
 
 func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
@@ -172,6 +173,10 @@ func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
 
 func (f *fakeK8sClients) GetPod(namespace, name string) (*v1.Pod, error) {
 	return f.podLister.Pods(namespace).Get(name)
+}
+
+func (f *fakeK8sClients) GetSC(name string) (*storagev1.StorageClass, error) {
+	return f.scLister.Get(name)
 }
 
 // testFixture holds the necessary components for testing the Scanner.
@@ -241,9 +246,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 	s := &Scanner{
 		kubeClient:     kubeClient,
 		pvcLister:      pvcInformer.Lister(),
-		scLister:       scInformer.Lister(),
 		pvcSynced:      pvcInformer.Informer().HasSynced,
-		scSynced:       scInformer.Informer().HasSynced,
 		factory:        factory,
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		eventRecorder:  recorder,
@@ -255,12 +258,13 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 			K8SClients: &fakeK8sClients{
 				pvLister:  pvInformer.Lister(),
 				podLister: podInformer.Lister(),
+				scLister:  scInformer.Lister(),
 			},
 		},
 	}
 
 	factory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, s.pvcSynced, s.scSynced, podInformer.Informer().HasSynced) {
+	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, s.pvcSynced, scInformer.Informer().HasSynced, podInformer.Informer().HasSynced) {
 		t.Fatalf("Failed to sync caches")
 	}
 
