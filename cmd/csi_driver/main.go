@@ -222,12 +222,7 @@ func main() {
 		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
 			Enabled: *enableGCSFuseProfiles,
 			ScannerConfig: &profiles.ScannerConfig{
-				K8SClients: clientset,
-				// TODO(urielguzman): Remove KupeAPI options from here once all informers have been migrated to the clientset.
-				KubeAPIQPS:                       *kubeAPIQPS,
-				KubeAPIBurst:                     *kubeAPIBurst,
-				ResyncPeriod:                     time.Duration(*informerResyncDurationSec) * time.Second,
-				KubeConfigPath:                   *kubeconfigPath,
+				K8SClients:                       clientset,
 				CloudConfigPath:                  *cloudConfigFilePath,
 				RateLimiter:                      workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
 				LeaderElection:                   *leaderElection,
@@ -311,9 +306,9 @@ func main() {
 		if *enableSharedMount || *enableGCSFuseProfiles {
 			clientset.ConfigurePVLister(ctx, pvEventHandlerFuncs)
 			clientset.ConfigurePodLister(ctx, "", podEventHandlerFuncs)
+			clientset.ConfigurePVCLister(ctx)
 		}
 		if *enableSharedMount {
-			clientset.ConfigurePVCLister(ctx)
 			clientset.ConfigurePodTemplateLister(ctx)
 		}
 	}

@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
@@ -161,10 +162,12 @@ func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, buc
 }
 
 type fakeK8sClients struct {
+	kubeClient kubernetes.Interface
 	clientset.Interface
 	pvLister  corelisters.PersistentVolumeLister
 	podLister corelisters.PodLister
 	scLister  storagelisters.StorageClassLister
+	pvcLister corelisters.PersistentVolumeClaimLister
 }
 
 func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
@@ -177,6 +180,13 @@ func (f *fakeK8sClients) GetPod(namespace, name string) (*v1.Pod, error) {
 
 func (f *fakeK8sClients) GetSC(name string) (*storagev1.StorageClass, error) {
 	return f.scLister.Get(name)
+}
+
+func (f *fakeK8sClients) GetPVC(namespace, name string) (*v1.PersistentVolumeClaim, error) {
+	return f.pvcLister.PersistentVolumeClaims(namespace).Get(name)
+}
+func (f *fakeK8sClients) K8sClient() kubernetes.Interface {
+	return f.kubeClient
 }
 
 // testFixture holds the necessary components for testing the Scanner.
@@ -244,10 +254,6 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 
 	// Create the Scanner instance with fake/mock components.
 	s := &Scanner{
-		kubeClient:     kubeClient,
-		pvcLister:      pvcInformer.Lister(),
-		pvcSynced:      pvcInformer.Informer().HasSynced,
-		factory:        factory,
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		eventRecorder:  recorder,
 		trackedPVs:     make(map[string]syncInfo),
@@ -256,15 +262,17 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 		metricManager:  metrics.NewFakePrometheusMetricsManager(),
 		config: &ScannerConfig{
 			K8SClients: &fakeK8sClients{
-				pvLister:  pvInformer.Lister(),
-				podLister: podInformer.Lister(),
-				scLister:  scInformer.Lister(),
+				kubeClient: kubeClient,
+				pvLister:   pvInformer.Lister(),
+				podLister:  podInformer.Lister(),
+				scLister:   scInformer.Lister(),
+				pvcLister:  pvcInformer.Lister(),
 			},
 		},
 	}
 
 	factory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, s.pvcSynced, scInformer.Informer().HasSynced, podInformer.Informer().HasSynced) {
+	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, pvcInformer.Informer().HasSynced, scInformer.Informer().HasSynced, podInformer.Informer().HasSynced) {
 		t.Fatalf("Failed to sync caches")
 	}
 
