@@ -78,7 +78,6 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	v1listers "k8s.io/client-go/listers/core/v1"
-	storagelisters "k8s.io/client-go/listers/storage/v1"
 )
 
 const (
@@ -243,9 +242,7 @@ type EventInfo struct {
 type Scanner struct {
 	kubeClient           kubernetes.Interface
 	pvcLister            v1listers.PersistentVolumeClaimLister
-	scLister             storagelisters.StorageClassLister
 	pvcSynced            cache.InformerSynced
-	scSynced             cache.InformerSynced
 	factory              informers.SharedInformerFactory
 	queue                workqueue.TypedRateLimitingInterface[string]
 	eventRecorder        record.EventRecorder
@@ -387,7 +384,6 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	}
 	factory := informers.NewSharedInformerFactory(kubeClient, config.ResyncPeriod)
 	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
-	scInformer := factory.Storage().V1().StorageClasses()
 
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
@@ -399,9 +395,7 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		kubeClient:     kubeClient,
 		factory:        factory,
 		pvcLister:      pvcInformer.Lister(),
-		scLister:       scInformer.Lister(),
 		pvcSynced:      pvcInformer.Informer().HasSynced,
-		scSynced:       scInformer.Informer().HasSynced,
 		queue:          workqueue.NewTypedRateLimitingQueue(rateLimiter),
 		trackedPVs:     make(map[string]syncInfo),
 		eventRecorder:  eventRecorder,
@@ -484,7 +478,7 @@ func (s *Scanner) run(ctx context.Context) {
 	s.factory.Start(stopCh)
 
 	klog.Info("Waiting for informer caches to sync")
-	if !cache.WaitForCacheSync(stopCh, s.pvcSynced, s.scSynced) {
+	if !cache.WaitForCacheSync(stopCh, s.pvcSynced) {
 		klog.Error("Failed to wait for caches to sync")
 		return
 	}
@@ -1870,7 +1864,7 @@ func (s *Scanner) getStorageClass(pv *v1.PersistentVolume) (*storagev1.StorageCl
 	if scName == "" {
 		return nil, nil
 	}
-	sc, err := s.scLister.Get(scName)
+	sc, err := s.config.K8SClients.GetSC(scName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get StorageClass %q: %w", scName, err)

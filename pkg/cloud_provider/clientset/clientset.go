@@ -294,6 +294,9 @@ func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 }
 
 func (c *Clientset) ConfigureSCLister(ctx context.Context) {
+	labelsToKeep := map[string]bool{
+		profilesutil.LabelProfile: true,
+	}
 	trim := func(obj any) (any, error) {
 		scObj, ok := obj.(*storagev1.StorageClass)
 		if !ok || scObj == nil {
@@ -302,7 +305,7 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 		return &storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   scObj.ObjectMeta.Name,
-				Labels: scObj.ObjectMeta.Labels, // Required by the gcsfuse profiles feature to know if the StorageClass is a profile.
+				Labels: trimMap(scObj.ObjectMeta.Labels, labelsToKeep), // Required by the gcsfuse profiles feature to know if the StorageClass is a profile.
 			},
 			MountOptions: scObj.MountOptions, // Required by the gcsfuse profiles feature to apply pre-bundled mount options.
 			Parameters:   scObj.Parameters,   // Required by the gcsfuse profiles feature to get profile configs.
@@ -313,6 +316,9 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 		c.k8sClients,
 		time.Duration(c.informerResyncDurationSec)*time.Second,
 		informers.WithTransform(trim),
+		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.LabelSelector = fmt.Sprintf("%s=%s", profilesutil.LabelProfile, util.TrueStr)
+		}),
 	)
 	scLister := informerFactory.Storage().V1().StorageClasses().Lister()
 
