@@ -73,6 +73,7 @@ type MountConfig struct {
 	EnableAutoGoMemLimit           bool                  `json:"-"`
 	AutoGoMemLimitRatio            float64               `json:"-"`
 	StorageEndpoint                string                `json:"-"`
+	SharedMountPoint               string                `json:"-"`
 }
 
 // EnsureErrWriter safely initializes ErrWriter to the correct writer if it is nil.

@@ -42,7 +42,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"gopkg.in/gcfg.v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -245,12 +244,9 @@ type Scanner struct {
 	kubeClient           kubernetes.Interface
 	pvcLister            v1listers.PersistentVolumeClaimLister
 	scLister             storagelisters.StorageClassLister
-	podLister            v1listers.PodLister
 	pvcSynced            cache.InformerSynced
 	scSynced             cache.InformerSynced
-	podSynced            cache.InformerSynced
 	factory              informers.SharedInformerFactory
-	podFactory           informers.SharedInformerFactory
 	queue                workqueue.TypedRateLimitingInterface[string]
 	eventRecorder        record.EventRecorder
 	datafluxConfig       *DatafluxConfig
@@ -312,35 +308,6 @@ func buildKubeConfig(kubeconfigPath string) (*rest.Config, error) {
 	}
 	klog.Info("Using In-Cluster Kubeconfig")
 	return cfg, nil
-}
-
-// trimPodObject is a transform function for the Pod informer to reduce memory usage.
-// It keeps only the fields relevant to the scanner logic.
-func trimPodObject(obj any) (any, error) {
-	if accessor, err := meta.Accessor(obj); err == nil {
-		accessor.SetManagedFields(nil)
-	} else {
-		klog.Warningf("Failed to get meta accessor for object: %v", err)
-	}
-
-	podObj, ok := obj.(*v1.Pod)
-	if !ok {
-		return obj, nil
-	}
-
-	// Create a new Pod object with only the fields we need.
-	trimmedPod := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podObj.ObjectMeta.Name,      // Needed for workqueue key.
-			Namespace: podObj.ObjectMeta.Namespace, // Needed for workqueue key.
-		},
-		Spec: v1.PodSpec{
-			Volumes:         podObj.Spec.Volumes,         // Needed to check PVs requiring scans.
-			SchedulingGates: podObj.Spec.SchedulingGates, // Needed to remove scheduling gates.
-		},
-	}
-
-	return trimmedPod, nil
 }
 
 func generateTokenSource(ctx context.Context, configFile *ConfigFile) (oauth2.TokenSource, error) {
@@ -422,21 +389,6 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
 	scInformer := factory.Storage().V1().StorageClasses()
 
-	// Factory for Pod informer with label selector and transform
-	// The label is patched by the mutating webhook.
-	podLabelSelector := fmt.Sprintf("%s=%s", profileManagedLabelKey, profileManagedLabelValue)
-	tweakFunc := func(options *metav1.ListOptions) {
-		options.LabelSelector = podLabelSelector
-	}
-	podFactory := informers.NewSharedInformerFactoryWithOptions(
-		kubeClient,
-		config.ResyncPeriod,
-		informers.WithTweakListOptions(tweakFunc),
-		informers.WithTransform(trimPodObject),
-	)
-	podInformer := podFactory.Core().V1().Pods()
-	klog.Infof("Pod informer configured with label selector: %q and a transform function", podLabelSelector)
-
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
@@ -446,13 +398,10 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	scanner := &Scanner{
 		kubeClient:     kubeClient,
 		factory:        factory,
-		podFactory:     podFactory,
 		pvcLister:      pvcInformer.Lister(),
 		scLister:       scInformer.Lister(),
-		podLister:      podInformer.Lister(),
 		pvcSynced:      pvcInformer.Informer().HasSynced,
 		scSynced:       scInformer.Informer().HasSynced,
-		podSynced:      podInformer.Informer().HasSynced,
 		queue:          workqueue.NewTypedRateLimitingQueue(rateLimiter),
 		trackedPVs:     make(map[string]syncInfo),
 		eventRecorder:  eventRecorder,
@@ -463,12 +412,6 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		metricManager:  metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
 		mux:            mux,
 	}
-
-	klog.Info("Setting up event handlers for Pods")
-	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    scanner.addPod,
-		DeleteFunc: scanner.deletePod,
-	})
 
 	return scanner, nil
 }
@@ -539,10 +482,9 @@ func (s *Scanner) run(ctx context.Context) {
 
 	klog.Info("Starting informers")
 	s.factory.Start(stopCh)
-	s.podFactory.Start(stopCh)
 
 	klog.Info("Waiting for informer caches to sync")
-	if !cache.WaitForCacheSync(stopCh, s.pvcSynced, s.scSynced, s.podSynced) {
+	if !cache.WaitForCacheSync(stopCh, s.pvcSynced, s.scSynced) {
 		klog.Error("Failed to wait for caches to sync")
 		return
 	}
@@ -735,7 +677,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		return status.Errorf(codes.Internal, "failed to split meta namespace key %q: %v", key, err)
 	}
 
-	pod, err := s.podLister.Pods(namespace).Get(name)
+	pod, err := s.config.K8SClients.GetPod(namespace, name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Infof("Pod %q in namespace %q has been deleted", name, namespace)
@@ -1870,9 +1812,9 @@ func (s *Scanner) enqueueTrackedPVs() {
 }
 
 // addPod is the add event handler for Pods.
-func (s *Scanner) addPod(obj any) {
+func (s *Scanner) AddPod(obj any) {
 	pod, ok := obj.(*v1.Pod)
-	if !ok {
+	if !ok || pod == nil {
 		klog.Errorf("AddFunc Pod: Expected Pod but got %T", obj)
 		return
 	}
@@ -1881,9 +1823,9 @@ func (s *Scanner) addPod(obj any) {
 }
 
 // deletePod is the event handler for Pod Delete events.
-func (s *Scanner) deletePod(obj any) {
+func (s *Scanner) DeletePod(obj any) {
 	pod, ok := obj.(*v1.Pod)
-	if !ok {
+	if !ok || pod == nil {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			klog.Errorf("DeleteFunc Pod: Expected Pod or Tombstone but got %T", obj)

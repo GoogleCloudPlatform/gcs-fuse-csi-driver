@@ -63,16 +63,15 @@ func initTestController(t *testing.T, clientset clientset.Interface) csi.Control
 }
 
 type fakeClientsetConfig struct {
-	existingObjects []runtime.Object
-	pvConfig        *clientset.FakePVConfig
-	pvcConfig       *clientset.FakePVCConfig
-	ptConfig        *clientset.FakePodTemplateConfig
-	podConfig       *clientset.FakePodConfig
-	scConfig        *clientset.FakeSCConfig
+	pvConfig  *clientset.FakePVConfig
+	pvcConfig *clientset.FakePVCConfig
+	ptConfig  *clientset.FakePodTemplateConfig
+	podConfig *clientset.FakePodConfig
+	scConfig  *clientset.FakeSCConfig
 }
 
 func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
-	fc := clientset.NewFakeClientset(cfg.existingObjects...)
+	fc := clientset.NewFakeClientset()
 	if cfg.pvConfig != nil {
 		fc.CreatePV(*cfg.pvConfig)
 	}
@@ -242,23 +241,6 @@ func TestControllerPublishVolume(t *testing.T) {
 	mounterPodPollInterval = 10 * time.Millisecond
 	defer func() { mounterPodPollInterval = oldInterval }()
 
-	timeNow := metav1.Now()
-
-	// Helper to create a mounter pod for initial state
-	makeMounterPod := func(config *mounterPodConfig, deletionTimestamp *metav1.Time) *corev1.Pod {
-		p := createMounterPodSpec(config)
-		p.ObjectMeta.DeletionTimestamp = deletionTimestamp
-		p.ResourceVersion = "1"
-		return p
-	}
-
-	defaultMounterPodConfig := &mounterPodConfig{
-		podName:   createMounterPodName(testNodeID, testVolumeID),
-		namespace: testNamespace,
-		nodeID:    testNodeID,
-		image:     testImage,
-	}
-
 	cases := []struct {
 		name               string
 		req                *csi.ControllerPublishVolumeRequest
@@ -382,6 +364,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 		},
 		{
@@ -424,6 +407,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				if len(pod.Spec.Containers) != 1 {
@@ -488,6 +472,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				if len(pod.Spec.Containers) != 1 {
@@ -525,6 +510,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				if pod.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
@@ -552,6 +538,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				wantVolume := webhook.GetSATokenVolume("fake.identity.pool")
@@ -589,6 +576,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				wantVolume := webhook.GetSATokenVolume("https://custom.identity.provider")
@@ -625,6 +613,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				wantVolume := webhook.GetSATokenVolume("fake.identity.pool")
@@ -714,9 +703,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				existingPod := makeMounterPod(defaultMounterPodConfig, nil)
 				cfg := getDefaultFakeClientsetConfig()
-				cfg.existingObjects = []runtime.Object{existingPod}
 				cfg.podConfig = &clientset.FakePodConfig{
 					NodeName: testNodeID,
 					PodStatus: &corev1.PodStatus{
@@ -748,9 +735,19 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				existingPod := makeMounterPod(defaultMounterPodConfig, &timeNow)
 				cfg := getDefaultFakeClientsetConfig()
-				cfg.existingObjects = []runtime.Object{existingPod}
+				cfg.podConfig = &clientset.FakePodConfig{
+					NodeName: testNodeID,
+					PodStatus: &corev1.PodStatus{
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodScheduled,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+					DeletionTimestamp: &metav1.Time{},
+				}
 				return setupFakeBase(cfg)
 			},
 			expectErr:     true,
@@ -788,6 +785,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			setupFake: func() *clientset.FakeClientset {
 				return setupFakeBase(getDefaultFakeClientsetConfig())
 			},
+			podGetErr:     apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			podCreateErr:  errors.New("simulated create error"),
 			expectErr:     true,
 			expectErrCode: codes.Internal,
@@ -831,6 +829,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				// The profile volumes must be injected if profilesEnabled was true
@@ -857,9 +856,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			var createdPod *corev1.Pod
 
 			if test.podGetErr != nil {
-				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, test.podGetErr
-				})
+				fc.GetPodErr = test.podGetErr
 			}
 			if test.podCreateErr != nil {
 				fakeK8sClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
@@ -887,6 +884,9 @@ func TestControllerPublishVolume(t *testing.T) {
 						PodStatus: &pod.Status,
 					})
 
+					if apierrors.IsNotFound(fc.GetPodErr) {
+						fc.GetPodErr = nil // Clear any previous GetPodErr to simulate successful retrieval after creation
+					}
 					return false, pod, nil // Return false to allow default fake client handling to store the object
 				})
 			}

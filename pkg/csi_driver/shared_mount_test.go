@@ -790,42 +790,43 @@ func TestCreateMounterPod(t *testing.T) {
 		image:     testImage,
 	}
 
-	timeNow := metav1.Now()
-
-	makePod := func(deletionTimestamp *metav1.Time) *corev1.Pod {
-		p := createMounterPodSpec(baseConfig)
-		p.ObjectMeta.DeletionTimestamp = deletionTimestamp
-		p.ResourceVersion = "1" // Needed for some fake client operations
-		return p
-	}
-
 	tests := []struct {
-		name         string
-		initialState []runtime.Object
-		getErr       error
-		createErr    error
-		wantErr      bool
-		wantCode     codes.Code
-		wantCreates  int
+		name        string
+		getErr      error
+		createErr   error
+		wantErr     bool
+		wantCode    codes.Code
+		wantCreates int
+		setupFake   func() *clientset.FakeClientset
 	}{
 		{
-			name:         "pod does not exist - create pod successfully",
-			initialState: []runtime.Object{},
-			wantErr:      false,
-			wantCreates:  1,
+			name:        "pod does not exist - create pod successfully",
+			wantErr:     false,
+			wantCreates: 1,
+			getErr:      k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 		},
 		{
-			name: "pod exists - no-op success",
-			initialState: []runtime.Object{
-				makePod(nil),
-			},
+			name:        "pod exists - no-op success",
 			wantErr:     false,
 			wantCreates: 0,
 		},
 		{
 			name: "pod exists with deletion timestamp - return error",
-			initialState: []runtime.Object{
-				makePod(&timeNow),
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.podConfig = &clientset.FakePodConfig{
+					NodeName: testNodeID,
+					PodStatus: &corev1.PodStatus{
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodScheduled,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+					DeletionTimestamp: &metav1.Time{},
+				}
+				return setupFakeBase(cfg)
 			},
 			wantErr:     true,
 			wantCode:    codes.Aborted,
@@ -841,24 +842,30 @@ func TestCreateMounterPod(t *testing.T) {
 			name:        "pod create fails with error - return error",
 			createErr:   errors.New("simulated create failed"),
 			wantErr:     true,
+			getErr:      k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			wantCreates: 1, // Create was attempted
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// NewFakeClientset now initializes the standard fake client
-			testClientset := clientset.NewFakeClientset(tc.initialState...)
+			var testClientset *clientset.FakeClientset
+			if tc.setupFake != nil {
+				testClientset = tc.setupFake()
+			} else {
+				testClientset = clientset.NewFakeClientset()
+			}
 			fakeK8sClient := testClientset.K8sClient().(*fake.Clientset)
 
 			// Inject errors using reactors on the standard fake client
 			if tc.getErr != nil {
-				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, tc.getErr
-				})
+				testClientset.GetPodErr = tc.getErr
 			}
 			if tc.createErr != nil {
 				fakeK8sClient.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					if k8serrors.IsNotFound(testClientset.GetPodErr) {
+						testClientset.GetPodErr = nil // Clear any previous GetPodErr to simulate successful retrieval after creation
+					}
 					return true, nil, tc.createErr
 				})
 			}
@@ -1270,7 +1277,7 @@ func TestDeleteMounterPod(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond) // Short timeout for testing
 			defer cancel()
 
-			testClientset := clientset.NewFakeClientset(tc.initialObjects...)
+			testClientset := clientset.NewFakeClientset()
 			fakeK8sClient := testClientset.K8sClient().(*fake.Clientset)
 
 			deleteCalled := false
