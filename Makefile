@@ -339,7 +339,7 @@ verify:
 	hack/verify-all.sh
 
 unit-test:
-	GOTOOLCHAIN=go1.25.1+auto go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
+	env -u GOROOT GOTOOLCHAIN=go1.25.1+auto go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
 	cd test && go mod tidy && GOTOOLCHAIN=go1.25.1+auto go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
