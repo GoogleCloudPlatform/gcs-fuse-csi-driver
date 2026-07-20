@@ -150,7 +150,6 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	if !s.driver.sharedMount(vc) {
 		return &csi.ControllerPublishVolumeResponse{}, nil
 	}
-
 	// Find the workload namespace where the mounter pod should be created by identifying the PVC
 	// bound to this volume's PV.
 	clientset := s.driver.config.K8sClients
@@ -196,9 +195,28 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Extract overrides specifically from the container named "gcsfusecsi-mount".
 	var containerResources *corev1.ResourceRequirements
 	var containerImage string
-	if s.features != nil && s.features.SharedMountOptions != nil {
-		containerImage = s.features.SharedMountOptions.MounterPodImage
+
+	// Retrieve the mounter pod image from the ConfigMap.
+	if s.features == nil || s.features.SharedMountOptions == nil {
+		return nil, status.Error(codes.Internal, "shared mount options can't be nil")
 	}
+	driverNamespace := s.features.SharedMountOptions.DriverNamespace
+	if driverNamespace == "" {
+		return nil, status.Error(codes.Internal, "driver namespace can't be empty")
+	}
+	configMap, err := clientset.GetConfigMap(driverNamespace, util.SidecarImageConfigMapName)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get image configmap %s/%s: %v", driverNamespace, util.SidecarImageConfigMapName, err)
+	}
+	if configMap == nil || configMap.Data == nil {
+		return nil, status.Errorf(codes.Internal, "%s/%s ConfigMap data can't be empty", driverNamespace, util.SidecarImageConfigMapName)
+	}
+	var ok bool
+	containerImage, ok = configMap.Data[util.SidecarImageConfigMapKey]
+	if !ok || containerImage == "" {
+		return nil, status.Errorf(codes.Internal, "%s/%s ConfigMap is missing key %q or it is empty", driverNamespace, util.SidecarImageConfigMapName, util.SidecarImageConfigMapKey)
+	}
+
 	for i := range podTemplate.Template.Spec.Containers {
 		container := &podTemplate.Template.Spec.Containers[i]
 		if container.Name != util.MounterPodNamePrefix {

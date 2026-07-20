@@ -55,6 +55,7 @@ type Interface interface {
 	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
 	ConfigurePodTemplateLister(ctx context.Context)
+	ConfigureConfigMapLister(ctx context.Context, namespace string)
 	GetPod(namespace, name string) (*corev1.Pod, error)
 	GetMounterPod(namespace, name string) (*corev1.Pod, error)
 	GetMounterPodsByName(name string) ([]*corev1.Pod, error)
@@ -63,6 +64,7 @@ type Interface interface {
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
 	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
+	GetConfigMap(namespace, name string) (*corev1.ConfigMap, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -82,6 +84,7 @@ type Clientset struct {
 	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
 	podTemplateLister         listersv1.PodTemplateLister
+	configMapLister           listersv1.ConfigMapLister
 	informerResyncDurationSec int
 	runController             bool
 	enableGCSFuseProfiles     bool
@@ -356,6 +359,38 @@ func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
 	informerFactory.WaitForCacheSync(ctx.Done())
 
 	c.podTemplateLister = podTemplateLister
+}
+
+func (c *Clientset) ConfigureConfigMapLister(ctx context.Context, namespace string) {
+	trim := func(obj any) (any, error) {
+		cmObj, ok := obj.(*corev1.ConfigMap)
+		if !ok || cmObj == nil {
+			return obj, nil
+		}
+		return &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cmObj.ObjectMeta.Name,
+				Namespace: cmObj.ObjectMeta.Namespace,
+			},
+			Data: cmObj.Data,
+		}, nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		c.k8sClients,
+		time.Duration(c.informerResyncDurationSec)*time.Second,
+		informers.WithNamespace(namespace),
+		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.FieldSelector = fmt.Sprintf("metadata.name=%s", util.SidecarImageConfigMapName)
+		}),
+		informers.WithTransform(trim),
+	)
+	configMapLister := informerFactory.Core().V1().ConfigMaps().Lister()
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	c.configMapLister = configMapLister
 }
 
 func New(kubeconfigPath string, informerResyncDurationSec int, runController bool, kubeAPIBurst int, kubeAPIQPS float64, enableGCSFuseProfiles, enableSharedMount bool) (Interface, error) {
@@ -652,6 +687,14 @@ func (c *Clientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate,
 	}
 
 	return c.podTemplateLister.PodTemplates(namespace).Get(name)
+}
+
+func (c *Clientset) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
+	if c.configMapLister == nil {
+		return nil, errors.New("configmap informer is not ready")
+	}
+
+	return c.configMapLister.ConfigMaps(namespace).Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

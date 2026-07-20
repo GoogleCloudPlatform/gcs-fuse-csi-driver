@@ -76,7 +76,6 @@ var (
 	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 	universeDomain                 = flag.String("universe-domain", "googleapis.com", "The universe domain. The default value is googleapis.com.")
-	mounterPodImage                = flag.String("mounter-pod-image", "", "The image for the mounter pod.")
 
 	// GCSFuse kernel params feature.
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
@@ -98,7 +97,7 @@ var (
 
 	// Leader election flags.
 	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
-	leaderElectionNamespace          = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
+	driverNamespace                  = flag.String("driver-namespace", "gcs-fuse-csi-driver", "The namespace where the driver resources are deployed.")
 	leaderElectionLeaseDuration      = flag.Duration("leader-election-lease-duration", 15*time.Second, "Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.")
 	leaderElectionRenewDeadline      = flag.Duration("leader-election-renew-deadline", 10*time.Second, "Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.")
 	leaderElectionRetryPeriod        = flag.Duration("leader-election-retry-period", 5*time.Second, "Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.")
@@ -226,7 +225,7 @@ func main() {
 				CloudConfigPath:                  *cloudConfigFilePath,
 				RateLimiter:                      workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
 				LeaderElection:                   *leaderElection,
-				LeaderElectionNamespace:          *leaderElectionNamespace,
+				LeaderElectionNamespace:          *driverNamespace,
 				LeaderElectionLeaseDuration:      *leaderElectionLeaseDuration,
 				LeaderElectionRenewDeadline:      *leaderElectionRenewDeadline,
 				LeaderElectionRetryPeriod:        *leaderElectionRetryPeriod,
@@ -249,8 +248,8 @@ func main() {
 		},
 		SharedMountOptions: &driver.SharedMountOptions{
 			Enabled:         *enableSharedMount,
-			MounterPodImage: *mounterPodImage,
 			FuseSocketDir:   *fuseSocketDir,
+			DriverNamespace: *driverNamespace,
 			EmptyDirBasePath: func(podUID string) string {
 				return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			},
@@ -310,6 +309,7 @@ func main() {
 		}
 		if *enableSharedMount {
 			clientset.ConfigurePodTemplateLister(ctx)
+			clientset.ConfigureConfigMapLister(ctx, *driverNamespace)
 		}
 	}
 
