@@ -68,6 +68,7 @@ type fakeClientsetConfig struct {
 	ptConfig  *clientset.FakePodTemplateConfig
 	podConfig *clientset.FakePodConfig
 	scConfig  *clientset.FakeSCConfig
+	cmConfig  *clientset.FakeConfigMapConfig
 }
 
 func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
@@ -86,6 +87,9 @@ func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
 	}
 	if cfg.scConfig != nil {
 		fc.CreateSC(*cfg.scConfig)
+	}
+	if cfg.cmConfig != nil {
+		fc.CreateConfigMap(*cfg.cmConfig)
 	}
 	return fc
 }
@@ -110,6 +114,13 @@ func getDefaultFakeClientsetConfig() fakeClientsetConfig {
 		ptConfig: &clientset.FakePodTemplateConfig{
 			Name:      testMounterPodTemplate,
 			Namespace: testNamespace,
+		},
+		cmConfig: &clientset.FakeConfigMapConfig{
+			Name:      util.SidecarImageConfigMapName,
+			Namespace: "gcs-fuse-csi-driver",
+			Data: map[string]string{
+				util.SidecarImageConfigMapKey: testImage,
+			},
 		},
 	}
 }
@@ -487,6 +498,46 @@ func TestControllerPublishVolume(t *testing.T) {
 
 				if !reflect.DeepEqual(container.Image, expectedImage) {
 					t.Errorf("Mounter pod image does not match expected overrides.\nGot: %+v\nWant: %+v", container.Image, expectedImage)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - sidecar image from ConfigMap - should create pod with image from ConfigMap",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				fakeClient := setupFakeBase(cfg)
+				fakeClient.CreateConfigMap(clientset.FakeConfigMapConfig{
+					Name:      util.SidecarImageConfigMapName,
+					Namespace: "gcs-fuse-csi-driver",
+					Data: map[string]string{
+						util.SidecarImageConfigMapKey: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-from-configmap",
+					},
+				})
+				return fakeClient
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if len(pod.Spec.Containers) != 1 {
+					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
+				}
+				container := pod.Spec.Containers[0]
+				expectedImage := "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-from-configmap"
+				if container.Image != expectedImage {
+					t.Errorf("Expected image %q, got %q", expectedImage, container.Image)
 				}
 			},
 		},

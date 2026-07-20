@@ -75,6 +75,8 @@ const (
 	KubeletPluginsGCSFuseDir            = "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io"
 	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
 	MounterPodNamePrefix                = "gcsfusecsi-mount"
+	SidecarImageConfigMapName           = "gcsfusecsi-image-config"
+	SidecarImageConfigMapKey            = "sidecar-image"
 )
 
 var (
