@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+unexport GOROOT
+
 BINDIR ?= $(shell pwd)/bin
 
 ifeq ($(ENABLE_ZB), true)
@@ -305,7 +307,7 @@ verify:
 	hack/verify-all.sh
 
 unit-test:
-	env -u GOROOT go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
+	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
 	cd test && go mod tidy && go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
