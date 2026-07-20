@@ -305,7 +305,7 @@ verify:
 	hack/verify-all.sh
 
 unit-test:
-	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
+	env -u GOROOT go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
 	cd test && go mod tidy && go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
