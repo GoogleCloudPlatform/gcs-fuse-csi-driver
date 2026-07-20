@@ -245,3 +245,23 @@ func BenchmarkEmitMetricFamily(b *testing.B) {
 	close(ch)
 	<-done
 }
+
+func TestMetricsCollectorConstLabels(t *testing.T) {
+	t.Parallel()
+	labels := map[string]string{
+		"pod_name":       "test-pod",
+		"namespace_name": "test-ns",
+		"volume_name":    "test-vol",
+		"bucket_name":    "test-bucket",
+		"jobset_name":    "test-jobset",
+	}
+	collector := NewMetricsCollector("sock-path", "emptydir-path", "test-ns", "test-pod", "uid-123", "test-vol", labels, nil, false).(*metricsCollector)
+
+	if _, exists := collector.constLabels["pod_uid"]; exists {
+		t.Errorf("Expected pod_uid to be absent from constLabels, but found: %s", collector.constLabels["pod_uid"])
+	}
+	if got := collector.constLabels["jobset_name"]; got != "test-jobset" {
+		t.Errorf("Expected jobset_name to be 'test-jobset', got %q", got)
+	}
+}
+

@@ -1836,111 +1836,6 @@ func createVolumesTestCase(fakeClientSet *clientset.FakeClientset, tc volumeTest
 	return volumes
 }
 
-func TestCountGcsFuseVolumes(t *testing.T) {
-	testCases := []struct {
-		name          string
-		tcVolumes     volumeTestCase
-		expectedCount int
-	}{
-		{
-			name:          "no volumes",
-			tcVolumes:     volumeTestCase{},
-			expectedCount: 0,
-		},
-		{
-			name: "one gcsfuse ephemeral volume",
-			tcVolumes: volumeTestCase{
-				totalEphemeralVolumeCount:   1,
-				gcsFuseEphemeralVolumeCount: 1,
-			},
-			expectedCount: 1,
-		},
-		{
-			name: "one gcsfuse persistent volume",
-			tcVolumes: volumeTestCase{
-				totalPersistentVolumeCount:   1,
-				gcsFusePersistentVolumeCount: 1,
-			},
-			expectedCount: 1,
-		},
-		{
-			name: "multiple gcsfuse ephemeral volumes",
-			tcVolumes: volumeTestCase{
-				totalEphemeralVolumeCount:   2,
-				gcsFuseEphemeralVolumeCount: 2,
-			},
-			expectedCount: 2,
-		},
-		{
-			name: "multiple gcsfuse persistent volumes",
-			tcVolumes: volumeTestCase{
-				totalPersistentVolumeCount:   2,
-				gcsFusePersistentVolumeCount: 2,
-			},
-			expectedCount: 2,
-		},
-		{
-			name: "one ephemeral and one persistent gcsfuse volumes",
-			tcVolumes: volumeTestCase{
-				totalEphemeralVolumeCount:    1,
-				totalPersistentVolumeCount:   1,
-				gcsFuseEphemeralVolumeCount:  1,
-				gcsFusePersistentVolumeCount: 1,
-			},
-			expectedCount: 2,
-		},
-		{
-			name: "multiple ephemeral and multiple persistent gcsfuse volumes",
-			tcVolumes: volumeTestCase{
-				totalEphemeralVolumeCount:    2,
-				totalPersistentVolumeCount:   3,
-				gcsFuseEphemeralVolumeCount:  2,
-				gcsFusePersistentVolumeCount: 3,
-			},
-			expectedCount: 5,
-		},
-		{
-			name: "mixed csi drivers with some gcsfuse volumes",
-			tcVolumes: volumeTestCase{
-				totalEphemeralVolumeCount:    5,
-				totalPersistentVolumeCount:   5,
-				gcsFuseEphemeralVolumeCount:  2,
-				gcsFusePersistentVolumeCount: 3,
-			},
-			expectedCount: 7,
-		},
-		{
-			name: "mixed csi drivers with no gcsfuse volumes",
-			tcVolumes: volumeTestCase{
-				totalEphemeralVolumeCount:  5,
-				totalPersistentVolumeCount: 5,
-			},
-			expectedCount: 5,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			fakeClientSet := clientset.NewFakeClientset()
-			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
-			ns, ok := testEnv.ns.(*nodeServer)
-			if !ok {
-				t.Fatalf("Failed to cast NodeServer to *nodeServer")
-			}
-			ns.driver.config.Name = csiDriverName
-			volumes := createVolumesTestCase(fakeClientSet, tc.tcVolumes)
-			pod := &corev1.Pod{
-				Spec: corev1.PodSpec{
-					Volumes: volumes,
-				},
-			}
-			count, _ := ns.countGcsFuseVolumes(pod)
-			if count != tc.expectedCount {
-				t.Errorf("got %d, want %d", count, tc.expectedCount)
-			}
-		})
-	}
-}
 
 func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 	t.Parallel()
@@ -2000,24 +1895,24 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			expectCollectorRegistered:    true,
 		},
 		{
-			name:                        "should not register collector for 11 gcsfuse ephemeral volumes",
+			name:                        "should register collector for 11 gcsfuse ephemeral volumes",
 			totalEphemeralVolumeCount:   11,
 			gcsFuseEphemeralVolumeCount: 11,
-			expectCollectorRegistered:   false,
+			expectCollectorRegistered:   true,
 		},
 		{
-			name:                         "should not register collector for 11 gcsfuse persistent volumes",
+			name:                         "should register collector for 11 gcsfuse persistent volumes",
 			totalPersistentVolumeCount:   11,
 			gcsFusePersistentVolumeCount: 11,
-			expectCollectorRegistered:    false,
+			expectCollectorRegistered:    true,
 		},
 		{
-			name:                         "should not register collector for a mix of 11 gcsfuse volumes",
+			name:                         "should register collector for a mix of 11 gcsfuse volumes",
 			totalEphemeralVolumeCount:    6,
 			totalPersistentVolumeCount:   5,
 			gcsFuseEphemeralVolumeCount:  6,
 			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    false,
+			expectCollectorRegistered:    true,
 		},
 		{
 			name:                         "should register collector with other non gcsfuse volumes",
@@ -2028,12 +1923,12 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			expectCollectorRegistered:    true,
 		},
 		{
-			name:                         "should not register collector with other non gcsfuse volumes when gcsfuse volumes exceeds limit",
+			name:                         "should register collector with other non gcsfuse volumes when gcsfuse volumes is high",
 			totalEphemeralVolumeCount:    15,
 			totalPersistentVolumeCount:   15,
 			gcsFuseEphemeralVolumeCount:  6,
 			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    false,
+			expectCollectorRegistered:    true,
 		},
 	}
 

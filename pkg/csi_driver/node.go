@@ -52,7 +52,6 @@ const (
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
-	maxGCSFuseVolumesForMetrics         = 10
 	unmountRetryInterval                = 100 * time.Millisecond
 	unmountRetryBackoffFactor           = 2.0
 	unmountRetryJitter                  = 0.1
@@ -389,16 +388,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Register metrics collector.
 	// It is idempotent to register the same collector in node republish calls.
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		gcsFuseVolumeCount, err := s.countGcsFuseVolumes(pod)
-
-		if err != nil {
-			klog.Errorf("Metrics collection is disabled for Pod %s/%s as counting the number of GCS FUSE volumes failed with error: %v", pod.Namespace, pod.Name, err)
-		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
-			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
-		} else {
-			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID)
+		var jobsetName string
+		if pod.Labels != nil {
+			jobsetName = pod.Labels["jobset.sigs.k8s.io/jobset-name"]
 		}
+		klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q (jobset_name: %q)", targetPath, jobsetName)
+		s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, jobsetName)
 	}
 
 	// Check if the sidecar container is still required,
@@ -803,37 +798,6 @@ func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	return ""
 }
 
-// countGcsFuseVolumes returns the number of GCSFuse CSI Ephemeral volumes or
-// PersistentVolumeClaims in the given Pod spec. We intentionally do not
-// check to see if the PVC is a GCSFuseCSI PVC because that requires additional
-// API calls or a PVC informer which previously made the node driver OOM.
-// We may end up counting some non-GCSFuse volumes, but that is acceptable
-// since this is only used to determine whether to enable metrics collection
-// on a given pod.
-// TODO(amacaskill): Make sure the PVC is a GCSFuseCSI PVC, without
-// causing an OOM in the node driver at scale.
-func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
-	gcsFuseVolumeCount := 0
-
-	if pod.Spec.Volumes == nil {
-		return gcsFuseVolumeCount, nil
-	}
-
-	for _, v := range pod.Spec.Volumes {
-		// Count ephemeral gcsfuse volumes
-		if v.CSI != nil && v.CSI.Driver == s.driver.config.Name {
-			gcsFuseVolumeCount++
-			continue
-		}
-
-		if v.PersistentVolumeClaim != nil {
-			gcsFuseVolumeCount++
-			continue
-		}
-	}
-
-	return gcsFuseVolumeCount, nil
-}
 
 func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	// Validate arguments.

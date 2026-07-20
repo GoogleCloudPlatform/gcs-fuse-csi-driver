@@ -53,7 +53,7 @@ const (
 
 type Manager interface {
 	InitializeHTTPHandler()
-	RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName, nodeName string)
+	RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName, nodeName, jobsetName string)
 	UnregisterMetricsCollector(targetPath, nodeName string)
 }
 
@@ -107,7 +107,7 @@ func (mm *manager) InitializeHTTPHandler() {
 }
 
 // RegisterMetricsCollector registers the metrics collector. It is idempotent to register the same collector.
-func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName, nodeName string) {
+func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, bucketName, nodeName, jobsetName string) {
 	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
 	if err != nil {
 		klog.Errorf("failed to register metrics collector for target path %q, bucket %q: %v", targetPath, bucketName, err)
@@ -126,7 +126,7 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
-		"pod_uid":        "", // podUID is emptied to avoid infinite cardinality in the metric labels
+		"jobset_name":    jobsetName,
 	}, mm.clientset, mm.streamMetrics)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.

@@ -270,7 +270,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 						labels["pod_name"] == podName &&
 						labels["volume_name"] == volume &&
 						labels["namespace_name"] == f.Namespace.Name &&
-						(hasMetricsCardFixes == (labels["pod_uid"] == "")) { // cardinality fixes and pod_uid being empty should go hand in hand
+						labels["pod_uid"] == "" { // pod_uid must be completely absent from metric labels
 						metricsList = append(metricsList, m)
 					}
 				}
@@ -382,17 +382,17 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		gcsFuseCSIMetricsTest(testNameMultiplePodShouldEmitMetrics, true)
 	})
 
-	ginkgo.It("should emit metrics until a threshold of 10 gcsfuse volumes", func() {
+	ginkgo.It("should emit metrics for 10 gcsfuse volumes", func() {
 		init(10, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
 		gcsFuseCSIMetricsTest(testNamePodThresholdVolumesShouldEmitMetrics, true)
 	})
 
-	ginkgo.It("should emit no metrics when more than 10 gcsfuse volumes are mounted", func() {
+	ginkgo.It("should continue emitting metrics when more than 10 gcsfuse volumes are mounted", func() {
 		init(11, specs.EnableFileCacheForceNewBucketAndMetricsPrefix)
 		defer cleanup()
 
-		gcsFuseCSIMetricsTest(testNamePodExceedsThresholdVolumesShouldNotEmitMetrics, false)
+		gcsFuseCSIMetricsTest(testNamePodExceedsThresholdVolumesShouldNotEmitMetrics, true)
 	})
 }
