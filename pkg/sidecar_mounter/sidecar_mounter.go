@@ -342,10 +342,14 @@ func logVolumeTotalSize(dirPath string) {
 		return nil
 	})
 
-	if err != nil {
-		klog.Errorf("failed to calculate volume total size for %q: %v", dirPath, err)
-	} else {
+	switch {
+	case err == nil:
 		klog.Infof("total volume size of %v: %v bytes", dirPath, totalSize)
+	case os.IsNotExist(err):
+		// The cache/buffer dir may not exist when caching is not in use for this volume, which is expected and not an error.
+		klog.V(4).Infof("skipping volume total size calculation for %q: %v", dirPath, err)
+	default:
+		klog.Errorf("failed to calculate volume total size for %q: %v", dirPath, err)
 	}
 }
 
