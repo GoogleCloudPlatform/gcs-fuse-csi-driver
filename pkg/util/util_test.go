@@ -18,12 +18,17 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"crypto/sha1"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestConvertLabelsStringToMap(t *testing.T) {
@@ -620,4 +625,138 @@ func TestCheckNotSymlink(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsDirMounted(t *testing.T) {
+	tempDir := t.TempDir()
+	fakeProcMounts := filepath.Join(tempDir, "mounts")
+	mountedPath := "/path/to/mounted"
+	content := fmt.Sprintf("device %s fuse.gcsfuse rw 0 0\n", mountedPath)
+	if err := os.WriteFile(fakeProcMounts, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write fake proc mounts: %v", err)
+	}
+
+	oldProcMountsPath := procMountsPath
+	procMountsPath = fakeProcMounts
+	t.Cleanup(func() {
+		procMountsPath = oldProcMountsPath
+	})
+
+	mounted, err := IsDirMounted(mountedPath)
+	if err != nil {
+		t.Fatalf("IsDirMounted failed: %v", err)
+	}
+	if !mounted {
+		t.Errorf("expected path %q to be mounted", mountedPath)
+	}
+
+	notMounted, err := IsDirMounted("/path/to/not/mounted")
+	if err != nil {
+		t.Fatalf("IsDirMounted failed: %v", err)
+	}
+	if notMounted {
+		t.Errorf("expected path not to be mounted")
+	}
+}
+
+func TestWaitForPathMounted(t *testing.T) {
+	mountedPath := "/path/to/mounted"
+	mountContent := fmt.Sprintf("device %s fuse.gcsfuse rw 0 0\n", mountedPath)
+
+	t.Run("already mounted", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(mountContent), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if err := WaitForPathMounted(ctx, mountedPath); err != nil {
+			t.Fatalf("WaitForPathMounted failed: %v", err)
+		}
+	})
+
+	t.Run("mounted after delay", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		timer := time.AfterFunc(500*time.Millisecond, func() {
+			_ = os.WriteFile(fakeProcMounts, []byte(mountContent), 0644)
+		})
+		defer timer.Stop()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := WaitForPathMounted(ctx, mountedPath); err != nil {
+			t.Fatalf("WaitForPathMounted failed: %v", err)
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+
+		err := WaitForPathMounted(ctx, mountedPath)
+		if err == nil {
+			t.Fatal("expected error on timeout, got nil")
+		}
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.DeadlineExceeded {
+			t.Errorf("expected DeadlineExceeded error code, got %v", err)
+		}
+	})
+
+	t.Run("context canceled", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := WaitForPathMounted(ctx, mountedPath)
+		if err == nil {
+			t.Fatal("expected error on canceled context, got nil")
+		}
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.Canceled {
+			t.Errorf("expected Canceled error code, got %v", err)
+		}
+	})
 }

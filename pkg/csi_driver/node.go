@@ -1025,6 +1025,10 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 
 	// Send GRPC to mounter pod to start GCSFuse.
 	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, args.fuseMountOptions); err != nil {
+		klog.Errorf("Failed to mount volume %q to staging path %q: %v", volumeID, stagingPath, err)
+		if code, err := checkMounterPodErrorFile(emptyDirBasePath); err != nil {
+			return nil, status.Error(code, err.Error())
+		}
 		return nil, err
 	}
 

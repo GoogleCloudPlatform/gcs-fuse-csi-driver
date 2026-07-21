@@ -56,6 +56,8 @@ import (
 
 const metricEndpointFmt = "http://localhost:%v/metrics"
 
+var gracefulKillGracePeriod = 5 * time.Second
+
 // Mounter will be used in the sidecar container to invoke gcsfuse.
 type Mounter struct {
 	mounterPath           string
@@ -113,28 +115,29 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
-	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+TempDir, err)
+	if err := createBufferTempDir(mc); err != nil {
+		return err
 	}
 
-	args := []string{}
-	for k, v := range mc.FlagMap {
-		arg := k
-		if v != "" {
-			arg = fmt.Sprintf("%s=%s", k, v)
-		}
-		args = append(args, fmt.Sprintf("--%s", arg))
-	}
-
-	args = append(args, mc.BucketName)
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
-	args = append(args, "/dev/fd/3")
-
-	cmd := m.prepareMountCommand(ctx, mc, args)
+	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
 
-	startCleanupMonitor(ctx, cmd)
+	// when the ctx.Done() is closed,
+	// the main workload containers have exited,
+	// so it is safe to force kill the gcsfuse process.
+	go func(cmd *exec.Cmd) {
+		<-ctx.Done()
+		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
+		time.Sleep(time.Second * 5)
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
+			if err := cmd.Process.Kill(); err != nil {
+				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
+			}
+		}
+	}(cmd)
 
 	m.WaitGroup.Add(1)
 	go func() {
@@ -147,65 +150,156 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
 
-		loggingSeverity := mc.ConfigFileFlagMap["logging:severity"]
-		if loggingSeverity == "debug" || loggingSeverity == "trace" {
-			go logMemoryUsage(ctx, cmd.Process.Pid)
-			go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
-		}
-
-		promPort, ok := mc.FlagMap["prometheus-port"]
-		if ok && promPort != "0" {
-			klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
-			go collectMetrics(ctx, promPort, mc.TempDir)
-		}
+		startVolumeMonitoring(ctx, mc, cmd.Process.Pid)
 
 		// Since the gcsfuse has taken over the file descriptor,
 		// closing the file descriptor to avoid other process forking it.
 		syscall.Close(mc.FileDescriptor)
-		if err := cmd.Wait(); err != nil {
-			errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
-			if strings.Contains(errMsg, "signal: terminated") {
-				klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
-			} else if strings.Contains(errMsg, "signal: killed") {
-				klog.Infof("[%v] gcsfuse was killed.", mc.VolumeName)
-			} else {
-				mc.ErrWriter.WriteMsg(errMsg)
-			}
-		} else {
-			klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
-		}
+		waitForGcsfuseExit(cmd, mc)
 	}()
 
 	return nil
 }
 
 // MountToNode uses the mount config to initialize the GCSFuse process for a share node mount architecture.
-// gcsfuseContext is the long running context from the sidecar, this prevents the gcsfuse process from being killed when the NodeStageVolume context (the ctx variable) is canceled.
-func (m *Mounter) MountToNode(ctx context.Context, gcsfuseContext context.Context, mc *MountConfig) error {
-	return status.Errorf(codes.Unimplemented, "method MountToNode not implemented")
+// mountServerContext is the long running context from the sidecar, using this prevents the gcsfuse process from being killed when the NodeStageVolume context (the ctx variable) is canceled.
+func (m *Mounter) MountToNode(ctx context.Context, mountServerContext context.Context, mc *MountConfig) error {
+	if mc == nil {
+		return status.Error(codes.Internal, "mount config cannot be nil")
+	}
+	if mc.SharedMountPoint == "" {
+		return status.Error(codes.Internal, "shared mount point cannot be empty")
+	}
+	mc.EnsureErrWriter()
+
+	// TODO(yaozile) Implement the host network path for the sidecar mounter, where the token server is started in the sidecar mounter.
+
+	klog.Infof("Start mounting GCS bucket %q", mc.BucketName)
+
+	if err := createBufferTempDir(mc); err != nil {
+		return status.Errorf(codes.Internal, "failed to create buffer temp dir: %v", err)
+	}
+
+	// processCtx is derived from the long-running sidecar container context
+	// (mountServerContext) to tie the gcsfuse daemon lifecycle to the pod container
+	// rather than the short-lived Mount gRPC call. If MountToNode fails (!success),
+	// processCancel is called to shut down the gcsfuse process.
+	processCtx, processCancel := context.WithCancel(mountServerContext)
+	var success bool
+	defer func() {
+		if !success {
+			processCancel()
+		}
+	}()
+
+	cmd := m.prepareMountCommand(processCtx, mc, mc.SharedMountPoint)
+
+	klog.Infof("GCSFuse CSI Driver starting gcsfuse in node mounter...")
+	if err := cmd.Start(); err != nil {
+		return status.Errorf(codes.Internal, "failed to start gcsfuse with error: %v", err)
+	}
+
+	klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
+
+	// cmdDone is closed when waitForGcsfuseExit returns, signaling to forceKillCmd
+	// that the gcsfuse process has exited so it can return immediately without
+	// waiting out the grace period or risking PID reuse.
+	cmdDone := make(chan struct{})
+	// pollCtx is derived from the short-lived Mount gRPC request context (ctx)
+	// and bounds the polling loop in util.WaitForPathMounted so polling stops
+	// if the gRPC request times out, is canceled, or if gcsfuse exits early.
+	pollCtx, pollCancel := context.WithCancel(ctx)
+	defer pollCancel()
+
+	m.WaitGroup.Add(1)
+	go func() {
+		defer m.WaitGroup.Done()
+		waitForGcsfuseExit(cmd, mc)
+		// Broadcast that gcsfuse has exited so forceKillCmd does not call cmd.Process.Kill()
+		// on an already reaped process or a recycled PID.
+		close(cmdDone)
+		pollCancel()
+		processCancel()
+	}()
+
+	// Kill the gcsfuse process if the path has not been mounted within a timeout.
+	// This allows the next Mount attempt to start a fresh gcsfuse process.
+	if err := util.WaitForPathMounted(pollCtx, mc.SharedMountPoint); err != nil {
+		klog.Errorf("gcsfuse process did not mount path %q within the context timeout: %v, killing gcsfuse process with id %d", mc.SharedMountPoint, err, cmd.Process.Pid)
+		// Terminate the gcsfuse process asynchronously to avoid blocking the gRPC response.
+		go func() {
+			forceKillCmd(cmd, cmdDone)
+		}()
+		return err
+	}
+
+	startVolumeMonitoring(mountServerContext, mc, cmd.Process.Pid)
+
+	// Make the gcsfuse process depend on the life-cycle of the mounter pod's container context.
+	// This allows the gcsfuse process to be kept alive until the container is killed, as
+	// opposed to depending on the life-cycle of the Mount gRPC call.
+	go func() {
+		<-processCtx.Done()
+		if mountServerContext.Err() != nil {
+			forceKillCmd(cmd, cmdDone)
+		}
+	}()
+	// Successfully mounted the path, so the gcsfuse process is now tied to the long-running sidecar container context.
+	success = true
+	return nil
 }
 
-func startCleanupMonitor(ctx context.Context, cmd *exec.Cmd) {
-	// when the ctx.Done() is closed,
-	// the main workload containers have exited,
-	// so it is safe to force kill the gcsfuse process.
-	go func(cmd *exec.Cmd) {
-		<-ctx.Done()
+// forceKillCmd will force kill the process for a cmd
+// once cmdDone is closed.
+func forceKillCmd(cmd *exec.Cmd, cmdDone <-chan struct{}) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
 
-		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
-		time.Sleep(time.Second * 5)
+	select {
+	case <-cmdDone:
+		// gcsfuse exited cleanly or responded to SIGTERM within the grace period.
+		// Return immediately without calling cmd.Process.Kill() to prevent PID reuse issues.
+		return
+	case <-time.After(gracefulKillGracePeriod):
+		// Grace period expired and gcsfuse has not exited; force kill the process.
+		klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
 
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
-			if err := cmd.Process.Kill(); err != nil {
-				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
-			}
+		if err := cmd.Process.Kill(); err != nil {
+			klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
 		}
-	}(cmd)
+	}
+}
+
+// waitForGcsfuseExit waits for the gcsfuse process to exit and logs the exit state.
+func waitForGcsfuseExit(cmd *exec.Cmd, mc *MountConfig) {
+	if err := cmd.Wait(); err != nil {
+		errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
+		if strings.Contains(errMsg, "signal: terminated") {
+			klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
+		} else if strings.Contains(errMsg, "signal: killed") {
+			klog.Infof("[%v] gcsfuse was killed.", mc.VolumeName)
+		} else {
+			mc.ErrWriter.WriteMsg(errMsg)
+		}
+	} else {
+		klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
+	}
 }
 
 // prepareMountCommand prepares the exec.Cmd with optional NUMA node binding using numactl.
-func (m *Mounter) prepareMountCommand(ctx context.Context, mc *MountConfig, args []string) *exec.Cmd {
+func (m *Mounter) prepareMountCommand(ctx context.Context, mc *MountConfig, mountPoint string) *exec.Cmd {
+	args := []string{}
+	for k, v := range mc.FlagMap {
+		arg := k
+		if v != "" {
+			arg = fmt.Sprintf("%s=%s", k, v)
+		}
+		args = append(args, fmt.Sprintf("--%s", arg))
+	}
+
+	args = append(args, mc.BucketName)
+	args = append(args, mountPoint)
 	cmdName := m.mounterPath
 	if mc.GcsFuseNumaNode >= 0 && numactlAllowed(ctx, mc.GcsFuseNumaNode) {
 		// A nonnegative numa node has been calculated by the csi driver by looking at network
@@ -270,6 +364,32 @@ func numactlAllowed(ctx context.Context, node int) bool {
 	}
 	klog.Infof("numactl checks out")
 	return true
+}
+
+// createBufferTempDir creates the buffer temporary directory for the volume mount.
+func createBufferTempDir(mc *MountConfig) error {
+	bufferTmpDir := filepath.Join(mc.BufferDir, TempDir)
+	if err := os.MkdirAll(bufferTmpDir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create temp dir %q: %w", bufferTmpDir, err)
+	}
+
+	return nil
+}
+
+// startVolumeMonitoring starts background goroutines for memory usage logging, volume usage logging,
+// and Prometheus metrics collection if configured.
+func startVolumeMonitoring(ctx context.Context, mc *MountConfig, pid int) {
+	loggingSeverity := mc.ConfigFileFlagMap["logging:severity"]
+	if loggingSeverity == "debug" || loggingSeverity == "trace" {
+		go logMemoryUsage(ctx, pid)
+		go logVolumeUsage(ctx, mc.BufferDir, mc.CacheDir)
+	}
+
+	promPort, ok := mc.FlagMap["prometheus-port"]
+	if ok && promPort != "0" {
+		klog.Infof("start to collect metrics from port %v for volume %q", promPort, mc.VolumeName)
+		go collectMetrics(ctx, promPort, mc.TempDir)
+	}
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.

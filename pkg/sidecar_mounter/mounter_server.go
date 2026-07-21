@@ -32,12 +32,18 @@ type MounterServer struct {
 	mounter.UnimplementedMounterServer
 	mounter   *Mounter
 	serverCtx context.Context
+	tmpDir    string
+	bufferDir string
+	cacheDir  string
 }
 
 func NewMounterServer(ctx context.Context, mounter *Mounter) *MounterServer {
 	return &MounterServer{
 		mounter:   mounter,
 		serverCtx: ctx,
+		tmpDir:    webhook.SidecarContainerTmpVolumeMountPath,
+		bufferDir: webhook.SidecarContainerBufferVolumeMountPath,
+		cacheDir:  webhook.SidecarContainerCacheVolumeMountPath,
 	}
 }
 
@@ -57,11 +63,11 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 		BucketName:          util.ParseVolumeID(req.GetVolumeId()),
 		Options:             req.GetMountOptions(),
 		SharedMountPoint:    req.GetMountPoint(),
-		TempDir:             webhook.SidecarContainerTmpVolumeMountPath,
-		ErrWriter:           NewErrorWriter(filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, util.ErrorFileName)),
-		BufferDir:           webhook.SidecarContainerBufferVolumeMountPath,
-		CacheDir:            webhook.SidecarContainerCacheVolumeMountPath,
-		ConfigFile:          filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, "config.yaml"),
+		TempDir:             ms.tmpDir,
+		ErrWriter:           NewErrorWriter(filepath.Join(ms.tmpDir, util.ErrorFileName)),
+		BufferDir:           ms.bufferDir,
+		CacheDir:            ms.cacheDir,
+		ConfigFile:          filepath.Join(ms.tmpDir, "config.yaml"),
 		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 

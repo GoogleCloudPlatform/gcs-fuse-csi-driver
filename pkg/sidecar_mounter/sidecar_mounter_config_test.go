@@ -280,6 +280,31 @@ func TestPrepareMountArgs(t *testing.T) {
 			},
 		},
 		{
+			name: "should override cache-dir without .volumes subdirectory when SharedMountPoint is set",
+			mc: &MountConfig{
+				BucketName:       "test-bucket",
+				BufferDir:        "test-buffer-dir",
+				CacheDir:         "test-cache-dir",
+				ConfigFile:       "test-config-file",
+				FileCacheMedium:  "ram",
+				VolumeName:       "volume-name",
+				SharedMountPoint: "/mnt/shared",
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "/gcsfuse-file-cache-ram-disk",
+			},
+		},
+		{
 			name: "should override cache-dir when file cache medium is lssd",
 			mc: &MountConfig{
 				BucketName:      "test-bucket",
@@ -758,6 +783,46 @@ func TestPrepareConfigFile(t *testing.T) {
 					"type-cache-max-size-mb": -1,
 				},
 				"cache-dir": "/gcsfuse-file-cache-ephemeral-disk/.volumes/volume-name",
+			},
+		},
+		{
+			name: "should create valid config file without .volumes subdirectory when SharedMountPoint is set",
+			mc: &MountConfig{
+				ConfigFile: "./test-config-file.yaml",
+				TempDir:    "test-temp-dir",
+				ConfigFileFlagMap: map[string]string{
+					"logging:file-path":                     "/dev/fd/1",
+					"logging:format":                        "json",
+					"logging:severity":                      "error",
+					"write:create-empty-file":               "true",
+					"file-cache:max-size-mb":                "10000",
+					"file-cache:cache-file-for-range-read":  "true",
+					"metadata-cache:stat-cache-max-size-mb": "1000",
+					"metadata-cache:type-cache-max-size-mb": "-1",
+					"cache-dir":                             "/gcsfuse-file-cache-ram-disk",
+				},
+				VolumeName:       "volume-name",
+				FileCacheMedium:  "ram",
+				SharedMountPoint: "/mnt/shared",
+			},
+			expectedConfig: map[string]interface{}{
+				"logging": map[string]interface{}{
+					"file-path": "/dev/fd/1",
+					"format":    "json",
+					"severity":  "error",
+				},
+				"write": map[string]interface{}{
+					"create-empty-file": true,
+				},
+				"file-cache": map[string]interface{}{
+					"max-size-mb":               10000,
+					"cache-file-for-range-read": true,
+				},
+				"metadata-cache": map[string]interface{}{
+					"stat-cache-max-size-mb": 1000,
+					"type-cache-max-size-mb": -1,
+				},
+				"cache-dir": "/gcsfuse-file-cache-ram-disk",
 			},
 		},
 		{
