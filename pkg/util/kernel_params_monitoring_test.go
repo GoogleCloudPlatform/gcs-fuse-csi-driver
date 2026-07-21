@@ -18,6 +18,8 @@ limitations under the License.
 package util
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -379,5 +381,295 @@ func TestValidateParamValue(t *testing.T) {
 				t.Errorf("validateParamValue(%q, %q): unexpected error: %v", tc.paramName, tc.paramValue, err)
 			}
 		})
+	}
+}
+
+func TestFuseMaxMaxPagesUpdateSupported(t *testing.T) {
+	origPath := procSysFsFuseMaxPagesLimitPath
+	t.Cleanup(func() {
+		procSysFsFuseMaxPagesLimitPath = origPath
+	})
+
+	testCases := []struct {
+		name           string
+		setup          func(t *testing.T, tempDir string) string
+		expectedResult bool
+	}{
+		{
+			name: "FileDoesNotExist",
+			setup: func(t *testing.T, tempDir string) string {
+				return filepath.Join(tempDir, "missing_file")
+			},
+			expectedResult: false,
+		},
+		{
+			name: "FileExists",
+			setup: func(t *testing.T, tempDir string) string {
+				path := filepath.Join(tempDir, "existing_file")
+				if err := os.WriteFile(path, []byte("16\n"), 0644); err != nil {
+					t.Fatalf("failed to write temp file: %v", err)
+				}
+				return path
+			},
+			expectedResult: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			procSysFsFuseMaxPagesLimitPath = tc.setup(t, tempDir)
+			result := FuseMaxMaxPagesUpdateSupported()
+			if result != tc.expectedResult {
+				t.Errorf("Expected %v, got %v", tc.expectedResult, result)
+			}
+		})
+	}
+}
+
+func TestReadFuseMaxPagesLimit(t *testing.T) {
+	origPath := procSysFsFuseMaxPagesLimitPath
+	t.Cleanup(func() {
+		procSysFsFuseMaxPagesLimitPath = origPath
+	})
+
+	testCases := []struct {
+		name          string
+		setup         func(t *testing.T, tempDir string) string
+		expectedValue int64
+		expectError   bool
+	}{
+		{
+			name: "FileDoesNotExist",
+			setup: func(t *testing.T, tempDir string) string {
+				return filepath.Join(tempDir, "missing_file")
+			},
+			expectedValue: 0,
+			expectError:   true,
+		},
+		{
+			name: "ValidContent",
+			setup: func(t *testing.T, tempDir string) string {
+				path := filepath.Join(tempDir, "valid_file")
+				if err := os.WriteFile(path, []byte("  256\n"), 0644); err != nil {
+					t.Fatalf("failed to write temp file: %v", err)
+				}
+				return path
+			},
+			expectedValue: 256,
+			expectError:   false,
+		},
+		{
+			name: "InvalidContent",
+			setup: func(t *testing.T, tempDir string) string {
+				path := filepath.Join(tempDir, "invalid_file")
+				if err := os.WriteFile(path, []byte("abc\n"), 0644); err != nil {
+					t.Fatalf("failed to write temp file: %v", err)
+				}
+				return path
+			},
+			expectedValue: 0,
+			expectError:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			procSysFsFuseMaxPagesLimitPath = tc.setup(t, tempDir)
+			val, err := ReadFuseMaxPagesLimit()
+			if tc.expectError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if val != tc.expectedValue {
+					t.Errorf("Expected %d, got %d", tc.expectedValue, val)
+				}
+			}
+		})
+	}
+}
+
+func TestSetFuseMaxPagesLimit(t *testing.T) {
+	origPath := procSysFsFuseMaxPagesLimitPath
+	t.Cleanup(func() {
+		procSysFsFuseMaxPagesLimitPath = origPath
+	})
+
+	testCases := []struct {
+		name            string
+		inputLimit      int64
+		expectedContent string
+	}{
+		{
+			name:            "WritePositive",
+			inputLimit:      512,
+			expectedContent: "512\n",
+		},
+		{
+			name:            "WriteZero",
+			inputLimit:      0,
+			expectedContent: "0\n",
+		},
+		{
+			name:            "WriteNegative",
+			inputLimit:      -1,
+			expectedContent: "-1\n",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			tempFile := filepath.Join(tempDir, "max_pages_limit")
+			procSysFsFuseMaxPagesLimitPath = tempFile
+
+			if err := SetFuseMaxPagesLimit(tc.inputLimit); err != nil {
+				t.Fatalf("SetFuseMaxPagesLimit failed: %v", err)
+			}
+
+			bytes, err := os.ReadFile(tempFile)
+			if err != nil {
+				t.Fatalf("failed to read temp file: %v", err)
+			}
+			if string(bytes) != tc.expectedContent {
+				t.Errorf("Expected file content %q, got %q", tc.expectedContent, string(bytes))
+			}
+		})
+	}
+}
+
+func TestMountUsingElevatedFuseMaxPagesLimit(t *testing.T) {
+	origPath := procSysFsFuseMaxPagesLimitPath
+	t.Cleanup(func() {
+		procSysFsFuseMaxPagesLimitPath = origPath
+	})
+
+	testCases := []struct {
+		name                 string
+		initialLimit         int64
+		targetLimit          int64
+		fn                   func(tempFile string) func() error
+		expectedMountError   bool
+		expectedLimitInMount int64
+		expectedFinalLimit   int64
+		expectPanic          bool
+	}{
+		{
+			name:         "should temporarily increase limit and restore it",
+			initialLimit: 256,
+			targetLimit:  512,
+			fn: func(tempFile string) func() error {
+				return func() error {
+					// Inside the mount function, the limit should be increased to 512
+					limit, err := ReadFuseMaxPagesLimit()
+					if err != nil {
+						return err
+					}
+					if limit != 512 {
+						return fmt.Errorf("expected limit during mount to be 512, got %d", limit)
+					}
+					return nil
+				}
+			},
+			expectedFinalLimit: 256,
+		},
+		{
+			name:         "should not change limit if target is smaller or equal",
+			initialLimit: 256,
+			targetLimit:  128,
+			fn: func(tempFile string) func() error {
+				return func() error {
+					limit, err := ReadFuseMaxPagesLimit()
+					if err != nil {
+						return err
+					}
+					if limit != 256 {
+						return fmt.Errorf("expected limit during mount to remain 256, got %d", limit)
+					}
+					return nil
+				}
+			},
+			expectedFinalLimit: 256,
+		},
+		{
+			name:         "should propagate error and still restore limit",
+			initialLimit: 256,
+			targetLimit:  512,
+			fn: func(tempFile string) func() error {
+				return func() error {
+					return errors.New("mount failed")
+				}
+			},
+			expectedMountError: true,
+			expectedFinalLimit: 256,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			tempFile := filepath.Join(tempDir, "max_pages_limit")
+			procSysFsFuseMaxPagesLimitPath = tempFile
+
+			if err := SetFuseMaxPagesLimit(tc.initialLimit); err != nil {
+				t.Fatalf("SetFuseMaxPagesLimit failed: %v", err)
+			}
+
+			err := MountUsingElevatedFuseMaxPagesLimit(tc.targetLimit, "test", tc.fn(tempFile))
+			if tc.expectedMountError && err == nil {
+				t.Errorf("Expected mount error, got nil")
+			}
+			if !tc.expectedMountError && err != nil {
+				t.Errorf("Unexpected mount error: %v", err)
+			}
+
+			finalLimit, err := ReadFuseMaxPagesLimit()
+			if err != nil {
+				t.Fatalf("failed to read final limit: %v", err)
+			}
+			if finalLimit != tc.expectedFinalLimit {
+				t.Errorf("Expected final limit to be %d, got %d", tc.expectedFinalLimit, finalLimit)
+			}
+		})
+	}
+}
+
+func TestMountUsingElevatedFuseMaxPagesLimitPanic(t *testing.T) {
+	origPath := procSysFsFuseMaxPagesLimitPath
+	t.Cleanup(func() {
+		procSysFsFuseMaxPagesLimitPath = origPath
+	})
+
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "max_pages_limit")
+	procSysFsFuseMaxPagesLimitPath = tempFile
+
+	if err := SetFuseMaxPagesLimit(256); err != nil {
+		t.Fatalf("SetFuseMaxPagesLimit failed: %v", err)
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("Expected panic, did not panic")
+			}
+		}()
+
+		_ = MountUsingElevatedFuseMaxPagesLimit(512, "test", func() error {
+			panic("mount panic")
+		})
+	}()
+
+	finalLimit, err := ReadFuseMaxPagesLimit()
+	if err != nil {
+		t.Fatalf("failed to read final limit: %v", err)
+	}
+	if finalLimit != 256 {
+		t.Errorf("Expected final limit to be restored to 256, got %d", finalLimit)
 	}
 }
