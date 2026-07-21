@@ -18,7 +18,6 @@ package containermap
 
 import (
 	"fmt"
-	"maps"
 )
 
 // cmItem (ContainerMap ITEM) is a pair podUID, containerName
@@ -37,7 +36,11 @@ func NewContainerMap() ContainerMap {
 
 // Clone creates a deep copy of the ContainerMap
 func (cm ContainerMap) Clone() ContainerMap {
-	return maps.Clone(cm)
+	ret := make(ContainerMap, len(cm))
+	for key, val := range cm {
+		ret[key] = val
+	}
+	return ret
 }
 
 // Add adds a mapping of (containerID)->(podUID, containerName) to the ContainerMap

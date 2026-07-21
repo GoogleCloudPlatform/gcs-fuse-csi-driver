@@ -119,7 +119,6 @@ var standardResourceQuotaScopes = sets.New(
 	core.ResourceQuotaScopeBestEffort,
 	core.ResourceQuotaScopeNotBestEffort,
 	core.ResourceQuotaScopePriorityClass,
-	core.ResourceQuotaScopeVolumeAttributesClass,
 )
 
 // IsStandardResourceQuotaScope returns true if the scope is a standard value
@@ -140,14 +139,6 @@ var podComputeQuotaResources = sets.New(
 	core.ResourceRequestsMemory,
 )
 
-var pvcObjectCountQuotaResources = sets.New(
-	core.ResourcePersistentVolumeClaims,
-)
-
-var pvcStorageQuotaResources = sets.New(
-	core.ResourceRequestsStorage,
-)
-
 // IsResourceQuotaScopeValidForResource returns true if the resource applies to the specified scope
 func IsResourceQuotaScopeValidForResource(scope core.ResourceQuotaScope, resource core.ResourceName) bool {
 	switch scope {
@@ -156,8 +147,6 @@ func IsResourceQuotaScopeValidForResource(scope core.ResourceQuotaScope, resourc
 		return podObjectCountQuotaResources.Has(resource) || podComputeQuotaResources.Has(resource)
 	case core.ResourceQuotaScopeBestEffort:
 		return podObjectCountQuotaResources.Has(resource)
-	case core.ResourceQuotaScopeVolumeAttributesClass:
-		return pvcObjectCountQuotaResources.Has(resource) || pvcStorageQuotaResources.Has(resource)
 	default:
 		return true
 	}
@@ -510,19 +499,4 @@ func validFirstDigit(str string) bool {
 		return false
 	}
 	return str[0] == '-' || (str[0] == '0' && str == "0") || (str[0] >= '1' && str[0] <= '9')
-}
-
-// HasInvalidLabelValueInNodeSelectorTerms checks if there's an invalid label value
-// in one NodeSelectorTerm's MatchExpression values
-func HasInvalidLabelValueInNodeSelectorTerms(terms []core.NodeSelectorTerm) bool {
-	for _, term := range terms {
-		for _, expression := range term.MatchExpressions {
-			for _, value := range expression.Values {
-				if len(validation.IsValidLabelValue(value)) > 0 {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

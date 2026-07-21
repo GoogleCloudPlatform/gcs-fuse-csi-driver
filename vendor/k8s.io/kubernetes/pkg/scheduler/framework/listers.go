@@ -50,13 +50,8 @@ type SharedLister interface {
 
 // ResourceSliceLister can be used to obtain ResourceSlices.
 type ResourceSliceLister interface {
-	// ListWithDeviceTaintRules returns a list of all ResourceSlices with DeviceTaintRules applied
-	// if the DRADeviceTaints feature is enabled, otherwise without them.
-	//
-	// k8s.io/dynamic-resource-allocation/resourceslice/tracker provides an implementation
-	// of the necessary logic. That tracker can be instantiated as a replacement for
-	// a normal ResourceSlice informer and provides a ListPatchedResourceSlices method.
-	ListWithDeviceTaintRules() ([]*resourceapi.ResourceSlice, error)
+	// List returns a list of all ResourceSlices.
+	List() ([]*resourceapi.ResourceSlice, error)
 }
 
 // DeviceClassLister can be used to obtain DeviceClasses.

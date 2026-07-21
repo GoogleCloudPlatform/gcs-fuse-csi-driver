@@ -44,10 +44,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 )
 
-// ProbeOperation represents a type of operation for probing volume plugins.
 type ProbeOperation uint32
-
-// ProbeEvent represents an event triggered during a volume plugin probe operation.
 type ProbeEvent struct {
 	Plugin     VolumePlugin // VolumePlugin that was added/updated/removed. if ProbeEvent.Op is 'ProbeRemove', Plugin should be nil
 	PluginName string
@@ -55,22 +52,17 @@ type ProbeEvent struct {
 }
 
 const (
-	// VolumeParameterFSType is a common parameter which can be specified in StorageClass to specify the desired FSType
+	// Common parameter which can be specified in StorageClass to specify the desired FSType
 	// Provisioners SHOULD implement support for this if they are block device based
 	// Must be a filesystem type supported by the host operating system.
 	// Ex. "ext4", "xfs", "ntfs". Default value depends on the provisioner
 	VolumeParameterFSType = "fstype"
 
-	// ProbeAddOrUpdate represents an operation where a probe is added or updated.
 	ProbeAddOrUpdate ProbeOperation = 1 << iota
-
-	// ProbeRemove represents an operation to remove a probe.
-	// This operation is used to indicate that a previously added probe should be removed.
 	ProbeRemove
 )
 
-// ErrNoPluginMatched is used to return when no volume plugin matches the requested type.
-var ErrNoPluginMatched = errors.New("no volume plugin matched")
+var ErrNoPluiginMatched = errors.New("no volume plugin matched")
 
 // VolumeOptions contains option information about a volume.
 type VolumeOptions struct {
@@ -116,7 +108,6 @@ type NodeResizeOptions struct {
 	OldSize resource.Quantity
 }
 
-// DynamicPluginProber is an interface that defines methods for probing dynamic volume plugins.
 type DynamicPluginProber interface {
 	Init() error
 
@@ -234,7 +225,6 @@ type AttachableVolumePlugin interface {
 	NewDetacher() (Detacher, error)
 	// CanAttach tests if provided volume spec is attachable
 	CanAttach(spec *Spec) (bool, error)
-	VerifyExhaustedResource(spec *Spec, nodeName types.NodeName)
 }
 
 // DeviceMountableVolumePlugin is an extended interface of VolumePlugin and is used
@@ -638,8 +628,9 @@ func (pm *VolumePluginMgr) initProbedPlugin(probedPlugin VolumePlugin) error {
 // specification.  If no plugins can support or more than one plugin can
 // support it, return error.
 func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
-	pm.mutex.Lock()
-	defer pm.mutex.Unlock()
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
+
 	if spec == nil {
 		return nil, fmt.Errorf("could not find plugin because volume spec is nil")
 	}
@@ -652,8 +643,8 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 			matchedPluginNames = append(matchedPluginNames, v.GetPluginName())
 		}
 	}
-	pm.refreshProbedPlugins()
 
+	pm.refreshProbedPlugins()
 	for _, plugin := range pm.probedPlugins {
 		if plugin.CanSupport(spec) {
 			match = plugin
@@ -662,7 +653,7 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 	}
 
 	if len(matchedPluginNames) == 0 {
-		return nil, ErrNoPluginMatched
+		return nil, ErrNoPluiginMatched
 	}
 	if len(matchedPluginNames) > 1 {
 		return nil, fmt.Errorf("multiple volume plugins matched: %s", strings.Join(matchedPluginNames, ","))
@@ -673,13 +664,14 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 
 // FindPluginByName fetches a plugin by name. If no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindPluginByName(name string) (VolumePlugin, error) {
-	pm.mutex.Lock()
-	defer pm.mutex.Unlock()
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
 
 	var match VolumePlugin
 	if v, found := pm.plugins[name]; found {
 		match = v
 	}
+
 	pm.refreshProbedPlugins()
 	if plugin, found := pm.probedPlugins[name]; found {
 		if match != nil {
@@ -706,7 +698,6 @@ func (pm *VolumePluginMgr) refreshProbedPlugins() {
 	// because the probe function can return a list of valid plugins
 	// even when an error is present we still must add the plugins
 	// or they will be skipped because each event only fires once
-
 	for _, event := range events {
 		if event.Op == ProbeAddOrUpdate {
 			if err := pm.initProbedPlugin(event.Plugin); err != nil {
@@ -739,7 +730,7 @@ func (pm *VolumePluginMgr) FindPersistentPluginBySpec(spec *Spec) (PersistentVol
 	return nil, fmt.Errorf("no persistent volume plugin matched")
 }
 
-// FindPersistentPluginByName fetches a recyclable persistent volume plugin by name.  If
+// FindPersistentPluginByName fetches a persistent volume plugin by name.  If
 // no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindPersistentPluginByName(name string) (PersistentVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginByName(name)
@@ -752,7 +743,7 @@ func (pm *VolumePluginMgr) FindPersistentPluginByName(name string) (PersistentVo
 	return nil, fmt.Errorf("no persistent volume plugin matched")
 }
 
-// FindRecyclablePluginBySpec fetches a recyclable persistent volume plugin by spec.  If
+// FindRecyclablePluginByName fetches a persistent volume plugin by name.  If
 // no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindRecyclablePluginBySpec(spec *Spec) (RecyclableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginBySpec(spec)
@@ -765,7 +756,7 @@ func (pm *VolumePluginMgr) FindRecyclablePluginBySpec(spec *Spec) (RecyclableVol
 	return nil, fmt.Errorf("no recyclable volume plugin matched")
 }
 
-// FindProvisionablePluginByName fetches a provisionable persistent volume plugin by name.  If
+// FindProvisionablePluginByName fetches  a persistent volume plugin by name.  If
 // no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindProvisionablePluginByName(name string) (ProvisionableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginByName(name)
@@ -778,7 +769,7 @@ func (pm *VolumePluginMgr) FindProvisionablePluginByName(name string) (Provision
 	return nil, fmt.Errorf("no provisionable volume plugin matched")
 }
 
-// FindDeletablePluginBySpec fetches a provisionable persistent volume plugin by spec.  If
+// FindDeletablePluginBySpec fetches a persistent volume plugin by spec.  If
 // no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindDeletablePluginBySpec(spec *Spec) (DeletableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginBySpec(spec)
@@ -791,7 +782,7 @@ func (pm *VolumePluginMgr) FindDeletablePluginBySpec(spec *Spec) (DeletableVolum
 	return nil, fmt.Errorf("no deletable volume plugin matched")
 }
 
-// FindDeletablePluginByName fetches a deleteable persistent volume plugin by name.  If
+// FindDeletablePluginByName fetches a persistent volume plugin by name.  If
 // no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindDeletablePluginByName(name string) (DeletableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginByName(name)
@@ -838,7 +829,7 @@ func (pm *VolumePluginMgr) FindAttachablePluginByName(name string) (AttachableVo
 	return nil, nil
 }
 
-// FindDeviceMountablePluginBySpec fetches a devicemountable persistent volume plugin by spec.
+// FindDeviceMountablePluginBySpec fetches a persistent volume plugin by spec.
 func (pm *VolumePluginMgr) FindDeviceMountablePluginBySpec(spec *Spec) (DeviceMountableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginBySpec(spec)
 	if err != nil {
@@ -854,7 +845,7 @@ func (pm *VolumePluginMgr) FindDeviceMountablePluginBySpec(spec *Spec) (DeviceMo
 	return nil, nil
 }
 
-// FindDeviceMountablePluginByName fetches a devicemountable persistent volume plugin by name.
+// FindDeviceMountablePluginByName fetches a devicemountable volume plugin by name.
 func (pm *VolumePluginMgr) FindDeviceMountablePluginByName(name string) (DeviceMountableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginByName(name)
 	if err != nil {
@@ -866,7 +857,7 @@ func (pm *VolumePluginMgr) FindDeviceMountablePluginByName(name string) (DeviceM
 	return nil, nil
 }
 
-// FindExpandablePluginBySpec fetches an expandable persistent volume plugin by spec.
+// FindExpandablePluginBySpec fetches a persistent volume plugin by spec.
 func (pm *VolumePluginMgr) FindExpandablePluginBySpec(spec *Spec) (ExpandableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginBySpec(spec)
 	if err != nil {
@@ -876,7 +867,7 @@ func (pm *VolumePluginMgr) FindExpandablePluginBySpec(spec *Spec) (ExpandableVol
 			klog.V(4).InfoS("FindExpandablePluginBySpec -> returning noopExpandableVolumePluginInstance", "specName", spec.Name())
 			return &noopExpandableVolumePluginInstance{spec}, nil
 		}
-		if errors.Is(err, ErrNoPluginMatched) {
+		if errors.Is(err, ErrNoPluiginMatched) {
 			return nil, nil
 		}
 		klog.V(4).InfoS("FindExpandablePluginBySpec -> err", "specName", spec.Name(), "err", err)
@@ -889,7 +880,7 @@ func (pm *VolumePluginMgr) FindExpandablePluginBySpec(spec *Spec) (ExpandableVol
 	return nil, nil
 }
 
-// FindExpandablePluginByName fetches an expandable persistent volume plugin by name.
+// FindExpandablePluginBySpec fetches a persistent volume plugin by name.
 func (pm *VolumePluginMgr) FindExpandablePluginByName(name string) (ExpandableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginByName(name)
 	if err != nil {
@@ -928,7 +919,7 @@ func (pm *VolumePluginMgr) FindMapperPluginByName(name string) (BlockVolumePlugi
 	return nil, nil
 }
 
-// FindNodeExpandablePluginBySpec fetches a node expandable persistent volume plugin by spec
+// FindNodeExpandablePluginBySpec fetches a persistent volume plugin by spec
 func (pm *VolumePluginMgr) FindNodeExpandablePluginBySpec(spec *Spec) (NodeExpandableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginBySpec(spec)
 	if err != nil {
@@ -940,7 +931,7 @@ func (pm *VolumePluginMgr) FindNodeExpandablePluginBySpec(spec *Spec) (NodeExpan
 	return nil, nil
 }
 
-// FindNodeExpandablePluginByName fetches a node expandable persistent volume plugin by name
+// FindNodeExpandablePluginByName fetches a persistent volume plugin by name
 func (pm *VolumePluginMgr) FindNodeExpandablePluginByName(name string) (NodeExpandableVolumePlugin, error) {
 	volumePlugin, err := pm.FindPluginByName(name)
 	if err != nil {
@@ -954,9 +945,6 @@ func (pm *VolumePluginMgr) FindNodeExpandablePluginByName(name string) (NodeExpa
 	return nil, nil
 }
 
-// Run starts the volume plugin manager, initializing and running the necessary
-// tasks for managing volume plugins. This method is typically called to begin
-// the plugin management lifecycle.
 func (pm *VolumePluginMgr) Run(stopCh <-chan struct{}) {
 	kletHost, ok := pm.Host.(KubeletVolumeHost)
 	if ok {
@@ -1019,7 +1007,7 @@ func NewPersistentVolumeRecyclerPodTemplate() *v1.Pod {
 	return pod
 }
 
-// ValidateRecyclerPodTemplate checks validity of recycle pod template
+// Check validity of recycle pod template
 // List of checks:
 // - at least one volume is defined in the recycle pod template
 // If successful, returns nil
