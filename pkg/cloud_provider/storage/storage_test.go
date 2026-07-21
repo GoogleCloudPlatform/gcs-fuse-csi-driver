@@ -38,13 +38,13 @@ func TestCompareBuckets(t *testing.T) {
 				Name:      "name",
 				Project:   "project",
 				Location:  "location",
-				SizeBytes: 10 * util.Mb,
+				SizeBytes: 10 * util.MiB,
 			},
 			b: &ServiceBucket{
 				Name:      "name",
 				Project:   "project",
 				Location:  "location",
-				SizeBytes: 10 * util.Mb,
+				SizeBytes: 10 * util.MiB,
 			},
 		},
 		{
@@ -53,13 +53,13 @@ func TestCompareBuckets(t *testing.T) {
 				Name:      "name1",
 				Project:   "project1",
 				Location:  "location1",
-				SizeBytes: 10 * util.Mb,
+				SizeBytes: 10 * util.MiB,
 			},
 			b: &ServiceBucket{
 				Name:      "name2",
 				Project:   "project2",
 				Location:  "location2",
-				SizeBytes: 20 * util.Mb,
+				SizeBytes: 20 * util.MiB,
 			},
 			expectedMismatches: []string{
 				"bucket name",

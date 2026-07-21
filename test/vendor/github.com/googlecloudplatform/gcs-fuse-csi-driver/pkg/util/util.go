@@ -36,7 +36,8 @@ import (
 )
 
 const (
-	Mb = 1024 * 1024
+	KiB = 1024
+	MiB = 1024 * KiB
 
 	TrueStr  = "true"
 	FalseStr = "false"
@@ -75,6 +76,8 @@ const (
 	KubeletPluginsGCSFuseDir            = "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io"
 	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
 	MounterPodNamePrefix                = "gcsfusecsi-mount"
+	SidecarImageConfigMapName           = "gcsfusecsi-image-config"
+	SidecarImageConfigMapKey            = "sidecar-image"
 )
 
 var (
@@ -336,4 +339,9 @@ func CheckNotSymlink(path string) error {
 		return fmt.Errorf("security error: path %q is a symlink", path)
 	}
 	return nil
+}
+
+// CeilDiv64 performs integer division of 'a' by 'b', rounding the result up.
+func CeilDiv64(a, b int64) int64 {
+	return (a + b - 1) / b
 }
