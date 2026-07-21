@@ -198,7 +198,6 @@ type StatefulSetSpec struct {
 	// the network identity of the set. Pods get DNS/hostnames that follow the
 	// pattern: pod-specific-string.serviceName.default.svc.cluster.local
 	// where "pod-specific-string" is managed by the StatefulSet controller.
-	// +optional
 	ServiceName string
 
 	// PodManagementPolicy controls how pods are created during initial scale up,
@@ -508,19 +507,19 @@ type DeploymentStatus struct {
 	// +optional
 	ObservedGeneration int64
 
-	// Total number of non-terminating pods targeted by this deployment (their labels match the selector).
+	// Total number of non-terminated pods targeted by this deployment (their labels match the selector).
 	// +optional
 	Replicas int32
 
-	// Total number of non-terminating pods targeted by this deployment that have the desired template spec.
+	// Total number of non-terminated pods targeted by this deployment that have the desired template spec.
 	// +optional
 	UpdatedReplicas int32
 
-	// Total number of non-terminating pods targeted by this Deployment with a Ready Condition.
+	// Total number of ready pods targeted by this deployment.
 	// +optional
 	ReadyReplicas int32
 
-	// Total number of available non-terminating pods (ready for at least minReadySeconds) targeted by this deployment.
+	// Total number of available pods (ready for at least minReadySeconds) targeted by this deployment.
 	// +optional
 	AvailableReplicas int32
 
@@ -529,13 +528,6 @@ type DeploymentStatus struct {
 	// either be pods that are running but not yet available or pods that still have not been created.
 	// +optional
 	UnavailableReplicas int32
-
-	// Total number of terminating pods targeted by this deployment. Terminating pods have a non-null
-	// .metadata.deletionTimestamp and have not yet reached the Failed or Succeeded .status.phase.
-	//
-	// This is an alpha field. Enable DeploymentReplicaSetTerminatingReplicas to be able to use this field.
-	// +optional
-	TerminatingReplicas *int32
 
 	// Represents the latest available observations of a deployment's current state.
 	Conditions []DeploymentCondition
@@ -873,30 +865,22 @@ type ReplicaSetSpec struct {
 
 // ReplicaSetStatus represents the current status of a ReplicaSet.
 type ReplicaSetStatus struct {
-	// Replicas is the most recently observed number of non-terminating pods.
-	// More info: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset
+	// Replicas is the number of actual replicas.
 	Replicas int32
 
-	// The number of non-terminating pods that have labels matching the labels of the pod template of the replicaset.
+	// The number of pods that have labels matching the labels of the pod template of the replicaset.
 	// +optional
 	FullyLabeledReplicas int32
 
-	// The number of non-terminating pods targeted by this ReplicaSet with a Ready Condition.
+	// The number of ready replicas for this replica set.
 	// +optional
 	ReadyReplicas int32
 
-	// The number of available non-terminating pods (ready for at least minReadySeconds) for this replica set.
+	// The number of available replicas (ready for at least minReadySeconds) for this replica set.
 	// +optional
 	AvailableReplicas int32
 
-	// The number of terminating pods for this replica set. Terminating pods have a non-null .metadata.deletionTimestamp
-	// and have not yet reached the Failed or Succeeded .status.phase.
-	//
-	// This is an alpha field. Enable DeploymentReplicaSetTerminatingReplicas to be able to use this field.
-	// +optional
-	TerminatingReplicas *int32
-
-	// ObservedGeneration reflects the generation of the most recently observed ReplicaSet.
+	// ObservedGeneration is the most recent generation observed by the controller.
 	// +optional
 	ObservedGeneration int64
 

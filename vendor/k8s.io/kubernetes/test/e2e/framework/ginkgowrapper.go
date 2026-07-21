@@ -41,6 +41,11 @@ type Feature string
 // "Linux" or "Windows".
 type Environment string
 
+// NodeFeature is the name of a feature that a node must support. To be
+// removed, see
+// https://github.com/kubernetes/enhancements/tree/master/keps/sig-testing/3041-node-conformance-and-features#nodefeature.
+type NodeFeature string
+
 type Valid[T comparable] struct {
 	items  sets.Set[T]
 	frozen bool
@@ -71,13 +76,14 @@ func (v *Valid[T]) Freeze() {
 	v.frozen = true
 }
 
-// These variables contain the parameters that [WithFeature] and [WithEnvironment] accept.
-// The framework itself has no pre-defined
+// These variables contain the parameters that [WithFeature], [WithEnvironment]
+// and [WithNodeFeatures] accept. The framework itself has no pre-defined
 // constants. Test suites and tests may define their own and then add them here
 // before calling these With functions.
 var (
 	ValidFeatures     Valid[Feature]
 	ValidEnvironments Valid[Environment]
+	ValidNodeFeatures Valid[NodeFeature]
 )
 
 var errInterface = reflect.TypeOf((*error)(nil)).Elem()
@@ -91,12 +97,7 @@ func IgnoreNotFound(in any) any {
 	inType := reflect.TypeOf(in)
 	inValue := reflect.ValueOf(in)
 	return reflect.MakeFunc(inType, func(args []reflect.Value) []reflect.Value {
-		var out []reflect.Value
-		if inType.IsVariadic() {
-			out = inValue.CallSlice(args)
-		} else {
-			out = inValue.Call(args)
-		}
+		out := inValue.Call(args)
 		if len(out) > 0 {
 			lastValue := out[len(out)-1]
 			last := lastValue.Interface()
@@ -208,18 +209,9 @@ func registerInSuite(ginkgoCall func(string, ...interface{}) bool, args []interf
 		case label:
 			fullLabel := strings.Join(arg.parts, ":")
 			addLabel(fullLabel)
-			if arg.alphaBetaLevel != "" {
-				texts = append(texts, fmt.Sprintf("[%[1]s]", arg.alphaBetaLevel))
-				ginkgoArgs = append(ginkgoArgs, ginkgo.Label(arg.alphaBetaLevel))
-			}
-			if arg.offByDefault {
-				texts = append(texts, "[Feature:OffByDefault]")
-				ginkgoArgs = append(ginkgoArgs, ginkgo.Label("Feature:OffByDefault"))
-				// Alphas are always off by default but we may want to select
-				// betas based on defaulted-ness.
-				if arg.alphaBetaLevel == "Beta" {
-					ginkgoArgs = append(ginkgoArgs, ginkgo.Label("BetaOffByDefault"))
-				}
+			if arg.extraFeature != "" {
+				texts = append(texts, fmt.Sprintf("[%s]", arg.extraFeature))
+				ginkgoArgs = append(ginkgoArgs, ginkgo.Label("Feature:"+arg.extraFeature))
 			}
 			if fullLabel == "Serial" {
 				ginkgoArgs = append(ginkgoArgs, ginkgo.Serial)
@@ -314,12 +306,6 @@ func validateText(location types.CodeLocation, text string, labels []string) {
 			// Okay, was also set as label.
 			continue
 		}
-		// TODO: we currently only set this as a text value
-		// We should probably reflect it into labels, but that could break some
-		// existing jobs and we're still setting on an exact plan
-		if tag == "Feature:OffByDefault" {
-			continue
-		}
 		if deprecatedTags.Has(tag) {
 			recordTextBug(location, fmt.Sprintf("[%s] in plain text is deprecated and must be added through With%s instead", tag, tag))
 		}
@@ -365,8 +351,7 @@ func withFeature(name Feature) interface{} {
 }
 
 // WithFeatureGate specifies that a certain test or group of tests depends on a
-// feature gate and the corresponding API group (if there is one)
-// being enabled. The return value must be passed as additional
+// feature gate being enabled. The return value must be passed as additional
 // argument to [framework.It], [framework.Describe], [framework.Context].
 //
 // The feature gate must be listed in
@@ -375,21 +360,9 @@ func withFeature(name Feature) interface{} {
 // also need to be removed.
 //
 // [Alpha] resp. [Beta] get added to the test name automatically depending
-// on the current stability level of the feature, to emulate historic
-// usage of those tags.
-//
-// For label filtering, Alpha resp. Beta get added to the Ginkgo labels.
-//
-// [Feature:OffByDefault] gets added to support skipping a test with
-// a dependency on an alpha or beta feature gate in jobs which use the
-// traditional \[Feature:.*\] skip regular expression.
-//
-// Feature:OffByDefault is also available for label filtering.
-//
-// BetaOffByDefault is also added *only as a label* when the feature gate is
-// an off by default beta feature. This can be used to include/exclude based
-// on beta + defaulted-ness. Alpha has no equivalent because all alphas are
-// off by default.
+// on the current stability level of the feature. Feature:Alpha resp.
+// Feature:Beta get added to the Ginkgo labels because this is a special
+// requirement for how the cluster needs to be configured.
 //
 // If the test can run in any cluster that has alpha resp. beta features and
 // API groups enabled, then annotating it with just WithFeatureGate is
@@ -418,8 +391,7 @@ func withFeatureGate(featureGate featuregate.Feature) interface{} {
 	}
 
 	l := newLabel("FeatureGate", string(featureGate))
-	l.offByDefault = !spec.Default
-	l.alphaBetaLevel = level
+	l.extraFeature = level
 	return l
 }
 
@@ -442,6 +414,28 @@ func withEnvironment(name Environment) interface{} {
 		RecordBug(NewBug(fmt.Sprintf("WithEnvironment: unknown environment %q", name), 2))
 	}
 	return newLabel("Environment", string(name))
+}
+
+// WithNodeFeature specifies that a certain test or group of tests only works
+// if the node supports a certain feature. The return value must be passed as
+// additional argument to [framework.It], [framework.Describe],
+// [framework.Context].
+//
+// The environment must be listed in ValidNodeFeatures.
+func WithNodeFeature(name NodeFeature) interface{} {
+	return withNodeFeature(name)
+}
+
+// WithNodeFeature is a shorthand for the corresponding package function.
+func (f *Framework) WithNodeFeature(name NodeFeature) interface{} {
+	return withNodeFeature(name)
+}
+
+func withNodeFeature(name NodeFeature) interface{} {
+	if !ValidNodeFeatures.items.Has(name) {
+		RecordBug(NewBug(fmt.Sprintf("WithNodeFeature: unknown environment %q", name), 2))
+	}
+	return newLabel("NodeFeature", string(name))
 }
 
 // WithConformace specifies that a certain test or group of tests must pass in
@@ -565,19 +559,13 @@ func withFlaky() interface{} {
 type label struct {
 	// parts get concatenated with ":" to build the full label.
 	parts []string
+	// extra is an optional feature name. It gets added as [<extraFeature>]
+	// to the test name and as Feature:<extraFeature> to the labels.
+	extraFeature string
 	// explanation gets set for each label to help developers
 	// who pass a label to a ginkgo function. They need to use
 	// the corresponding framework function instead.
 	explanation string
-
-	// TODO: the fields below are only used for FeatureGates, we may want to refactor
-
-	// alphaBetaLevel is "Alpha", "Beta" or empty for GA features
-	// It gets added as [<level>] [Feature:<level>]
-	// to the test name and as Feature:<level> to the labels.
-	alphaBetaLevel string
-	// set based on featuregate default state
-	offByDefault bool
 }
 
 func newLabel(parts ...string) label {
@@ -600,10 +588,7 @@ func TagsEqual(a, b interface{}) bool {
 	if !ok {
 		return false
 	}
-	if al.alphaBetaLevel != bl.alphaBetaLevel {
-		return false
-	}
-	if al.offByDefault != bl.offByDefault {
+	if al.extraFeature != bl.extraFeature {
 		return false
 	}
 	return slices.Equal(al.parts, bl.parts)

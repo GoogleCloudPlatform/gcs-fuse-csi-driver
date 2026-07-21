@@ -39,17 +39,16 @@ const (
 
 var (
 	alphaOptions = sets.New[string](
+		DistributeCPUsAcrossNUMAOption,
 		AlignBySocketOption,
 		DistributeCPUsAcrossCoresOption,
+		StrictCPUReservationOption,
 		PreferAlignByUnCoreCacheOption,
 	)
 	betaOptions = sets.New[string](
-		StrictCPUReservationOption,
-		DistributeCPUsAcrossNUMAOption,
-	)
-	stableOptions = sets.New[string](
 		FullPCPUsOnlyOption,
 	)
+	stableOptions = sets.New[string]()
 )
 
 // CheckPolicyOptionAvailable verifies if the given option can be used depending on the Feature Gate Settings.
@@ -67,7 +66,6 @@ func CheckPolicyOptionAvailable(option string) error {
 		return fmt.Errorf("CPU Manager Policy Beta-level Options not enabled, but option %q provided", option)
 	}
 
-	// if the option is stable, we need no CPUManagerPolicy*Options feature gate check
 	return nil
 }
 

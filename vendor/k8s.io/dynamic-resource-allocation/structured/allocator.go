@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
@@ -29,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	draapi "k8s.io/dynamic-resource-allocation/api"
 	"k8s.io/dynamic-resource-allocation/cel"
-	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
@@ -48,19 +46,12 @@ type deviceClassLister interface {
 // available and the current state of the cluster (claims, classes, resource
 // slices).
 type Allocator struct {
-	features         Features
-	claimsToAllocate []*resourceapi.ResourceClaim
-	allocatedDevices sets.Set[DeviceID]
-	classLister      deviceClassLister
-	slices           []*resourceapi.ResourceSlice
-	celCache         *cel.Cache
-}
-
-type Features struct {
-	AdminAccess          bool
-	PrioritizedList      bool
-	PartitionableDevices bool
-	DeviceTaints         bool
+	adminAccessEnabled bool
+	claimsToAllocate   []*resourceapi.ResourceClaim
+	allocatedDevices   sets.Set[DeviceID]
+	classLister        deviceClassLister
+	slices             []*resourceapi.ResourceSlice
+	celCache           *cel.Cache
 }
 
 // NewAllocator returns an allocator for a certain set of claims or an error if
@@ -68,7 +59,7 @@ type Features struct {
 //
 // The returned Allocator can be used multiple times and is thread-safe.
 func NewAllocator(ctx context.Context,
-	features Features,
+	adminAccessEnabled bool,
 	claimsToAllocate []*resourceapi.ResourceClaim,
 	allocatedDevices sets.Set[DeviceID],
 	classLister deviceClassLister,
@@ -76,12 +67,12 @@ func NewAllocator(ctx context.Context,
 	celCache *cel.Cache,
 ) (*Allocator, error) {
 	return &Allocator{
-		features:         features,
-		claimsToAllocate: claimsToAllocate,
-		allocatedDevices: allocatedDevices,
-		classLister:      classLister,
-		slices:           slices,
-		celCache:         celCache,
+		adminAccessEnabled: adminAccessEnabled,
+		claimsToAllocate:   claimsToAllocate,
+		allocatedDevices:   allocatedDevices,
+		classLister:        classLister,
+		slices:             slices,
+		celCache:           celCache,
 	}, nil
 }
 
@@ -118,7 +109,6 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 		Allocator:            a,
 		ctx:                  ctx, // all methods share the same a and thus ctx
 		logger:               klog.FromContext(ctx),
-		node:                 node,
 		deviceMatchesRequest: make(map[matchKey]bool),
 		constraints:          make([][]constraint, len(a.claimsToAllocate)),
 		requestData:          make(map[requestIndices]requestData),
@@ -128,7 +118,7 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 	defer alloc.logger.V(5).Info("Done with allocation", "success", len(finalResult) == len(alloc.claimsToAllocate), "err", finalErr)
 
 	// First determine all eligible pools.
-	pools, err := GatherPools(ctx, alloc.slices, node, a.features)
+	pools, err := GatherPools(ctx, alloc.slices, node)
 	if err != nil {
 		return nil, fmt.Errorf("gather pool information: %w", err)
 	}
@@ -158,9 +148,9 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 	// and their requests. For each claim we determine how many devices
 	// need to be allocated. If not all can be stored in the result, the
 	// claim cannot be allocated.
-	minDevicesTotal := 0
+	numDevicesTotal := 0
 	for claimIndex, claim := range alloc.claimsToAllocate {
-		minDevicesPerClaim := 0
+		numDevicesPerClaim := 0
 
 		// If we have any any request that wants "all" devices, we need to
 		// figure out how much "all" is. If some pool is incomplete, we stop
@@ -171,57 +161,87 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 		// has some matching device.
 		for requestIndex := range claim.Spec.Devices.Requests {
 			request := &claim.Spec.Devices.Requests[requestIndex]
+			for i, selector := range request.Selectors {
+				if selector.CEL == nil {
+					// Unknown future selector type!
+					return nil, fmt.Errorf("claim %s, request %s, selector #%d: CEL expression empty (unsupported selector type?)", klog.KObj(claim), request.Name, i)
+				}
+			}
+
+			if !a.adminAccessEnabled && request.AdminAccess != nil {
+				return nil, fmt.Errorf("claim %s, request %s: admin access is requested, but the feature is disabled", klog.KObj(claim), request.Name)
+			}
+
+			// Should be set. If it isn't, something changed and we should refuse to proceed.
+			if request.DeviceClassName == "" {
+				return nil, fmt.Errorf("claim %s, request %s: missing device class name (unsupported request type?)", klog.KObj(claim), request.Name)
+			}
+			class, err := alloc.classLister.Get(request.DeviceClassName)
+			if err != nil {
+				return nil, fmt.Errorf("claim %s, request %s: could not retrieve device class %s: %w", klog.KObj(claim), request.Name, request.DeviceClassName, err)
+			}
+
+			// Start collecting information about the request.
+			// The class must be set and stored before calling isSelectable.
+			requestData := requestData{
+				class: class,
+			}
 			requestKey := requestIndices{claimIndex: claimIndex, requestIndex: requestIndex}
-			hasSubRequests := len(request.FirstAvailable) > 0
+			alloc.requestData[requestKey] = requestData
 
-			// Error out if the prioritizedList feature is not enabled and the request
-			// has subrequests. This is to avoid surprising behavior for users.
-			if !a.features.PrioritizedList && hasSubRequests {
-				return nil, fmt.Errorf("claim %s, request %s: has subrequests, but the DRAPrioritizedList feature is disabled", klog.KObj(claim), request.Name)
-			}
-
-			if hasSubRequests {
-				// We need to find the minimum number of devices that can be allocated
-				// for the request, so setting this to a high number so we can do the
-				// easy comparison in the loop.
-				minDevicesPerRequest := math.MaxInt
-
-				// A request with subrequests gets one entry per subrequest in alloc.requestData.
-				// We can only predict a lower number of devices because it depends on which
-				// subrequest gets chosen.
-				for i, subReq := range request.FirstAvailable {
-					reqData, err := alloc.validateDeviceRequest(&deviceSubRequestAccessor{subRequest: &subReq},
-						&deviceRequestAccessor{request: request}, requestKey, pools)
-					if err != nil {
-						return nil, err
+			switch request.AllocationMode {
+			case resourceapi.DeviceAllocationModeExactCount:
+				numDevices := request.Count
+				if numDevices > math.MaxInt {
+					// Allowed by API validation, but doesn't make sense.
+					return nil, fmt.Errorf("claim %s, request %s: exact count %d is too large", klog.KObj(claim), request.Name, numDevices)
+				}
+				requestData.numDevices = int(numDevices)
+			case resourceapi.DeviceAllocationModeAll:
+				requestData.allDevices = make([]deviceWithID, 0, resourceapi.AllocationResultsMaxSize)
+				for _, pool := range pools {
+					if pool.IsIncomplete {
+						return nil, fmt.Errorf("claim %s, request %s: asks for all devices, but resource pool %s is currently being updated", klog.KObj(claim), request.Name, pool.PoolID)
 					}
-					requestKey.subRequestIndex = i
-					alloc.requestData[requestKey] = reqData
-					if reqData.numDevices < minDevicesPerRequest {
-						minDevicesPerRequest = reqData.numDevices
+					if pool.IsInvalid {
+						return nil, fmt.Errorf("claim %s, request %s: asks for all devices, but resource pool %s is currently invalid", klog.KObj(claim), request.Name, pool.PoolID)
+					}
+
+					for _, slice := range pool.Slices {
+						for deviceIndex := range slice.Spec.Devices {
+							selectable, err := alloc.isSelectable(requestKey, slice, deviceIndex)
+							if err != nil {
+								return nil, err
+							}
+							if selectable {
+								device := deviceWithID{
+									id:    DeviceID{Driver: slice.Spec.Driver, Pool: slice.Spec.Pool.Name, Device: slice.Spec.Devices[deviceIndex].Name},
+									basic: slice.Spec.Devices[deviceIndex].Basic,
+									slice: slice,
+								}
+								requestData.allDevices = append(requestData.allDevices, device)
+							}
+						}
 					}
 				}
-				minDevicesPerClaim += minDevicesPerRequest
-			} else {
-				reqData, err := alloc.validateDeviceRequest(&deviceRequestAccessor{request: request}, nil, requestKey, pools)
-				if err != nil {
-					return nil, err
-				}
-				alloc.requestData[requestKey] = reqData
-				minDevicesPerClaim += reqData.numDevices
+				requestData.numDevices = len(requestData.allDevices)
+				alloc.logger.V(6).Info("Request for 'all' devices", "claim", klog.KObj(claim), "request", request.Name, "numDevicesPerRequest", requestData.numDevices)
+			default:
+				return nil, fmt.Errorf("claim %s, request %s: unsupported count mode %s", klog.KObj(claim), request.Name, request.AllocationMode)
 			}
+			alloc.requestData[requestKey] = requestData
+			numDevicesPerClaim += requestData.numDevices
 		}
-		alloc.logger.V(6).Info("Checked claim", "claim", klog.KObj(claim), "minDevices", minDevicesPerClaim)
+		alloc.logger.V(6).Info("Checked claim", "claim", klog.KObj(claim), "numDevices", numDevicesPerClaim)
+
 		// Check that we don't end up with too many results.
-		// This isn't perfectly reliable because numDevicesPerClaim is
-		// only a lower bound, so allocation also has to check this.
-		if minDevicesPerClaim > resourceapi.AllocationResultsMaxSize {
-			return nil, fmt.Errorf("claim %s: number of requested devices %d exceeds the claim limit of %d", klog.KObj(claim), minDevicesPerClaim, resourceapi.AllocationResultsMaxSize)
+		if numDevicesPerClaim > resourceapi.AllocationResultsMaxSize {
+			return nil, fmt.Errorf("claim %s: number of requested devices %d exceeds the claim limit of %d", klog.KObj(claim), numDevicesPerClaim, resourceapi.AllocationResultsMaxSize)
 		}
 
 		// If we don't, then we can pre-allocate the result slices for
 		// appending the actual results later.
-		alloc.result[claimIndex].devices = make([]internalDeviceResult, 0, minDevicesPerClaim)
+		alloc.result[claimIndex].devices = make([]internalDeviceResult, 0, numDevicesPerClaim)
 
 		// Constraints are assumed to be monotonic: once a constraint returns
 		// false, adding more devices will not cause it to return true. This
@@ -248,7 +268,7 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 			}
 		}
 		alloc.constraints[claimIndex] = constraints
-		minDevicesTotal += minDevicesPerClaim
+		numDevicesTotal += numDevicesPerClaim
 	}
 
 	// Selecting a device for a request is independent of what has been
@@ -259,9 +279,9 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 	alloc.deviceMatchesRequest = make(map[matchKey]bool)
 
 	// We can estimate the size based on what we need to allocate.
-	alloc.allocatingDevices = make(map[DeviceID]bool, minDevicesTotal)
+	alloc.allocatingDevices = make(map[DeviceID]bool, numDevicesTotal)
 
-	alloc.logger.V(6).Info("Gathered information about devices", "numAllocated", len(alloc.allocatedDevices), "minDevicesToBeAllocated", minDevicesTotal)
+	alloc.logger.V(6).Info("Gathered information about devices", "numAllocated", len(alloc.allocatedDevices), "toBeAllocated", numDevicesTotal)
 
 	// In practice, there aren't going to be many different CEL
 	// expressions. Most likely, there is going to be handful of different
@@ -276,7 +296,7 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 
 	// All errors get created such that they can be returned by Allocate
 	// without further wrapping.
-	done, err := alloc.allocateOne(deviceIndices{}, false)
+	done, err := alloc.allocateOne(deviceIndices{})
 	if errors.Is(err, errStop) {
 		return nil, nil
 	}
@@ -294,7 +314,7 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 		allocationResult.Devices.Results = make([]resourceapi.DeviceRequestAllocationResult, len(internalResult.devices))
 		for i, internal := range internalResult.devices {
 			allocationResult.Devices.Results[i] = resourceapi.DeviceRequestAllocationResult{
-				Request:     internal.requestName(),
+				Request:     internal.request,
 				Driver:      internal.id.Driver.String(),
 				Pool:        internal.id.Pool.String(),
 				Device:      internal.id.Device.String(),
@@ -304,15 +324,7 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 
 		// Populate configs.
 		for requestIndex := range claim.Spec.Devices.Requests {
-			requestKey := requestIndices{claimIndex: claimIndex, requestIndex: requestIndex}
-			requestData := alloc.requestData[requestKey]
-			if requestData.parentRequest != nil {
-				// We need the class of the selected subrequest.
-				requestKey.subRequestIndex = requestData.selectedSubRequestIndex
-				requestData = alloc.requestData[requestKey]
-			}
-
-			class := requestData.class
+			class := alloc.requestData[requestIndices{claimIndex: claimIndex, requestIndex: requestIndex}].class
 			if class != nil {
 				for _, config := range class.Spec.Config {
 					allocationResult.Devices.Config = append(allocationResult.Devices.Config, resourceapi.DeviceAllocationConfiguration{
@@ -324,42 +336,11 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 			}
 		}
 		for _, config := range claim.Spec.Devices.Config {
-			// If Requests are empty, it applies to all. So it can just be included.
-			if len(config.Requests) == 0 {
-				allocationResult.Devices.Config = append(allocationResult.Devices.Config, resourceapi.DeviceAllocationConfiguration{
-					Source:              resourceapi.AllocationConfigSourceClaim,
-					Requests:            config.Requests,
-					DeviceConfiguration: config.DeviceConfiguration,
-				})
-				continue
-			}
-
-			for i, request := range claim.Spec.Devices.Requests {
-				if slices.Contains(config.Requests, request.Name) {
-					allocationResult.Devices.Config = append(allocationResult.Devices.Config, resourceapi.DeviceAllocationConfiguration{
-						Source:              resourceapi.AllocationConfigSourceClaim,
-						Requests:            config.Requests,
-						DeviceConfiguration: config.DeviceConfiguration,
-					})
-					continue
-				}
-
-				requestKey := requestIndices{claimIndex: claimIndex, requestIndex: i}
-				requestData := alloc.requestData[requestKey]
-				if requestData.parentRequest == nil {
-					continue
-				}
-
-				subRequest := request.FirstAvailable[requestData.selectedSubRequestIndex]
-				subRequestName := fmt.Sprintf("%s/%s", request.Name, subRequest.Name)
-				if slices.Contains(config.Requests, subRequestName) {
-					allocationResult.Devices.Config = append(allocationResult.Devices.Config, resourceapi.DeviceAllocationConfiguration{
-						Source:              resourceapi.AllocationConfigSourceClaim,
-						Requests:            config.Requests,
-						DeviceConfiguration: config.DeviceConfiguration,
-					})
-				}
-			}
+			allocationResult.Devices.Config = append(allocationResult.Devices.Config, resourceapi.DeviceAllocationConfiguration{
+				Source:              resourceapi.AllocationConfigSourceClaim,
+				Requests:            config.Requests,
+				DeviceConfiguration: config.DeviceConfiguration,
+			})
 		}
 
 		// Determine node selector.
@@ -373,86 +354,6 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node) (finalResult []
 	return result, nil
 }
 
-func (a *allocator) validateDeviceRequest(request requestAccessor, parentRequest requestAccessor, requestKey requestIndices, pools []*Pool) (requestData, error) {
-	claim := a.claimsToAllocate[requestKey.claimIndex]
-	requestData := requestData{
-		request:       request,
-		parentRequest: parentRequest,
-	}
-	for i, selector := range request.selectors() {
-		if selector.CEL == nil {
-			// Unknown future selector type!
-			return requestData, fmt.Errorf("claim %s, request %s, selector #%d: CEL expression empty (unsupported selector type?)", klog.KObj(claim), request.name(), i)
-		}
-	}
-
-	if !a.features.AdminAccess && request.hasAdminAccess() {
-		return requestData, fmt.Errorf("claim %s, request %s: admin access is requested, but the feature is disabled", klog.KObj(claim), request.name())
-	}
-
-	// Should be set. If it isn't, something changed and we should refuse to proceed.
-	if request.deviceClassName() == "" {
-		return requestData, fmt.Errorf("claim %s, request %s: missing device class name (unsupported request type?)", klog.KObj(claim), request.name())
-	}
-	class, err := a.classLister.Get(request.deviceClassName())
-	if err != nil {
-		return requestData, fmt.Errorf("claim %s, request %s: could not retrieve device class %s: %w", klog.KObj(claim), request.name(), request.deviceClassName(), err)
-	}
-
-	// Start collecting information about the request.
-	// The class must be set and stored before calling isSelectable.
-	requestData.class = class
-
-	switch request.allocationMode() {
-	case resourceapi.DeviceAllocationModeExactCount:
-		numDevices := request.count()
-		if numDevices > math.MaxInt {
-			// Allowed by API validation, but doesn't make sense.
-			return requestData, fmt.Errorf("claim %s, request %s: exact count %d is too large", klog.KObj(claim), request.name(), numDevices)
-		}
-		requestData.numDevices = int(numDevices)
-	case resourceapi.DeviceAllocationModeAll:
-		// If we have any any request that wants "all" devices, we need to
-		// figure out how much "all" is. If some pool is incomplete, we stop
-		// here because allocation cannot succeed. Once we do scoring, we should
-		// stop in all cases, not just when "all" devices are needed, because
-		// pulling from an incomplete might not pick the best solution and it's
-		// better to wait. This does not matter yet as long the incomplete pool
-		// has some matching device.
-		requestData.allDevices = make([]deviceWithID, 0, resourceapi.AllocationResultsMaxSize)
-		for _, pool := range pools {
-			if pool.IsIncomplete {
-				return requestData, fmt.Errorf("claim %s, request %s: asks for all devices, but resource pool %s is currently being updated", klog.KObj(claim), request.name(), pool.PoolID)
-			}
-			if pool.IsInvalid {
-				return requestData, fmt.Errorf("claim %s, request %s: asks for all devices, but resource pool %s is currently invalid", klog.KObj(claim), request.name(), pool.PoolID)
-			}
-
-			for _, slice := range pool.Slices {
-				for deviceIndex := range slice.Spec.Devices {
-					selectable, err := a.isSelectable(requestKey, requestData, slice, deviceIndex)
-					if err != nil {
-						return requestData, err
-					}
-					if selectable {
-						device := deviceWithID{
-							id:    DeviceID{Driver: slice.Spec.Driver, Pool: slice.Spec.Pool.Name, Device: slice.Spec.Devices[deviceIndex].Name},
-							basic: slice.Spec.Devices[deviceIndex].Basic,
-							slice: slice,
-						}
-						requestData.allDevices = append(requestData.allDevices, device)
-					}
-				}
-			}
-		}
-		requestData.numDevices = len(requestData.allDevices)
-		a.logger.V(6).Info("Request for 'all' devices", "claim", klog.KObj(claim), "request", request.name(), "numDevicesPerRequest", requestData.numDevices)
-	default:
-		return requestData, fmt.Errorf("claim %s, request %s: unsupported count mode %s", klog.KObj(claim), request.name(), request.allocationMode())
-	}
-	return requestData, nil
-}
-
 // errStop is a special error that gets returned by allocateOne if it detects
 // that allocation cannot succeed.
 var errStop = errors.New("stop allocation")
@@ -463,11 +364,10 @@ type allocator struct {
 	*Allocator
 	ctx                  context.Context
 	logger               klog.Logger
-	node                 *v1.Node
 	pools                []*Pool
 	deviceMatchesRequest map[matchKey]bool
 	constraints          [][]constraint                 // one list of constraints per claim
-	requestData          map[requestIndices]requestData // one entry per request with no subrequests and one entry per subrequest
+	requestData          map[requestIndices]requestData // one entry per request
 	allocatingDevices    map[DeviceID]bool
 	result               []internalAllocationResult
 }
@@ -478,38 +378,21 @@ type matchKey struct {
 	requestIndices
 }
 
-// requestIndices identifies one specific request
-// or subrequest by three properties:
-//
-// - claimIndex: The index of the claim in the requestData map.
-// - requestIndex: The index of the request in the claim.
-// - subRequestIndex: The index of the subrequest in the parent request.
+// requestIndices identifies one specific request by its
+// claim and request index.
 type requestIndices struct {
 	claimIndex, requestIndex int
-	subRequestIndex          int
 }
 
 // deviceIndices identifies one specific required device inside
-// a request or subrequest of a certain claim.
+// a request of a certain claim.
 type deviceIndices struct {
-	claimIndex      int // The index of the claim in the allocator.
-	requestIndex    int // The index of the request in the claim.
-	subRequestIndex int // The index of the subrequest within the request (ignored if subRequest is false).
-	deviceIndex     int // The index of a device within a request or subrequest.
+	claimIndex, requestIndex, deviceIndex int
 }
 
 type requestData struct {
-	// The request or subrequest which needs to be allocated.
-	// Never nil.
-	request requestAccessor
-	// The parent of a subrequest, nil if not a subrequest.
-	parentRequest requestAccessor
-	class         *resourceapi.DeviceClass
-	numDevices    int
-
-	// selectedSubRequestIndex is set for the entry with requestIndices.subRequestIndex == 0.
-	// It is the index of the subrequest which got picked during allocation.
-	selectedSubRequestIndex int
+	class      *resourceapi.DeviceClass
+	numDevices int
 
 	// pre-determined set of devices for allocating "all" devices
 	allDevices []deviceWithID
@@ -526,30 +409,21 @@ type internalAllocationResult struct {
 }
 
 type internalDeviceResult struct {
-	request       string // name of the request (if no subrequests) or the subrequest
-	parentRequest string // name of the request which contains the subrequest, empty otherwise
-	id            DeviceID
-	basic         *draapi.BasicDevice
-	slice         *draapi.ResourceSlice
-	adminAccess   *bool
-}
-
-func (i internalDeviceResult) requestName() string {
-	if i.parentRequest == "" {
-		return i.request
-	}
-	return fmt.Sprintf("%s/%s", i.parentRequest, i.request)
+	request     string
+	id          DeviceID
+	slice       *draapi.ResourceSlice
+	adminAccess *bool
 }
 
 type constraint interface {
 	// add is called whenever a device is about to be allocated. It must
 	// check whether the device matches the constraint and if yes,
 	// track that it is allocated.
-	add(requestName, subRequestName string, device *draapi.BasicDevice, deviceID DeviceID) bool
+	add(requestName string, device *draapi.BasicDevice, deviceID DeviceID) bool
 
 	// For every successful add there is exactly one matching removed call
 	// with the exact same parameters.
-	remove(requestName, subRequestName string, device *draapi.BasicDevice, deviceID DeviceID)
+	remove(requestName string, device *draapi.BasicDevice, deviceID DeviceID)
 }
 
 // matchAttributeConstraint compares an attribute value across devices.
@@ -568,8 +442,8 @@ type matchAttributeConstraint struct {
 	numDevices int
 }
 
-func (m *matchAttributeConstraint) add(requestName, subRequestName string, device *draapi.BasicDevice, deviceID DeviceID) bool {
-	if m.requestNames.Len() > 0 && !m.matches(requestName, subRequestName) {
+func (m *matchAttributeConstraint) add(requestName string, device *draapi.BasicDevice, deviceID DeviceID) bool {
+	if m.requestNames.Len() > 0 && !m.requestNames.Has(requestName) {
 		// Device not affected by constraint.
 		m.logger.V(7).Info("Constraint does not apply to request", "request", requestName)
 		return true
@@ -625,23 +499,14 @@ func (m *matchAttributeConstraint) add(requestName, subRequestName string, devic
 	return true
 }
 
-func (m *matchAttributeConstraint) remove(requestName, subRequestName string, device *draapi.BasicDevice, deviceID DeviceID) {
-	if m.requestNames.Len() > 0 && !m.matches(requestName, subRequestName) {
+func (m *matchAttributeConstraint) remove(requestName string, device *draapi.BasicDevice, deviceID DeviceID) {
+	if m.requestNames.Len() > 0 && !m.requestNames.Has(requestName) {
 		// Device not affected by constraint.
 		return
 	}
 
 	m.numDevices--
 	m.logger.V(7).Info("Device removed from constraint set", "device", deviceID, "numDevices", m.numDevices)
-}
-
-func (m *matchAttributeConstraint) matches(requestName, subRequestName string) bool {
-	if subRequestName == "" {
-		return m.requestNames.Has(requestName)
-	} else {
-		fullSubRequestName := fmt.Sprintf("%s/%s", requestName, subRequestName)
-		return m.requestNames.Has(requestName) || m.requestNames.Has(fullSubRequestName)
-	}
 }
 
 func lookupAttribute(device *draapi.BasicDevice, deviceID DeviceID, attributeName draapi.FullyQualifiedName) *draapi.DeviceAttribute {
@@ -672,11 +537,7 @@ func lookupAttribute(device *draapi.BasicDevice, deviceID DeviceID, attributeNam
 // allocateOne iterates over all eligible devices (not in use, match selector,
 // satisfy constraints) for a specific required device. It returns true if
 // everything got allocated, an error if allocation needs to stop.
-//
-// allocateSubRequest is true when trying to allocate one particular subrequest.
-// This allows the logic for subrequests to call allocateOne with the same
-// device index without causing infinite recursion.
-func (alloc *allocator) allocateOne(r deviceIndices, allocateSubRequest bool) (bool, error) {
+func (alloc *allocator) allocateOne(r deviceIndices) (bool, error) {
 	if r.claimIndex >= len(alloc.claimsToAllocate) {
 		// Done! If we were doing scoring, we would compare the current allocation result
 		// against the previous one, keep the best, and continue. Without scoring, we stop
@@ -688,73 +549,20 @@ func (alloc *allocator) allocateOne(r deviceIndices, allocateSubRequest bool) (b
 	claim := alloc.claimsToAllocate[r.claimIndex]
 	if r.requestIndex >= len(claim.Spec.Devices.Requests) {
 		// Done with the claim, continue with the next one.
-		return alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex + 1}, false)
-	}
-
-	// r.subRequestIndex is zero unless the for loop below is in the
-	// recursion chain.
-	requestKey := requestIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex, subRequestIndex: r.subRequestIndex}
-	requestData := alloc.requestData[requestKey]
-
-	// Subrequests are special: we only need to allocate one of them, then
-	// we can move on to the next request. We enter this for loop when
-	// hitting the first subrequest, but not if we are already working on a
-	// specific subrequest.
-	if !allocateSubRequest && requestData.parentRequest != nil {
-		for subRequestIndex := 0; ; subRequestIndex++ {
-			nextSubRequestKey := requestKey
-			nextSubRequestKey.subRequestIndex = subRequestIndex
-			if _, ok := alloc.requestData[nextSubRequestKey]; !ok {
-				// Past the end of the subrequests without finding a solution -> give up.
-				return false, nil
-			}
-
-			r.subRequestIndex = subRequestIndex
-			success, err := alloc.allocateOne(r, true /* prevent infinite recusion */)
-			if err != nil {
-				return false, err
-			}
-			// If allocation with a subrequest succeeds, return without
-			// attempting the remaining subrequests.
-			if success {
-				// Store the index of the selected subrequest
-				requestData.selectedSubRequestIndex = subRequestIndex
-				alloc.requestData[requestKey] = requestData
-				return true, nil
-			}
-		}
-		// This is unreachable, so no need to have a return statement here.
-	}
-
-	// Look up the current request that we are attempting to satisfy. This can
-	// be either a request or a subrequest.
-	request := requestData.request
-	doAllDevices := request.allocationMode() == resourceapi.DeviceAllocationModeAll
-
-	// At least one device is required for 'All' allocation mode.
-	if doAllDevices && len(requestData.allDevices) == 0 {
-		alloc.logger.V(6).Info("Allocation for 'all' devices didn't succeed: no devices found", "claim", klog.KObj(claim), "request", requestData.request.name())
-		return false, nil
+		return alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex + 1})
 	}
 
 	// We already know how many devices per request are needed.
+	// Ready to move on to the next request?
+	requestData := alloc.requestData[requestIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex}]
 	if r.deviceIndex >= requestData.numDevices {
-		// Done with request, continue with next one. We have completed the work for
-		// the request or subrequest, so we can no longer be allocating devices for
-		// a subrequest.
-		return alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex + 1}, false)
+		return alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex + 1})
 	}
 
-	// Before trying to allocate devices, check if allocating the devices
-	// in the current request will put us over the threshold.
-	numDevicesAfterAlloc := len(alloc.result[r.claimIndex].devices) + requestData.numDevices
-	if numDevicesAfterAlloc > resourceapi.AllocationResultsMaxSize {
-		// Don't return an error here since we want to keep searching for
-		// a solution that works.
-		return false, nil
-	}
+	request := &alloc.claimsToAllocate[r.claimIndex].Spec.Devices.Requests[r.requestIndex]
+	doAllDevices := request.AllocationMode == resourceapi.DeviceAllocationModeAll
+	alloc.logger.V(6).Info("Allocating one device", "currentClaim", r.claimIndex, "totalClaims", len(alloc.claimsToAllocate), "currentRequest", r.requestIndex, "totalRequestsPerClaim", len(claim.Spec.Devices.Requests), "currentDevice", r.deviceIndex, "devicesPerRequest", requestData.numDevices, "allDevices", doAllDevices, "adminAccess", request.AdminAccess)
 
-	alloc.logger.V(6).Info("Allocating one device", "currentClaim", r.claimIndex, "totalClaims", len(alloc.claimsToAllocate), "currentRequest", r.requestIndex, "currentSubRequest", r.subRequestIndex, "totalRequestsPerClaim", len(claim.Spec.Devices.Requests), "currentDevice", r.deviceIndex, "devicesPerRequest", requestData.numDevices, "allDevices", doAllDevices, "adminAccess", request.adminAccess())
 	if doAllDevices {
 		// For "all" devices we already know which ones we need. We
 		// just need to check whether we can use them.
@@ -767,9 +575,9 @@ func (alloc *allocator) allocateOne(r deviceIndices, allocateSubRequest bool) (b
 			// The order in which we allocate "all" devices doesn't matter,
 			// so we only try with the one which was up next. If we couldn't
 			// get all of them, then there is no solution and we have to stop.
-			return false, nil
+			return false, errStop
 		}
-		done, err := alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex, deviceIndex: r.deviceIndex + 1}, allocateSubRequest)
+		done, err := alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex, deviceIndex: r.deviceIndex + 1})
 		if err != nil {
 			return false, err
 		}
@@ -782,31 +590,31 @@ func (alloc *allocator) allocateOne(r deviceIndices, allocateSubRequest bool) (b
 
 	// We need to find suitable devices.
 	for _, pool := range alloc.pools {
-		// If the pool is not valid, then fail now. It's okay when pools of one driver
-		// are invalid if we allocate from some other pool, but it's not safe to
-		// allocated from an invalid pool.
-		if pool.IsInvalid {
-			return false, fmt.Errorf("pool %s is invalid: %s", pool.Pool, pool.InvalidReason)
-		}
 		for _, slice := range pool.Slices {
 			for deviceIndex := range slice.Spec.Devices {
 				deviceID := DeviceID{Driver: pool.Driver, Pool: pool.Pool, Device: slice.Spec.Devices[deviceIndex].Name}
 
 				// Checking for "in use" is cheap and thus gets done first.
-				if !request.adminAccess() && (alloc.allocatedDevices.Has(deviceID) || alloc.allocatingDevices[deviceID]) {
+				if !ptr.Deref(request.AdminAccess, false) && (alloc.allocatedDevices.Has(deviceID) || alloc.allocatingDevices[deviceID]) {
 					alloc.logger.V(7).Info("Device in use", "device", deviceID)
 					continue
 				}
 
 				// Next check selectors.
-				requestKey := requestIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex, subRequestIndex: r.subRequestIndex}
-				selectable, err := alloc.isSelectable(requestKey, requestData, slice, deviceIndex)
+				selectable, err := alloc.isSelectable(requestIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex}, slice, deviceIndex)
 				if err != nil {
 					return false, err
 				}
 				if !selectable {
 					alloc.logger.V(7).Info("Device not selectable", "device", deviceID)
 					continue
+				}
+
+				// If the pool is not valid, then fail now. It's okay when pools of one driver
+				// are invalid if we allocate from some other pool, but it's not safe to
+				// allocated from an invalid pool.
+				if pool.IsInvalid {
+					return false, fmt.Errorf("pool %s is invalid: %s", pool.Pool, pool.InvalidReason)
 				}
 
 				// Finally treat as allocated and move on to the next device.
@@ -824,13 +632,7 @@ func (alloc *allocator) allocateOne(r deviceIndices, allocateSubRequest bool) (b
 					alloc.logger.V(7).Info("Device not usable", "device", deviceID)
 					continue
 				}
-				deviceKey := deviceIndices{
-					claimIndex:      r.claimIndex,
-					requestIndex:    r.requestIndex,
-					subRequestIndex: r.subRequestIndex,
-					deviceIndex:     r.deviceIndex + 1,
-				}
-				done, err := alloc.allocateOne(deviceKey, allocateSubRequest)
+				done, err := alloc.allocateOne(deviceIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex, deviceIndex: r.deviceIndex + 1})
 				if err != nil {
 					return false, err
 				}
@@ -851,7 +653,7 @@ func (alloc *allocator) allocateOne(r deviceIndices, allocateSubRequest bool) (b
 }
 
 // isSelectable checks whether a device satisfies the request and class selectors.
-func (alloc *allocator) isSelectable(r requestIndices, requestData requestData, slice *draapi.ResourceSlice, deviceIndex int) (bool, error) {
+func (alloc *allocator) isSelectable(r requestIndices, slice *draapi.ResourceSlice, deviceIndex int) (bool, error) {
 	// This is the only supported device type at the moment.
 	device := slice.Spec.Devices[deviceIndex].Basic
 	if device == nil {
@@ -866,6 +668,7 @@ func (alloc *allocator) isSelectable(r requestIndices, requestData requestData, 
 		return matches, nil
 	}
 
+	requestData := alloc.requestData[r]
 	if requestData.class != nil {
 		match, err := alloc.selectorsMatch(r, device, deviceID, requestData.class, requestData.class.Spec.Selectors)
 		if err != nil {
@@ -877,33 +680,14 @@ func (alloc *allocator) isSelectable(r requestIndices, requestData requestData, 
 		}
 	}
 
-	request := requestData.request
-	match, err := alloc.selectorsMatch(r, device, deviceID, nil, request.selectors())
+	request := &alloc.claimsToAllocate[r.claimIndex].Spec.Devices.Requests[r.requestIndex]
+	match, err := alloc.selectorsMatch(r, device, deviceID, nil, request.Selectors)
 	if err != nil {
 		return false, err
 	}
 	if !match {
 		alloc.deviceMatchesRequest[matchKey] = false
 		return false, nil
-	}
-
-	if ptr.Deref(slice.Spec.PerDeviceNodeSelection, false) {
-		var nodeName string
-		var allNodes bool
-		if device.NodeName != nil {
-			nodeName = *device.NodeName
-		}
-		if device.AllNodes != nil {
-			allNodes = *device.AllNodes
-		}
-		matches, err := nodeMatches(alloc.node, nodeName, allNodes, device.NodeSelector)
-		if err != nil {
-			return false, err
-		}
-		if !matches {
-			alloc.deviceMatchesRequest[matchKey] = false
-			return false, nil
-		}
 	}
 
 	alloc.deviceMatchesRequest[matchKey] = true
@@ -964,58 +748,26 @@ func (alloc *allocator) selectorsMatch(r requestIndices, device *draapi.BasicDev
 // restore the previous state.
 func (alloc *allocator) allocateDevice(r deviceIndices, device deviceWithID, must bool) (bool, func(), error) {
 	claim := alloc.claimsToAllocate[r.claimIndex]
-	requestKey := requestIndices{claimIndex: r.claimIndex, requestIndex: r.requestIndex, subRequestIndex: r.subRequestIndex}
-	requestData := alloc.requestData[requestKey]
-	request := requestData.request
-	if !request.adminAccess() && (alloc.allocatedDevices.Has(device.id) || alloc.allocatingDevices[device.id]) {
+	request := &claim.Spec.Devices.Requests[r.requestIndex]
+	adminAccess := ptr.Deref(request.AdminAccess, false)
+	if !adminAccess && (alloc.allocatedDevices.Has(device.id) || alloc.allocatingDevices[device.id]) {
 		alloc.logger.V(7).Info("Device in use", "device", device.id)
-		return false, nil, nil
-	}
-
-	// The API validation logic has checked the ConsumesCounters referred should exist inside SharedCounters.
-	if alloc.features.PartitionableDevices && len(device.basic.ConsumesCounters) > 0 {
-		// If a device consumes capacity from a capacity pool, verify that
-		// there is sufficient capacity available.
-		ok, err := alloc.checkAvailableCapacity(device)
-		if err != nil {
-			return false, nil, err
-		}
-		if !ok {
-			alloc.logger.V(7).Info("Insufficient capacity", "device", device.id)
-			return false, nil, nil
-		}
-	}
-
-	var parentRequestName string
-	var baseRequestName string
-	var subRequestName string
-	if requestData.parentRequest == nil {
-		baseRequestName = requestData.request.name()
-	} else {
-		parentRequestName = requestData.parentRequest.name()
-		baseRequestName = parentRequestName
-		subRequestName = requestData.request.name()
-	}
-
-	// Might be tainted, in which case the taint has to be tolerated.
-	// The check is skipped if the feature is disabled.
-	if alloc.features.DeviceTaints && !allTaintsTolerated(device.basic, request) {
 		return false, nil, nil
 	}
 
 	// It's available. Now check constraints.
 	for i, constraint := range alloc.constraints[r.claimIndex] {
-		added := constraint.add(baseRequestName, subRequestName, device.basic, device.id)
+		added := constraint.add(request.Name, device.basic, device.id)
 		if !added {
 			if must {
 				// It does not make sense to declare a claim where a constraint prevents getting
 				// all devices. Treat this as an error.
-				return false, nil, fmt.Errorf("claim %s, request %s: cannot add device %s because a claim constraint would not be satisfied", klog.KObj(claim), request.name(), device.id)
+				return false, nil, fmt.Errorf("claim %s, request %s: cannot add device %s because a claim constraint would not be satisfied", klog.KObj(claim), request.Name, device.id)
 			}
 
 			// Roll back for all previous constraints before we return.
 			for e := 0; e < i; e++ {
-				alloc.constraints[r.claimIndex][e].remove(baseRequestName, subRequestName, device.basic, device.id)
+				alloc.constraints[r.claimIndex][e].remove(request.Name, device.basic, device.id)
 			}
 			return false, nil, nil
 		}
@@ -1024,27 +776,25 @@ func (alloc *allocator) allocateDevice(r deviceIndices, device deviceWithID, mus
 	// All constraints satisfied. Mark as in use (unless we do admin access)
 	// and record the result.
 	alloc.logger.V(7).Info("Device allocated", "device", device.id)
-	if !request.adminAccess() {
+	if !adminAccess {
 		alloc.allocatingDevices[device.id] = true
 	}
 	result := internalDeviceResult{
-		request:       request.name(),
-		parentRequest: parentRequestName,
-		id:            device.id,
-		basic:         device.basic,
-		slice:         device.slice,
+		request: request.Name,
+		id:      device.id,
+		slice:   device.slice,
 	}
-	if request.adminAccess() {
-		result.adminAccess = ptr.To(request.adminAccess())
+	if adminAccess {
+		result.adminAccess = &adminAccess
 	}
 	previousNumResults := len(alloc.result[r.claimIndex].devices)
 	alloc.result[r.claimIndex].devices = append(alloc.result[r.claimIndex].devices, result)
 
 	return true, func() {
 		for _, constraint := range alloc.constraints[r.claimIndex] {
-			constraint.remove(baseRequestName, subRequestName, device.basic, device.id)
+			constraint.remove(request.Name, device.basic, device.id)
 		}
-		if !request.adminAccess() {
+		if !adminAccess {
 			alloc.allocatingDevices[device.id] = false
 		}
 		// Truncate, but keep the underlying slice.
@@ -1053,117 +803,18 @@ func (alloc *allocator) allocateDevice(r deviceIndices, device deviceWithID, mus
 	}, nil
 }
 
-func allTaintsTolerated(device *draapi.BasicDevice, request requestAccessor) bool {
-	for _, taint := range device.Taints {
-		if !taintTolerated(taint, request) {
-			return false
-		}
-	}
-	return true
-}
-
-func taintTolerated(taint resourceapi.DeviceTaint, request requestAccessor) bool {
-	for _, toleration := range request.tolerations() {
-		if resourceclaim.ToleratesTaint(toleration, taint) {
-			return true
-		}
-	}
-	return false
-}
-
-func (alloc *allocator) checkAvailableCapacity(device deviceWithID) (bool, error) {
-	slice := device.slice
-
-	referencedSharedCounters := sets.New[draapi.UniqueString]()
-	for _, consumedCounter := range device.basic.ConsumesCounters {
-		referencedSharedCounters.Insert(consumedCounter.CounterSet)
-	}
-
-	// Create a structure that captures the initial counter for all sharedCounters
-	// referenced by the device.
-	availableCounters := make(map[draapi.UniqueString]map[string]draapi.Counter)
-	for _, counterSet := range slice.Spec.SharedCounters {
-		if !referencedSharedCounters.Has(counterSet.Name) {
-			// the API validation logic has been added to make sure the counterSet referred should exist in capacityPools
-			continue
-		}
-		counterShared := make(map[string]draapi.Counter, len(counterSet.Counters))
-		for name, cap := range counterSet.Counters {
-			counterShared[name] = cap
-		}
-		availableCounters[counterSet.Name] = counterShared
-	}
-
-	// Update the data structure to reflect capacity already in use.
-	for _, device := range slice.Spec.Devices {
-		deviceID := DeviceID{
-			Driver: slice.Spec.Driver,
-			Pool:   slice.Spec.Pool.Name,
-			Device: device.Name,
-		}
-		if !alloc.allocatedDevices.Has(deviceID) && !alloc.allocatingDevices[deviceID] {
-			continue
-		}
-		for _, consumedCounter := range device.Basic.ConsumesCounters {
-			counterShared := availableCounters[consumedCounter.CounterSet]
-			for name, cap := range consumedCounter.Counters {
-				existingCap, ok := counterShared[name]
-				if !ok {
-					// the API validation logic has been added to make sure the capacity referred should exist in capacityPools
-					continue
-				}
-				// This can potentially result in negative available capacity. That is fine,
-				// we just treat it as no capacity available.
-				existingCap.Value.Sub(cap.Value)
-				counterShared[name] = existingCap
-			}
-		}
-	}
-
-	// Check if all consumed capacities for the device can be satisfied.
-	for _, deviceConsumedCounter := range device.basic.ConsumesCounters {
-		counterShared := availableCounters[deviceConsumedCounter.CounterSet]
-		for name, cap := range deviceConsumedCounter.Counters {
-			availableCap, found := counterShared[name]
-			// If the device requests a capacity that doesn't exist in
-			// the pool, it can not be allocated.
-			if !found {
-				return false, nil
-			}
-			// If the device requests more capacity than is available, it
-			// can not be allocated.
-			if availableCap.Value.Cmp(cap.Value) < 0 {
-				return false, nil
-			}
-		}
-	}
-
-	return true, nil
-}
-
 // createNodeSelector constructs a node selector for the allocation, if needed,
 // otherwise it returns nil.
 func (alloc *allocator) createNodeSelector(result []internalDeviceResult) (*v1.NodeSelector, error) {
 	// Selector with one term. That term gets extended with additional
 	// requirements from the different devices.
-	ns := &v1.NodeSelector{
+	nodeSelector := &v1.NodeSelector{
 		NodeSelectorTerms: []v1.NodeSelectorTerm{{}},
 	}
 
 	for i := range result {
 		slice := result[i].slice
-		var nodeName draapi.UniqueString
-		var nodeSelector *v1.NodeSelector
-		if ptr.Deref(slice.Spec.PerDeviceNodeSelection, false) {
-			if result[i].basic.NodeName != nil {
-				nodeName = draapi.MakeUniqueString(*result[i].basic.NodeName)
-			}
-			nodeSelector = result[i].basic.NodeSelector
-		} else {
-			nodeName = slice.Spec.NodeName
-			nodeSelector = slice.Spec.NodeSelector
-		}
-		if nodeName != draapi.NullUniqueString {
+		if slice.Spec.NodeName != draapi.NullUniqueString {
 			// At least one device is local to one node. This
 			// restricts the allocation to that node.
 			return &v1.NodeSelector{
@@ -1171,124 +822,33 @@ func (alloc *allocator) createNodeSelector(result []internalDeviceResult) (*v1.N
 					MatchFields: []v1.NodeSelectorRequirement{{
 						Key:      "metadata.name",
 						Operator: v1.NodeSelectorOpIn,
-						Values:   []string{nodeName.String()},
+						Values:   []string{slice.Spec.NodeName.String()},
 					}},
 				}},
 			}, nil
 		}
-		if nodeSelector != nil {
-			switch len(nodeSelector.NodeSelectorTerms) {
+		if slice.Spec.NodeSelector != nil {
+			switch len(slice.Spec.NodeSelector.NodeSelectorTerms) {
 			case 0:
 				// Nothing?
 			case 1:
 				// Add all terms if they are not present already.
-				addNewNodeSelectorRequirements(nodeSelector.NodeSelectorTerms[0].MatchFields, &ns.NodeSelectorTerms[0].MatchFields)
-				addNewNodeSelectorRequirements(nodeSelector.NodeSelectorTerms[0].MatchExpressions, &ns.NodeSelectorTerms[0].MatchExpressions)
+				addNewNodeSelectorRequirements(slice.Spec.NodeSelector.NodeSelectorTerms[0].MatchFields, &nodeSelector.NodeSelectorTerms[0].MatchFields)
+				addNewNodeSelectorRequirements(slice.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions, &nodeSelector.NodeSelectorTerms[0].MatchExpressions)
 			default:
 				// This shouldn't occur, validation must prevent creation of such slices.
-				return nil, fmt.Errorf("unsupported ResourceSlice.NodeSelector with %d terms", len(nodeSelector.NodeSelectorTerms))
+				return nil, fmt.Errorf("unsupported ResourceSlice.NodeSelector with %d terms", len(slice.Spec.NodeSelector.NodeSelectorTerms))
 			}
 		}
 	}
 
-	if len(ns.NodeSelectorTerms[0].MatchFields) > 0 || len(ns.NodeSelectorTerms[0].MatchExpressions) > 0 {
+	if len(nodeSelector.NodeSelectorTerms[0].MatchFields) > 0 || len(nodeSelector.NodeSelectorTerms[0].MatchExpressions) > 0 {
 		// We have a valid node selector.
-		return ns, nil
+		return nodeSelector, nil
 	}
 
 	// Available everywhere.
 	return nil, nil
-}
-
-// requestAccessor is an interface for accessing either
-// DeviceRequests or DeviceSubRequests. It lets most
-// of the allocator code work with either DeviceRequests
-// or DeviceSubRequests.
-type requestAccessor interface {
-	name() string
-	deviceClassName() string
-	allocationMode() resourceapi.DeviceAllocationMode
-	count() int64
-	adminAccess() bool
-	hasAdminAccess() bool
-	selectors() []resourceapi.DeviceSelector
-	tolerations() []resourceapi.DeviceToleration
-}
-
-// deviceRequestAccessor is an implementation of the
-// requestAccessor interface for DeviceRequests.
-type deviceRequestAccessor struct {
-	request *resourceapi.DeviceRequest
-}
-
-func (d *deviceRequestAccessor) name() string {
-	return d.request.Name
-}
-
-func (d *deviceRequestAccessor) deviceClassName() string {
-	return d.request.DeviceClassName
-}
-
-func (d *deviceRequestAccessor) allocationMode() resourceapi.DeviceAllocationMode {
-	return d.request.AllocationMode
-}
-
-func (d *deviceRequestAccessor) count() int64 {
-	return d.request.Count
-}
-
-func (d *deviceRequestAccessor) adminAccess() bool {
-	return ptr.Deref(d.request.AdminAccess, false)
-}
-
-func (d *deviceRequestAccessor) hasAdminAccess() bool {
-	return d.request.AdminAccess != nil
-}
-
-func (d *deviceRequestAccessor) selectors() []resourceapi.DeviceSelector {
-	return d.request.Selectors
-}
-
-func (d *deviceRequestAccessor) tolerations() []resourceapi.DeviceToleration {
-	return d.request.Tolerations
-}
-
-// deviceSubRequestAccessor is an implementation of the
-// requestAccessor interface for DeviceSubRequests.
-type deviceSubRequestAccessor struct {
-	subRequest *resourceapi.DeviceSubRequest
-}
-
-func (d *deviceSubRequestAccessor) name() string {
-	return d.subRequest.Name
-}
-
-func (d *deviceSubRequestAccessor) deviceClassName() string {
-	return d.subRequest.DeviceClassName
-}
-
-func (d *deviceSubRequestAccessor) allocationMode() resourceapi.DeviceAllocationMode {
-	return d.subRequest.AllocationMode
-}
-
-func (d *deviceSubRequestAccessor) count() int64 {
-	return d.subRequest.Count
-}
-
-func (d *deviceSubRequestAccessor) adminAccess() bool {
-	return false
-}
-
-func (d *deviceSubRequestAccessor) hasAdminAccess() bool {
-	return false
-}
-
-func (d *deviceSubRequestAccessor) selectors() []resourceapi.DeviceSelector {
-	return d.subRequest.Selectors
-}
-
-func (d *deviceSubRequestAccessor) tolerations() []resourceapi.DeviceToleration {
-	return d.subRequest.Tolerations
 }
 
 func addNewNodeSelectorRequirements(from []v1.NodeSelectorRequirement, to *[]v1.NodeSelectorRequirement) {

@@ -16,10 +16,8 @@ limitations under the License.
 
 package autoscaling
 
-// DropRoundTripHorizontalPodAutoscalerAnnotations removes any annotations used to
-// serialize round-tripped fields from HorizontalPodAutoscaler later API versions,
+// DropRoundTripHorizontalPodAutoscalerAnnotations removes any annotations used to serialize round-tripped fields from later API versions,
 // and returns false if no changes were made and the original input object was returned.
-//
 // It should always be called when converting internal -> external versions, prior
 // to setting any of the custom annotations:
 //
@@ -36,16 +34,12 @@ package autoscaling
 func DropRoundTripHorizontalPodAutoscalerAnnotations(in map[string]string) (out map[string]string, copied bool) {
 	_, hasMetricsSpecs := in[MetricSpecsAnnotation]
 	_, hasBehaviorSpecs := in[BehaviorSpecsAnnotation]
-	_, hasToleranceScaleDown := in[ToleranceScaleDownAnnotation]
-	_, hasToleranceScaleUp := in[ToleranceScaleUpAnnotation]
 	_, hasMetricsStatuses := in[MetricStatusesAnnotation]
 	_, hasConditions := in[HorizontalPodAutoscalerConditionsAnnotation]
-	if hasMetricsSpecs || hasBehaviorSpecs || hasToleranceScaleDown || hasToleranceScaleUp || hasMetricsStatuses || hasConditions {
+	if hasMetricsSpecs || hasBehaviorSpecs || hasMetricsStatuses || hasConditions {
 		out = DeepCopyStringMap(in)
 		delete(out, MetricSpecsAnnotation)
 		delete(out, BehaviorSpecsAnnotation)
-		delete(out, ToleranceScaleDownAnnotation)
-		delete(out, ToleranceScaleUpAnnotation)
 		delete(out, MetricStatusesAnnotation)
 		delete(out, HorizontalPodAutoscalerConditionsAnnotation)
 		return out, true

@@ -33,7 +33,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	resourceslicetracker "k8s.io/dynamic-resource-allocation/resourceslice/tracker"
 	"k8s.io/klog/v2"
 	configv1 "k8s.io/kube-scheduler/config/v1"
 	"k8s.io/kubernetes/pkg/features"
@@ -51,7 +50,6 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 	"k8s.io/kubernetes/pkg/scheduler/profile"
 	"k8s.io/kubernetes/pkg/scheduler/util/assumecache"
-	"k8s.io/utils/clock"
 )
 
 const (
@@ -118,7 +116,6 @@ func (sched *Scheduler) applyDefaultHandlers() {
 }
 
 type schedulerOptions struct {
-	clock                  clock.WithTicker
 	componentConfigVersion string
 	kubeConfig             *restclient.Config
 	// Overridden by profile level percentageOfNodesToScore if set in v1.
@@ -230,13 +227,6 @@ func WithExtenders(e ...schedulerapi.Extender) Option {
 	}
 }
 
-// WithClock sets clock for PriorityQueue, the default clock is clock.RealClock.
-func WithClock(clock clock.WithTicker) Option {
-	return func(o *schedulerOptions) {
-		o.clock = clock
-	}
-}
-
 // FrameworkCapturer is used for registering a notify function in building framework.
 type FrameworkCapturer func(schedulerapi.KubeSchedulerProfile)
 
@@ -248,7 +238,6 @@ func WithBuildFrameworkCapturer(fc FrameworkCapturer) Option {
 }
 
 var defaultSchedulerOptions = schedulerOptions{
-	clock:                             clock.RealClock{},
 	percentageOfNodesToScore:          schedulerapi.DefaultPercentageOfNodesToScore,
 	podInitialBackoffSeconds:          int64(internalqueue.DefaultPodInitialBackoffDuration.Seconds()),
 	podMaxBackoffSeconds:              int64(internalqueue.DefaultPodMaxBackoffDuration.Seconds()),
@@ -308,27 +297,11 @@ func New(ctx context.Context,
 	waitingPods := frameworkruntime.NewWaitingPodsMap()
 
 	var resourceClaimCache *assumecache.AssumeCache
-	var resourceSliceTracker *resourceslicetracker.Tracker
 	var draManager framework.SharedDRAManager
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicResourceAllocation) {
 		resourceClaimInformer := informerFactory.Resource().V1beta1().ResourceClaims().Informer()
 		resourceClaimCache = assumecache.NewAssumeCache(logger, resourceClaimInformer, "ResourceClaim", "", nil)
-		resourceSliceTrackerOpts := resourceslicetracker.Options{
-			EnableDeviceTaints: utilfeature.DefaultFeatureGate.Enabled(features.DRADeviceTaints),
-			SliceInformer:      informerFactory.Resource().V1beta1().ResourceSlices(),
-			KubeClient:         client,
-		}
-		// If device taints are disabled, the additional informers are not needed and
-		// the tracker turns into a simple wrapper around the slice informer.
-		if resourceSliceTrackerOpts.EnableDeviceTaints {
-			resourceSliceTrackerOpts.TaintInformer = informerFactory.Resource().V1alpha3().DeviceTaintRules()
-			resourceSliceTrackerOpts.ClassInformer = informerFactory.Resource().V1beta1().DeviceClasses()
-		}
-		resourceSliceTracker, err = resourceslicetracker.StartTracker(ctx, resourceSliceTrackerOpts)
-		if err != nil {
-			return nil, fmt.Errorf("couldn't start resource slice tracker: %w", err)
-		}
-		draManager = dynamicresources.NewDRAManager(ctx, resourceClaimCache, resourceSliceTracker, informerFactory)
+		draManager = dynamicresources.NewDRAManager(ctx, resourceClaimCache, informerFactory)
 	}
 
 	profiles, err := profile.NewMap(ctx, options.profiles, registry, recorderFactory,
@@ -370,7 +343,6 @@ func New(ctx context.Context,
 	podQueue := internalqueue.NewSchedulingQueue(
 		profiles[options.profiles[0].SchedulerName].QueueSortFunc(),
 		informerFactory,
-		internalqueue.WithClock(options.clock),
 		internalqueue.WithPodInitialBackoffDuration(time.Duration(options.podInitialBackoffSeconds)*time.Second),
 		internalqueue.WithPodMaxBackoffDuration(time.Duration(options.podMaxBackoffSeconds)*time.Second),
 		internalqueue.WithPodLister(podLister),
@@ -406,7 +378,7 @@ func New(ctx context.Context,
 	sched.NextPod = podQueue.Pop
 	sched.applyDefaultHandlers()
 
-	if err = addAllEventHandlers(sched, informerFactory, dynInformerFactory, resourceClaimCache, resourceSliceTracker, unionedGVKs(queueingHintsPerProfile)); err != nil {
+	if err = addAllEventHandlers(sched, informerFactory, dynInformerFactory, resourceClaimCache, unionedGVKs(queueingHintsPerProfile)); err != nil {
 		return nil, fmt.Errorf("adding event handlers: %w", err)
 	}
 

@@ -94,7 +94,6 @@ func (s *stateMemory) SetMemoryAssignments(assignments ContainerMemoryAssignment
 	defer s.Unlock()
 
 	s.assignments = assignments.Clone()
-	klog.V(5).InfoS("Updated Memory assignments", "assignments", assignments)
 }
 
 // Delete deletes corresponding Blocks from ContainerMemoryAssignments

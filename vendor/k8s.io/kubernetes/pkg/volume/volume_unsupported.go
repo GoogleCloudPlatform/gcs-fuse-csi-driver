@@ -21,19 +21,9 @@ package volume
 
 import (
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/volume/util/types"
 )
 
-// NewVolumeOwnership returns an interface that can be used to recursively change volume permissions and ownership
-func NewVolumeOwnership(mounter Mounter, dir string, fsGroup *int64, fsGroupChangePolicy *v1.PodFSGroupChangePolicy, completeFunc func(types.CompleteFuncParam)) *VolumeOwnership {
-	return nil
-}
-
-func (vo *VolumeOwnership) AddProgressNotifier(pod *v1.Pod, recorder record.EventRecorder) *VolumeOwnership {
-	return vo
-}
-
-func (vo *VolumeOwnership) ChangePermissions() error {
+func SetVolumeOwnership(mounter Mounter, dir string, fsGroup *int64, fsGroupChangePolicy *v1.PodFSGroupChangePolicy, completeFunc func(types.CompleteFuncParam)) error {
 	return nil
 }

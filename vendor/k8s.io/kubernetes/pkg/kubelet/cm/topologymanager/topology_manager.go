@@ -188,17 +188,7 @@ func NewManager(topology []cadvisorapi.Node, topologyPolicyName string, topology
 		scope: scope,
 	}
 
-	manager.initializeMetrics()
-
 	return manager, nil
-}
-
-func (m *manager) initializeMetrics() {
-	// ensure the values exist
-	metrics.ContainerAlignedComputeResources.WithLabelValues(metrics.AlignScopeContainer, metrics.AlignedNUMANode).Add(0)
-	metrics.ContainerAlignedComputeResources.WithLabelValues(metrics.AlignScopePod, metrics.AlignedNUMANode).Add(0)
-	metrics.ContainerAlignedComputeResourcesFailure.WithLabelValues(metrics.AlignScopeContainer, metrics.AlignedNUMANode).Add(0)
-	metrics.ContainerAlignedComputeResourcesFailure.WithLabelValues(metrics.AlignScopePod, metrics.AlignedNUMANode).Add(0)
 }
 
 func (m *manager) GetAffinity(podUID string, containerName string) TopologyHint {
@@ -222,13 +212,11 @@ func (m *manager) RemoveContainer(containerID string) error {
 }
 
 func (m *manager) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
-	klog.V(4).InfoS("Topology manager admission check", "pod", klog.KObj(attrs.Pod))
 	metrics.TopologyManagerAdmissionRequestsTotal.Inc()
 
 	startTime := time.Now()
 	podAdmitResult := m.scope.Admit(attrs.Pod)
 	metrics.TopologyManagerAdmissionDuration.Observe(float64(time.Since(startTime).Milliseconds()))
 
-	klog.V(4).InfoS("Pod Admit Result", "Message", podAdmitResult.Message, "pod", klog.KObj(attrs.Pod))
 	return podAdmitResult
 }
