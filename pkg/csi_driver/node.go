@@ -325,41 +325,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		})
 	}
 
-	// Check if the user explicitly provided GOMEMLIMIT flags in their
-	// volume's mountOptions.
-	userProvidedAutoMemLimit := false
-	userProvidedRatio := false
-	for _, opt := range args.fuseMountOptions {
-		if opt == util.EnableAutoGoMemLimitConst || strings.HasPrefix(opt, util.EnableAutoGoMemLimitConst+"=") {
-			userProvidedAutoMemLimit = true
-		}
-		if strings.HasPrefix(opt, util.AutoGoMemLimitRatioConst+"=") {
-			userProvidedRatio = true
-		}
-	}
-
-	// Inject driver defaults if the sidecar supports the GOMEMLIMIT feature.
-	// We evaluate the ratio independently so users who manually opt-in via
-	// mountOptions without specifying a ratio still receive the driver's
-	// default.
-	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarAutoGoMemLimitMinVersion) {
-		var extraOpts []string
-		enableAutoGoMemLimit := s.driver.config.FeatureOptions.GoMemLimitOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions.EnableAutoGoMemLimit
-		if enableAutoGoMemLimit && !userProvidedAutoMemLimit {
-			extraOpts = append(extraOpts, util.EnableAutoGoMemLimitConst+"=true")
-		}
-		//  We check this to prevent injecting the ratio and adding unnecessary
-		// noise to the mount options when the feature is completely disabled.
-		sidecarFeatureWillBeEnabled := enableAutoGoMemLimit || userProvidedAutoMemLimit
-		if !userProvidedRatio && sidecarFeatureWillBeEnabled && s.driver.config.FeatureOptions.GoMemLimitOptions != nil {
-			autoGoMemLimitRatio := s.driver.config.FeatureOptions.GoMemLimitOptions.AutoGoMemLimitRatio
-			extraOpts = append(extraOpts, util.AutoGoMemLimitRatioConst+"="+strconv.FormatFloat(autoGoMemLimitRatio, 'f', -1, 64))
-		}
-
-		if len(extraOpts) > 0 {
-			args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, extraOpts)
-		}
-	}
+	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
 	if err != nil {
@@ -789,6 +755,47 @@ func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, i
 	}
 }
 
+// appendAutoGoMemLimitOptions evaluates and appends enable-auto-gomemlimit and auto-gomemlimit-ratio
+// mount options if supported by the container image and enabled in driver options, unless explicitly overridden.
+func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptions []string) []string {
+	// Check if the user explicitly provided GOMEMLIMIT flags in their
+	// volume's mountOptions.
+	userProvidedAutoMemLimit := false
+	userProvidedRatio := false
+	for _, opt := range mountOptions {
+		if opt == util.EnableAutoGoMemLimitConst || strings.HasPrefix(opt, util.EnableAutoGoMemLimitConst+"=") {
+			userProvidedAutoMemLimit = true
+		}
+		if strings.HasPrefix(opt, util.AutoGoMemLimitRatioConst+"=") {
+			userProvidedRatio = true
+		}
+	}
+
+	// Inject driver defaults if the sidecar supports the GOMEMLIMIT feature.
+	// We evaluate the ratio independently so users who manually opt-in via
+	// mountOptions without specifying a ratio still receive the driver's
+	// default.
+	if s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarAutoGoMemLimitMinVersion) {
+		var extraOpts []string
+		enableAutoGoMemLimit := s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions.EnableAutoGoMemLimit
+		if enableAutoGoMemLimit && !userProvidedAutoMemLimit {
+			extraOpts = append(extraOpts, util.EnableAutoGoMemLimitConst+"=true")
+		}
+		// We check this to prevent injecting the ratio and adding unnecessary
+		// noise to the mount options when the feature is completely disabled.
+		sidecarFeatureWillBeEnabled := enableAutoGoMemLimit || userProvidedAutoMemLimit
+		if !userProvidedRatio && sidecarFeatureWillBeEnabled && s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions != nil {
+			autoGoMemLimitRatio := s.driver.config.FeatureOptions.GoMemLimitOptions.AutoGoMemLimitRatio
+			extraOpts = append(extraOpts, util.AutoGoMemLimitRatioConst+"="+strconv.FormatFloat(autoGoMemLimitRatio, 'f', -1, 64))
+		}
+
+		if len(extraOpts) > 0 {
+			return joinMountOptions(mountOptions, extraOpts)
+		}
+	}
+	return mountOptions
+}
+
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
@@ -972,6 +979,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
+	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
 
 	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
 	var vs *util.VolumeState
