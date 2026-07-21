@@ -2658,6 +2658,147 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 	}
 }
 
+func TestNodeStageVolumeEnableAutoGoMemLimit(t *testing.T) {
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	cases := []struct {
+		name                     string
+		enableAutoGoMemLimit     bool
+		autoGoMemLimitRatio      float64
+		assumeGoodSidecarVersion bool
+		userMountOptions         string
+		expectedOptions          []string
+		unexpectedOptions        []string
+	}{
+		{
+			name:                     "feature flag enabled, mounter pod image supported, no user overrides, expect all driver defaults",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.95"},
+		},
+		{
+			name:                     "feature flag disabled, mounter pod image supported, no user overrides, expect no driver defaults",
+			enableAutoGoMemLimit:     false,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			unexpectedOptions:        []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.95"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image not supported, no user overrides, expect no driver defaults",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: false,
+			unexpectedOptions:        []string{"enable-auto-gomemlimit=true", "auto-gomemlimit-ratio=0.95"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user overrides ratio, expect driver default enable flag and user ratio",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "auto-gomemlimit-ratio=0.8",
+			expectedOptions:          []string{"auto-gomemlimit-ratio=0.8", "enable-auto-gomemlimit=true"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user overrides enable flag to false, expect user enable flag and driver default ratio",
+			enableAutoGoMemLimit:     true,
+			autoGoMemLimitRatio:      0.95,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-auto-gomemlimit=false",
+			expectedOptions:          []string{"enable-auto-gomemlimit=false", "auto-gomemlimit-ratio=0.95"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			tmpDir, err := os.MkdirTemp("/tmp", "s")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+			t.Cleanup(func() { os.RemoveAll(tmpDir) })
+			socketDir := filepath.Join(tmpDir, "s")
+			emptyDirBasePath := filepath.Join(tmpDir, "e")
+
+			sockFile := filepath.Join(emptyDirBasePath, string(podUID), MounterPodSocketFile)
+			mounterServer := startFakeMounterServer(t, sockFile)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+
+			ns.driver.config.FeatureOptions.GoMemLimitOptions = &GoMemLimitOptions{
+				EnableAutoGoMemLimit: tc.enableAutoGoMemLimit,
+				AutoGoMemLimitRatio:  tc.autoGoMemLimitRatio,
+			}
+			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
+				Enabled:       true,
+				FuseSocketDir: socketDir,
+				EmptyDirBasePath: func(podUID string) string {
+					return filepath.Join(emptyDirBasePath, podUID)
+				},
+			}
+
+			vc := map[string]string{
+				VolumeContextSharedNodeMount: "true",
+				util.VolumeContextKeyPVName:  volID,
+			}
+			if tc.userMountOptions != "" {
+				vc[VolumeContextKeyMountOptions] = tc.userMountOptions
+			}
+
+			stageReq := &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: testStagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext:     vc,
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      podName,
+					PublishContextKeyMounterPodNamespace: podNamespace,
+				},
+			}
+
+			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if mounterServer.req == nil {
+				t.Fatalf("expected mounterServer.req to be non-nil, but got nil")
+			}
+			validateMountOptions(t, mounterServer.req.MountOptions, tc.expectedOptions, tc.unexpectedOptions)
+		})
+	}
+}
+
 func TestNodeStageVolumeEnableGCSFuseKernelParams(t *testing.T) {
 	nodeID := "test-node"
 	volID := testVolumeID

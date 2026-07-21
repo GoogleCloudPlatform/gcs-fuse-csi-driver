@@ -53,16 +53,16 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 	}
 
 	mc := MountConfig{
-		VolumeName:       req.GetVolumeId(), // Set VolumeName to VolumeId for logging purposes.
-		BucketName:       util.ParseVolumeID(req.GetVolumeId()),
-		Options:          req.GetMountOptions(),
-		SharedMountPoint: req.GetMountPoint(),
-		TempDir:          webhook.SidecarContainerTmpVolumeMountPath,
-		ErrWriter:        NewErrorWriter(filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, util.ErrorFileName)),
-		BufferDir:        webhook.SidecarContainerBufferVolumeMountPath,
-		CacheDir:         webhook.SidecarContainerCacheVolumeMountPath,
-		ConfigFile:       filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, "config.yaml"),
-		// TODO(FUECHR): Implement Auto Go Mem Limit.
+		VolumeName:          req.GetVolumeId(), // Set VolumeName to VolumeId for logging purposes.
+		BucketName:          util.ParseVolumeID(req.GetVolumeId()),
+		Options:             req.GetMountOptions(),
+		SharedMountPoint:    req.GetMountPoint(),
+		TempDir:             webhook.SidecarContainerTmpVolumeMountPath,
+		ErrWriter:           NewErrorWriter(filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, util.ErrorFileName)),
+		BufferDir:           webhook.SidecarContainerBufferVolumeMountPath,
+		CacheDir:            webhook.SidecarContainerCacheVolumeMountPath,
+		ConfigFile:          filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, "config.yaml"),
+		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
 	// TODO(FUECHR): Implement defaultingFlagFileParsing.
