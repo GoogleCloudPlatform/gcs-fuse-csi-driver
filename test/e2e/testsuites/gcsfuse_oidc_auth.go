@@ -438,7 +438,7 @@ func (t *gcsFuseCSIOIDCTestSuite) DefineTests(driver storageframework.TestDriver
 // Helper functions for GCP operations
 
 func getProjectNumber(projectID string) string {
-	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)")
+	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)", "--billing-project="+projectID)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		klog.Errorf("Failed to get project number: %v, output: %s", err, string(output))

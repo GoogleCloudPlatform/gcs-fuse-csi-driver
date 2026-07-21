@@ -18,6 +18,7 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -60,6 +61,24 @@ func gcloudCommand(testParams *TestParameters, args ...string) *exec.Cmd {
 
 	//nolint:gosec
 	return exec.Command(gcloudBin, fullArgs...)
+}
+
+// gcloudCommandContext constructs an exec.Cmd for a gcloud command with context,
+// incorporating custom command paths and default arguments from TestParameters.
+func gcloudCommandContext(ctx context.Context, testParams *TestParameters, args ...string) *exec.Cmd {
+	gcloudBin := testParams.GkeGcloudCommand
+	if gcloudBin == "" {
+		gcloudBin = "gcloud" // Default to "gcloud" if not provided
+	}
+
+	var fullArgs []string
+	if testParams.GkeGcloudArgs != "" {
+		fullArgs = append(fullArgs, strings.Fields(testParams.GkeGcloudArgs)...)
+	}
+	fullArgs = append(fullArgs, args...)
+
+	//nolint:gosec
+	return exec.CommandContext(ctx, gcloudBin, fullArgs...)
 }
 
 func clusterDownGKE(testParams *TestParameters) error {

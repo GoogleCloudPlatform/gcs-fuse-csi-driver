@@ -656,7 +656,7 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
 	// since it's built off latest code in main
 	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
-	if strings.Contains(imageName, "prow-gob-internal-boskos") {
+	if strings.Contains(imageName, "prow-gob-internal-boskos") || strings.Contains(imageName, "oss-gcp-community") {
 		return true
 	}
 

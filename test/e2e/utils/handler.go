@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientset "k8s.io/client-go/kubernetes"
@@ -114,9 +115,12 @@ func Handle(testParams *TestParameters) error {
 
 	// Always ensure ProjectID is set and PROJECT env var is exported for all test runs.
 	if testParams.ProjectID == "" {
-		output, err := gcloudCommand(testParams, "config", "get-value", "project").CombinedOutput()
+		klog.Infof("Getting default gcloud project...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		output, err := gcloudCommandContext(ctx, testParams, "config", "get-value", "project").CombinedOutput()
+		cancel()
 		if err != nil {
-			klog.Fatalf("Failed to get gcloud project: %v", err)
+			klog.Fatalf("Failed to get gcloud project: %v (output: %s)", err, string(output))
 		}
 		// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
 		// "Your active configuration is: [...]" to the project ID. Take the last line.
@@ -135,7 +139,10 @@ func Handle(testParams *TestParameters) error {
 	if testParams.ManageClusterLifecycle {
 		if testParams.UseBoskos {
 			// 1. Get the old project ID.
-			output, err := gcloudCommand(testParams, "config", "get-value", "project").CombinedOutput()
+			klog.Infof("Getting old gcloud project...")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			output, err := gcloudCommandContext(ctx, testParams, "config", "get-value", "project").CombinedOutput()
+			cancel()
 			if err != nil {
 				return fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err)
 			}
@@ -305,7 +312,6 @@ func Handle(testParams *TestParameters) error {
 	if !strings.Contains(testSkipStr, "istio") && (len(testFocusStr) == 0 || strings.Contains(testFocusStr, "istio")) {
 		installIstio(testParams.IstioVersion)
 	}
-
 	// Setting project number and adding compute binding for the driver service account for Storage Profiles.
 	if testParams.EnableGcsFuseProfiles {
 		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
