@@ -17,12 +17,15 @@ package libcontainer
 import (
 	"fmt"
 
-	"github.com/google/cadvisor/container"
 	info "github.com/google/cadvisor/info/v1"
 
-	"github.com/opencontainers/cgroups"
-	fs "github.com/opencontainers/cgroups/fs"
-	fs2 "github.com/opencontainers/cgroups/fs2"
+	"github.com/opencontainers/runc/libcontainer/cgroups"
+
+	"github.com/google/cadvisor/container"
+
+	fs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
+	fs2 "github.com/opencontainers/runc/libcontainer/cgroups/fs2"
+	configs "github.com/opencontainers/runc/libcontainer/configs"
 	"k8s.io/klog/v2"
 )
 
@@ -154,9 +157,9 @@ func diskStatsCopy(blkioStats []cgroups.BlkioStatEntry) (stat []info.PerDiskStat
 }
 
 func NewCgroupManager(name string, paths map[string]string) (cgroups.Manager, error) {
-	config := &cgroups.Cgroup{
+	config := &configs.Cgroup{
 		Name:      name,
-		Resources: &cgroups.Resources{},
+		Resources: &configs.Resources{},
 	}
 	if cgroups.IsCgroup2UnifiedMode() {
 		path := paths[""]

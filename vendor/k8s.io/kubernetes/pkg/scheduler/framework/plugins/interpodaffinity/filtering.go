@@ -89,21 +89,15 @@ type topologyPair struct {
 }
 type topologyToMatchedTermCount map[topologyPair]int64
 
-func (m topologyToMatchedTermCount) merge(toMerge topologyToMatchedTermCount) {
-	for pair, count := range toMerge {
-		m[pair] += count
-	}
-}
-
-func (m topologyToMatchedTermCount) mergeWithList(toMerge topologyToMatchedTermCountList) {
-	for _, tmtc := range toMerge {
-		m[tmtc.topologyPair] += tmtc.count
+func (m topologyToMatchedTermCount) append(toAppend topologyToMatchedTermCount) {
+	for pair := range toAppend {
+		m[pair] += toAppend[pair]
 	}
 }
 
 func (m topologyToMatchedTermCount) clone() topologyToMatchedTermCount {
 	copy := make(topologyToMatchedTermCount, len(m))
-	copy.merge(m)
+	copy.append(m)
 	return copy
 }
 
@@ -140,48 +134,6 @@ func (m topologyToMatchedTermCount) updateWithAntiAffinityTerms(terms []framewor
 	}
 }
 
-// topologyToMatchedTermCountList is a slice equivalent of topologyToMatchedTermCount map.
-// The use of slice improves the performance of PreFilter,
-// especially due to faster iteration when merging than with topologyToMatchedTermCount.
-type topologyToMatchedTermCountList []topologyPairCount
-
-type topologyPairCount struct {
-	topologyPair topologyPair
-	count        int64
-}
-
-func (m *topologyToMatchedTermCountList) append(node *v1.Node, tk string, value int64) {
-	if tv, ok := node.Labels[tk]; ok {
-		pair := topologyPair{key: tk, value: tv}
-		*m = append(*m, topologyPairCount{
-			topologyPair: pair,
-			count:        value,
-		})
-	}
-}
-
-// appends the specified value to the topologyToMatchedTermCountList
-// for each affinity term if "targetPod" matches ALL terms.
-func (m *topologyToMatchedTermCountList) appendWithAffinityTerms(
-	terms []framework.AffinityTerm, pod *v1.Pod, node *v1.Node, value int64) {
-	if podMatchesAllAffinityTerms(terms, pod) {
-		for _, t := range terms {
-			m.append(node, t.TopologyKey, value)
-		}
-	}
-}
-
-// appends the specified value to the topologyToMatchedTermCountList
-// for each anti-affinity term matched the target pod.
-func (m *topologyToMatchedTermCountList) appendWithAntiAffinityTerms(terms []framework.AffinityTerm, pod *v1.Pod, nsLabels labels.Set, node *v1.Node, value int64) {
-	// Check anti-affinity terms.
-	for _, t := range terms {
-		if t.Matches(pod, nsLabels) {
-			m.append(node, t.TopologyKey, value)
-		}
-	}
-}
-
 // returns true IFF the given pod matches all the given terms.
 func podMatchesAllAffinityTerms(terms []framework.AffinityTerm, pod *v1.Pod) bool {
 	if len(terms) == 0 {
@@ -201,26 +153,25 @@ func podMatchesAllAffinityTerms(terms []framework.AffinityTerm, pod *v1.Pod) boo
 //  1. Whether it has PodAntiAffinity
 //  2. Whether any AntiAffinityTerm matches the incoming pod
 func (pl *InterPodAffinity) getExistingAntiAffinityCounts(ctx context.Context, pod *v1.Pod, nsLabels labels.Set, nodes []*framework.NodeInfo) topologyToMatchedTermCount {
-	antiAffinityCountsList := make([]topologyToMatchedTermCountList, len(nodes))
+	topoMaps := make([]topologyToMatchedTermCount, len(nodes))
 	index := int32(-1)
 	processNode := func(i int) {
 		nodeInfo := nodes[i]
 		node := nodeInfo.Node()
 
-		antiAffinityCounts := make(topologyToMatchedTermCountList, 0)
+		topoMap := make(topologyToMatchedTermCount)
 		for _, existingPod := range nodeInfo.PodsWithRequiredAntiAffinity {
-			antiAffinityCounts.appendWithAntiAffinityTerms(existingPod.RequiredAntiAffinityTerms, pod, nsLabels, node, 1)
+			topoMap.updateWithAntiAffinityTerms(existingPod.RequiredAntiAffinityTerms, pod, nsLabels, node, 1)
 		}
-		if len(antiAffinityCounts) != 0 {
-			antiAffinityCountsList[atomic.AddInt32(&index, 1)] = antiAffinityCounts
+		if len(topoMap) != 0 {
+			topoMaps[atomic.AddInt32(&index, 1)] = topoMap
 		}
 	}
 	pl.parallelizer.Until(ctx, len(nodes), processNode, pl.Name())
 
 	result := make(topologyToMatchedTermCount)
-	// Traditional for loop is slightly faster in this case than its "for range" equivalent.
 	for i := 0; i <= int(index); i++ {
-		result.mergeWithList(antiAffinityCountsList[i])
+		result.append(topoMaps[i])
 	}
 
 	return result
@@ -237,20 +188,20 @@ func (pl *InterPodAffinity) getIncomingAffinityAntiAffinityCounts(ctx context.Co
 		return affinityCounts, antiAffinityCounts
 	}
 
-	affinityCountsList := make([]topologyToMatchedTermCountList, len(allNodes))
-	antiAffinityCountsList := make([]topologyToMatchedTermCountList, len(allNodes))
+	affinityCountsList := make([]topologyToMatchedTermCount, len(allNodes))
+	antiAffinityCountsList := make([]topologyToMatchedTermCount, len(allNodes))
 	index := int32(-1)
 	processNode := func(i int) {
 		nodeInfo := allNodes[i]
 		node := nodeInfo.Node()
 
-		affinity := make(topologyToMatchedTermCountList, 0)
-		antiAffinity := make(topologyToMatchedTermCountList, 0)
+		affinity := make(topologyToMatchedTermCount)
+		antiAffinity := make(topologyToMatchedTermCount)
 		for _, existingPod := range nodeInfo.Pods {
-			affinity.appendWithAffinityTerms(podInfo.RequiredAffinityTerms, existingPod.Pod, node, 1)
+			affinity.updateWithAffinityTerms(podInfo.RequiredAffinityTerms, existingPod.Pod, node, 1)
 			// The incoming pod's terms have the namespaceSelector merged into the namespaces, and so
 			// here we don't lookup the existing pod's namespace labels, hence passing nil for nsLabels.
-			antiAffinity.appendWithAntiAffinityTerms(podInfo.RequiredAntiAffinityTerms, existingPod.Pod, nil, node, 1)
+			antiAffinity.updateWithAntiAffinityTerms(podInfo.RequiredAntiAffinityTerms, existingPod.Pod, nil, node, 1)
 		}
 
 		if len(affinity) > 0 || len(antiAffinity) > 0 {
@@ -262,8 +213,8 @@ func (pl *InterPodAffinity) getIncomingAffinityAntiAffinityCounts(ctx context.Co
 	pl.parallelizer.Until(ctx, len(allNodes), processNode, pl.Name())
 
 	for i := 0; i <= int(index); i++ {
-		affinityCounts.mergeWithList(affinityCountsList[i])
-		antiAffinityCounts.mergeWithList(antiAffinityCountsList[i])
+		affinityCounts.append(affinityCountsList[i])
+		antiAffinityCounts.append(antiAffinityCountsList[i])
 	}
 
 	return affinityCounts, antiAffinityCounts

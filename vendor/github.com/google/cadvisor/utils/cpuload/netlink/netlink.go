@@ -47,7 +47,7 @@ type netlinkMessage struct {
 func (m netlinkMessage) toRawMsg() (rawmsg syscall.NetlinkMessage) {
 	rawmsg.Header = m.Header
 	w := bytes.NewBuffer([]byte{})
-	_ = binary.Write(w, Endian, m.GenHeader)
+	binary.Write(w, Endian, m.GenHeader)
 	w.Write(m.Data)
 	rawmsg.Data = w.Bytes()
 	return rawmsg
@@ -94,13 +94,13 @@ func addAttribute(buf *bytes.Buffer, attrType uint16, data interface{}, dataSize
 		Type: attrType,
 	}
 	attr.Len += uint16(dataSize)
-	_ = binary.Write(buf, Endian, attr)
+	binary.Write(buf, Endian, attr)
 	switch data := data.(type) {
 	case string:
-		_ = binary.Write(buf, Endian, []byte(data))
+		binary.Write(buf, Endian, []byte(data))
 		buf.WriteByte(0) // terminate
 	default:
-		_ = binary.Write(buf, Endian, data)
+		binary.Write(buf, Endian, data)
 	}
 	for i := 0; i < padding(int(attr.Len), syscall.NLMSG_ALIGNTO); i++ {
 		buf.WriteByte(0)

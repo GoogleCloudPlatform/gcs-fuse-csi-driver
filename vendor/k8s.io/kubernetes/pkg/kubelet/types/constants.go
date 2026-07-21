@@ -32,9 +32,7 @@ const (
 )
 
 // SwapBehavior types
-type SwapBehavior string
-
 const (
-	LimitedSwap SwapBehavior = "LimitedSwap"
-	NoSwap      SwapBehavior = "NoSwap"
+	LimitedSwap = "LimitedSwap"
+	NoSwap      = "NoSwap"
 )

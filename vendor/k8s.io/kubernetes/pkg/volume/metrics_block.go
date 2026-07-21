@@ -37,7 +37,7 @@ type metricsBlock struct {
 	device string
 }
 
-// NewMetricsBlock creates a new metricsBlock with the device node of the
+// NewMetricsStatfs creates a new metricsBlock with the device node of the
 // Volume.
 func NewMetricsBlock(device string) MetricsProvider {
 	return &metricsBlock{device}

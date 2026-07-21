@@ -34,7 +34,7 @@ type metricsStatFS struct {
 	path string
 }
 
-// NewMetricsStatFS creates a new metricsStatFS with the Volume path.
+// NewMetricsStatfs creates a new metricsStatFS with the Volume path.
 func NewMetricsStatFS(path string) MetricsProvider {
 	return &metricsStatFS{path}
 }

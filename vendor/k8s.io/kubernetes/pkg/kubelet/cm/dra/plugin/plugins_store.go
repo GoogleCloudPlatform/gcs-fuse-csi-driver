@@ -18,16 +18,13 @@ package plugin
 
 import (
 	"errors"
-	"fmt"
-	"slices"
 	"sync"
 )
 
 // PluginsStore holds a list of DRA Plugins.
 type pluginsStore struct {
 	sync.RWMutex
-	// plugin name -> Plugin in the order in which they got added
-	store map[string][]*Plugin
+	store map[string]*Plugin
 }
 
 // draPlugins map keeps track of all registered DRA plugins on the node
@@ -40,57 +37,43 @@ func (s *pluginsStore) get(pluginName string) *Plugin {
 	s.RLock()
 	defer s.RUnlock()
 
-	instances := s.store[pluginName]
-	if len(instances) == 0 {
-		return nil
-	}
-	// Heuristic: pick the most recent one. It's most likely
-	// the newest, except when kubelet got restarted and registered
-	// all running plugins in random order.
-	return instances[len(instances)-1]
+	return s.store[pluginName]
 }
 
 // Set lets you save a DRA Plugin to the list and give it a specific name.
 // This method is protected by a mutex.
-func (s *pluginsStore) add(p *Plugin) error {
+func (s *pluginsStore) add(p *Plugin) (replacedPlugin *Plugin, replaced bool) {
 	s.Lock()
 	defer s.Unlock()
 
 	if s.store == nil {
-		s.store = make(map[string][]*Plugin)
+		s.store = make(map[string]*Plugin)
 	}
-	for _, oldP := range s.store[p.name] {
-		if oldP.endpoint == p.endpoint {
-			// One plugin instance cannot hijack the endpoint of another instance.
-			return fmt.Errorf("endpoint %s already registered for plugin %s", p.endpoint, p.name)
-		}
+
+	replacedPlugin, exists := s.store[p.name]
+	s.store[p.name] = p
+
+	if replacedPlugin != nil && replacedPlugin.cancel != nil {
+		replacedPlugin.cancel(errors.New("plugin got replaced"))
 	}
-	s.store[p.name] = append(s.store[p.name], p)
-	return nil
+
+	return replacedPlugin, exists
 }
 
-// remove lets you remove one endpoint for a DRA Plugin.
-// This method is protected by a mutex. It returns the
-// plugin if found and true if that was the last instance
-func (s *pluginsStore) remove(pluginName, endpoint string) (*Plugin, bool) {
+// Delete lets you delete a DRA Plugin by name.
+// This method is protected by a mutex.
+func (s *pluginsStore) delete(pluginName string) *Plugin {
 	s.Lock()
 	defer s.Unlock()
 
-	instances := s.store[pluginName]
-	i := slices.IndexFunc(instances, func(p *Plugin) bool { return p.endpoint == endpoint })
-	if i == -1 {
-		return nil, false
+	p, exists := s.store[pluginName]
+	if !exists {
+		return nil
 	}
-	p := instances[i]
-	last := len(instances) == 1
-	if last {
-		delete(s.store, pluginName)
-	} else {
-		s.store[pluginName] = slices.Delete(instances, i, i+1)
-	}
-
 	if p.cancel != nil {
 		p.cancel(errors.New("plugin got removed"))
 	}
-	return p, last
+	delete(s.store, pluginName)
+
+	return p
 }
