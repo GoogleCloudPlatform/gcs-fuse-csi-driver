@@ -53,8 +53,8 @@ type GoMemLimitOptions struct {
 
 type SharedMountOptions struct {
 	Enabled         bool
+	MounterPodImage string
 	FuseSocketDir   string
-	DriverNamespace string
 	// Needed to override the mounter pods emptydir base path, otherwise tests will try to write to var/lib/kubelet which it won't have access to.
 	EmptyDirBasePath func(podUID string) string
 }
