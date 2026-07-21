@@ -28,11 +28,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+	mount "k8s.io/mount-utils"
 )
 
 const (
@@ -86,6 +89,7 @@ var (
 	gkeIdentityProviderRegex = regexp.MustCompile(
 		`^https://(?:[a-z0-9-]+-)?container(?:\.sandbox)?\.googleapis\.com/v1/projects/[^/]+/locations/[^/]+/clusters/[^/]+$`,
 	)
+	procMountsPath = "/proc/mounts"
 )
 
 // ConvertLabelsStringToMap converts the labels from string to map
@@ -337,5 +341,51 @@ func CheckNotSymlink(path string) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("security error: path %q is a symlink", path)
 	}
+	return nil
+}
+
+// IsDirMounted checks if the path is already a mount point.
+func IsDirMounted(targetPath string) (bool, error) {
+	mps, err := mount.ListProcMounts(procMountsPath)
+	if err != nil {
+		return false, err
+	}
+	cleanTargetPath := filepath.Clean(targetPath)
+	for _, m := range mps {
+		if filepath.Clean(m.Path) == cleanTargetPath {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// WaitForPathMounted waits until the given path is mounted or the context expires.
+func WaitForPathMounted(ctx context.Context, path string) error {
+	pollInterval := 1 * time.Second
+	klog.Infof("Waiting for path %q to be mounted. Polling every %q", path, pollInterval)
+
+	condition := func(ctx context.Context) (bool, error) {
+		mounted, err := IsDirMounted(path)
+		if err != nil {
+			klog.Warningf("failed to check if path %q is already mounted (will retry): %v", path, err)
+			return false, nil // Continue polling
+		}
+		if mounted {
+			klog.Infof("path %q was mounted", path)
+			return true, nil
+		}
+		return false, nil
+	}
+
+	if err := wait.PollUntilContextCancel(ctx, pollInterval, true, condition); err != nil {
+		// wait.PollUntilContextCancel returns context.DeadlineExceeded or context.Canceled on timeout/cancellation.
+		code := codes.DeadlineExceeded
+		if errors.Is(err, context.Canceled) {
+			code = codes.Canceled
+		}
+		return status.Errorf(code, "timeout waiting for path %q to be mounted: %v", path, err)
+	}
+
 	return nil
 }
