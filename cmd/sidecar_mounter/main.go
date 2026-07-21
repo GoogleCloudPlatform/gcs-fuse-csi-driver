@@ -110,16 +110,11 @@ func main() {
 	if err != nil {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
-	flagsFromDriver := map[string]string{}
-	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
+	defaultingFlagFilePath := filepath.Join(*volumeBasePath, driver.FlagFileForDefaultingPath)
 	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
-	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
-		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
-		if err != nil {
-			klog.Fatalf("failed to read defaulting-flag file: %v", err)
-		}
-		fileContent := string(machineTypeBytes)
-		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
+	flagsFromDriver, err := sidecarmounter.ReadDriverFlagsForDefaulting(defaultingFlagFilePath)
+	if err != nil {
+		klog.Fatalf("failed to read defaulting-flag file: %v", err)
 	}
 	var startProfilerOnce sync.Once
 	for _, sp := range socketPaths {

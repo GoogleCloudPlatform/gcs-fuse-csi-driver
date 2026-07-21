@@ -884,7 +884,7 @@ func TestPrepareConfigFile(t *testing.T) {
 }
 
 func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
-	t.Parallel()
+	// Do not parallelize because prepareMountArgs modifies shared prometheusPort.
 
 	testCases := []struct {
 		name           string
@@ -935,6 +935,74 @@ func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
 
 			if mc.AutoGoMemLimitRatio != tc.expectedRatio {
 				t.Errorf("Got AutoGoMemLimitRatio %v, expected %v", mc.AutoGoMemLimitRatio, tc.expectedRatio)
+			}
+		})
+	}
+}
+
+func TestReadDriverFlagsForDefaulting(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name          string
+		fileExists    bool
+		unreadable    bool
+		fileContent   string
+		expectedFlags map[string]string
+		expectErr     bool
+	}{
+		{
+			name:          "File does not exist",
+			fileExists:    false,
+			expectedFlags: map[string]string{},
+			expectErr:     false,
+		},
+		{
+			name:        "File exists and contains flags",
+			fileExists:  true,
+			fileContent: "machine-type:e2-standard-4\ndisable-autoconfig:false\n",
+			expectedFlags: map[string]string{
+				"machine-type":       "e2-standard-4",
+				"disable-autoconfig": "false",
+			},
+			expectErr: false,
+		},
+		{
+			name:        "File exists but is unreadable",
+			fileExists:  true,
+			unreadable:  true,
+			fileContent: "machine-type:e2-standard-4\n",
+			expectErr:   true,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			flagFilePath := filepath.Join(t.TempDir(), "flags-for-defaulting")
+
+			if tc.fileExists {
+				if err := os.WriteFile(flagFilePath, []byte(tc.fileContent), 0644); err != nil {
+					t.Fatalf("Failed to write mock flag file: %v", err)
+				}
+				if tc.unreadable {
+					_ = os.Chmod(flagFilePath, 0000)
+				}
+			}
+
+			flagMap, err := ReadDriverFlagsForDefaulting(flagFilePath)
+
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("Expected error reading %s, got nil", flagFilePath)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error reading %s: %v", flagFilePath, err)
+				}
+				if !reflect.DeepEqual(flagMap, tc.expectedFlags) {
+					t.Errorf("Expected flags %v, got: %v", tc.expectedFlags, flagMap)
+				}
 			}
 		})
 	}

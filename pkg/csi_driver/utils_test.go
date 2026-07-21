@@ -19,6 +19,8 @@ package driver
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1190,6 +1192,108 @@ func TestGetInternalMountOptionValue(t *testing.T) {
 			got := getInternalMountOptionValue(tc.options, tc.key)
 			if got != tc.expected {
 				t.Errorf("getInternalMountOptionValue(%v, %q) = %q; want %q", tc.options, tc.key, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestWriteDriverFlagsFile(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name    string
+		flagMap map[string]string
+	}{
+		{
+			name: "valid flags",
+			flagMap: map[string]string{
+				"machine-type":       "n1-standard-1",
+				"disable-autoconfig": "false",
+			},
+		},
+		{
+			name:    "empty flag map",
+			flagMap: map[string]string{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpDir := t.TempDir()
+
+			err := writeDriverFlagsFile(tc.flagMap, tmpDir)
+			if err != nil {
+				t.Fatalf("writeDriverFlagsFile failed: %v", err)
+			}
+
+			filePath := filepath.Join(tmpDir, FlagFileForDefaultingPath)
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				t.Fatalf("failed to read flag file: %v", err)
+			}
+
+			parsed := ParseFlagMapFromFlagFile(string(content))
+			if len(tc.flagMap) == 0 {
+				if len(parsed) != 0 {
+					t.Errorf("parsed flags %v, want empty map", parsed)
+				}
+			} else if !reflect.DeepEqual(parsed, tc.flagMap) {
+				t.Errorf("parsed flags %v, want %v", parsed, tc.flagMap)
+			}
+		})
+	}
+}
+
+func TestParseFlagMapFromFlagFile(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		content  string
+		expected map[string]string
+	}{
+		{
+			name:     "empty content",
+			content:  "",
+			expected: map[string]string{},
+		},
+		{
+			name:    "valid key value pairs",
+			content: "machine-type:n1-standard-1\ndisable-autoconfig:false\n",
+			expected: map[string]string{
+				"machine-type":       "n1-standard-1",
+				"disable-autoconfig": "false",
+			},
+		},
+		{
+			name:    "malformed lines without colon",
+			content: "machine-type:n1-standard-1\nmalformed_line_no_colon\ndisable-autoconfig:false\n",
+			expected: map[string]string{
+				"machine-type":       "n1-standard-1",
+				"disable-autoconfig": "false",
+			},
+		},
+		{
+			name:    "value contains colon",
+			content: "custom-flag:value:with:colons\n",
+			expected: map[string]string{
+				"custom-flag": "value:with:colons",
+			},
+		},
+		{
+			name:     "empty key skipped",
+			content:  ":value_without_key\n",
+			expected: map[string]string{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ParseFlagMapFromFlagFile(tc.content)
+			if !reflect.DeepEqual(got, tc.expected) {
+				t.Errorf("ParseFlagMapFromFlagFile(%q) = %v, want %v", tc.content, got, tc.expected)
 			}
 		})
 	}

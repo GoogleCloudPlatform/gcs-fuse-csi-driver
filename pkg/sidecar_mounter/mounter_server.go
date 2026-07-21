@@ -20,6 +20,7 @@ import (
 	"context"
 	"path/filepath"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
@@ -71,11 +72,15 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
-	// TODO(FUECHR): Implement defaultingFlagFileParsing.
+	defaultingFlagFilePath := filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, driver.FlagFileForDefaultingPath)
+	flagsFromDriver, err := ReadDriverFlagsForDefaulting(defaultingFlagFilePath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to read defaulting-flag file: %v", err)
+	}
 
 	mc.prepareMountArgs()
 
-	// TODO(FUECHR): Call mergeFlags(mc.ConfigFileFlagMap, flagMapFromDriver) (to be done with flag defaulting).
+	mergeFlags(mc.ConfigFileFlagMap, flagsFromDriver)
 
 	// TODO(FUECHR) SetupTokenAndStorageManager for bucket access check.
 	// TODO(FUECHR) Implement cloud profiler hook.

@@ -282,7 +282,7 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	}
 
 	ginkgo.It("should pass --machine-type and --disable-autoconfig=false from driver to gcsfuse", func() {
-		testDefaultingFlags(specs.DisableAutoconfig)
+		testDefaultingFlags()
 	})
 
 	ginkgo.It("should pass --disable-autoconfig=true as a user-specified mountOption to gcsfuse", func() {
