@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	resourcelisters "k8s.io/client-go/listers/resource/v1beta1"
-	resourceslicetracker "k8s.io/dynamic-resource-allocation/resourceslice/tracker"
 	"k8s.io/dynamic-resource-allocation/structured"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -45,9 +44,8 @@ type DefaultDRAManager struct {
 	deviceClassLister    *deviceClassLister
 }
 
-func NewDRAManager(ctx context.Context, claimsCache *assumecache.AssumeCache, resourceSliceTracker *resourceslicetracker.Tracker, informerFactory informers.SharedInformerFactory) *DefaultDRAManager {
+func NewDRAManager(ctx context.Context, claimsCache *assumecache.AssumeCache, informerFactory informers.SharedInformerFactory) *DefaultDRAManager {
 	logger := klog.FromContext(ctx)
-
 	manager := &DefaultDRAManager{
 		resourceClaimTracker: &claimTracker{
 			cache:               claimsCache,
@@ -55,7 +53,7 @@ func NewDRAManager(ctx context.Context, claimsCache *assumecache.AssumeCache, re
 			allocatedDevices:    newAllocatedDevices(logger),
 			logger:              logger,
 		},
-		resourceSliceLister: &resourceSliceLister{tracker: resourceSliceTracker},
+		resourceSliceLister: &resourceSliceLister{sliceLister: informerFactory.Resource().V1beta1().ResourceSlices().Lister()},
 		deviceClassLister:   &deviceClassLister{classLister: informerFactory.Resource().V1beta1().DeviceClasses().Lister()},
 	}
 
@@ -81,11 +79,11 @@ func (s *DefaultDRAManager) DeviceClasses() framework.DeviceClassLister {
 var _ framework.ResourceSliceLister = &resourceSliceLister{}
 
 type resourceSliceLister struct {
-	tracker *resourceslicetracker.Tracker
+	sliceLister resourcelisters.ResourceSliceLister
 }
 
-func (l *resourceSliceLister) ListWithDeviceTaintRules() ([]*resourceapi.ResourceSlice, error) {
-	return l.tracker.ListPatchedResourceSlices()
+func (l *resourceSliceLister) List() ([]*resourceapi.ResourceSlice, error) {
+	return l.sliceLister.List(labels.Everything())
 }
 
 var _ framework.DeviceClassLister = &deviceClassLister{}

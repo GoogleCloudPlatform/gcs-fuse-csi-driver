@@ -17,7 +17,6 @@ limitations under the License.
 package devicemanager
 
 import (
-	"maps"
 	"sync"
 
 	"k8s.io/klog/v2"
@@ -430,7 +429,10 @@ func NewResourceDeviceInstances() ResourceDeviceInstances {
 func (rdev ResourceDeviceInstances) Clone() ResourceDeviceInstances {
 	clone := NewResourceDeviceInstances()
 	for resourceName, resourceDevs := range rdev {
-		clone[resourceName] = maps.Clone(resourceDevs)
+		clone[resourceName] = make(map[string]pluginapi.Device)
+		for devID, dev := range resourceDevs {
+			clone[resourceName][devID] = dev
+		}
 	}
 	return clone
 }

@@ -176,7 +176,7 @@ func MatchMultipleContainerOutputs(
 	createdPod := podClient.Create(ctx, pod)
 	defer func() {
 		ginkgo.By("delete the pod")
-		podClient.DeleteSync(ctx, createdPod.Name, metav1.DeleteOptions{}, f.Timeouts.PodDelete)
+		podClient.DeleteSync(ctx, createdPod.Name, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
 	}()
 
 	// Wait for client pod to complete.

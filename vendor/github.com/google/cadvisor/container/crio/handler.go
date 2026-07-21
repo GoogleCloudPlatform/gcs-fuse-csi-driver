@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opencontainers/cgroups"
+	"github.com/opencontainers/runc/libcontainer/cgroups"
 
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/container/common"
