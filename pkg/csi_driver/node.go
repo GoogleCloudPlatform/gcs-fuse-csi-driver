@@ -354,18 +354,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	// Register metrics collector.
 	// It is idempotent to register the same collector in node republish calls.
-	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		gcsFuseVolumeCount, err := s.countGcsFuseVolumes(pod)
-
-		if err != nil {
-			klog.Errorf("Metrics collection is disabled for Pod %s/%s as counting the number of GCS FUSE volumes failed with error: %v", pod.Namespace, pod.Name, err)
-		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
-			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
-		} else {
-			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID)
-		}
-	}
+	s.registerMetricsCollector(targetPath, pod, args.bucketName, args.disableMetricsCollection, "NodePublishVolume")
 
 	// Check if the sidecar container is still required,
 	// if not, put an exit file to the emptyDir path to
@@ -842,6 +831,25 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 	return gcsFuseVolumeCount, nil
 }
 
+func (s *nodeServer) registerMetricsCollector(targetPath string, pod *corev1.Pod, bucketName string, disableMetricsCollection bool, caller string) {
+	if pod == nil {
+		klog.Errorf("%s: pod cannot be nil when registering metrics collector for path %q", caller, targetPath)
+		return
+	}
+	if s.driver.config.MetricsManager != nil && !disableMetricsCollection {
+		gcsFuseVolumeCount, err := s.countGcsFuseVolumes(pod)
+
+		if err != nil {
+			klog.Errorf("Metrics collection is disabled for Pod %s/%s as counting the number of GCS FUSE volumes failed with error: %v", pod.Namespace, pod.Name, err)
+		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
+			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
+		} else {
+			klog.V(4).Infof("%s enabling metrics collector for path %q", caller, targetPath)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, bucketName, s.driver.config.NodeID)
+		}
+	}
+}
+
 func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	// Validate arguments.
 	if req == nil {
@@ -1003,6 +1011,10 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		// Restart monitoring goroutine if the driver restarts for existing mounts.
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, podImage, vs)
 
+		// Register metrics collector.
+		// It is idempotent to register the same collector.
+		s.registerMetricsCollector(stagingPath, pod, args.bucketName, args.disableMetricsCollection, "NodeStageVolume")
+
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
@@ -1030,6 +1042,10 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 
 	// Start monitoring goroutine for new shared mounts.
 	s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirBasePath, podUID, pvName, podImage, vs)
+
+	// Register metrics collector.
+	// It is idempotent to register the same collector.
+	s.registerMetricsCollector(stagingPath, pod, args.bucketName, args.disableMetricsCollection, "NodeStageVolume")
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
@@ -1125,6 +1141,12 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 }
 
 func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
+	// Unregister metrics collector.
+	// It is idempotent to unregister the same collector.
+	if s.driver.config.MetricsManager != nil {
+		s.driver.config.MetricsManager.UnregisterMetricsCollector(stagingPath, s.driver.config.NodeID)
+	}
+
 	// Stop GCSFuse Kernel Params monitoring.
 	if vs, ok := s.volumeStateStore.Load(stagingPath); ok && vs != nil {
 		if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
