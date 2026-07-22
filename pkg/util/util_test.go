@@ -354,24 +354,19 @@ func TestGetSocketBasePath(t *testing.T) {
 	fuseSocketDir := "/tmp/fuse-sockets"
 
 	testCases := []struct {
-		targetPath   string
 		expectedBase string
-		parseError   bool
+		podUID       string
+		volumeName   string
 	}{
 		{
-			targetPath:   "/var/lib/kubelet/pods/pod-xyz123/volumes/kubernetes.io~csi/pvc-abc456/mount",
+			podUID:       "pod-xyz123",
+			volumeName:   "pvc-abc456",
 			expectedBase: filepath.Join(fuseSocketDir, fmt.Sprintf("%x", sha1.Sum([]byte("pod-xyz123_pvc-abc456")))),
-			parseError:   false,
 		},
 		{
-			targetPath:   "/var/lib/kubelet/pods/pod-def789/volumes/kubernetes.io~csi/data-uvw012/mount",
+			podUID:       "pod-def789",
+			volumeName:   "data-uvw012",
 			expectedBase: filepath.Join(fuseSocketDir, fmt.Sprintf("%x", sha1.Sum([]byte("pod-def789_data-uvw012")))),
-			parseError:   false,
-		},
-		{
-			targetPath:   "/invalid/path",
-			expectedBase: "",
-			parseError:   true,
 		},
 	}
 
@@ -383,17 +378,9 @@ func TestGetSocketBasePath(t *testing.T) {
 	defer os.RemoveAll(fuseSocketDir) // Clean up after the test
 
 	for _, tc := range testCases {
-		actualBase := GetSocketBasePath(tc.targetPath, fuseSocketDir)
-
-		if tc.parseError {
-			podID, volumeName, err := ParsePodIDVolumeFromTargetpath(tc.targetPath)
-			if err == nil {
-				t.Errorf("GetSocketBasePath(%q, %q) expected ParsePodIDVolumeFromTargetpath to return an error, but got podID: %q, volumeName: %q", tc.targetPath, fuseSocketDir, podID, volumeName)
-			}
-		} else {
-			if actualBase != tc.expectedBase {
-				t.Errorf("GetSocketBasePath(%q, %q) = %q, expected %q", tc.targetPath, fuseSocketDir, actualBase, tc.expectedBase)
-			}
+		actualBase := GetSocketBasePath(tc.podUID, tc.volumeName, fuseSocketDir)
+		if actualBase != tc.expectedBase {
+			t.Errorf("GetSocketBasePath(%q, %q, %q) = %q, expected %q", tc.podUID, tc.volumeName, fuseSocketDir, actualBase, tc.expectedBase)
 		}
 	}
 }

@@ -3034,3 +3034,126 @@ func TestNodeStageVolumeHostNetwork(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeStageVolumeAssertMetricsCollectorRegistration(t *testing.T) {
+	t.Parallel()
+
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	tmpDir, err := os.MkdirTemp("/tmp", "s_metrics")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	socketDir := filepath.Join(tmpDir, "s")
+	emptyDirBasePath := filepath.Join(tmpDir, "e")
+
+	sockFile := filepath.Join(emptyDirBasePath, string(podUID), MounterPodSocketFile)
+	_ = startFakeMounterServer(t, sockFile)
+
+	testCases := []volumeTestCase{
+		{
+			name:                      "node stage should register collector, node unstage should deregister",
+			expectCollectorRegistered: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+			volumes := createVolumesTestCase(fc, tc)
+			fc.AddPodVolumes(volumes)
+
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+			ns.driver.config.Name = csiDriverName
+
+			ns.driver.config.AssumeGoodSidecarVersion = true
+			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
+				Enabled:       true,
+				FuseSocketDir: socketDir,
+				EmptyDirBasePath: func(podUID string) string {
+					return filepath.Join(emptyDirBasePath, podUID)
+				},
+			}
+
+			// Setup metrics manager
+			mm := metrics.NewFakeMetricsManager()
+			ns.driver.config.MetricsManager = mm
+
+			volContext := map[string]string{
+				VolumeContextSharedNodeMount: "true",
+				util.VolumeContextKeyPVName:  volID,
+				"bucketName":                 volID,
+			}
+
+			stageReq := &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: testStagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext:     volContext,
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      podName,
+					PublishContextKeyMounterPodNamespace: podNamespace,
+				},
+			}
+
+			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			// Assertions
+			collectors := mm.GetCollectors()
+			_, collectorRegistered := collectors[testStagingPath]
+			if tc.expectCollectorRegistered && !collectorRegistered {
+				t.Error("expected metrics collector to be registered, but it was not")
+			}
+			if !tc.expectCollectorRegistered && collectorRegistered {
+				t.Error("expected metrics collector not to be registered, but it was")
+			}
+
+			// Verify Unstage unregisters the collector
+			unstageReq := &csi.NodeUnstageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: testStagingPath,
+			}
+			_, err = ns.NodeUnstageVolume(context.Background(), unstageReq)
+			if err != nil {
+				t.Fatalf("NodeUnstageVolume failed: %v", err)
+			}
+
+			collectorsAfterUnstage := mm.GetCollectors()
+			if _, collectorRegisteredAfterUnstage := collectorsAfterUnstage[testStagingPath]; collectorRegisteredAfterUnstage {
+				t.Error("expected metrics collector to be unregistered after unstage, but it was still registered")
+			}
+		})
+	}
+}

@@ -211,16 +211,14 @@ func sha1Hash(str string) string {
 
 // GetSocketBasePath constructs the base path for a Unix domain socket.
 // It takes the target path and the directory where Fuse sockets are stored as input.
-func GetSocketBasePath(targetPath, fuseSocketDir string) string {
-	podID, volumeName, _ := ParsePodIDVolumeFromTargetpath(targetPath)
-
+func GetSocketBasePath(podUID, volumeName, fuseSocketDir string) string {
 	// We hash the combined pod ID and volume name because Unix domain socket paths
 	// have a length limitation (often around 104 characters). Directly using potentially
 	// long pod IDs and volume names could easily violate this limit. SHA1 provides a
 	// fixed-length, short representation (40 hexadecimal characters) that ensures
 	// we stay within these constraints while still providing a unique identifier
 	// based on the pod and volume.
-	return filepath.Join(fuseSocketDir, sha1Hash(podID+"_"+volumeName))
+	return filepath.Join(fuseSocketDir, sha1Hash(podUID+"_"+volumeName))
 }
 
 func CheckAndDeleteStaleFile(dirPath, fileName string) error {
