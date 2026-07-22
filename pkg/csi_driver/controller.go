@@ -258,20 +258,23 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		tokenAudience = identityProvider
 	}
 
+	enableCloudProfiler := vc[VolumeContextEnableCloudProfilerForSidecar] == util.TrueStr
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
-		podName:            podName,
-		namespace:          podNamespace,
-		serviceAccountName: podTemplate.Template.Spec.ServiceAccountName,
-		resources:          containerResources,
-		nodeID:             nodeID,
-		image:              containerImage,
-		volumes:            podTemplate.Template.Spec.Volumes,
-		profilesEnabled:    profilesEnabled,
-		hostNetworkEnabled: hostNetworkEnabled,
-		tokenAudience:      tokenAudience,
-		dnsPolicy:          podTemplate.Template.Spec.DNSPolicy,
+		podName:             podName,
+		namespace:           podNamespace,
+		serviceAccountName:  podTemplate.Template.Spec.ServiceAccountName,
+		resources:           containerResources,
+		nodeID:              nodeID,
+		image:               containerImage,
+		volumes:             podTemplate.Template.Spec.Volumes,
+		profilesEnabled:     profilesEnabled,
+		hostNetworkEnabled:  hostNetworkEnabled,
+		tokenAudience:       tokenAudience,
+		dnsPolicy:           podTemplate.Template.Spec.DNSPolicy,
+		enableCloudProfiler: enableCloudProfiler,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

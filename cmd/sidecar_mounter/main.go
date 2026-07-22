@@ -26,14 +26,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/profiler"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
@@ -50,9 +47,15 @@ var (
 	storageServiceAndBucketAccessJitter   = flag.Float64("storage-service-check-retry-jitter", 0.1, "storage service creation and bucket access check exponential retry jitter")
 	storageServiceAndBucketAccessDuration = flag.Duration("storage-service-check-retry-duration", 5*time.Second, "storage service creation and bucket access check exponential retry initial duration")
 	enableSharedMount                     = flag.Bool("enable-shared-mount", false, "whether to run gcsfuse in a mounter pod")
+	enableCloudProfiler                   = flag.Bool("enable-cloud-profiler", false, "whether to enable Cloud Profiler for the sidecar mounter container")
 
 	// This is set at compile time.
 	version = "unknown"
+)
+
+const (
+	cloudProfilerSidecarServiceName     = "gke-gcsfuse-sidecar"
+	cloudProfilerSharedMountServiceName = "gcsfusecsi-mount"
 )
 
 func runNodeMounter(ctx context.Context, cancel context.CancelFunc, mounter *sidecarmounter.Mounter) {
@@ -101,6 +104,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if *enableSharedMount {
+		if *enableCloudProfiler {
+			sidecarmounter.StartCloudProfiler(cloudProfilerSharedMountServiceName, os.Getenv("POD_NAME"), os.Getenv("POD_UID"))
+		}
 		runNodeMounter(ctx, cancel, mounter)
 		return
 	}
@@ -116,7 +122,6 @@ func main() {
 	if err != nil {
 		klog.Fatalf("failed to read defaulting-flag file: %v", err)
 	}
-	var startProfilerOnce sync.Once
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
@@ -127,23 +132,7 @@ func main() {
 		if mc != nil {
 			mc.EnsureErrWriter()
 			if mc.EnableCloudProfilerForSidecar {
-				serviceVersion := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
-				if serviceVersion == "" {
-					klog.Warning("Cloud Profiler is disabled because both PodName and PodUID are empty.")
-				} else {
-					// Use sync.Once to ensure Cloud Profiler only start once per process.
-					startProfilerOnce.Do(func() {
-						cfg := profiler.Config{
-							Service:        "gke-gcsfuse-sidecar",
-							ServiceVersion: serviceVersion,
-						}
-						if err := profiler.Start(cfg); err != nil {
-							klog.Errorf("Errored while starting cloud profiler, got %v", err)
-						} else {
-							klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
-						}
-					})
-				}
+				sidecarmounter.StartCloudProfiler(cloudProfilerSidecarServiceName, mc.PodName, mc.PodUID)
 			}
 			if mc.EnableSidecarBucketAccessCheck {
 				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap

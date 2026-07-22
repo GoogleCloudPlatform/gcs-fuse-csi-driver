@@ -55,17 +55,18 @@ var (
 
 // mounterPodConfig holds the configuration parameters required to define and manage a mounter pod.
 type mounterPodConfig struct {
-	podName            string                       // The name to assign to the mounter pod.
-	nodeID             string                       // The specific node ID where the pod should be scheduled.
-	namespace          string                       // The Kubernetes namespace in which to create the pod.
-	image              string                       // The image for the mounter pod binary.
-	serviceAccountName string                       // The KSA name for the mounter pod.
-	resources          *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
-	volumes            []corev1.Volume              // The volumes for the mounter pod.
-	profilesEnabled    bool                         // Whether the profiles feature is enabled.
-	hostNetworkEnabled bool                         // Whether hostNetwork is enabled for the mounter pod.
-	tokenAudience      string                       // Token audience for projected service account volume.
-	dnsPolicy          corev1.DNSPolicy             // The DNS policy for the mounter pod.
+	podName             string                       // The name to assign to the mounter pod.
+	nodeID              string                       // The specific node ID where the pod should be scheduled.
+	namespace           string                       // The Kubernetes namespace in which to create the pod.
+	image               string                       // The image for the mounter pod binary.
+	serviceAccountName  string                       // The KSA name for the mounter pod.
+	resources           *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
+	volumes             []corev1.Volume              // The volumes for the mounter pod.
+	profilesEnabled     bool                         // Whether the profiles feature is enabled.
+	hostNetworkEnabled  bool                         // Whether hostNetwork is enabled for the mounter pod.
+	tokenAudience       string                       // Token audience for projected service account volume.
+	dnsPolicy           corev1.DNSPolicy             // The DNS policy for the mounter pod.
+	enableCloudProfiler bool                         // Whether cloud profiler is enabled for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -190,6 +191,11 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 		labels[webhook.GcsfuseCacheCreatedByUserLabel] = util.TrueStr
 	}
 
+	args := []string{"--enable-shared-mount"}
+	if config.enableCloudProfiler {
+		args = append(args, "--enable-cloud-profiler=true")
+	}
+
 	spec := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      config.podName,
@@ -210,9 +216,27 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 					Name:            util.MounterPodNamePrefix,
 					Image:           config.image,
 					ImagePullPolicy: corev1.PullAlways,
-					Args:            []string{"--enable-shared-mount"},
+					Args:            args,
 					SecurityContext: &corev1.SecurityContext{
 						Privileged: ptr.To(true),
+					},
+					Env: []corev1.EnvVar{
+						{
+							Name: "POD_NAME",
+							ValueFrom: &corev1.EnvVarSource{
+								FieldRef: &corev1.ObjectFieldSelector{
+									FieldPath: "metadata.name",
+								},
+							},
+						},
+						{
+							Name: "POD_UID",
+							ValueFrom: &corev1.EnvVarSource{
+								FieldRef: &corev1.ObjectFieldSelector{
+									FieldPath: "metadata.uid",
+								},
+							},
+						},
 					},
 					VolumeMounts: volumeMounts,
 				},

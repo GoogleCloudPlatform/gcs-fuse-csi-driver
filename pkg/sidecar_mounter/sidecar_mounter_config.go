@@ -26,9 +26,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/profiler"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -103,7 +105,10 @@ type sidecarRetryConfig struct {
 	Jitter   float64
 }
 
-var prometheusPort = 62990
+var (
+	prometheusPort    = 62990
+	startProfilerOnce sync.Once
+)
 
 // DisallowedFlags is a map of flags that are disallowed to be passed to sidecar mounter directly.
 // They are mapped to their config file style representation so that they can be passed in config file format
@@ -486,4 +491,25 @@ func (mc *MountConfig) prepareConfigFile() error {
 	klog.Infof("gcsfuse config file content: %v", configMap)
 
 	return os.WriteFile(mc.ConfigFile, yamlData, 0o400)
+}
+
+// StartCloudProfiler starts the Google Cloud Profiler.
+// It uses sync.Once to ensure the profiler is started at most once per process.
+func StartCloudProfiler(serviceName string, podName string, podUID string) {
+	if podName == "" || podUID == "" {
+		klog.Warningf("Cloud Profiler is disabled because PodName (%q) or PodUID (%q) is empty.", podName, podUID)
+		return
+	}
+	serviceVersion := util.GetCloudProfilerServiceVersion(podName, podUID)
+	startProfilerOnce.Do(func() {
+		cfg := profiler.Config{
+			Service:        serviceName,
+			ServiceVersion: serviceVersion,
+		}
+		if err := profiler.Start(cfg); err != nil {
+			klog.Errorf("Errored while starting cloud profiler, got %v", err)
+		} else {
+			klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
+		}
+	})
 }

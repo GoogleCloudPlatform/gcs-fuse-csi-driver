@@ -18,6 +18,7 @@ package sidecarmounter
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
@@ -70,6 +71,8 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 		CacheDir:            ms.cacheDir,
 		ConfigFile:          filepath.Join(ms.tmpDir, "config.yaml"),
 		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
+		PodName:             os.Getenv("POD_NAME"),
+		PodUID:              os.Getenv("POD_UID"),
 	}
 
 	defaultingFlagFilePath := filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, driver.FlagFileForDefaultingPath)
@@ -83,7 +86,6 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 	mergeFlags(mc.ConfigFileFlagMap, flagsFromDriver)
 
 	// TODO(FUECHR) SetupTokenAndStorageManager for bucket access check.
-	// TODO(FUECHR) Implement cloud profiler hook.
 	// TODO(FUECHR) Clean errors in preparation for mount.
 
 	if err := mc.prepareConfigFile(); err != nil {

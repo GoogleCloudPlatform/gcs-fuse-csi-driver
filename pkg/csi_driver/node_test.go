@@ -1230,6 +1230,28 @@ func TestNodeStageVolume(t *testing.T) {
 				MountOptions: []string{"log-severity=trace"},
 			},
 		},
+		{
+			name: "valid request with sharedMount true and cloud profiler enabled",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount:               "true",
+					util.VolumeContextKeyPVName:                testVolumeID,
+					VolumeContextEnableCloudProfilerForSidecar: "true",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectedMountOptions: []string{
+				util.EnableCloudProfilerForSidecarConst + "=true",
+				util.PodNameConst + "=" + createMounterPodName("test-node", testVolumeID),
+				util.PodUIDConst + "=" + createMounterPodName("test-node", testVolumeID),
+			},
+		},
 	}
 
 	for _, test := range cases {
@@ -3159,6 +3181,84 @@ func TestNodeStageVolumeMachineTypeDefaulting(t *testing.T) {
 				if readErr == nil {
 					t.Errorf("expected no flags-for-defaulting file to be written, but found one with content: %q", string(content))
 				}
+			}
+		})
+	}
+}
+
+func TestAppendCloudProfilerOptions(t *testing.T) {
+	t.Parallel()
+	fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+	driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
+	ns := newNodeServer(driver, fakeMounter).(*nodeServer)
+
+	testCases := []struct {
+		name                string
+		mounterImage        string
+		enableCloudProfiler bool
+		podName             string
+		podUID              string
+		mountOptions        []string
+		expectedOptions     []string
+	}{
+		{
+			name:                "podName is empty - should return options unchanged",
+			mounterImage:        "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.7-gke.0",
+			enableCloudProfiler: true,
+			podName:             "",
+			podUID:              "test-uid",
+			mountOptions:        []string{"debug_gcs", "ro"},
+			expectedOptions:     []string{"debug_gcs", "ro"},
+		},
+		{
+			name:                "podUID is empty - should return options unchanged",
+			mounterImage:        "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.7-gke.0",
+			enableCloudProfiler: true,
+			podName:             "test-pod",
+			podUID:              "",
+			mountOptions:        []string{"debug_gcs", "ro"},
+			expectedOptions:     []string{"debug_gcs", "ro"},
+		},
+		{
+			name:                "enableCloudProfiler is false - should return options unchanged",
+			mounterImage:        "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.7-gke.0",
+			enableCloudProfiler: false,
+			podName:             "test-pod",
+			podUID:              "test-uid",
+			mountOptions:        []string{"debug_gcs", "ro"},
+			expectedOptions:     []string{"debug_gcs", "ro"},
+		},
+		{
+			name:                "unsupported sidecar version - should return options unchanged",
+			mounterImage:        "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.6-gke.0",
+			enableCloudProfiler: true,
+			podName:             "test-pod",
+			podUID:              "test-uid",
+			mountOptions:        []string{"debug_gcs", "ro"},
+			expectedOptions:     []string{"debug_gcs", "ro"},
+		},
+		{
+			name:                "valid inputs and supported sidecar - should append cloud profiler options",
+			mounterImage:        "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.7-gke.0",
+			enableCloudProfiler: true,
+			podName:             "test-pod",
+			podUID:              "test-uid",
+			mountOptions:        []string{"debug_gcs", "ro"},
+			expectedOptions: []string{
+				"debug_gcs",
+				util.EnableCloudProfilerForSidecarConst + "=true",
+				util.PodNameConst + "=test-pod",
+				util.PodUIDConst + "=test-uid",
+				"ro",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ns.appendCloudProfilerOptions(tc.mounterImage, tc.enableCloudProfiler, tc.podName, tc.podUID, tc.mountOptions)
+			if !reflect.DeepEqual(got, tc.expectedOptions) {
+				t.Errorf("appendCloudProfilerOptions() = %v, want %v", got, tc.expectedOptions)
 			}
 		})
 	}

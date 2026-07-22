@@ -338,15 +338,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
-
-	if args.enableCloudProfilerForSidecar && s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, SidecarCloudProfilerMinVersion) {
-		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{
-			util.EnableCloudProfilerForSidecarConst + "=" + strconv.FormatBool(args.enableCloudProfilerForSidecar),
-			util.PodNameConst + "=" + vc[VolumeContextKeyPodName],
-			util.PodUIDConst + "=" + string(pod.UID),
-		})
-	}
-
+	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -773,6 +765,27 @@ func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, i
 	}
 }
 
+// appendCloudProfilerOptions evaluates and appends enable-cloud-profiler-for-sidecar, pod-name, and pod-uid
+// mount options if enabled in driver options and supported by the container image.
+func (s *nodeServer) appendCloudProfilerOptions(mounterImage string, enableCloudProfiler bool, podName string, podUID string, mountOptions []string) []string {
+	if !enableCloudProfiler || !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarCloudProfilerMinVersion) {
+		return mountOptions
+	}
+	if podName == "" {
+		klog.Warning("Pod name is empty, skipping cloud profiler mount options")
+		return mountOptions
+	}
+	if podUID == "" {
+		klog.Warning("Pod UID is empty, skipping cloud profiler mount options")
+		return mountOptions
+	}
+	return joinMountOptions(mountOptions, []string{
+		util.EnableCloudProfilerForSidecarConst + "=true",
+		util.PodNameConst + "=" + podName,
+		util.PodUIDConst + "=" + podUID,
+	})
+}
+
 // appendAutoGoMemLimitOptions evaluates and appends enable-auto-gomemlimit and auto-gomemlimit-ratio
 // mount options if supported by the container image and enabled in driver options, unless explicitly overridden.
 func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptions []string) []string {
@@ -997,6 +1010,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
+	args.fuseMountOptions = s.appendCloudProfilerOptions(podImage, args.enableCloudProfilerForSidecar, podName, string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
 
 	// We initialize volumeState if bucket name is NOT "_", I.e. It's not a dynamic mount.
