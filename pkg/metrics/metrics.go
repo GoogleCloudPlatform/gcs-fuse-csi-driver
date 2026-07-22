@@ -125,7 +125,10 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 
 	jobsetName := ""
 	if mm.clientset != nil {
-		if pod, err := mm.clientset.GetPod(podNamespace, podName); err == nil && pod != nil {
+		pod, err := mm.clientset.GetPod(podNamespace, podName)
+		if err != nil {
+			klog.V(4).Infof("Failed to get pod %s/%s for jobset_name label: %v", podNamespace, podName, err)
+		} else if pod != nil {
 			if val, ok := pod.Labels[JobSetNameLabel]; ok {
 				jobsetName = val
 			} else if val, ok := pod.Annotations[JobSetNameAnnotation]; ok {

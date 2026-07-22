@@ -269,3 +269,53 @@ func TestJobSetNameExtraction(t *testing.T) {
 		t.Errorf("expected collector to be registered for targetPath")
 	}
 }
+
+func TestEmitMetricFamily_JobSetName(t *testing.T) {
+	name := "fs_ops_count"
+	help := "number of fs ops"
+	metricType := dto.MetricType_COUNTER
+	val := float64(10.0)
+
+	mf := &dto.MetricFamily{
+		Name: &name,
+		Help: &help,
+		Type: &metricType,
+		Metric: []*dto.Metric{
+			{
+				Counter: &dto.Counter{Value: &val},
+			},
+		},
+	}
+
+	c := &metricsCollector{
+		constLabels: map[string]string{
+			"jobset_name": "my-jobset-123",
+			"volume_name": "test-vol",
+			"bucket_name": "test-bucket",
+		},
+	}
+
+	ch := make(chan prometheus.Metric, 10)
+	c.emitMetricFamily(mf, ch)
+	close(ch)
+
+	metric := <-ch
+	var m dto.Metric
+	if err := metric.Write(&m); err != nil {
+		t.Fatalf("failed to write metric: %v", err)
+	}
+
+	foundJobSet := false
+	for _, l := range m.Label {
+		if l.GetName() == "jobset_name" {
+			foundJobSet = true
+			if l.GetValue() != "my-jobset-123" {
+				t.Errorf("expected jobset_name to be 'my-jobset-123', got %q", l.GetValue())
+			}
+		}
+	}
+
+	if !foundJobSet {
+		t.Errorf("expected jobset_name label in emitted metric, but none found")
+	}
+}
