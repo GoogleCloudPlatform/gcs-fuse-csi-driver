@@ -51,6 +51,7 @@ const (
 	FileCacheMediumConst                = "file-cache-medium"
 	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
 	GCSFuseKernelParamsFileName         = "kernel-params.json"
+	ErrorFileName                       = "error"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"

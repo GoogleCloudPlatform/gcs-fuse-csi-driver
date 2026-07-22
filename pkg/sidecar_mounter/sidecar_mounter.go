@@ -72,6 +72,7 @@ func New(mounterPath string) *Mounter {
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
 	var tokenSource oauth2.TokenSource
@@ -101,6 +102,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service or check bucket access, failed with error: %v", err)
 		}
+	}
+
+	// Clear the GCS Fuse error file after the sidecar bucket access check completes and just before the GCS Fuse mount starts.
+	// This ensures the NodePublish volume will always fail if the error persists until the GCS Fuse mount actually starts.
+	if err := mc.ErrWriter.Clean(); err != nil {
+		klog.Warningf("failed to cleanup error file: %v", err)
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
@@ -510,6 +517,8 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(ctx context.Context, clientset clientset.Interface, mc *MountConfig) error {
+	mc.EnsureErrWriter()
+
 	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
 		var tm auth.TokenManager
 		var ssm storage.ServiceManager
