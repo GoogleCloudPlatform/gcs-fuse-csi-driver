@@ -49,6 +49,9 @@ const (
 
 	metricsPath = "/metrics"
 	unixURL     = "http://unix/"
+
+	JobSetNameLabel      = "jobset.sigs.k8s.io/jobset-name"
+	JobSetNameAnnotation = "jobset.sigs.k8s.io/jobset-name"
 )
 
 type Manager interface {
@@ -120,13 +123,24 @@ func (mm *manager) RegisterMetricsCollector(targetPath, podNamespace, podName, b
 		return
 	}
 
+	jobsetName := ""
+	if mm.clientset != nil {
+		if pod, err := mm.clientset.GetPod(podNamespace, podName); err == nil && pod != nil {
+			if val, ok := pod.Labels[JobSetNameLabel]; ok {
+				jobsetName = val
+			} else if val, ok := pod.Annotations[JobSetNameAnnotation]; ok {
+				jobsetName = val
+			}
+		}
+	}
+
 	podUID, volumeName, _ := util.ParsePodIDVolumeFromTargetpath(targetPath)
 	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, map[string]string{
 		"pod_name":       podName,
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
-		"pod_uid":        "", // podUID is emptied to avoid infinite cardinality in the metric labels
+		"jobset_name":    jobsetName,
 	}, mm.clientset, mm.streamMetrics)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.

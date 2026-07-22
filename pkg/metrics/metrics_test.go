@@ -27,6 +27,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestNewMetricsManager(t *testing.T) {
@@ -244,4 +245,27 @@ func BenchmarkEmitMetricFamily(b *testing.B) {
 	b.StopTimer()
 	close(ch)
 	<-done
+}
+
+func TestJobSetNameExtraction(t *testing.T) {
+	fakeClient := clientset.NewFakeClientset()
+	fakeClient.CreatePod(clientset.FakePodConfig{
+		Name:      "test-pod",
+		Namespace: "default",
+		PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+	})
+	if pod, err := fakeClient.GetPod("default", "test-pod"); err == nil && pod != nil {
+		pod.Labels = map[string]string{
+			JobSetNameLabel: "my-jobset",
+		}
+	}
+
+	targetPath := "/var/lib/kubelet/pods/d2013878-3d56-45f9-89ec-0826612c89b6/volumes/kubernetes.io~csi/test-volume/mount"
+	socketDir := t.TempDir()
+	m := NewMetricsManager(":9920", socketDir, 5, fakeClient, false).(*manager)
+	m.RegisterMetricsCollector(targetPath, "default", "test-pod", "test-bucket", "test-node")
+
+	if !m.volumePublishPathRegistered.Has(targetPath) {
+		t.Errorf("expected collector to be registered for targetPath")
+	}
 }
