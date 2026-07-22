@@ -36,17 +36,17 @@ func NewFakeMetricsManager() *FakeMetricsManager {
 func (*FakeMetricsManager) InitializeHTTPHandler() {}
 
 // RegisterMetricsCollector records the registration of a metrics collector.
-func (f *FakeMetricsManager) RegisterMetricsCollector(targetPath, _, _, bucketName, nodeName string) {
+func (f *FakeMetricsManager) RegisterMetricsCollector(mountPath, _, _, bucketName, nodeName, _, _, _ string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.collectors[targetPath] = bucketName
+	f.collectors[mountPath] = bucketName
 }
 
 // UnregisterMetricsCollector records the unregistration of a metrics collector.
-func (f *FakeMetricsManager) UnregisterMetricsCollector(targetPath, nodeName string) {
+func (f *FakeMetricsManager) UnregisterMetricsCollector(mountPath, nodeName, _, _ string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.collectors, targetPath)
+	delete(f.collectors, mountPath)
 }
 
 // GetCollectors returns the map of registered collectors.

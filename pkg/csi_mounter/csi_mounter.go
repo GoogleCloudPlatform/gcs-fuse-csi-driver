@@ -256,7 +256,11 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 	// Need to create symbolic link of emptyDirBasePath to socketBasePath,
 	// because the socket absolute path is longer than 104 characters,
 	// which will cause "bind: invalid argument" errors.
-	socketBasePath := util.GetSocketBasePath(target, m.fuseSocketDir)
+	podUID, volumeName, err := util.ParsePodIDVolumeFromTargetpath(target)
+	if err != nil {
+		klog.Warningf("Failed to parse pod ID and volume name from target path %q: %v.", target, err)
+	}
+	socketBasePath := util.GetSocketBasePath(podUID, volumeName, m.fuseSocketDir)
 	if err := os.Symlink(emptyDirBasePath, socketBasePath); err != nil && !os.IsExist(err) {
 		return nil, fmt.Errorf("failed to create symbolic link to path %q: %w", socketBasePath, err)
 	}
@@ -322,7 +326,11 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 }
 
 func (m *Mounter) cleanupSocket(target string) {
-	socketBasePath := util.GetSocketBasePath(target, m.fuseSocketDir)
+	podUID, volumeName, err := util.ParsePodIDVolumeFromTargetpath(target)
+	if err != nil {
+		klog.Warningf("Failed to parse pod ID and volume name from target path %q: %v.", target, err)
+	}
+	socketBasePath := util.GetSocketBasePath(podUID, volumeName, m.fuseSocketDir)
 	socketPath := filepath.Join(socketBasePath, socketName)
 	if err := syscall.Unlink(socketPath); err != nil {
 		if !os.IsNotExist(err) {

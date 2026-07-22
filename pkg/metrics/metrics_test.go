@@ -70,8 +70,8 @@ func TestNewMetricsManager(t *testing.T) {
 			if manager.registry == nil {
 				t.Errorf("NewMetricsManager did not initialize registry")
 			}
-			if manager.volumePublishPathRegistered == nil {
-				t.Errorf("NewMetricsManager did not initialize volumePublishPathRegistered")
+			if manager.volumeMountPathRegistered == nil {
+				t.Errorf("NewMetricsManager did not initialize volumeMountPathRegistered")
 			}
 		}
 	})
