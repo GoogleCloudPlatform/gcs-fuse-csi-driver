@@ -2266,10 +2266,11 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			setupClient: func() *clientset.FakeClientset {
 				fc := clientset.NewFakeClientset()
 				fc.CreatePod(clientset.FakePodConfig{
-					Name:      podName,
-					Namespace: podNamespace,
-					UID:       podUID,
-					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
 				})
 				return fc
 			},
@@ -2497,10 +2498,11 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			setupClient: func() *clientset.FakeClientset {
 				fc := clientset.NewFakeClientset()
 				fc.CreatePod(clientset.FakePodConfig{
-					Name:      podName,
-					Namespace: podNamespace,
-					UID:       podUID,
-					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
 				})
 				return fc
 			},
@@ -2528,10 +2530,11 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			setupClient: func() *clientset.FakeClientset {
 				fc := clientset.NewFakeClientset()
 				fc.CreatePod(clientset.FakePodConfig{
-					Name:      podName,
-					Namespace: podNamespace,
-					UID:       podUID,
-					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
 				})
 				return fc
 			},
@@ -2560,10 +2563,11 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			setupClient: func() *clientset.FakeClientset {
 				fc := clientset.NewFakeClientset()
 				fc.CreatePod(clientset.FakePodConfig{
-					Name:      podName,
-					Namespace: podNamespace,
-					UID:       podUID,
-					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
 				})
 				return fc
 			},
