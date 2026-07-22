@@ -43,6 +43,17 @@ const (
 	KernelParamsFileConfigFlag = "file-system:kernel-params-file"
 )
 
+// octalStringConfigFlags are gcsfuse config-file leaf keys whose values must
+// remain quoted YAML strings (e.g. "777"), not be coerced to YAML integers,
+// since gcsfuse parses them as octal permission bits
+// (see https://cloud.google.com/storage/docs/cloud-storage-fuse/config-file).
+// A bare YAML integer like 777 is decimal, not octal, and gets rejected by
+// gcsfuse with "illegal file perms".
+var octalStringConfigFlags = map[string]bool{
+	"dir-mode":  true,
+	"file-mode": true,
+}
+
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
 	FileDescriptor                 int                   `json:"-"`
@@ -435,12 +446,17 @@ func (mc *MountConfig) prepareConfigFile() error {
 					return fmt.Errorf("invalid config file flag: %q", f)
 				}
 
-				if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
-					curLevel[t] = intVal
-				} else if boolVal, err := strconv.ParseBool(v); err == nil {
-					curLevel[t] = boolVal
-				} else {
+				switch {
+				case octalStringConfigFlags[t]:
 					curLevel[t] = v
+				default:
+					if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
+						curLevel[t] = intVal
+					} else if boolVal, err := strconv.ParseBool(v); err == nil {
+						curLevel[t] = boolVal
+					} else {
+						curLevel[t] = v
+					}
 				}
 
 				break
