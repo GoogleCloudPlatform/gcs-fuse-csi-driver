@@ -80,6 +80,12 @@ type FakePodTemplateConfig struct {
 	Template  corev1.PodTemplateSpec
 }
 
+type FakeConfigMapConfig struct {
+	Name      string
+	Namespace string
+	Data      map[string]string
+}
+
 type FakeClientset struct {
 	Client            kubernetes.Interface
 	fakePod           *corev1.Pod
@@ -87,8 +93,9 @@ type FakeClientset struct {
 	fakePVs           map[string]*corev1.PersistentVolume
 	fakePVCs          map[string]*corev1.PersistentVolumeClaim
 	fakeSCs           map[string]*storagev1.StorageClass
-	fakePods          []*corev1.Pod
 	fakePodTemplates  map[string]*corev1.PodTemplate
+	fakeConfigMaps    map[string]*corev1.ConfigMap
+	fakePods          []*corev1.Pod
 	ListPodErr        error
 	GetPodErr         error
 	GetPodTemplateErr error
@@ -102,6 +109,7 @@ func NewFakeClientset() *FakeClientset {
 		fakePVCs:         make(map[string]*corev1.PersistentVolumeClaim),
 		fakeSCs:          make(map[string]*storagev1.StorageClass),
 		fakePodTemplates: make(map[string]*corev1.PodTemplate),
+		fakeConfigMaps:   make(map[string]*corev1.ConfigMap),
 		fakePods:         []*corev1.Pod{},
 	}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
@@ -111,6 +119,7 @@ func NewFakeClientset() *FakeClientset {
 	fakeClientSet.CreatePVC(FakePVCConfig{})
 	fakeClientSet.CreateSC(FakeSCConfig{})
 	fakeClientSet.CreatePodTemplate(FakePodTemplateConfig{})
+	fakeClientSet.CreateConfigMap(FakeConfigMapConfig{})
 
 	return fakeClientSet
 }
@@ -347,6 +356,27 @@ func (c *FakeClientset) GetPodTemplate(namespace, name string) (*corev1.PodTempl
 	}
 
 	return c.fakePodTemplates[""], nil
+}
+
+func (c *FakeClientset) ConfigureConfigMapLister(_ context.Context, _ string) {}
+
+func (c *FakeClientset) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
+	if cm, ok := c.fakeConfigMaps[name]; ok {
+		return cm, nil
+	}
+	return c.fakeConfigMaps[""], nil
+}
+
+func (c *FakeClientset) CreateConfigMap(cmConfig FakeConfigMapConfig) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmConfig.Name,
+			Namespace: cmConfig.Namespace,
+		},
+		Data: cmConfig.Data,
+	}
+
+	c.fakeConfigMaps[cmConfig.Name] = cm
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

@@ -24,12 +24,40 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 )
+
+var (
+	// fuseMaxMaxPagesMu serializes concurrent updates to the host's FUSE max_pages_limit.
+	fuseMaxMaxPagesMu sync.Mutex
+	// procSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
+	procSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs-fuse/max_pages_limit"
+)
+
+// FuseMaxMaxPagesUpdateSupported returns true if the host supports FUSE max_pages_limit tuning.
+func FuseMaxMaxPagesUpdateSupported() bool {
+	_, err := os.Lstat(procSysFsFuseMaxPagesLimitPath)
+	return err == nil
+}
+
+// ReadFuseMaxPagesLimit reads the host's current FUSE max_pages_limit.
+func ReadFuseMaxPagesLimit() (int64, error) {
+	bytes, err := os.ReadFile(procSysFsFuseMaxPagesLimitPath)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(string(bytes)), 10, 64)
+}
+
+// SetFuseMaxPagesLimit writes the target limit to the host's FUSE max_pages_limit file.
+func SetFuseMaxPagesLimit(target int64) error {
+	return os.WriteFile(procSysFsFuseMaxPagesLimitPath, []byte(strconv.FormatInt(target, 10)+"\n"), 0o644)
+}
 
 // getDeviceMajorMinor returns the major and minor device numbers
 // for the filesystem mounted at the given targetPath.
@@ -182,4 +210,36 @@ func MonitorKernelParamsFile(ctx context.Context, mountPoint, emptyDirBasePath, 
 			}
 		}
 	}
+}
+
+// MountUsingElevatedFuseMaxPagesLimit temporarily increases the host's FUSE max_pages_limit if the current limit is lower,
+// executes the provided function, and then restores the original limit.
+func MountUsingElevatedFuseMaxPagesLimit(targetLimit int64, logPrefix string, fn func() error) error {
+	fuseMaxMaxPagesMu.Lock()
+	defer fuseMaxMaxPagesMu.Unlock()
+
+	origLimit, err := ReadFuseMaxPagesLimit()
+	if err != nil {
+		klog.Warningf("%v Failed to read host FUSE max_pages_limit: %v. Proceeding with default kernel limit.", logPrefix, err)
+		return fn()
+	}
+
+	if origLimit >= targetLimit {
+		return fn()
+	}
+
+	klog.Infof("%v Temporarily increasing host FUSE max_pages_limit from %d to %d for mount", logPrefix, origLimit, targetLimit)
+	if err := SetFuseMaxPagesLimit(targetLimit); err != nil {
+		klog.Warningf("%v Failed to set host FUSE max_pages_limit to %d: %v. Proceeding with default kernel limit.", logPrefix, targetLimit, err)
+		return fn()
+	}
+
+	defer func() {
+		klog.Infof("%v Restoring host FUSE max_pages_limit back to %d", logPrefix, origLimit)
+		if err := SetFuseMaxPagesLimit(origLimit); err != nil {
+			klog.Errorf("%v Failed to restore host FUSE max_pages_limit to %d: %v", logPrefix, origLimit, err)
+		}
+	}()
+
+	return fn()
 }
