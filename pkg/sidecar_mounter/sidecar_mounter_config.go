@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"gopkg.in/yaml.v3"
@@ -201,6 +202,20 @@ func mergeFlags(mountConfigFlagMap map[string]string, driverFlagMap map[string]s
 			mountConfigFlagMap[key] = value
 		}
 	}
+}
+
+// ReadDriverFlagsForDefaulting reads the defaulting flags file written by the CSI driver
+// into the emptyDir volume and parses its content into a map of flag key-value pairs.
+// If the file does not exist, it returns an empty map and nil error.
+func ReadDriverFlagsForDefaulting(defaultFilePath string) (map[string]string, error) {
+	machineTypeBytes, err := os.ReadFile(defaultFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("failed to read defaulting-flag file %q: %w", defaultFilePath, err)
+	}
+	return driver.ParseFlagMapFromFlagFile(string(machineTypeBytes)), nil
 }
 
 func (mc *MountConfig) prepareMountArgs() {

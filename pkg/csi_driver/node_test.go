@@ -3034,3 +3034,132 @@ func TestNodeStageVolumeHostNetwork(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeStageVolumeMachineTypeDefaulting(t *testing.T) {
+	t.Parallel()
+
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+	expectedMachineType := "e2-medium" // default set by FakeClientset.CreateNode
+
+	cases := []struct {
+		name                     string
+		assumeGoodSidecarVersion bool
+		disableAutoconfig        bool
+		expectFlagFileWritten    bool
+	}{
+		{
+			name:                     "version check passes - flag file should be written with machine-type and disable-autoconfig",
+			assumeGoodSidecarVersion: true,
+			disableAutoconfig:        false,
+			expectFlagFileWritten:    true,
+		},
+		{
+			name:                     "version check passes, autoconfig disabled - flag file written with disable-autoconfig=true",
+			assumeGoodSidecarVersion: true,
+			disableAutoconfig:        true,
+			expectFlagFileWritten:    true,
+		},
+		{
+			name:                     "version check fails - flag file should not be written",
+			assumeGoodSidecarVersion: false,
+			disableAutoconfig:        false,
+			expectFlagFileWritten:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			tmpDir, err := os.MkdirTemp("/tmp", "s")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+			t.Cleanup(func() { os.RemoveAll(tmpDir) })
+			socketDir := filepath.Join(tmpDir, "s")
+			emptyDirBaseRoot := filepath.Join(tmpDir, "e")
+
+			sockFile := filepath.Join(emptyDirBaseRoot, string(podUID), MounterPodSocketFile)
+			_ = startFakeMounterServer(t, sockFile)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = mount.NewFakeMounter([]mount.MountPoint{})
+			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns.driver.config.DisableAutoconfig = tc.disableAutoconfig
+			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
+				Enabled:       true,
+				FuseSocketDir: socketDir,
+				EmptyDirBasePath: func(uid string) string {
+					return filepath.Join(emptyDirBaseRoot, uid)
+				},
+			}
+
+			stageReq := &csi.NodeStageVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: testStagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  volID,
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      podName,
+					PublishContextKeyMounterPodNamespace: podNamespace,
+				},
+			}
+
+			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			emptyDirPath := ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(string(podUID))
+			flagFilePath := filepath.Join(emptyDirPath, FlagFileForDefaultingPath)
+			content, readErr := os.ReadFile(flagFilePath)
+
+			if tc.expectFlagFileWritten {
+				if readErr != nil {
+					t.Fatalf("expected flags-for-defaulting file at %q, got error: %v", flagFilePath, readErr)
+				}
+				flags := ParseFlagMapFromFlagFile(string(content))
+				if got := flags["machine-type"]; got != expectedMachineType {
+					t.Errorf("flags[%q] = %q, want %q", "machine-type", got, expectedMachineType)
+				}
+				if got := flags["disable-autoconfig"]; got != strconv.FormatBool(tc.disableAutoconfig) {
+					t.Errorf("flags[%q] = %q, want %q", "disable-autoconfig", got, strconv.FormatBool(tc.disableAutoconfig))
+				}
+			} else {
+				if readErr == nil {
+					t.Errorf("expected no flags-for-defaulting file to be written, but found one with content: %q", string(content))
+				}
+			}
+		})
+	}
+}

@@ -680,27 +680,24 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 	return false
 }
 
-func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string, fileName string) error {
-	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
-	if err != nil {
-		return fmt.Errorf("failed to get emptyDir path: %w", err)
+func writeDriverFlagsFile(flagMap map[string]string, emptyDirBasePath string) error {
+	if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
+		return fmt.Errorf("failed to create directory %q: %w", emptyDirBasePath, err)
 	}
 
-	absolutePath := filepath.Dir(emptyDirBasePath) + "/" + fileName
+	absolutePath := filepath.Join(emptyDirBasePath, FlagFileForDefaultingPath)
 	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %q: %v", absolutePath, flagMap)
-
-	parentDir := filepath.Dir(emptyDirBasePath)
 
 	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
 	// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
 	// attacks during subsequent relative operations (using unix.Openat).
-	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	parentFd, err := unix.Open(emptyDirBasePath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
+		return fmt.Errorf("failed to open parent directory %q: %w", emptyDirBasePath, err)
 	}
 	defer unix.Close(parentFd)
 
-	fd, err := unix.Openat(parentFd, filepath.Base(fileName), unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
+	fd, err := unix.Openat(parentFd, FlagFileForDefaultingPath, unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to securely open defaulting-flag file: %w", err)
 	}
@@ -730,12 +727,10 @@ func ParseFlagMapFromFlagFile(flagFileContent string) map[string]string {
 	configFlags := make(map[string]string)
 	lines := strings.Split(flagFileContent, "\n")
 	for _, line := range lines {
-		if line == "" { // Skip empty lines
+		key, value, found := strings.Cut(line, ":")
+		if !found || key == "" {
 			continue
 		}
-		parts := strings.Split(line, ":")
-		key := parts[0]
-		value := parts[1]
 		configFlags[key] = value
 	}
 	return configFlags

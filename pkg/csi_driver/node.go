@@ -215,6 +215,28 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
+func (s *nodeServer) populateDriverFlagsForDefaulting(node *corev1.Node, mounterImage string, emptyDirBasePath string) error {
+	if node == nil {
+		return fmt.Errorf("node cannot be nil")
+	}
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, MachineTypeAutoConfigSidecarMinVersion) {
+		return nil
+	}
+
+	shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
+	machineType, ok := node.Labels[clientset.MachineTypeKey]
+	if !ok {
+		klog.Warningf("Unable to fetch target node %v's machine type", node.Name)
+		return nil
+	}
+
+	flagMap := map[string]string{
+		"machine-type":       machineType,
+		"disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig),
+	}
+
+	return writeDriverFlagsFile(flagMap, emptyDirBasePath)
+}
 
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Rate limit NodePublishVolume calls to avoid kube API throttling.
@@ -376,27 +398,16 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisifies min version requirement
-	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MachineTypeAutoConfigSidecarMinVersion) {
-		shouldDisableAutoConfig := s.driver.config.DisableAutoconfig
-		machineType, ok := node.Labels[clientset.MachineTypeKey]
-		if ok {
-			flagMap := map[string]string{"machine-type": machineType, "disable-autoconfig": strconv.FormatBool(shouldDisableAutoConfig)}
-			if err := PutFlagsFromDriverToTargetPath(flagMap, targetPath, FlagFileForDefaultingPath); err != nil {
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-		} else {
-			klog.Warningf("Unable to fetch target node %v's machine type", node.Name)
-		}
+	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
+	if err != nil {
+		klog.Warningf("Failed to prepare empty dir from target path %q: %v", targetPath, err)
 	}
 
-	var podUID, volumeName, emptyDirBasePath string
+	var podUID, volumeName string
 	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, vs) {
 		var err error
 		if podUID, volumeName, err = util.ParsePodIDVolumeFromTargetpath(targetPath); err != nil {
 			klog.Warningf("Failed to parse pod ID and volume name from target path %q for kernel params monitor: %v. Monitor will not be started.", targetPath, err)
-		} else if emptyDirBasePath, err = util.PrepareEmptyDir(targetPath, false); err != nil {
-			klog.Warningf("Failed to prepare empty dir from target path %q for kernel params monitor: %v. Monitor will not be started.", targetPath, err)
 		}
 	}
 
@@ -439,6 +450,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
 		return &csi.NodePublishVolumeResponse{}, nil
+	}
+
+	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisfies min version requirement
+	if emptyDirBasePath != "" {
+		if err := s.populateDriverFlagsForDefaulting(node, gcsFuseSidecarImage, filepath.Dir(emptyDirBasePath)); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
 	}
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
@@ -1016,6 +1034,20 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
+	}
+
+	// Fetch the node to pass its labels for auto-config
+	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if node == nil {
+		return nil, status.Errorf(codes.Internal, "Node %q not found", s.driver.config.NodeID)
+	}
+
+	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisfies min version requirement
+	if err := s.populateDriverFlagsForDefaulting(node, podImage, emptyDirBasePath); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	// Wait for the mounter pod grpc server to be ready.
