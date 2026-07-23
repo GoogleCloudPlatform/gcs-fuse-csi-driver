@@ -20,7 +20,6 @@ package driver
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -33,12 +32,10 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
 )
@@ -50,6 +47,18 @@ const (
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
 	maxGCSFuseVolumesForMetrics         = 10
+	unmountRetryInterval                = 100 * time.Millisecond
+	unmountRetryBackoffFactor           = 2.0
+	unmountRetryJitter                  = 0.1
+	// Standard unmount has no built-in timeout, so we use a short timeout to fail fast.
+	standardUnmountRetryTimeout = 2 * time.Second
+	standardUnmountRetrySteps   = 5
+	// Force unmount attempts include an initial non-force unmount with a
+	// 5 second timeout (as defined in vendor/k8s.io/mount-utils/mount_linux.go).
+	// We then retry force unmounting for 2 seconds.
+	// Thus the full timeout is 7 seconds.
+	forceUnmountRetryTimeout = 7 * time.Second
+	forceUnmountRetrySteps   = 6
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -90,48 +99,6 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 	}, nil
 }
 
-func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	// Validate arguments
-	stagingPath := req.GetStagingTargetPath()
-	if len(stagingPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Staging Target Path must be provided")
-	}
-	publishContext := req.GetPublishContext()
-	if publishContext == nil {
-		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Publish Context must be provided")
-	}
-	mounterPodNamespace := publishContext[PublishContextKeyMounterPodNamespace]
-	if len(mounterPodNamespace) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Namespace must be provided")
-	}
-	mounterPodName := publishContext[PublishContextKeyMounterPodName]
-	if len(mounterPodName) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodePublishVolume Mounter Pod Name must be provided")
-	}
-
-	// Verify mounter pod exists.
-	mounterPod, err := s.k8sClients.GetPod(mounterPodNamespace, mounterPodName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.FailedPrecondition, "failed to get mounter pod: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "failed to get mounter pod: %v", err)
-	}
-	if mounterPod == nil {
-		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
-	}
-
-	// NodePublish is guaranteed to be called after NodeStage has waited for mounter pod to become running.
-	// Mounter pod not running at this stage means that the pod started and failed (e.g. killed by Kubelet
-	// during OOMKILL).
-	if mounterPod.Status.Phase != corev1.PodRunning {
-		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
-	}
-
-	// TODO(urielguzman): Implement the rest of the NodePublishVolume logic for shared mount.
-	return &csi.NodePublishVolumeResponse{}, nil
-}
-
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Rate limit NodePublishVolume calls to avoid kube API throttling.
 	if err := s.limiter.Wait(ctx); err != nil {
@@ -144,13 +111,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.InvalidArgument, "NodePublishVolume target path must be provided")
 	}
 
-	// Switch to shared mount logic if the volume context indicates that shared mount is enabled.
-	vc := req.GetVolumeContext()
-	if sharedMount(vc) {
-		return s.NodePublishVolumeForSharedMount(ctx, req)
-	}
-
 	// Get the Pod object.
+	vc := req.GetVolumeContext()
 	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
@@ -480,7 +442,7 @@ func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage s
 		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseKernelParamsMinVersion)
 }
 
-func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Validate arguments
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -517,12 +479,16 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		// mount.CleanupMountPoint() call will hang.
 		forceUnmounter, ok := s.mounter.(mount.MounterForceUnmounter)
 		if ok {
-			if err = forceUnmounter.UnmountWithForce(targetPath, UmountTimeout); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath, forceUnmountRetryTimeout, forceUnmountRetrySteps, func() error {
+				return forceUnmounter.UnmountWithForce(targetPath, UmountTimeout)
+			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to force unmount target path %q: %v", targetPath, err)
 			}
 		} else {
 			klog.Warningf("failed to cast the mounter to a forceUnmounter, proceed with the default mounter Unmount")
-			if err = s.mounter.Unmount(targetPath); err != nil {
+			if err = s.unmountWithRetry(ctx, targetPath, standardUnmountRetryTimeout, standardUnmountRetrySteps, func() error {
+				return s.mounter.Unmount(targetPath)
+			}); err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to unmount target path %q: %v", targetPath, err)
 			}
 		}
@@ -551,6 +517,43 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// unmountWithRetry retries the unmount operation using exponential backoff.
+// It uses a child context with a timeout to limit the total retry duration,
+// in addition to being limited to the defined number of steps.
+//
+// If the OS unmount system call itself hangs, this function will block
+// on the hung call. It won't be able to interrupt the hung call until the Kubelet cancels the parent
+// context (NodeUnpublishVolume context) and retries the entire operation.
+func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, timeout time.Duration, steps int, unmountFn func() error) error {
+	var lastErr error
+	childCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	backoff := wait.Backoff{
+		Duration: unmountRetryInterval,
+		Factor:   unmountRetryBackoffFactor,
+		Jitter:   unmountRetryJitter,
+		Steps:    steps,
+	}
+
+	pollErr := wait.ExponentialBackoffWithContext(childCtx, backoff, func(ctx context.Context) (bool, error) {
+		lastErr = unmountFn()
+		if lastErr == nil {
+			return true, nil
+		}
+		klog.Warningf("Failed to unmount %q: %v. Retrying...", targetPath, lastErr)
+		return false, nil
+	})
+
+	if pollErr != nil {
+		if lastErr != nil {
+			return lastErr
+		}
+		return pollErr
+	}
+	return nil
 }
 
 // setupMultiNIC updates args with options for multi NIC configuration.
@@ -675,228 +678,4 @@ func (s *nodeServer) countGcsFuseVolumes(pod *corev1.Pod) (int, error) {
 	}
 
 	return gcsFuseVolumeCount, nil
-}
-
-func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	// Validate arguments.
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Request cannot be nil")
-	}
-	volumeID := req.GetVolumeId()
-	if len(volumeID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Volume ID must be provided")
-	}
-	if req.GetVolumeCapability() == nil {
-		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Volume capability must be provided")
-	}
-	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	stagingPath := req.GetStagingTargetPath()
-	if len(stagingPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodeStageVolume Staging Target Path must be provided")
-	}
-	// Skip NodeStageVolume for sidecar mounted volumes.
-	if !sharedMount(req.GetVolumeContext()) {
-		return &csi.NodeStageVolumeResponse{}, nil
-	}
-
-	publishContext := req.GetPublishContext()
-	if publishContext == nil {
-		return nil, status.Error(codes.InvalidArgument, "publishContext must be provided")
-	}
-
-	podName, ok := publishContext[PublishContextKeyMounterPodName]
-	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "publishContext must contain mounter pod name")
-	}
-	if podName == "" {
-		return nil, status.Error(codes.InvalidArgument, "mounter pod name in publishContext cannot be empty")
-	}
-
-	podNamespace, ok := publishContext[PublishContextKeyMounterPodNamespace]
-	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "publishContext must contain mounter pod namespace")
-	}
-	if podNamespace == "" {
-		return nil, status.Error(codes.InvalidArgument, "mounter pod namespace in publishContext cannot be empty")
-	}
-
-	// Acquire a lock on the staging path.
-	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
-		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
-	}
-	defer s.volumeLocks.Release(stagingPath)
-
-	resp, err := s.executeNodeStageVolume(ctx, req)
-
-	if err != nil {
-		klog.Errorf("NodeStageVolume failed on staging path %q for volume %q: %v)", stagingPath, volumeID, err)
-	}
-
-	return resp, err
-}
-
-func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	clientset := s.driver.config.K8sClients
-	stagingPath := req.GetStagingTargetPath()
-
-	// Validate staging path and mounter pod information from the request.
-	publishContext := req.GetPublishContext()
-	podName := publishContext[PublishContextKeyMounterPodName]
-	podNamespace := publishContext[PublishContextKeyMounterPodNamespace]
-
-	klog.Infof("Executing NodeStageVolume. Mounter pod: %s/%s, node: %q, volume: %q, staging path: %q", podNamespace, podName, s.driver.config.NodeID, req.GetVolumeId(), stagingPath)
-
-	// Verify mounter pod exists.
-	pod, err := clientset.GetPod(podNamespace, podName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", podNamespace, podName)
-		}
-		return nil, status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", podNamespace, podName, err)
-	}
-	if pod == nil {
-		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
-	}
-
-	// Check if the staging path is already mounted.
-	mounted, err := s.isDirMounted(stagingPath)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
-	}
-	if mounted {
-		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
-		return &csi.NodeStageVolumeResponse{}, nil
-	}
-
-	// Make the staging path.
-	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
-	if err := os.MkdirAll(stagingPath, 0750); err != nil {
-		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
-	}
-
-	// Wait for the mounter pod grpc server to be ready.
-	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, string(pod.UID), s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
-		return nil, err
-	}
-
-	podUID := string(pod.UID)
-
-	// Send GRPC to mounter pod to start GCSFuse.
-	if err := s.mountToNode(ctx, podUID, stagingPath, req.GetVolumeId()); err != nil {
-		return nil, err
-	}
-
-	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
-
-	klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
-	return &csi.NodeStageVolumeResponse{}, nil
-}
-
-// mountToNode connects to the mounter server, at which point it initializes the GCSFuse process.
-func (s *nodeServer) mountToNode(ctx context.Context, podUID, stagingPath, volumeID string) error {
-	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
-		return status.Errorf(codes.Internal, "shared mount options are not fully configured")
-	}
-
-	if s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath == nil {
-		return status.Errorf(codes.Internal, "empty dir base path must be provided for shared mount")
-	}
-	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
-	socketFile := filepath.Join(emptyDirBasePath, mounterPodSocketFile)
-
-	// Create a symlink to bypass the 108-character limit for Unix domain sockets
-	// when dialing the connection from the Node Server.
-	if s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir == "" {
-		return status.Errorf(codes.Internal, "fuse socket dir must be provided for shared mount")
-	}
-	symlink := filepath.Join(s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir, mounterPodSocketDir, podUID)
-	if err := os.MkdirAll(filepath.Dir(symlink), 0750); err != nil {
-		return status.Errorf(codes.Internal, "failed to create dir for symlink %q: %v", symlink, err)
-	}
-
-	if err := os.Remove(symlink); err != nil && !os.IsNotExist(err) {
-		klog.Errorf("failed to remove stale symlink %q: %v", symlink, err)
-	}
-
-	if err := os.Symlink(socketFile, symlink); err != nil {
-		return status.Errorf(codes.Internal, "failed to create symlink to %q: %v", socketFile, err)
-	}
-	defer os.Remove(symlink)
-
-	// Connect to the socket using the short symlink path.
-	socketPath := fmt.Sprintf("unix:%s", symlink)
-	conn, err := grpc.NewClient(socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		klog.Errorf("Failed to connect to the server: %v", err)
-		return status.Errorf(codes.Internal, "failed to connect to the mounter pod grpc server: %v", err)
-	}
-	klog.Infof("Connected to MounterServer at %s", socketPath)
-	defer conn.Close()
-
-	/*
-		TODO(FUECHR): Implement the mounter client and mount request once we have a mounter service defined.
-		c := mounter.NewMounterClient(conn)
-		if _, err := c.Mount(ctx, &mounter.MountRequest{
-			Mountpoint: stagingPath,
-			VolumeID:   volumeID,
-		}); err != nil {
-			return status.Errorf(codes.Internal, "failed to mount: %v", err)
-		}
-	*/
-
-	klog.Infof("Mount succeeded at staging target path %s", stagingPath)
-	return nil
-}
-
-func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	// Validate arguments.
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Request cannot be nil")
-	}
-	volumeID := req.GetVolumeId()
-	if len(volumeID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Volume ID must be provided")
-	}
-	stagingPath := req.GetStagingTargetPath()
-	if len(stagingPath) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "NodeUnstageVolume Staging Target Path must be provided")
-	}
-
-	// Acquire a lock on the staging path instead of volumeID, since we do not want to serialize multiple node unstage calls on the same volume.
-	if acquired := s.volumeLocks.TryAcquire(stagingPath); !acquired {
-		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, stagingPath)
-	}
-	defer s.volumeLocks.Release(stagingPath)
-
-	if err := s.cleanupStagingPath(stagingPath); err != nil {
-		return nil, err
-	}
-
-	klog.Infof("NodeUnstageVolume succeeded on staging path %q for volume %q", stagingPath, req.GetVolumeId())
-	return &csi.NodeUnstageVolumeResponse{}, nil
-}
-
-func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
-	// Unmount staging path.
-	mounted, err := s.isDirMounted(stagingPath)
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", stagingPath, err)
-	}
-
-	if mounted {
-		if err = s.mounter.Unmount(stagingPath); err != nil {
-			return status.Errorf(codes.Internal, "failed to unmount staging path %q: %v", stagingPath, err)
-		}
-	} else {
-		klog.Infof("staging path %q was already unmounted", stagingPath)
-	}
-
-	// Cleanup the mount point.
-	if err := mount.CleanupMountPoint(stagingPath, s.mounter, false /* bind mount */); err != nil {
-		return status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", stagingPath, err)
-	}
-
-	return nil
 }

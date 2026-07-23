@@ -43,11 +43,6 @@ const (
 
 	// Webhook relevant volume attributes.
 	gcsFuseMetadataPrefetchOnMountVolumeAttribute = "gcsfuseMetadataPrefetchOnMount"
-	SharedMountVolumeAttribute                    = "sharedMount"
-
-	// Webhook relevant labels and annotations.
-	SharedMountLabel             = "gke-gcsfuse/shared-mount"
-	MounterPodTemplateAnnotation = "gke-gcsfuse/mounter-pod-template"
 
 	// gcsfuse profiles constants
 	GcsfuseProfilesManagedLabel                           = "gke-gcsfuse/profile-managed"

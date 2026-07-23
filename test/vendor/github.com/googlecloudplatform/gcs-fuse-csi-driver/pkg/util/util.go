@@ -36,7 +36,8 @@ import (
 )
 
 const (
-	Mb = 1024 * 1024
+	KiB = 1024
+	MiB = 1024 * KiB
 
 	TrueStr  = "true"
 	FalseStr = "false"
@@ -60,7 +61,6 @@ const (
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
 	EnableCloudProfilerConst            = "enable-cloud-profiler"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
-	SidecarContainerTmpVolumePath       = "/gke-gcsfuse-tmp"
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
@@ -72,8 +72,6 @@ const (
 	AutoGoMemLimitRatioConst            = "auto-gomemlimit-ratio"
 	GoMemLimitCgroupPercentage          = 0.95
 	StorageEndpointInternal             = "storage-endpoint-internal"
-	KubeletDir                          = "/var/lib/kubelet"
-	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
 )
 
 var (
@@ -335,4 +333,9 @@ func CheckNotSymlink(path string) error {
 		return fmt.Errorf("security error: path %q is a symlink", path)
 	}
 	return nil
+}
+
+// CeilDiv64 performs integer division of 'a' by 'b', rounding the result up.
+func CeilDiv64(a, b int64) int64 {
+	return (a + b - 1) / b
 }
