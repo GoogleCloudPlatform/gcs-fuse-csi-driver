@@ -39,7 +39,8 @@ import (
 )
 
 const (
-	Mb = 1024 * 1024
+	KiB = 1024
+	MiB = 1024 * KiB
 
 	TrueStr  = "true"
 	FalseStr = "false"
@@ -388,4 +389,9 @@ func WaitForPathMounted(ctx context.Context, path string) error {
 	}
 
 	return nil
+}
+
+// CeilDiv64 performs integer division of 'a' by 'b', rounding the result up.
+func CeilDiv64(a, b int64) int64 {
+	return (a + b - 1) / b
 }
