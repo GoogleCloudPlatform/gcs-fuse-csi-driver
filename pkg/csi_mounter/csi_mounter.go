@@ -43,24 +43,12 @@ import (
 )
 
 const (
-	// Note: All variables here are in KiB instead of KB but they are added like this to ensure consistency in codebase.
 	socketName                       = "socket"
 	readAheadKBMountFlagRegexPattern = "^read_ahead_kb=(.+)$"
 	readAheadKBMountFlag             = "read_ahead_kb"
-	// Hidden CSI flag never to be passed to gcsfuse
-	nodeFuseMaxRequestLimitKBMountFlag             = "node_fuse_max_request_limit_kb"
-	nodeFuseMaxRequestLimitKBMountFlagRegexPattern = "^" + nodeFuseMaxRequestLimitKBMountFlag + "=(.+)$"
-	defaultNodeFuseMaxRequestLimitKB               = 16 * util.MiB / util.KiB // 16 MiB Request Size
-	// minPageSizeKB defines the minimum page size (4 KiB) to use as a fallback.
-	minPageSizeKB = 4
-	// maxFuseMaxPagesLimit defines the maximum pages limit supported by the Linux FUSE kernel (2^16 - 1).
-	maxFuseMaxPagesLimit = 65535
 )
 
-var (
-	readAheadKBMountFlagRegex               = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
-	nodeFuseMaxRequestLimitKBMountFlagRegex = regexp.MustCompile(nodeFuseMaxRequestLimitKBMountFlagRegexPattern)
-)
+var readAheadKBMountFlagRegex = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
 
 // Mounter provides the Cloud Storage FUSE CSI implementation of mount.Interface
 // for the linux platform.
@@ -90,7 +78,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	m.mux.Lock()
 	defer m.mux.Unlock()
 
-	csiMountOptions, sidecarMountOptions, sysfsBDI, fuseMaxPagesLimit, err := prepareMountOptions(options)
+	csiMountOptions, sidecarMountOptions, sysfsBDI, err := prepareMountOptions(options)
 	if err != nil {
 		return err
 	}
@@ -116,18 +104,8 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	}
 	csiMountOptions = append(csiMountOptions, fmt.Sprintf("fd=%v", fd))
 
-	mountFn := func() error {
-		klog.V(4).Infof("%v mounting the fuse filesystem", logPrefix)
-		return m.MountSensitiveWithoutSystemdWithMountFlags(source, target, fstype, csiMountOptions, nil, []string{"--internal-only"})
-	}
-	// TODO(mohitkyadav): Remove this check when kernel reader is enabled by default for Regional Buckets.
-	isKernelReaderEnabled := checkForKernelReader(options)
-	shouldMountUsingElevatedFuseMaxPagesLimit := util.FuseMaxMaxPagesUpdateSupported() && fuseMaxPagesLimit > 0 && isKernelReaderEnabled
-	if shouldMountUsingElevatedFuseMaxPagesLimit {
-		err = util.MountUsingElevatedFuseMaxPagesLimit(fuseMaxPagesLimit, logPrefix, mountFn)
-	} else {
-		err = mountFn()
-	}
+	klog.V(4).Infof("%v mounting the fuse filesystem", logPrefix)
+	err = m.MountSensitiveWithoutSystemdWithMountFlags(source, target, fstype, csiMountOptions, nil, []string{"--internal-only"})
 	if err != nil {
 		klog.Errorf("MountSensitiveWithoutSystemdWithMountFlags failed with error %v", err)
 		return fmt.Errorf("failed to mount the fuse filesystem: %w", err)
@@ -379,7 +357,7 @@ func startAcceptConn(l net.Listener, logPrefix string, msg []byte, fd int, cance
 	klog.V(4).Infof("%v exiting the listener goroutine.", logPrefix)
 }
 
-func prepareMountOptions(options []string) ([]string, []string, map[string]int64, int64, error) {
+func prepareMountOptions(options []string) ([]string, []string, map[string]int64, error) {
 	allowedOptions := map[string]bool{
 		"exec":    true,
 		"noexec":  true,
@@ -412,11 +390,6 @@ func prepareMountOptions(options []string) ([]string, []string, map[string]int64
 	}
 
 	sysfsBDI := make(map[string]int64)
-	pageSizeKB := max(minPageSizeKB, int64(os.Getpagesize()/util.KiB))
-	// Calculate default FUSE max pages limit. We use integer ceiling division to ensure we round
-	// up to the next page if the default size 16MB is not a perfect multiple of the page size on the machine.
-	fuseMaxPagesLimit := util.CeilDiv64(defaultNodeFuseMaxRequestLimitKB, pageSizeKB)
-
 	for _, o := range optionSet.List() {
 		if strings.HasPrefix(o, "o=") {
 			v := o[2:]
@@ -433,44 +406,15 @@ func prepareMountOptions(options []string) ([]string, []string, map[string]int64
 			// If found, it will be at index 1
 			readAheadKBInt, err := strconv.ParseInt(readAheadKB[1], 10, 0)
 			if err != nil {
-				return nil, nil, nil, 0, fmt.Errorf("invalid read_ahead_kb mount flag %q: %w", o, err)
+				return nil, nil, nil, fmt.Errorf("invalid read_ahead_kb mount flag %q: %w", o, err)
 			}
 			if readAheadKBInt < 0 {
-				return nil, nil, nil, 0, fmt.Errorf("invalid negative value for read_ahead_kb mount flag: %q", o)
+				return nil, nil, nil, fmt.Errorf("invalid negative value for read_ahead_kb mount flag: %q", o)
 			}
 			sysfsBDI[readAheadKBMountFlag] = readAheadKBInt
 			optionSet.Delete(o)
 		}
-
-		if maxReqSize := nodeFuseMaxRequestLimitKBMountFlagRegex.FindStringSubmatch(o); len(maxReqSize) == 2 {
-			nodeFuseMaxRequestLimitKB, err := strconv.ParseInt(maxReqSize[1], 10, 0)
-			if err != nil {
-				return nil, nil, nil, 0, fmt.Errorf("invalid %s mount flag %q: %w", nodeFuseMaxRequestLimitKBMountFlag, o, err)
-			}
-			if nodeFuseMaxRequestLimitKB < 0 {
-				return nil, nil, nil, 0, fmt.Errorf("invalid negative value for %s mount flag: %q", nodeFuseMaxRequestLimitKBMountFlag, o)
-			}
-			maxAllowedSizeKB := maxFuseMaxPagesLimit * pageSizeKB
-			if nodeFuseMaxRequestLimitKB > maxAllowedSizeKB {
-				return nil, nil, nil, 0, fmt.Errorf("invalid value for %s mount flag %q: exceeds maximum allowed limit of %d KiB on this host", nodeFuseMaxRequestLimitKBMountFlag, o, maxAllowedSizeKB)
-			}
-			// Convert the requested size in KB to pages. We use integer ceiling division
-			// to round up to the next page if the requested size is not a multiple of the
-			// page size. This ensures we can accommodate the full requested buffer size in
-			// a single fuse request.
-			fuseMaxPagesLimit = util.CeilDiv64(nodeFuseMaxRequestLimitKB, pageSizeKB)
-			optionSet.Delete(o)
-		}
 	}
 
-	return csiMountOptions, optionSet.List(), sysfsBDI, fuseMaxPagesLimit, nil
-}
-
-func checkForKernelReader(options []string) bool {
-	for _, o := range options {
-		if o == "enable-kernel-reader" || o == "enable-kernel-reader=true" || o == "file-system:enable-kernel-reader:true" {
-			return true
-		}
-	}
-	return false
+	return csiMountOptions, optionSet.List(), sysfsBDI, nil
 }

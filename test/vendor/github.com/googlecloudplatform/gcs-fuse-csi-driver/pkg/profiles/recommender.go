@@ -1037,7 +1037,7 @@ func bytesToMiB(a int64) int64 {
 	if a == -1 {
 		return -1
 	}
-	return util.CeilDiv64(a, mib)
+	return ceilDiv64(a, mib)
 }
 
 // mibToBytes converts mebibytes (MiB) to a byte count.
@@ -1046,6 +1046,11 @@ func mibToBytes(a int64) int64 {
 		return -1
 	}
 	return a * mib
+}
+
+// ceilDiv64 performs integer division of 'a' by 'b', rounding the result up.
+func ceilDiv64(a, b int64) int64 {
+	return (a + b - 1) / b
 }
 
 // isValidMountOption checks if a mount option string follows the allowed formats.
