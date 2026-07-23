@@ -281,9 +281,7 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 	// Running this test first gives it time to create and delete the anywhere cache which can take up to 2 hours.
 	ginkgo.It("should override profiles all overridable values", ginkgo.SpecPriority(10), func() {
 		err := utils.AddComputeBindingForAC(ctx)
-		if err != nil {
-			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
-		}
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Failed while prepping anywherecache iam bindings for profiles tests")
 		init(specs.ProfilesOverrideAllOverridablePrefix)
 		defer cleanup()
 

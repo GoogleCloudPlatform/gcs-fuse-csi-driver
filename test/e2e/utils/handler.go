@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientset "k8s.io/client-go/kubernetes"
@@ -56,8 +57,10 @@ type TestParameters struct {
 	UseGKEAutopilot     bool
 	APIEndpointOverride string
 
-	InProw             bool
-	BoskosResourceType string
+	InProw                 bool
+	BoskosResourceType     string
+	ManageClusterLifecycle bool
+	UseBoskos              bool
 
 	ImageRegistry          string
 	BuildGcsFuseCsiDriver  bool
@@ -112,9 +115,12 @@ func Handle(testParams *TestParameters) error {
 
 	// Always ensure ProjectID is set and PROJECT env var is exported for all test runs.
 	if testParams.ProjectID == "" {
-		output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
+		klog.Infof("Getting default gcloud project...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		output, err := gcloudCommandContext(ctx, testParams, "config", "get-value", "project").CombinedOutput()
+		cancel()
 		if err != nil {
-			klog.Fatalf("Failed to get gcloud project: %v", err)
+			klog.Fatalf("Failed to get gcloud project: %v (output: %s)", err, string(output))
 		}
 		// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
 		// "Your active configuration is: [...]" to the project ID. Take the last line.
@@ -129,39 +135,48 @@ func Handle(testParams *TestParameters) error {
 	oldMask := syscall.Umask(0o000)
 	defer syscall.Umask(oldMask)
 
-	// If the test is running in Prow, do the following steps:
-	// 1. Get the old project ID.
-	// 2. Acquire and set up a new project through Boskos.
-	// 3. Create a GKE cluster.
-	// 4. After the test, tear down the cluster, and switch back to the old project.
-	if testParams.InProw {
-		// 1. Get the old project ID.
-		output, err := exec.Command("gcloud", "config", "get-value", "project").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err)
-		}
-		oldProject := string(output)
+	// If we need to manage the cluster lifecycle (create and destroy cluster):
+	if testParams.ManageClusterLifecycle {
+		if testParams.UseBoskos {
+			// 1. Get the old project ID.
+			klog.Infof("Getting old gcloud project...")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			output, err := gcloudCommandContext(ctx, testParams, "config", "get-value", "project").CombinedOutput()
+			cancel()
+			if err != nil {
+				return fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err)
+			}
+			oldProject := string(output)
 
-		// 2. Acquire and set up a new project through Boskos.
-		newProject := setupProwConfig(testParams.BoskosResourceType)
-		if _, ok := os.LookupEnv("USER"); !ok {
-			if err := os.Setenv("USER", "prow"); err != nil {
-				return fmt.Errorf("failed to set user in prow to prow: %w", err)
+			// 2. Acquire and set up a new project through Boskos.
+			newProject := setupProwConfig(testParams.BoskosResourceType)
+			if _, ok := os.LookupEnv("USER"); !ok {
+				if err := os.Setenv("USER", "prow"); err != nil {
+					return fmt.Errorf("failed to set user in prow to prow: %w", err)
+				}
+			}
+
+			if err := setEnvProject(newProject); err != nil {
+				return fmt.Errorf("failed to set project environment to %s: %w", newProject, err)
+			}
+			testParams.ProjectID = newProject
+			testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(newProject))
+
+			// Restore old project at the end.
+			defer func() {
+				if err := setEnvProject(oldProject); err != nil {
+					klog.Errorf("failed to set project environment to %s: %v", oldProject, err)
+				}
+			}()
+		} else {
+			// If not using Boskos, we use the provided ProjectID.
+			if testParams.ProjectID == "" {
+				return fmt.Errorf("project-id must be provided when managing cluster lifecycle without Boskos")
+			}
+			if testParams.ImageRegistry == "" {
+				testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(testParams.ProjectID))
 			}
 		}
-
-		if err := setEnvProject(newProject); err != nil {
-			return fmt.Errorf("failed to set project environment to %s: %w", newProject, err)
-		}
-		testParams.ProjectID = newProject
-		testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(newProject))
-
-		// 4. After the test, tear down the cluster, and switch back to the old project.
-		defer func() {
-			if err := setEnvProject(oldProject); err != nil {
-				klog.Errorf("failed to set project environment to %s: %v", oldProject, err)
-			}
-		}()
 
 		// 3. Create a GKE cluster.
 		testParams.GkeClusterName = "gcsfuse" + string(uuid.NewUUID())[0:4]
@@ -171,14 +186,14 @@ func Handle(testParams *TestParameters) error {
 
 		// Set env variables for OIDC auth prow tests. For local tests, these
 		// env variables are set in the Makefile from kubectl config current-context.
-		if err = os.Setenv(ClusterNameEnvVar, testParams.GkeClusterName); err != nil {
+		if err := os.Setenv(ClusterNameEnvVar, testParams.GkeClusterName); err != nil {
 			klog.Fatalf(`env variable %q could not be set: %v`, ClusterNameEnvVar, err)
 		}
-		if err = os.Setenv(ClusterLocationEnvVar, testParams.GkeClusterRegion); err != nil {
+		if err := os.Setenv(ClusterLocationEnvVar, testParams.GkeClusterRegion); err != nil {
 			klog.Fatalf(`env variable %q could not be set: %v`, ClusterLocationEnvVar, err)
 		}
 
-		// 4. After the test, tear down the cluster, and switch back to the old project.
+		// 4. After the test, tear down the cluster.
 		defer func() {
 			if err := clusterDownGKE(testParams); err != nil {
 				klog.Errorf("failed to cluster down: %v", err)
@@ -186,11 +201,12 @@ func Handle(testParams *TestParameters) error {
 		}()
 
 		// Fetch the cluster version.
-		cmd := exec.Command("bash", "-c",
-			fmt.Sprintf("gcloud container clusters describe %s --location %s --format=\"value(currentMasterVersion)\"",
-				testParams.GkeClusterName,
-				testParams.GkeClusterRegion))
-		output, err = cmd.CombinedOutput()
+		cmd := gcloudCommand(testParams, "container", "clusters", "describe", testParams.GkeClusterName,
+			"--location", testParams.GkeClusterRegion,
+			"--project", testParams.ProjectID,
+			"--format=value(currentMasterVersion)",
+			"--verbosity", "none")
+		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to get cluster version, output: %s, err: %w", string(output), err)
 		}
@@ -296,7 +312,6 @@ func Handle(testParams *TestParameters) error {
 	if !strings.Contains(testSkipStr, "istio") && (len(testFocusStr) == 0 || strings.Contains(testFocusStr, "istio")) {
 		installIstio(testParams.IstioVersion)
 	}
-
 	// Setting project number and adding compute binding for the driver service account for Storage Profiles.
 	if testParams.EnableGcsFuseProfiles {
 		os.Setenv(TestEnvEnvVar, envAPIMap[testParams.APIEndpointOverride])
