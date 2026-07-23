@@ -555,6 +555,39 @@ func TestIsGKEIdentityProvider(t *testing.T) {
 	}
 }
 
+func TestGetCloudProfilerServiceVersion(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                   string
+		podName                string
+		podUID                 string
+		expectedServiceVersion string
+	}{
+		{
+			name:                   "both empty",
+			podName:                "",
+			podUID:                 "",
+			expectedServiceVersion: "",
+		},
+		{
+			name:                   "short pod name and standard uid",
+			podName:                "test-pod",
+			podUID:                 "12345678-1234-1234-1234-123456789012",
+			expectedServiceVersion: "test-pod_12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := GetCloudProfilerServiceVersion(tc.podName, tc.podUID)
+			if got != tc.expectedServiceVersion {
+				t.Errorf("GetCloudProfilerServiceVersion(%q, %q) = %q (len %d), want %q (len %d)", tc.podName, tc.podUID, got, len(got), tc.expectedServiceVersion, len(tc.expectedServiceVersion))
+			}
+		})
+	}
+}
+
 func TestCheckNotSymlink(t *testing.T) {
 	t.Parallel()
 

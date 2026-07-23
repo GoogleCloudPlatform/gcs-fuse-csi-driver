@@ -367,6 +367,25 @@ func TestCreateMounterPodSpec(t *testing.T) {
 		},
 	}
 
+	expectedEnv := []corev1.EnvVar{
+		{
+			Name: "POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "metadata.name",
+				},
+			},
+		},
+		{
+			Name: "POD_UID",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "metadata.uid",
+				},
+			},
+		},
+	}
+
 	// Kubelet HostPath volume always expected
 	kubeletHostPathVolume := corev1.Volume{
 		Name: mounterPodMountDir,
@@ -761,10 +780,59 @@ func TestCreateMounterPodSpec(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "enableCloudProfiler true - should include --enable-cloud-profiler=true in args",
+			config: &mounterPodConfig{
+				podName:             "my-mounter-pod",
+				namespace:           "my-namespace",
+				nodeID:              "node-123",
+				image:               "gcr.io/my-project/my-image:v1.0.0",
+				enableCloudProfiler: true,
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					PriorityClassName: mounterPodPriorityClass,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount", "--enable-cloud-profiler=true"},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if len(tc.want.Spec.Containers) > 0 && tc.want.Spec.Containers[0].Env == nil {
+				tc.want.Spec.Containers[0].Env = expectedEnv
+			}
 			// Sort volumes in the 'want' spec for consistent comparison
 			sortVolumes(tc.want.Spec.Volumes)
 
