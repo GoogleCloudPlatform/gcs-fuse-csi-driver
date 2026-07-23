@@ -112,6 +112,9 @@ spec:
               mountPath: /sys
             - name: host-iproute
               mountPath: /etc/iproute2
+            - name: host-proc-sys-fs-fuse
+              mountPath: /host-proc-sys-fs-fuse
+
             - name: tmp
               mountPath: /tmp
         - name: csi-driver-registrar
@@ -168,6 +171,10 @@ spec:
         - name: host-iproute
           hostPath:
             path: /etc/iproute2
+            type: Directory
+        - name: host-proc-sys-fs-fuse
+          hostPath:
+            path: /proc/sys/fs/fuse
             type: Directory
         - name: tmp
           emptyDir:

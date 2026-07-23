@@ -1145,6 +1145,11 @@ func (t *TestPod) VerifyDefaultingFlagsArePassed(namespace string, expectedMachi
 		"Should find MachineType flag string %q in stdout", expectedMachineTypeFlagString)
 }
 
+func (t *TestPod) GetSidecarLogs() (string, error) {
+	stdout, _, err := runKubectlWithFullOutputWithRetry(t.namespace.Name, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
+	return stdout, err
+}
+
 func (t *TestPod) VerifyProfileFlagsArePassed(namespace string, expectedProfileFlag string, expectedProfile bool) {
 	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", t.pod.Name, "-c", "gke-gcsfuse-sidecar")
 	framework.ExpectNoError(err,

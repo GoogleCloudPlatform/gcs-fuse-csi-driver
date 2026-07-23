@@ -155,7 +155,7 @@ func TestCreateVolume(t *testing.T) {
 			},
 			resp: &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
-					CapacityBytes: 1 * util.Mb,
+					CapacityBytes: 1 * util.MiB,
 					VolumeId:      testVolumeID,
 				},
 			},
