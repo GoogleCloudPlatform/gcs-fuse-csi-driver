@@ -81,23 +81,19 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	var tokenSource oauth2.TokenSource
 
 	// TODO(amacaskill): Add support for hostnetwork pods on OSS k8s.
-	if mc.HostNetworkKSAOptIn {
-		if mc.TokenServerIdentityProvider != "" {
-			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
-			go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
-		} else {
-			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set identityProvider in VolumeAttributes")
+	if err := startHostNetworkTokenServer(ctx, mc); err != nil {
+		return err
+	}
+
+	if mc.HostNetworkKSAOptIn && mc.EnableSidecarBucketAccessCheck {
+		// Fetch custom tokensource and audience for host network path. For workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
+		audience, err := getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
+		if err != nil {
+			return fmt.Errorf("failed to get audience from the context: %w", err)
 		}
-		if mc.EnableSidecarBucketAccessCheck {
-			// Fetch custom tokensource and audience for host network path. For workload identity, tokenSource is not needed and the audience is hardcoded in TokenSource.FetchIdentityBindingToken().
-			audience, err := getAudienceFromContextAndIdentityProvider(ctx, mc.TokenServerIdentityProvider)
-			if err != nil {
-				return fmt.Errorf("failed to get audience from the context: %w", err)
-			}
-			tokenSource, err = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
-			if err != nil {
-				return fmt.Errorf("Failed to create token source, got error %q", err)
-			}
+		tokenSource, err = m.fetchTokenSource(mc.PodNamespace, mc.ServiceAccountName, audience)
+		if err != nil {
+			return fmt.Errorf("Failed to create token source, got error %q", err)
 		}
 	}
 	if mc.EnableSidecarBucketAccessCheck {
@@ -161,6 +157,25 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	return nil
 }
 
+// startHostNetworkTokenServer starts the local token server if hostNetwork KSA feature is opted in.
+func startHostNetworkTokenServer(ctx context.Context, mc *MountConfig) error {
+	if mc == nil {
+		return fmt.Errorf("mount config cannot be nil")
+	}
+	if !mc.HostNetworkKSAOptIn {
+		return nil
+	}
+
+	if mc.TokenServerIdentityProvider == "" {
+		return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set identityProvider in VolumeAttributes")
+	}
+
+	klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
+	go StartTokenServer(ctx, mc.TempDir, TokenFileName, mc.TokenServerIdentityProvider)
+
+	return nil
+}
+
 // MountToNode uses the mount config to initialize the GCSFuse process for a share node mount architecture.
 // mountServerContext is the long running context from the sidecar, using this prevents the gcsfuse process from being killed when the NodeStageVolume context (the ctx variable) is canceled.
 func (m *Mounter) MountToNode(ctx context.Context, mountServerContext context.Context, mc *MountConfig) error {
@@ -172,7 +187,10 @@ func (m *Mounter) MountToNode(ctx context.Context, mountServerContext context.Co
 	}
 	mc.EnsureErrWriter()
 
-	// TODO(yaozile) Implement the host network path for the sidecar mounter, where the token server is started in the sidecar mounter.
+	// Start the token server for HostNetwork enabled mounter pods.
+	if err := startHostNetworkTokenServer(mountServerContext, mc); err != nil {
+		return status.Errorf(codes.Internal, "failed to start host network token server: %v", err)
+	}
 
 	klog.Infof("Start mounting GCS bucket %q", mc.BucketName)
 
