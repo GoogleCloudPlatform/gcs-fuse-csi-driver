@@ -156,10 +156,14 @@ func clusterUpGKE(testParams *TestParameters) error {
 	if !testParams.UseGKEAutopilot {
 		cmdParams = append(cmdParams, standardClusterFlags...)
 
-		// Update gcloud to latest version.
-		cmd = exec.Command("gcloud", "components", "update")
-		if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
-			return fmt.Errorf("failed to update gcloud to latest version: %w", err)
+		// Update gcloud to latest version in Prow.
+		if testParams.InProw {
+			cmd = exec.Command("gcloud", "components", "update")
+			if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
+				return fmt.Errorf("failed to update gcloud to latest version: %w", err)
+			}
+		} else {
+			klog.Infof("Skipping gcloud components update for local run.")
 		}
 	}
 
