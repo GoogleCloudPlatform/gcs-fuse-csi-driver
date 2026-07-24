@@ -181,6 +181,41 @@ func TestJoinMountOptions(t *testing.T) {
 	}
 }
 
+func TestJoinMountOptionsSorting(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		existingOptions []string
+		newOptions      []string
+		expectedOptions []string
+	}{
+		{
+			name:            "should sort enable-sidecar-bucket-access-check=true and false to false, true (first-wins false override)",
+			existingOptions: []string{"enable-sidecar-bucket-access-check=true"},
+			newOptions:      []string{"enable-sidecar-bucket-access-check=false"},
+			expectedOptions: []string{"enable-sidecar-bucket-access-check=false", "enable-sidecar-bucket-access-check=true"},
+		},
+		{
+			name:            "should sort enable-sidecar-bucket-access-check=false and true to false, true",
+			existingOptions: []string{"enable-sidecar-bucket-access-check=false"},
+			newOptions:      []string{"enable-sidecar-bucket-access-check=true"},
+			expectedOptions: []string{"enable-sidecar-bucket-access-check=false", "enable-sidecar-bucket-access-check=true"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			output := joinMountOptions(tc.existingOptions, tc.newOptions)
+			// Assert exact ordering of the returned slice without sorting it in comparison
+			if !reflect.DeepEqual(output, tc.expectedOptions) {
+				t.Errorf("unexpected options sorting: got %+v, expected %+v", output, tc.expectedOptions)
+			}
+		})
+	}
+}
+
 func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 	t.Parallel()
 	t.Run("checking if sidecar version is supported for given version and feature", func(t *testing.T) {

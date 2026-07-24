@@ -65,13 +65,14 @@ func TestPrepareMountArgs(t *testing.T) {
 	// Do not parallelize [e.g t.Parallel()] because all testcases share testPrometheusPort.
 
 	testCases := []struct {
-		name                    string
-		mc                      *MountConfig
-		expectedArgs            map[string]string
-		expectedConfigMapArgs   map[string]string
-		expectNumaNode          bool
-		expectedNumaNode        int
-		expectedStorageEndpoint string
+		name                                   string
+		mc                                     *MountConfig
+		expectedArgs                           map[string]string
+		expectedConfigMapArgs                  map[string]string
+		expectNumaNode                         bool
+		expectedNumaNode                       int
+		expectedStorageEndpoint                string
+		expectedEnableSidecarBucketAccessCheck bool
 	}{
 		{
 			name: "should return valid args correctly",
@@ -547,6 +548,58 @@ func TestPrepareMountArgs(t *testing.T) {
 				"cache-dir":         "",
 			},
 		},
+		{
+			name: "should respect enable-sidecar-bucket-access-check=true",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"enable-sidecar-bucket-access-check=true"},
+			},
+			expectedArgs:                           defaultFlagMap,
+			expectedConfigMapArgs:                  defaultConfigFileFlagMap,
+			expectedEnableSidecarBucketAccessCheck: true,
+		},
+		{
+			name: "should respect enable-sidecar-bucket-access-check=false",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"enable-sidecar-bucket-access-check=false"},
+			},
+			expectedArgs:                           defaultFlagMap,
+			expectedConfigMapArgs:                  defaultConfigFileFlagMap,
+			expectedEnableSidecarBucketAccessCheck: false,
+		},
+		{
+			name: "should respect first enable-sidecar-bucket-access-check=false when followed by true (due to alphabetical order)",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"enable-sidecar-bucket-access-check=false", "enable-sidecar-bucket-access-check=true"},
+			},
+			expectedArgs:                           defaultFlagMap,
+			expectedConfigMapArgs:                  defaultConfigFileFlagMap,
+			expectedEnableSidecarBucketAccessCheck: false,
+		},
+		{
+			name: "should respect first enable-sidecar-bucket-access-check=true when followed by false",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+			},
+			expectedArgs:                           defaultFlagMap,
+			expectedConfigMapArgs:                  defaultConfigFileFlagMap,
+			expectedEnableSidecarBucketAccessCheck: true,
+		},
 	}
 
 	testPrometheusPort := prometheusPort
@@ -579,6 +632,9 @@ func TestPrepareMountArgs(t *testing.T) {
 			}
 			if tc.expectedStorageEndpoint != "" && tc.expectedStorageEndpoint != tc.mc.StorageEndpoint {
 				t.Errorf("Got storage endpoint %s, but expected %s", tc.mc.StorageEndpoint, tc.expectedStorageEndpoint)
+			}
+			if tc.mc.EnableSidecarBucketAccessCheck != tc.expectedEnableSidecarBucketAccessCheck {
+				t.Errorf("Got EnableSidecarBucketAccessCheck %t, but expected %t", tc.mc.EnableSidecarBucketAccessCheck, tc.expectedEnableSidecarBucketAccessCheck)
 			}
 		})
 	}
