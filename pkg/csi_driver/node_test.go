@@ -206,6 +206,49 @@ func createErrorFile(t *testing.T, emptyDirPath, content string) {
 	}
 }
 
+func setupSharedMountOptions(t *testing.T, podUID types.UID) (*SharedMountOptions, *fakeMounterServer) {
+	t.Helper()
+	tmpDir, err := os.MkdirTemp("/tmp", "s_nsv")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+	socketDir := filepath.Join(tmpDir, "s")
+	emptyDirBasePath := filepath.Join(tmpDir, "e")
+	sockFile := filepath.Join(emptyDirBasePath, string(podUID), MounterPodSocketFile)
+
+	mounterServer := startFakeMounterServer(t, sockFile)
+
+	return &SharedMountOptions{
+		Enabled:       true,
+		FuseSocketDir: socketDir,
+		EmptyDirBasePath: func(podUID string) string {
+			return filepath.Join(emptyDirBasePath, podUID)
+		},
+	}, mounterServer
+}
+
+func newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace string, extraVolContext map[string]string) *csi.NodeStageVolumeRequest {
+	volContext := map[string]string{
+		VolumeContextSharedNodeMount: "true",
+		util.VolumeContextKeyPVName:  testVolumeID,
+	}
+	for k, v := range extraVolContext {
+		volContext[k] = v
+	}
+	return &csi.NodeStageVolumeRequest{
+		VolumeId:          testVolumeID,
+		StagingTargetPath: stagingPath,
+		VolumeCapability:  testVolumeCapability,
+		VolumeContext:     volContext,
+		PublishContext: map[string]string{
+			PublishContextKeyMounterPodName:      podName,
+			PublishContextKeyMounterPodNamespace: podNamespace,
+		},
+	}
+}
+
 func TestNodePublishVolume(t *testing.T) {
 	testTargetPath, cleanup := setupTestTargetPath(t)
 	defer cleanup()
@@ -2718,16 +2761,7 @@ func TestNodeStageVolumeEnableAutoGoMemLimit(t *testing.T) {
 			testStagingPath, cleanupStaging := setupTestStagingPath(t)
 			defer cleanupStaging()
 
-			tmpDir, err := os.MkdirTemp("/tmp", "s")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			t.Cleanup(func() { os.RemoveAll(tmpDir) })
-			socketDir := filepath.Join(tmpDir, "s")
-			emptyDirBasePath := filepath.Join(tmpDir, "e")
-
-			sockFile := filepath.Join(emptyDirBasePath, string(podUID), MounterPodSocketFile)
-			mounterServer := startFakeMounterServer(t, sockFile)
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
 			fc.CreatePod(clientset.FakePodConfig{
@@ -2752,34 +2786,15 @@ func TestNodeStageVolumeEnableAutoGoMemLimit(t *testing.T) {
 				AutoGoMemLimitRatio:  tc.autoGoMemLimitRatio,
 			}
 			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
-			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
-				Enabled:       true,
-				FuseSocketDir: socketDir,
-				EmptyDirBasePath: func(podUID string) string {
-					return filepath.Join(emptyDirBasePath, podUID)
-				},
-			}
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-			vc := map[string]string{
-				VolumeContextSharedNodeMount: "true",
-				util.VolumeContextKeyPVName:  volID,
-			}
+			var extraVC map[string]string
 			if tc.userMountOptions != "" {
-				vc[VolumeContextKeyMountOptions] = tc.userMountOptions
+				extraVC = map[string]string{VolumeContextKeyMountOptions: tc.userMountOptions}
 			}
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, extraVC)
 
-			stageReq := &csi.NodeStageVolumeRequest{
-				VolumeId:          volID,
-				StagingTargetPath: testStagingPath,
-				VolumeCapability:  testVolumeCapability,
-				VolumeContext:     vc,
-				PublishContext: map[string]string{
-					PublishContextKeyMounterPodName:      podName,
-					PublishContextKeyMounterPodNamespace: podNamespace,
-				},
-			}
-
-			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			_, err := ns.NodeStageVolume(context.Background(), stageReq)
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -2844,17 +2859,7 @@ func TestNodeStageVolumeEnableGCSFuseKernelParams(t *testing.T) {
 			testStagingPath, cleanupStaging := setupTestStagingPath(t)
 			defer cleanupStaging()
 
-			// Use a short base dir to avoid hitting the 108-character limit for Unix domain sockets.
-			tmpDir, err := os.MkdirTemp("/tmp", "s")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			t.Cleanup(func() { os.RemoveAll(tmpDir) })
-			socketDir := filepath.Join(tmpDir, "s")
-			emptyDirBasePath := filepath.Join(tmpDir, "e")
-
-			sockFile := filepath.Join(emptyDirBasePath, string(podUID), MounterPodSocketFile)
-			mounterServer := startFakeMounterServer(t, sockFile)
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
 			fc.CreatePod(clientset.FakePodConfig{
@@ -2876,29 +2881,11 @@ func TestNodeStageVolumeEnableGCSFuseKernelParams(t *testing.T) {
 
 			ns.driver.config.FeatureOptions.EnableGCSFuseKernelParams = tc.enableKernelParamsFileFlag
 			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
-			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
-				Enabled:       true,
-				FuseSocketDir: socketDir,
-				EmptyDirBasePath: func(podUID string) string {
-					return filepath.Join(emptyDirBasePath, podUID)
-				},
-			}
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-			stageReq := &csi.NodeStageVolumeRequest{
-				VolumeId:          volID,
-				StagingTargetPath: testStagingPath,
-				VolumeCapability:  testVolumeCapability,
-				VolumeContext: map[string]string{
-					VolumeContextSharedNodeMount: "true",
-					util.VolumeContextKeyPVName:  volID,
-				},
-				PublishContext: map[string]string{
-					PublishContextKeyMounterPodName:      podName,
-					PublishContextKeyMounterPodNamespace: podNamespace,
-				},
-			}
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
 
-			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			_, err := ns.NodeStageVolume(context.Background(), stageReq)
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -2953,16 +2940,7 @@ func TestNodeStageVolumeHostNetwork(t *testing.T) {
 			testStagingPath, cleanupStaging := setupTestStagingPath(t)
 			defer cleanupStaging()
 
-			tmpDir, err := os.MkdirTemp("/tmp", "s_hnw")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			t.Cleanup(func() { os.RemoveAll(tmpDir) })
-			socketDir := filepath.Join(tmpDir, "s")
-			emptyDirBasePath := filepath.Join(tmpDir, "e")
-
-			sockFile := filepath.Join(emptyDirBasePath, string(podUID), MounterPodSocketFile)
-			mounterServer := startFakeMounterServer(t, sockFile)
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
 			fc.CreatePod(clientset.FakePodConfig{
@@ -2987,35 +2965,15 @@ func TestNodeStageVolumeHostNetwork(t *testing.T) {
 			ns.mounter = fakeMounter
 
 			ns.driver.config.AssumeGoodSidecarVersion = true
-			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
-				Enabled:       true,
-				FuseSocketDir: socketDir,
-				EmptyDirBasePath: func(podUID string) string {
-					return filepath.Join(emptyDirBasePath, podUID)
-				},
-			}
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-			volContext := map[string]string{
-				VolumeContextSharedNodeMount:      "true",
-				VolumeContextKeyHostNetworkPodKSA: "true",
-				util.VolumeContextKeyPVName:       volID,
-			}
+			extraVC := map[string]string{VolumeContextKeyHostNetworkPodKSA: "true"}
 			if tc.userSpecifiedIDP != "" {
-				volContext[VolumeContextKeyIdentityProvider] = tc.userSpecifiedIDP
+				extraVC[VolumeContextKeyIdentityProvider] = tc.userSpecifiedIDP
 			}
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, extraVC)
 
-			stageReq := &csi.NodeStageVolumeRequest{
-				VolumeId:          volID,
-				StagingTargetPath: testStagingPath,
-				VolumeCapability:  testVolumeCapability,
-				VolumeContext:     volContext,
-				PublishContext: map[string]string{
-					PublishContextKeyMounterPodName:      podName,
-					PublishContextKeyMounterPodNamespace: podNamespace,
-				},
-			}
-
-			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			_, err := ns.NodeStageVolume(context.Background(), stageReq)
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -3078,16 +3036,7 @@ func TestNodeStageVolumeMachineTypeDefaulting(t *testing.T) {
 			testStagingPath, cleanupStaging := setupTestStagingPath(t)
 			defer cleanupStaging()
 
-			tmpDir, err := os.MkdirTemp("/tmp", "s")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			t.Cleanup(func() { os.RemoveAll(tmpDir) })
-			socketDir := filepath.Join(tmpDir, "s")
-			emptyDirBaseRoot := filepath.Join(tmpDir, "e")
-
-			sockFile := filepath.Join(emptyDirBaseRoot, string(podUID), MounterPodSocketFile)
-			_ = startFakeMounterServer(t, sockFile)
+			sharedMountOptions, _ := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
 			fc.CreatePod(clientset.FakePodConfig{
@@ -3106,29 +3055,11 @@ func TestNodeStageVolumeMachineTypeDefaulting(t *testing.T) {
 			ns.mounter = mount.NewFakeMounter([]mount.MountPoint{})
 			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
 			ns.driver.config.DisableAutoconfig = tc.disableAutoconfig
-			ns.driver.config.FeatureOptions.SharedMountOptions = &SharedMountOptions{
-				Enabled:       true,
-				FuseSocketDir: socketDir,
-				EmptyDirBasePath: func(uid string) string {
-					return filepath.Join(emptyDirBaseRoot, uid)
-				},
-			}
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-			stageReq := &csi.NodeStageVolumeRequest{
-				VolumeId:          volID,
-				StagingTargetPath: testStagingPath,
-				VolumeCapability:  testVolumeCapability,
-				VolumeContext: map[string]string{
-					VolumeContextSharedNodeMount: "true",
-					util.VolumeContextKeyPVName:  volID,
-				},
-				PublishContext: map[string]string{
-					PublishContextKeyMounterPodName:      podName,
-					PublishContextKeyMounterPodNamespace: podNamespace,
-				},
-			}
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
 
-			_, err = ns.NodeStageVolume(context.Background(), stageReq)
+			_, err := ns.NodeStageVolume(context.Background(), stageReq)
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -3140,7 +3071,7 @@ func TestNodeStageVolumeMachineTypeDefaulting(t *testing.T) {
 				}
 			}()
 
-			emptyDirPath := ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(string(podUID))
+			emptyDirPath := sharedMountOptions.EmptyDirBasePath(string(podUID))
 			flagFilePath := filepath.Join(emptyDirPath, FlagFileForDefaultingPath)
 			content, readErr := os.ReadFile(flagFilePath)
 
@@ -3158,6 +3089,79 @@ func TestNodeStageVolumeMachineTypeDefaulting(t *testing.T) {
 			} else {
 				if readErr == nil {
 					t.Errorf("expected no flags-for-defaulting file to be written, but found one with content: %q", string(content))
+				}
+			}
+		})
+	}
+}
+
+func TestNodeStageVolumeWILabelCheck(t *testing.T) {
+	t.Parallel()
+
+	testStagingPath, cleanup := setupTestStagingPath(t)
+	defer cleanup()
+
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	sharedMountOptions, _ := setupSharedMountOptions(t, podUID)
+
+	req := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
+
+	cases := []struct {
+		name                          string
+		wiNodeLabelCheck              bool
+		workloadIdentityEnabledOnNode bool
+		expectErr                     error
+	}{
+		{
+			name:                          "WI node label check is disabled, WI is disabled on node, should succeed",
+			wiNodeLabelCheck:              false,
+			workloadIdentityEnabledOnNode: false,
+		},
+		{
+			name:                          "WI node label check is enabled, WI is disabled on node, should fail",
+			wiNodeLabelCheck:              true,
+			workloadIdentityEnabledOnNode: false,
+			expectErr:                     status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)"),
+		},
+		{
+			name:                          "WI node label check is enabled, WI is enabled on node, should succeed",
+			wiNodeLabelCheck:              true,
+			workloadIdentityEnabledOnNode: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClientSet := &clientset.FakeClientset{}
+			fakeClientSet.CreateNode(clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: tc.workloadIdentityEnabledOnNode})
+			fakeClientSet.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, tc.wiNodeLabelCheck)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+			_, err := testEnv.ns.NodeStageVolume(context.TODO(), req)
+			if tc.expectErr == nil && err != nil {
+				t.Errorf("got error %q, expected error nil", err)
+			}
+			if tc.expectErr != nil && !errors.Is(err, tc.expectErr) {
+				t.Errorf("got error %q, expected error %q", err, tc.expectErr)
+			}
+			if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+				if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+					vs.GCSFuseKernelMonitorState.CancelFunc()
 				}
 			}
 		})

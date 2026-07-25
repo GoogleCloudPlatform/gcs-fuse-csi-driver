@@ -354,13 +354,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Errorf(codes.NotFound, "failed to get node: %v", err)
 	}
 
-	if s.driver.config.WINodeLabelCheck {
-		val, ok := node.Labels[clientset.GkeMetaDataServerKey]
-		// If Workload Identity is not enabled, the key should be missing; the check for "val == false" is just for extra caution
-		isWorkloadIdentityDisabled := val != "true" || !ok
-		if isWorkloadIdentityDisabled && !pod.Spec.HostNetwork {
-			return nil, status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)")
-		}
+	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
+		return nil, err
 	}
 
 	// Since the webhook mutating ordering is not definitive,
@@ -452,7 +447,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
-	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisfies min version requirement
+	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
 	if emptyDirBasePath != "" {
 		if err := s.populateDriverFlagsForDefaulting(node, gcsFuseSidecarImage, filepath.Dir(emptyDirBasePath)); err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
@@ -927,7 +922,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, status.Errorf(codes.Internal, "shared mount options are not fully configured")
 	}
 
-	clientset := s.driver.config.K8sClients
 	stagingPath := req.GetStagingTargetPath()
 
 	// Validate staging path and mounter pod information from the request.
@@ -938,7 +932,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	klog.Infof("Executing NodeStageVolume. Mounter pod: %s/%s, node: %q, volume: %q, staging path: %q", podNamespace, podName, s.driver.config.NodeID, req.GetVolumeId(), stagingPath)
 
 	// Verify mounter pod exists.
-	pod, err := clientset.GetPod(podNamespace, podName)
+	pod, err := s.k8sClients.GetPod(podNamespace, podName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.FailedPrecondition, "mounter pod %s/%s expected to exist but was not found", podNamespace, podName)
@@ -947,6 +941,17 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 	if pod == nil {
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s can't be nil", podNamespace, podName)
+	}
+
+	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, status.Errorf(codes.NotFound, "failed to get node: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get node: %v", err)
+	}
+	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
+		return nil, err
 	}
 
 	volumeID := req.GetVolumeId()
@@ -1030,28 +1035,22 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseKernelParams + "=true"})
 	}
 
+	disallowedFlags := s.driver.generateDisallowedFlagsMap(podImage)
+	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
+
 	// Make the staging path.
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
 	if err := os.MkdirAll(stagingPath, 0750); err != nil {
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", stagingPath, err)
 	}
 
-	// Fetch the node to pass its labels for auto-config
-	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	if node == nil {
-		return nil, status.Errorf(codes.Internal, "Node %q not found", s.driver.config.NodeID)
-	}
-
-	// Only pass mountOptions flags for defaulting if sidecar container is managed and satisfies min version requirement
+	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
 	if err := s.populateDriverFlagsForDefaulting(node, podImage, emptyDirBasePath); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	// Wait for the mounter pod grpc server to be ready.
-	if err := waitForMounterServer(ctx, clientset, podNamespace, podName, podUID, s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
+	if err := waitForMounterServer(ctx, s.k8sClients, podNamespace, podName, podUID, s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath); err != nil {
 		return nil, err
 	}
 
@@ -1186,6 +1185,24 @@ func (s *nodeServer) cleanupStagingPath(stagingPath string) error {
 	// Cleanup the mount point.
 	if err := mount.CleanupMountPoint(stagingPath, s.mounter, false /* bind mount */); err != nil {
 		return status.Errorf(codes.Internal, "failed to cleanup the mount point %q: %v", stagingPath, err)
+	}
+
+	return nil
+}
+
+func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) error {
+	if node == nil {
+		return status.Errorf(codes.Internal, "Node %q not found", s.driver.config.NodeID)
+	}
+	if !s.driver.config.WINodeLabelCheck {
+		return nil
+	}
+
+	val, ok := node.Labels[clientset.GkeMetaDataServerKey]
+	// If Workload Identity is not enabled, the key should be missing; the check for "val == false" is just for extra caution
+	isWorkloadIdentityDisabled := val != "true" || !ok
+	if isWorkloadIdentityDisabled && !isHostNetwork {
+		return status.Errorf(codes.FailedPrecondition, "Workload Identity Federation is not enabled on node. Please make sure this is enabled on both cluster and node pool level (https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)")
 	}
 
 	return nil
