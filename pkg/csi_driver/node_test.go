@@ -2836,6 +2836,149 @@ func TestNodeStageVolumeEnableAutoGoMemLimit(t *testing.T) {
 	}
 }
 
+func TestNodeStageVolumeMultiNIC(t *testing.T) {
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	for _, tc := range []struct {
+		name              string
+		poisonedIP        string
+		rules             []Rule
+		routes            []Route
+		rtTables          string
+		extraVC           map[string]string
+		expectedNewRules  []Rule
+		expectedNewRoutes []Route
+		expectedOpts      []string
+	}{
+		{
+			name: "use nic 1",
+			extraVC: map[string]string{
+				VolumeContextKeyMultiNICIndex: "1",
+			},
+			expectedNewRules:  []Rule{{Source: "10.144.0.8/32", Table: 50}},
+			expectedNewRoutes: []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 50}},
+			expectedOpts:      []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=10.144.0.8"},
+		},
+		{
+			name: "existing network",
+			extraVC: map[string]string{
+				VolumeContextKeyMultiNICIndex: "1",
+			},
+			rtTables:     "45 gcsfusecsi_eth1",
+			rules:        []Rule{{Source: "10.144.0.8/32", Table: 45}},
+			routes:       []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 45}},
+			expectedOpts: []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=10.144.0.8"},
+		},
+		{
+			name: "partial network",
+			extraVC: map[string]string{
+				VolumeContextKeyMultiNICIndex: "1",
+			},
+			rules:             []Rule{{Source: "10.144.0.8/32", Table: 50}},
+			expectedNewRoutes: []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 50}},
+			expectedOpts:      []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=10.144.0.8"},
+		},
+		{
+			name: "invalid node",
+			extraVC: map[string]string{
+				VolumeContextKeyMultiNICIndex: "3",
+			},
+			expectedOpts: []string{},
+		},
+		{
+			name:       "failed route",
+			poisonedIP: "10.128.0.6",
+			extraVC: map[string]string{
+				VolumeContextKeyMultiNICIndex: "0",
+			},
+			expectedOpts: []string{},
+		},
+		{
+			name: "source address override",
+			extraVC: map[string]string{
+				VolumeContextKeyMultiNICIndex: "1",
+				VolumeContextKeyMountOptions:  "experimental-local-socket-address=151.101.129.164",
+			},
+			expectedNewRules:  []Rule{{Source: "10.144.0.8/32", Table: 50}},
+			expectedNewRoutes: []Route{{Device: "eth1", Gateway: "10.144.0.1", Table: 50}},
+			expectedOpts:      []string{"gcs-fuse-numa-node=1", "experimental-local-socket-address=151.101.129.164"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			testEnv.nwMgr.poisonedIP = tc.poisonedIP
+			testEnv.nwMgr.devices = []LinkDevice{
+				{Name: "eth0", Driver: "gve", NumaNode: 0},
+				{Name: "eth1", Driver: "gve", NumaNode: 1},
+			}
+			testEnv.nwMgr.rules = append([]Rule{}, tc.rules...)
+			testEnv.nwMgr.routes = append([]Route{
+				{Device: "eth0", Gateway: "10.128.0.1", Source: "10.128.0.6", Table: 254},
+				{Device: "eth1", Gateway: "10.144.0.1", Source: "10.144.0.8", Table: 254},
+			}, tc.routes...)
+			testEnv.nwMgr.rtTables = tc.rtTables
+			expectedRules := append([]Rule{}, testEnv.nwMgr.rules...)
+			expectedRules = append(expectedRules, tc.expectedNewRules...)
+			expectedRoutes := append([]Route{}, testEnv.nwMgr.routes...)
+			expectedRoutes = append(expectedRoutes, tc.expectedNewRoutes...)
+
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+			ns.driver.config.AssumeGoodSidecarVersion = true
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, tc.extraVC)
+
+			_, err := ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if !reflect.DeepEqual(testEnv.nwMgr.routes, expectedRoutes) {
+				t.Errorf("Bad routes, expected %+v, got %+v", expectedRoutes, testEnv.nwMgr.routes)
+			}
+			if !reflect.DeepEqual(testEnv.nwMgr.rules, expectedRules) {
+				t.Errorf("Bad rules, expected %+v, got %+v", expectedRules, testEnv.nwMgr.rules)
+			}
+
+			if mounterServer.req == nil {
+				t.Fatalf("expected mounterServer.req to be non-nil, but got nil")
+			}
+			validateMountOptions(t, mounterServer.req.MountOptions, tc.expectedOpts, nil)
+		})
+	}
+}
+
 func TestNodeStageVolumeEnableGCSFuseKernelParams(t *testing.T) {
 	nodeID := "test-node"
 	volID := testVolumeID
