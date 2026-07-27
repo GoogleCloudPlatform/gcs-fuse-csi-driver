@@ -83,7 +83,6 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 	mergeFlags(mc.ConfigFileFlagMap, flagsFromDriver)
 
 	// TODO(FUECHR) SetupTokenAndStorageManager for bucket access check.
-	// TODO(FUECHR) Implement cloud profiler hook.
 	// TODO(FUECHR) Clean errors in preparation for mount.
 
 	if err := mc.prepareConfigFile(); err != nil {
@@ -91,6 +90,10 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 	}
 
 	klog.Infof("Start mounting bucket %q to %q for volume %q", mc.BucketName, mc.SharedMountPoint, mc.VolumeName)
+
+	if mc.EnableCloudProfilerForSidecar {
+		StartCloudProfiler(util.MounterPodNamePrefix, mc.PodName, mc.PodUID)
+	}
 
 	// Use the mounter servers long running ctx to prevent the one from NodeStageVolume from killing the gcsfuse process.
 	if err := ms.mounter.MountToNode(ctx, ms.serverCtx, &mc); err != nil {
