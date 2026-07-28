@@ -1066,6 +1066,8 @@ func TestNodeStageVolume(t *testing.T) {
 
 	fakeServer := startFakeMounterServer(t, validSocketFile)
 
+	defaultSharedOpts := []string{"o=allow_other,default_permissions"}
+
 	cases := []struct {
 		name                 string
 		req                  *csi.NodeStageVolumeRequest
@@ -1244,14 +1246,14 @@ func TestNodeStageVolume(t *testing.T) {
 				},
 			},
 			profilesEnabled: true,
-			expectedMountOptions: []string{
+			expectedMountOptions: append([]string{
 				"implicit-dirs",
 				"file-cache:max-size-mb:1",
 				"file-cache:cache-file-for-range-read:true",
 				"log-severity=trace",
 				"metadata-cache:stat-cache-max-size-mb:34",
 				"file-cache-medium=ram",
-			},
+			}, defaultSharedOpts...),
 			pvConfig: &clientset.FakePVConfig{
 				Name:         testVolumeID,
 				VolumeHandle: testVolumeID,
@@ -1289,11 +1291,11 @@ func TestNodeStageVolume(t *testing.T) {
 					PublishContextKeyMounterPodNamespace: "test-ns",
 				},
 			},
-			expectedMountOptions: []string{
+			expectedMountOptions: append([]string{
 				util.EnableCloudProfilerForSidecarConst + "=true",
 				util.PodNameConst + "=" + createMounterPodName("test-node", testVolumeID),
 				util.PodUIDConst + "=" + createMounterPodName("test-node", testVolumeID),
-			},
+			}, defaultSharedOpts...),
 		},
 	}
 
@@ -2639,6 +2641,116 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			targetPathMounted: false,
 			expectErrCode:     codes.OK,
 			expectedBindOpts:  []string{"bind", "ro"},
+		},
+		{
+			name: "target path not mounted - ro in mountOptions does not override pod spec readOnly false",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					Readonly:          false,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+						VolumeContextKeyMountOptions: "ro,implicit-dirs",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+				})
+				return fc
+			},
+			targetPathMounted: false,
+			expectErrCode:     codes.OK,
+			expectedBindOpts:  []string{"bind"},
+		},
+		{
+			name: "target path not mounted - mount option rw does not override pod spec readOnly true",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					Readonly:          true,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+						VolumeContextKeyMountOptions: "rw,implicit-dirs",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+				})
+				return fc
+			},
+			targetPathMounted: false,
+			expectErrCode:     codes.OK,
+			expectedBindOpts:  []string{"bind", "ro"},
+		},
+		{
+			name: "target path not mounted - ro in volumeCapability mountFlags does not override pod spec readOnly false",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId: testVolumeID,
+					VolumeCapability: &csi.VolumeCapability{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{
+								MountFlags: []string{"ro"},
+							},
+						},
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER,
+						},
+					},
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					Readonly:          false,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+				})
+				return fc
+			},
+			targetPathMounted: false,
+			expectErrCode:     codes.OK,
+			expectedBindOpts:  []string{"bind"},
 		},
 	}
 

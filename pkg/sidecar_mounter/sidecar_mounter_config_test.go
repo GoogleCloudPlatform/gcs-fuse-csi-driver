@@ -166,6 +166,27 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
 		{
+			name: "should concatenate multiple o= flags for shared node mount",
+			mc: &MountConfig{
+				BucketName:       "test-bucket",
+				BufferDir:        "test-buffer-dir",
+				CacheDir:         "test-cache-dir",
+				ConfigFile:       "test-config-file",
+				SharedMountPoint: "/shared-mount",
+				Options:          []string{"o=allow_other,default_permissions", "o=ro", "o=noexec"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+				"o":           "allow_other,default_permissions,ro,noexec",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
 			name: "should return valid args when file cache is disabled",
 			mc: &MountConfig{
 				BucketName: "test-bucket",

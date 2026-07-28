@@ -1108,8 +1108,13 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, err
 	}
 
+	// Prepare mount options specifically for shared node mount architecture before sending to mounter pod.
+	preparedMountOptions := prepareSharedNodeMountOptions(args.fuseMountOptions)
+
+	// TODO(FUECHR): Pass read_ahead_kb and node_fuse_max_request_limit_kb to gcsfuse config correctly for shared node mounts.
+
 	// Send GRPC to mounter pod to start GCSFuse.
-	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, args.fuseMountOptions); err != nil {
+	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, preparedMountOptions); err != nil {
 		klog.Errorf("Failed to mount volume %q to staging path %q: %v", volumeID, stagingPath, err)
 		if code, err := checkMounterPodErrorFile(emptyDirBasePath); err != nil {
 			return nil, status.Error(code, err.Error())
