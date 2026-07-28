@@ -290,9 +290,13 @@ func (mc *MountConfig) prepareMountArgs() {
 
 		flag := argPair[0]
 		if _, ok := DisallowedFlags[flag]; ok {
-			invalidArgs = append(invalidArgs, arg)
-
-			continue
+			// Reject all disallowed flags EXCEPT "-o" when SharedMountPoint is set.
+			// SharedMountPoint is set when the shared mount feature is enabled, during which the "-o" flag is needed to pass mount options to gcsfuse.
+			isAllowedOFlag := flag == "o" && mc.SharedMountPoint != ""
+			if !isAllowedOFlag {
+				invalidArgs = append(invalidArgs, arg)
+				continue
+			}
 		}
 
 		value := ""
@@ -376,7 +380,18 @@ func (mc *MountConfig) prepareMountArgs() {
 			value = GCSFuseAppName + "-" + value
 		}
 
-		flagMap[flag] = value
+		// The "-o" flag can be passed multiple times, and gcsfuse expects them to be comma-separated.
+		if flag == "o" {
+			if value != "" {
+				if existing, ok := flagMap["o"]; ok && existing != "" {
+					flagMap["o"] = existing + "," + value
+				} else {
+					flagMap["o"] = value
+				}
+			}
+		} else {
+			flagMap[flag] = value
+		}
 	}
 
 	if len(invalidArgs) > 0 {
