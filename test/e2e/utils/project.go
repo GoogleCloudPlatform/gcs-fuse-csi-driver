@@ -29,7 +29,15 @@ import (
 	"sigs.k8s.io/boskos/common"
 )
 
-var boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), "http://boskos", "", "")
+func getEnvWithDefault(key, defaultValue string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return defaultValue
+}
+
+var boskosURL = getEnvWithDefault("BOSKOS_URL", "http://boskos")
+var boskos, _ = boskosclient.NewClient(os.Getenv("JOB_NAME"), boskosURL, "", "")
 
 // getBoskosProject retries acquiring a boskos project until success or timeout.
 func getBoskosProject(resourceType string) *common.Resource {
@@ -84,7 +92,7 @@ func setEnvProject(project string) error {
 }
 
 func setEnvProjectNumberUsingID(projectID string) (string, error) {
-	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)")
+	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)", "--billing-project="+projectID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to get project number for %s: %s, err: %w", projectID, out, err)

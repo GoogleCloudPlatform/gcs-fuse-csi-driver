@@ -100,6 +100,8 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `E2E_TEST_GINKGO_FLAKE_ATTEMPTS`: default value is `2`. The value will be passed to `ginkgo run --flake-attempts` flag.
 - `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket created in the zone -> "$(location provided)" + "-c".
 - `GCSFUSE_CLIENT_PROTOCOL`: default value is 'http1'. Change to 'grpc' to alter the type of protocol gcsfuse uses to communicate with gcs
+- `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
+- `E2E_TEST_USE_BOSKOS`: default value is `false`. Change it to `true` if you want to use Boskos to acquire a project. Useful for debugging Boskos infrastructure locally.
 ```bash
 # Run the test on an Autopilot cluster with the GcsFuseCsiDriver add-on enabled.
 make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=true E2E_TEST_USE_GKE_AUTOPILOT=true
@@ -113,6 +115,11 @@ make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=false E2E_TEST_BUILD_DRIVER=true \
   GCSFUSE_PR_NUMBER=4651 STAGINGVERSION=v999.999.999 REGISTRY=my-registry
 # Run the test with customized Ginkgo flags.
 make e2e-test E2E_TEST_FOCUS=gcsfuseIntegration E2E_TEST_SKIP=failedMount E2E_TEST_GINKGO_PROCS=3 E2E_TEST_GINKGO_TIMEOUT=20m E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
+
+# Boskos Debugging: Test Boskos leasing and cluster lifecycle management locally.
+# This requires a Boskos server running in your current cluster context (e.g. port-forwarded to localhost:8080).
+export BOSKOS_URL=http://localhost:8080
+make e2e-test E2E_TEST_USE_BOSKOS=true E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true E2E_TEST_GKE_CLUSTER_VERSION=latest GKE_CLUSTER_REGION=us-central1
 ```
 
 ## Performance test

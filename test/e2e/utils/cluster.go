@@ -18,6 +18,7 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -62,9 +63,27 @@ func gcloudCommand(testParams *TestParameters, args ...string) *exec.Cmd {
 	return exec.Command(gcloudBin, fullArgs...)
 }
 
+// gcloudCommandContext constructs an exec.Cmd for a gcloud command with context,
+// incorporating custom command paths and default arguments from TestParameters.
+func gcloudCommandContext(ctx context.Context, testParams *TestParameters, args ...string) *exec.Cmd {
+	gcloudBin := testParams.GkeGcloudCommand
+	if gcloudBin == "" {
+		gcloudBin = "gcloud" // Default to "gcloud" if not provided
+	}
+
+	var fullArgs []string
+	if testParams.GkeGcloudArgs != "" {
+		fullArgs = append(fullArgs, strings.Fields(testParams.GkeGcloudArgs)...)
+	}
+	fullArgs = append(fullArgs, args...)
+
+	//nolint:gosec
+	return exec.CommandContext(ctx, gcloudBin, fullArgs...)
+}
+
 func clusterDownGKE(testParams *TestParameters) error {
 	//nolint:gosec
-	cmd := exec.Command("gcloud", "container", "clusters", "delete", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion, "--quiet")
+	cmd := gcloudCommand(testParams, "container", "clusters", "delete", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--quiet")
 	if err := runCommand("Bringing Down E2E Cluster on GKE", cmd); err != nil {
 		return fmt.Errorf("failed to bring down kubernetes e2e cluster on gke: %w", err)
 	}
@@ -74,7 +93,7 @@ func clusterDownGKE(testParams *TestParameters) error {
 
 func clusterUpGKE(testParams *TestParameters) error {
 	//nolint:gosec
-	out, err := exec.Command("gcloud", "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
+	out, err := gcloudCommand(testParams, "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to check for previous test cluster: output: %v, err: %w", out, err)
 	}
@@ -95,6 +114,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 		"container", "clusters", createCmd, testParams.GkeClusterName,
 		"--region", testParams.GkeClusterRegion, "--quiet",
 		"--release-channel", testParams.GkeReleaseChannel,
+		"--project", testParams.ProjectID,
 	}
 
 	if isVariableSet(testParams.GkeClusterVersion) {
@@ -136,10 +156,14 @@ func clusterUpGKE(testParams *TestParameters) error {
 	if !testParams.UseGKEAutopilot {
 		cmdParams = append(cmdParams, standardClusterFlags...)
 
-		// Update gcloud to latest version.
-		cmd = exec.Command("gcloud", "components", "update")
-		if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
-			return fmt.Errorf("failed to update gcloud to latest version: %w", err)
+		// Update gcloud to latest version in Prow.
+		if testParams.InProw {
+			cmd = exec.Command("gcloud", "components", "update")
+			if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
+				return fmt.Errorf("failed to update gcloud to latest version: %w", err)
+			}
+		} else {
+			klog.Infof("Skipping gcloud components update for local run.")
 		}
 	}
 
@@ -158,7 +182,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 	}
 
 	//nolint:gosec
-	cmd = exec.Command("gcloud", "container", "clusters", "update", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion,
+	cmd = gcloudCommand(testParams, "container", "clusters", "update", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID,
 		"--add-maintenance-exclusion-name", "no-upgrades-during-test",
 		"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
 		"--add-maintenance-exclusion-end", startExclusionTime.Add(exclusionDuration).Format(time.RFC3339),
