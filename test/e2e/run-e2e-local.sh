@@ -43,7 +43,7 @@ readonly boskos_resource_type="${E2E_TEST_BOSKOS_RESOURCE_TYPE:-${GCE_PD_BOSKOS_
 
 readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
 # TODO(amacaskill): Remove oidc from default skip when the test can be run without additional configuration.
-readonly ginkgo_skip="${E2E_TEST_SKIP:-'should.succeed.in.performance.test|oidc'}"
+readonly ginkgo_skip="${E2E_TEST_SKIP:-should.succeed.in.performance.test|oidc}"
 readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-40}"
 readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
 readonly ginkgo_flake_attempts="${E2E_TEST_GINKGO_FLAKE_ATTEMPTS:-2}"
@@ -94,8 +94,8 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --skip-csi-driver-install=${skip_csi_driver_install} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-release-channel=${gke_release_channel} \
-            --ginkgo-focus="${ginkgo_focus}" \
-            --ginkgo-skip="${ginkgo_skip}" \
+            --ginkgo-focus=\"${ginkgo_focus}\" \
+            --ginkgo-skip=\"${ginkgo_skip}\" \
             --ginkgo-procs=${ginkgo_procs} \
             --ginkgo-timeout=${ginkgo_timeout} \
             --gcsfuse-client-protocol=${gcsfuse_client_protocol} \
