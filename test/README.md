@@ -102,6 +102,7 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `GCSFUSE_CLIENT_PROTOCOL`: default value is 'http1'. Change to 'grpc' to alter the type of protocol gcsfuse uses to communicate with gcs
 - `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
 - `E2E_TEST_USE_BOSKOS`: default value is `false`. Change it to `true` if you want to use Boskos to acquire a project. Useful for debugging Boskos infrastructure locally.
+- `E2E_TEST_PROJECT_ID`: default value is empty. GCP project ID to run E2E tests. Required when managing cluster lifecycle without Boskos.
 ```bash
 # Run the test on an Autopilot cluster with the GcsFuseCsiDriver add-on enabled.
 make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=true E2E_TEST_USE_GKE_AUTOPILOT=true

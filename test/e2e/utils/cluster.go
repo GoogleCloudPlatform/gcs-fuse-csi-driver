@@ -163,6 +163,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 				return fmt.Errorf("failed to update gcloud to latest version: %w", err)
 			}
 		} else {
+			// This is skipped only to ensure command doesn't fail for 'apt' package installed gcloud in local runs.
 			klog.Infof("Skipping gcloud components update for local run.")
 		}
 	}

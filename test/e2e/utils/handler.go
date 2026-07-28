@@ -169,10 +169,6 @@ func Handle(testParams *TestParameters) error {
 				}
 			}()
 		} else {
-			// If not using Boskos, we use the provided ProjectID.
-			if testParams.ProjectID == "" {
-				return fmt.Errorf("project-id must be provided when managing cluster lifecycle without Boskos")
-			}
 			if testParams.ImageRegistry == "" {
 				testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(testParams.ProjectID))
 			}
