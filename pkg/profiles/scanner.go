@@ -1544,6 +1544,39 @@ func defaultScanBucketWithDataflux(ctx context.Context, gcsClient *storage.Clien
 	}
 }
 
+// ensurePVTrackingLabel applies the PV tracking label if it's currently missing.
+func (s *Scanner) ensurePVTrackingLabel(ctx context.Context, pv *v1.PersistentVolume) error {
+	if err := ctx.Err(); err != nil {
+		return status.Errorf(codes.Canceled, "context cancelled: %v", err)
+	}
+	if pv == nil {
+		return status.Error(codes.Internal, "persistent volume is nil")
+	}
+	if _, hasTrackedLabel := pv.Labels[profileManagedLabelKey]; hasTrackedLabel {
+		return nil
+	}
+
+	patchData := map[string]any{
+		"metadata": map[string]any{"labels": map[string]string{profileManagedLabelKey: util.TrueStr}},
+	}
+	patchBytes, marshalErr := json.Marshal(patchData)
+	if marshalErr != nil {
+		return status.Errorf(codes.Internal, "failed to marshal label patch data for PV %q: %v", pv.Name, marshalErr)
+	}
+	klog.V(6).Infof("PV %q is missing the tracking label. Patching it with: %q", pv.Name, string(patchBytes))
+	_, patchErr := s.kubeClient.CoreV1().PersistentVolumes().Patch(ctx, pv.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if patchErr != nil {
+		if apierrors.IsNotFound(patchErr) {
+			klog.Warningf("Failed to patch PV %q because it was not found", pv.Name)
+			return nil
+		}
+		return status.Errorf(codes.Internal, "failed to patch PV %q with label: %v", pv.Name, patchErr)
+	}
+
+	klog.V(6).Infof("Successfully added %s=%s label to PV %q", profileManagedLabelKey, util.TrueStr, pv.Name)
+	return nil
+}
+
 // patchPVAnnotations updates the annotations for a given PV.
 // annotationsToUpdate should contain the desired state of the annotations to be patched.
 func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotationsToUpdate map[string]*string) error {
@@ -1637,6 +1670,14 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	if !profilesutil.IsProfile(sc) {
 		klog.Warningf("profile label was not found in StorageClass %q for PV %q", sc.Name, pv.Name)
 		return nil, false, nil
+	}
+
+	// We intentionally only patch the tracking label onto PVs that utilize the GCS Fuse Profiles feature.
+	// This ensures that the Node driver (which filters its informer cache based on this label)
+	// only loads precisely the metadata it needs for profiling, preventing OOM crashes in large clusters
+	// that have thousands of generic GCS Fuse PVs or PDCSI PVs.
+	if err := s.ensurePVTrackingLabel(ctx, pv); err != nil {
+		return nil, false, fmt.Errorf("failed to ensure tracking label for PV %q: %w", pv.Name, err)
 	}
 
 	// ---- At this stage, there is clearly a customer intent to use the scanner feature, so we start logging warnings -----
