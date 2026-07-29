@@ -55,7 +55,6 @@ type Interface interface {
 	ConfigurePVCLister(ctx context.Context)
 	ConfigureSCLister(ctx context.Context)
 	ConfigurePodTemplateLister(ctx context.Context)
-	ConfigureConfigMapLister(ctx context.Context, namespace string)
 	GetPod(namespace, name string) (*corev1.Pod, error)
 	GetMounterPod(namespace, name string) (*corev1.Pod, error)
 	GetMounterPodsByName(name string) ([]*corev1.Pod, error)
@@ -64,7 +63,6 @@ type Interface interface {
 	GetPVC(namespace string, name string) (*corev1.PersistentVolumeClaim, error)
 	GetSC(name string) (*storagev1.StorageClass, error)
 	GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error)
-	GetConfigMap(namespace, name string) (*corev1.ConfigMap, error)
 	CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error)
 	GetGCPServiceAccountName(ctx context.Context, namespace, name string) (string, error)
 }
@@ -84,7 +82,6 @@ type Clientset struct {
 	pvcLister                 listersv1.PersistentVolumeClaimLister
 	scLister                  storagelisters.StorageClassLister
 	podTemplateLister         listersv1.PodTemplateLister
-	configMapLister           listersv1.ConfigMapLister
 	informerResyncDurationSec int
 	runController             bool
 	enableGCSFuseProfiles     bool
@@ -297,9 +294,6 @@ func (c *Clientset) ConfigurePVCLister(ctx context.Context) {
 }
 
 func (c *Clientset) ConfigureSCLister(ctx context.Context) {
-	labelsToKeep := map[string]bool{
-		profilesutil.LabelProfile: true,
-	}
 	trim := func(obj any) (any, error) {
 		scObj, ok := obj.(*storagev1.StorageClass)
 		if !ok || scObj == nil {
@@ -308,7 +302,7 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 		return &storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   scObj.ObjectMeta.Name,
-				Labels: trimMap(scObj.ObjectMeta.Labels, labelsToKeep), // Required by the gcsfuse profiles feature to know if the StorageClass is a profile.
+				Labels: scObj.ObjectMeta.Labels, // Required by the gcsfuse profiles feature to know if the StorageClass is a profile.
 			},
 			MountOptions: scObj.MountOptions, // Required by the gcsfuse profiles feature to apply pre-bundled mount options.
 			Parameters:   scObj.Parameters,   // Required by the gcsfuse profiles feature to get profile configs.
@@ -319,9 +313,6 @@ func (c *Clientset) ConfigureSCLister(ctx context.Context) {
 		c.k8sClients,
 		time.Duration(c.informerResyncDurationSec)*time.Second,
 		informers.WithTransform(trim),
-		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.LabelSelector = fmt.Sprintf("%s=%s", profilesutil.LabelProfile, util.TrueStr)
-		}),
 	)
 	scLister := informerFactory.Storage().V1().StorageClasses().Lister()
 
@@ -359,38 +350,6 @@ func (c *Clientset) ConfigurePodTemplateLister(ctx context.Context) {
 	informerFactory.WaitForCacheSync(ctx.Done())
 
 	c.podTemplateLister = podTemplateLister
-}
-
-func (c *Clientset) ConfigureConfigMapLister(ctx context.Context, namespace string) {
-	trim := func(obj any) (any, error) {
-		cmObj, ok := obj.(*corev1.ConfigMap)
-		if !ok || cmObj == nil {
-			return obj, nil
-		}
-		return &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      cmObj.ObjectMeta.Name,
-				Namespace: cmObj.ObjectMeta.Namespace,
-			},
-			Data: cmObj.Data,
-		}, nil
-	}
-
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(
-		c.k8sClients,
-		time.Duration(c.informerResyncDurationSec)*time.Second,
-		informers.WithNamespace(namespace),
-		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.FieldSelector = fmt.Sprintf("metadata.name=%s", util.SidecarImageConfigMapName)
-		}),
-		informers.WithTransform(trim),
-	)
-	configMapLister := informerFactory.Core().V1().ConfigMaps().Lister()
-
-	informerFactory.Start(ctx.Done())
-	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.configMapLister = configMapLister
 }
 
 func New(kubeconfigPath string, informerResyncDurationSec int, runController bool, kubeAPIBurst int, kubeAPIQPS float64, enableGCSFuseProfiles, enableSharedMount bool) (Interface, error) {
@@ -487,11 +446,9 @@ func (c *Clientset) configureControllerPodLister(ctx context.Context, nodeName s
 				klog.Fatalf("Failed to add indexers: %v", err)
 			}
 		}
-		podLister := factory.Core().V1().Pods().Lister()
-		podInformer := factory.Core().V1().Pods().Informer()
 		factory.Start(ctx.Done())
 		factory.WaitForCacheSync(ctx.Done())
-		return podLister, podInformer
+		return factory.Core().V1().Pods().Lister(), factory.Core().V1().Pods().Informer()
 	}
 
 	if c.enableGCSFuseProfiles {
@@ -584,12 +541,9 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string, eve
 		informers.WithTransform(trim),
 	)
 
-	podLister := informerFactory.Core().V1().Pods().Lister()
-
 	informerFactory.Start(ctx.Done())
 	informerFactory.WaitForCacheSync(ctx.Done())
-
-	c.podLister = podLister
+	c.podLister = informerFactory.Core().V1().Pods().Lister()
 }
 
 // GetMounterPodsByName retrieves all mounter pods with the given name across all namespaces.
@@ -687,14 +641,6 @@ func (c *Clientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate,
 	}
 
 	return c.podTemplateLister.PodTemplates(namespace).Get(name)
-}
-
-func (c *Clientset) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
-	if c.configMapLister == nil {
-		return nil, errors.New("configmap informer is not ready")
-	}
-
-	return c.configMapLister.ConfigMaps(namespace).Get(name)
 }
 
 func (c *Clientset) CreateServiceAccountToken(ctx context.Context, namespace, name string, tokenRequest *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

@@ -45,6 +45,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -75,6 +77,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	v1listers "k8s.io/client-go/listers/core/v1"
+	storagelisters "k8s.io/client-go/listers/storage/v1"
 )
 
 const (
@@ -189,6 +193,10 @@ type DatafluxConfig struct {
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
 	K8SClients                       clientset.Interface // Kubernetes clientset.
+	KubeAPIQPS                       float64             // QPS limit for Kubernetes API client.
+	KubeAPIBurst                     int                 // Burst limit for Kubernetes API client.
+	ResyncPeriod                     time.Duration       // Resync period for informers.
+	KubeConfigPath                   string              // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
 	CloudConfigPath                  string
 	RateLimiter                      workqueue.TypedRateLimiter[string]
 	DatafluxConfig                   *DatafluxConfig
@@ -233,6 +241,12 @@ type EventInfo struct {
 
 // Scanner is the main controller structure.
 type Scanner struct {
+	kubeClient           kubernetes.Interface
+	pvcLister            v1listers.PersistentVolumeClaimLister
+	scLister             storagelisters.StorageClassLister
+	pvcSynced            cache.InformerSynced
+	scSynced             cache.InformerSynced
+	factory              informers.SharedInformerFactory
 	queue                workqueue.TypedRateLimitingInterface[string]
 	eventRecorder        record.EventRecorder
 	datafluxConfig       *DatafluxConfig
@@ -341,11 +355,9 @@ func buildCloudConfig(configPath string) (*ConfigFile, error) {
 
 // NewScanner creates a new Scanner instance.
 func NewScanner(config *ScannerConfig) (*Scanner, error) {
-	if config == nil {
-		return nil, errors.New("config must not be nil")
-	}
-	if config.K8SClients == nil {
-		return nil, errors.New("K8SClients must be provided in ScannerConfig")
+	kubeconfig, err := buildKubeConfig(config.KubeConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build kubeconfig: %w", err)
 	}
 
 	// Add a uniquifier so that two processes on the same host don't accidentally both become active.
@@ -356,18 +368,40 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	}
 	id := hostname + "_" + string(uuid.NewUUID())
 
+	kubeconfig.QPS = float32(config.KubeAPIQPS)
+	kubeconfig.Burst = config.KubeAPIBurst
+	klog.Infof("KubeClient QPS: %f, Burst: %d", kubeconfig.QPS, kubeconfig.Burst)
+	kubeClient, err := kubernetes.NewForConfig(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
 	rateLimiter := config.RateLimiter
 	if rateLimiter == nil {
 		rateLimiter = workqueue.DefaultTypedControllerRateLimiter[string]()
 	}
 
+	// Factory for PV, PVC and SC informers
+	if config.K8SClients == nil {
+		return nil, errors.New("K8SClients must be provided in ScannerConfig")
+	}
+	factory := informers.NewSharedInformerFactory(kubeClient, config.ResyncPeriod)
+	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
+	scInformer := factory.Storage().V1().StorageClasses()
+
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
-	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: config.K8SClients.K8sClient().CoreV1().Events("")})
+	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	eventRecorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: scannerComponentName})
 	mux := http.NewServeMux()
 
 	scanner := &Scanner{
+		kubeClient:     kubeClient,
+		factory:        factory,
+		pvcLister:      pvcInformer.Lister(),
+		scLister:       scInformer.Lister(),
+		pvcSynced:      pvcInformer.Informer().HasSynced,
+		scSynced:       scInformer.Informer().HasSynced,
 		queue:          workqueue.NewTypedRateLimitingQueue(rateLimiter),
 		trackedPVs:     make(map[string]syncInfo),
 		eventRecorder:  eventRecorder,
@@ -446,6 +480,16 @@ func (s *Scanner) run(ctx context.Context) {
 
 	stopCh := ctx.Done()
 
+	klog.Info("Starting informers")
+	s.factory.Start(stopCh)
+
+	klog.Info("Waiting for informer caches to sync")
+	if !cache.WaitForCacheSync(stopCh, s.pvcSynced, s.scSynced) {
+		klog.Error("Failed to wait for caches to sync")
+		return
+	}
+	klog.Info("Informer caches synced successfully")
+
 	klog.Info("Starting worker")
 	go wait.Until(func() { s.runWorker(ctx) }, time.Second, ctx.Done())
 
@@ -485,7 +529,7 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 		s.config.LeaderElectionNamespace,
 		leaseName,
 		nil,
-		s.config.K8SClients.K8sClient().CoordinationV1(),
+		s.kubeClient.CoordinationV1(),
 		resourcelock.ResourceLockConfig{
 			Identity: s.id,
 		})
@@ -654,7 +698,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		}
 
 		pvcName := vol.PersistentVolumeClaim.ClaimName
-		pvc, err := s.config.K8SClients.GetPVC(namespace, pvcName)
+		pvc, err := s.pvcLister.PersistentVolumeClaims(namespace).Get(pvcName)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("PVC %q/%q for Pod %q not found, will recheck Pod later", namespace, pvcName, key)
@@ -752,7 +796,7 @@ func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
 		return fmt.Errorf("failed to marshal patch data for Pod %q/%q: %w", pod.Namespace, pod.Name, err)
 	}
 
-	_, err = s.config.K8SClients.K8sClient().CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	_, err = s.kubeClient.CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Warningf("Failed to patch Pod %q/%q because it was not found", pod.Namespace, pod.Name)
@@ -1454,7 +1498,7 @@ func (s *Scanner) ensurePVTrackingLabel(ctx context.Context, pv *v1.PersistentVo
 		return status.Errorf(codes.Internal, "failed to marshal label patch data for PV %q: %v", pv.Name, marshalErr)
 	}
 	klog.V(6).Infof("PV %q is missing the tracking label. Patching it with: %q", pv.Name, string(patchBytes))
-	_, patchErr := s.config.K8SClients.K8sClient().CoreV1().PersistentVolumes().Patch(ctx, pv.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	_, patchErr := s.kubeClient.CoreV1().PersistentVolumes().Patch(ctx, pv.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if patchErr != nil {
 		if apierrors.IsNotFound(patchErr) {
 			klog.Warningf("Failed to patch PV %q because it was not found", pv.Name)
@@ -1481,7 +1525,7 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 		return status.Errorf(codes.Internal, "failed to marshal annotation patch data for PV %q: %v", pvName, err)
 	}
 	klog.V(6).Infof("Patching PV %q annotations with: %q", pvName, string(patchBytes))
-	_, err = s.config.K8SClients.K8sClient().CoreV1().PersistentVolumes().Patch(ctx, pvName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	_, err = s.kubeClient.CoreV1().PersistentVolumes().Patch(ctx, pvName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Warningf("Failed to patch PV %q because it was not found", pvName)
@@ -1826,7 +1870,7 @@ func (s *Scanner) getStorageClass(pv *v1.PersistentVolume) (*storagev1.StorageCl
 	if scName == "" {
 		return nil, nil
 	}
-	sc, err := s.config.K8SClients.GetSC(scName)
+	sc, err := s.scLister.Get(scName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get StorageClass %q: %w", scName, err)

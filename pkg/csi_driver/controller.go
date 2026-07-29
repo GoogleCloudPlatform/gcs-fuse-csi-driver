@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	MinimumVolumeSizeInBytes int64 = 1 * util.MiB
+	MinimumVolumeSizeInBytes int64 = 1 * util.Mb
 )
 
 // CreateVolume parameters.
