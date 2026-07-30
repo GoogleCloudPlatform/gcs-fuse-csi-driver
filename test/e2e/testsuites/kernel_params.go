@@ -157,7 +157,7 @@ func skipIfFuseMaxRequestSizeNotSupported() {
 	if branch == utils.MasterBranchName {
 		return
 	}
-	// fuse-max-request-size-kb was introduced in v3.11.1-gke.0.
+	// fuse-max-request-size-kb was introduced in v3.11.2-gke.0.
 	if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseFuseMaxRequestSizeVersion)) {
 		e2eskipper.Skipf("skip fuse max request size test for unsupported gcsfuse version %s", gcsfuseVersion.String())
 	}
@@ -409,8 +409,8 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
 			e2eskipper.Skipf("skip for zonal bucket")
 		}
-		init(specs.EnableKernelParamsPrefix)
 		skipIfFuseMaxRequestSizeNotSupported()
+		init(specs.EnableKernelParamsPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring and setting up test pod with trace logging")
@@ -434,6 +434,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
 			e2eskipper.Skipf("skip for zonal bucket")
 		}
+		skipIfFuseMaxRequestSizeNotSupported()
 		init(specs.EnableKernelParamsPrefix)
 		defer cleanup()
 
@@ -459,8 +460,8 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
 			e2eskipper.Skipf("skip for zonal bucket")
 		}
-		init(specs.EnableKernelParamsPrefix)
 		skipIfFuseMaxRequestSizeNotSupported()
+		init(specs.EnableKernelParamsPrefix)
 		defer cleanup()
 
 		ginkgo.By("Configuring and deploying test pod with 32MiB limits and trace logging")
@@ -493,8 +494,8 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
 			e2eskipper.Skipf("skip for zonal bucket")
 		}
-		init(specs.EnableKernelParamsPrefix)
 		skipIfFuseMaxRequestSizeNotSupported()
+		init(specs.EnableKernelParamsPrefix)
 		defer cleanup()
 
 		ginkgo.By("Creating the second volume resource (second bucket)")
@@ -548,6 +549,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
 			e2eskipper.Skipf("skip for zonal bucket")
 		}
+		skipIfFuseMaxRequestSizeNotSupported()
 		init(specs.EnableKernelParamsPrefix)
 		defer cleanup()
 
