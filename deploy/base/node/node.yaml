@@ -109,6 +109,11 @@ spec:
               mountPath: /sys
             - name: host-iproute
               mountPath: /etc/iproute2
+            - name: host-proc-sys-fs-fuse
+              mountPath: /host-proc-sys-fs-fuse
+
+            - name: tmp
+              mountPath: /tmp
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -160,6 +165,13 @@ spec:
           hostPath:
             path: /etc/iproute2
             type: Directory
+        - name: host-proc-sys-fs-fuse
+          hostPath:
+            path: /proc/sys/fs/fuse
+            type: Directory
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Mi
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.

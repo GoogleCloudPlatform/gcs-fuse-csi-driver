@@ -19,15 +19,19 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -40,15 +44,21 @@ import (
 type ParamName string
 
 const (
-	MaxReadAheadKb               ParamName = "max-read-ahead-kb"
-	MaxBackgroundRequests        ParamName = "fuse-max-background-requests"
-	CongestionWindowThreshold    ParamName = "fuse-congestion-window-threshold"
-	CustomCSIReadAhead3MB                  = "3072"
-	CustomGCSFuseMaxReadAhead6MB           = "6144"
-	CustomGCSFuseMaxReadAhead8MB           = "8192"
-	CustomMaxBackground                    = "999"
-	CustomCongestionThreshold              = "666"
-	tmpMountPath                           = "/gcsfuse-tmp"
+	MaxReadAheadKb                ParamName = "max-read-ahead-kb"
+	MaxBackgroundRequests         ParamName = "fuse-max-background-requests"
+	CongestionWindowThreshold     ParamName = "fuse-congestion-window-threshold"
+	CustomCSIReadAhead3MiB                  = "3072"
+	CustomGCSFuseMaxReadAhead6MiB           = "6144"
+	CustomGCSFuseMaxReadAhead8MiB           = "8192"
+	CustomMaxBackground                     = "999"
+	CustomCongestionThreshold               = "666"
+	tmpMountPath                            = "/gcsfuse-tmp"
+
+	testFileSizeMiB       = 16
+	testFileSize32MiB     = 32
+	requestSize32MiBInKiB = 32 * util.KiB
+	chunkSize1MiBBytes    = 1 * util.MiB
+	expectedChunkCount    = 16
 )
 
 type gcsFuseCSIKernelParamsTestSuite struct {
@@ -137,6 +147,19 @@ func skipIfKernelParamsNotSupported() {
 	// Kernel parameters were introduced in v3.7.0-gke.0.
 	if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseKernelParamsVersion)) {
 		e2eskipper.Skipf("skip kernel params test for unsupported gcsfuse version %s", gcsfuseVersion.String())
+	}
+}
+
+func skipIfFuseMaxRequestSizeNotSupported() {
+	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch()
+
+	// Running since we are on master branch.
+	if branch == utils.MasterBranchName {
+		return
+	}
+	// fuse-max-request-size-kb was introduced in v3.11.1-gke.0.
+	if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseFuseMaxRequestSizeVersion)) {
+		e2eskipper.Skipf("skip fuse max request size test for unsupported gcsfuse version %s", gcsfuseVersion.String())
 	}
 }
 
@@ -242,7 +265,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 
 		ginkgo.By("Configuring and setting up test pod")
 		// This read_ahead_kb will be overwritten by GCSFuse default readAheadKb in config file.
-		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, false /* needsFuseConnections */, fmt.Sprintf("read_ahead_kb=%s", CustomCSIReadAhead3MB))
+		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, false /* needsFuseConnections */, fmt.Sprintf("read_ahead_kb=%s", CustomCSIReadAhead3MiB))
 
 		ginkgo.By("Verifying read_ahead_kb is eventually overwritten by GCSFuse default value")
 		expectedValue := kernelParamValueFromConfigFile(f, tPod, volumeName, MaxReadAheadKb)
@@ -252,7 +275,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 
 		ginkgo.By("Verify actual value of ReadAheadKb is not equal to CSI read_ahead_kb value")
 		actualValue := KernelParamValueFromMount(f, tPod, MaxReadAheadKb)
-		gomega.Expect(actualValue).ShouldNot(gomega.Equal(CustomCSIReadAhead3MB))
+		gomega.Expect(actualValue).ShouldNot(gomega.Equal(CustomCSIReadAhead3MiB))
 
 		ginkgo.By("Deleting the pod")
 		tPod.Cleanup(ctx)
@@ -267,11 +290,11 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 
 		ginkgo.By("Configuring and setting up test pod")
 		// This read_ahead_kb will be overwritten by user provided GCSFuse max-read-ahead-kb in config file.
-		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, false /* needsFuseConnections */, fmt.Sprintf("read_ahead_kb=%s,file-system:max-read-ahead-kb:%s", CustomCSIReadAhead3MB, CustomGCSFuseMaxReadAhead6MB))
+		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, false /* needsFuseConnections */, fmt.Sprintf("read_ahead_kb=%s,file-system:max-read-ahead-kb:%s", CustomCSIReadAhead3MiB, CustomGCSFuseMaxReadAhead6MiB))
 
 		ginkgo.By("Verifying ReadAheadkb is eventually overwritten by user provided value of GCSFuse max-read-ahead-kb")
 		expectedValue := kernelParamValueFromConfigFile(f, tPod, volumeName, MaxReadAheadKb)
-		gomega.Expect(CustomGCSFuseMaxReadAhead6MB).Should(gomega.Equal(expectedValue))
+		gomega.Expect(CustomGCSFuseMaxReadAhead6MiB).Should(gomega.Equal(expectedValue))
 		gomega.Eventually(func() string {
 			return KernelParamValueFromMount(f, tPod, MaxReadAheadKb)
 		}, retryTimeout, retryPolling).Should(gomega.Equal(expectedValue))
@@ -360,7 +383,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 			ginkgo.By("Deleting the pod")
 			tPod.Cleanup(ctx)
 		},
-		ginkgo.Entry("for read-ahead-kb", MaxReadAheadKb, CustomGCSFuseMaxReadAhead8MB, false),
+		ginkgo.Entry("for read-ahead-kb", MaxReadAheadKb, CustomGCSFuseMaxReadAhead8MiB, false),
 		ginkgo.Entry("for max-background", MaxBackgroundRequests, CustomMaxBackground, true),
 		ginkgo.Entry("for congestion-threshold", CongestionWindowThreshold, CustomCongestionThreshold, true),
 	)
@@ -381,4 +404,235 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		ginkgo.By("Deleting the pod")
 		tPod.Cleanup(ctx)
 	})
+
+	ginkgo.It("should verify node_fuse_max_request_limit_kb=0 disables higher file I/O", func() {
+		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
+		init(specs.EnableKernelParamsPrefix)
+		skipIfFuseMaxRequestSizeNotSupported()
+		defer cleanup()
+
+		ginkgo.By("Configuring and setting up test pod with trace logging")
+		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, false /* needsFuseConnections */, "enable-kernel-reader=true,node_fuse_max_request_limit_kb=0,logging:severity:trace")
+		defer tPod.Cleanup(ctx)
+
+		// We use direct-io=true to bypass the page cache, allowing us to verify file I/O correctly.
+		ginkgo.By("Write a 16MB file in single block and read in single block")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/dev/zero of=%s/testfile bs=%dM count=1 oflag=direct", mountPath, testFileSizeMiB))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=%s/testfile of=/dev/null bs=%dM count=1 iflag=direct", mountPath, testFileSizeMiB))
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		ginkgo.By("Verifying write I/O is present in sidecar logs in 1MiB blocks")
+		assertFuseIO(tPod, "write", chunkSize1MiBBytes, expectedChunkCount, bucketName)
+
+		ginkgo.By("Verifying read I/O is present in sidecar logs in 1MiB blocks")
+		assertFuseIO(tPod, "read", chunkSize1MiBBytes, expectedChunkCount, bucketName)
+	})
+
+	ginkgo.It("should verify enabling kernel reader results in 16MiB readFile I/O", func() {
+		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
+		init(specs.EnableKernelParamsPrefix)
+		defer cleanup()
+
+		ginkgo.By("Configuring and setting up test pod with trace logging")
+		tPod := setupAndDeployTestPod(ctx, f, l.volumeResource, false /* needsFuseConnections */, "enable-kernel-reader=true,logging:severity:trace")
+		defer tPod.Cleanup(ctx)
+
+		// We use direct-io=true to bypass the page cache, allowing us to verify file I/O correctly.
+		ginkgo.By("Write a 16MB file in a single block and read in a single block")
+		targetSize := int64(testFileSizeMiB * chunkSize1MiBBytes)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/dev/zero of=%s/testfile bs=%d count=1 oflag=direct", mountPath, targetSize))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=%s/testfile of=/dev/null bs=%d count=1 iflag=direct", mountPath, targetSize))
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		ginkgo.By("Verifying write I/O is present in sidecar logs in 1MiB blocks")
+		assertFuseIO(tPod, "write", chunkSize1MiBBytes, expectedChunkCount, bucketName)
+
+		ginkgo.By("Verifying read I/O is present in sidecar logs in a single 16MiB block")
+		assertFuseIO(tPod, "read", targetSize, 1, bucketName)
+	})
+
+	ginkgo.It("should verify enabling kernel reader with non-default setting results in 32MiB read and write file I/O", func() {
+		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
+		init(specs.EnableKernelParamsPrefix)
+		skipIfFuseMaxRequestSizeNotSupported()
+		defer cleanup()
+
+		ginkgo.By("Configuring and deploying test pod with 32MiB limits and trace logging")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false,
+			fmt.Sprintf("enable-kernel-reader=true,node_fuse_max_request_limit_kb=%d,file-system:fuse-max-request-size-kb:%d,logging:severity:trace", requestSize32MiBInKiB, requestSize32MiBInKiB))
+		tPod.SetupTmpVolumeMount(tmpMountPath)
+		tPod.SetResource("100m", "50Mi", "100Mi")
+		defer tPod.Cleanup(ctx)
+
+		tPod.Create(ctx)
+		tPod.WaitForRunning(ctx)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mountpoint %q", mountPath))
+
+		// We use direct-io=true to bypass the page cache, allowing us to verify file I/O correctly.
+		ginkgo.By("Write a 32MB file in a single block and read in a single block")
+		targetSize := int64(testFileSize32MiB * chunkSize1MiBBytes)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/dev/zero of=%s/testfile bs=%d count=1 oflag=direct", mountPath, targetSize))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=%s/testfile of=/dev/null bs=%d count=1 iflag=direct", mountPath, targetSize))
+
+		bucketName := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		ginkgo.By("Verifying write I/O is present in sidecar logs in 1MiB blocks")
+		assertFuseIO(tPod, "write", chunkSize1MiBBytes, testFileSize32MiB, bucketName)
+
+		ginkgo.By("Verifying read I/O is present in sidecar logs in a single 32MiB block")
+		assertFuseIO(tPod, "read", targetSize, 1, bucketName)
+	})
+
+	ginkgo.It("should verify enabling kernel reader on multiple volumes inside a single pod yields independent 16MiB and 32MiB block file I/O", func() {
+		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
+		init(specs.EnableKernelParamsPrefix)
+		skipIfFuseMaxRequestSizeNotSupported()
+		defer cleanup()
+
+		ginkgo.By("Creating the second volume resource (second bucket)")
+		l.config.Prefix = specs.EnableKernelParamsPrefix
+		volumeResource2 := storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+		defer func() {
+			if volumeResource2 != nil {
+				framework.ExpectNoError(volumeResource2.CleanupResource(ctx))
+			}
+		}()
+
+		ginkgo.By("Configuring and deploying a multi-volume test pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, "vol-16mib", "/mnt/test-16mib", false,
+			"enable-kernel-reader=true,logging:severity:trace")
+		tPod.SetupVolume(volumeResource2, "vol-32mib", "/mnt/test-32mib", false,
+			fmt.Sprintf("enable-kernel-reader=true,node_fuse_max_request_limit_kb=%d,file-system:fuse-max-request-size-kb:%d,logging:severity:trace", requestSize32MiBInKiB, requestSize32MiBInKiB))
+		tPod.SetupTmpVolumeMount(tmpMountPath)
+		tPod.SetResource("100m", "50Mi", "100Mi")
+		defer tPod.Cleanup(ctx)
+
+		tPod.Create(ctx)
+		tPod.WaitForRunning(ctx)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "mountpoint '/mnt/test-16mib'")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "mountpoint '/mnt/test-32mib'")
+
+		// We use direct-io=true to bypass the page cache, allowing us to verify file I/O correctly.
+		ginkgo.By("Write 16MiB to Volume 1 (vol-16mib) and verify write and read logs")
+		targetSize16 := int64(testFileSizeMiB * chunkSize1MiBBytes)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/dev/zero of=/mnt/test-16mib/testfile bs=%d count=1 oflag=direct", targetSize16))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/mnt/test-16mib/testfile of=/dev/null bs=%d count=1 iflag=direct", targetSize16))
+
+		ginkgo.By("Write 32MiB to Volume 2 (vol-32mib) and verify write and read logs")
+		targetSize32 := int64(testFileSize32MiB * chunkSize1MiBBytes)
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/dev/zero of=/mnt/test-32mib/testfile bs=%d count=1 oflag=direct", targetSize32))
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("dd if=/mnt/test-32mib/testfile of=/dev/null bs=%d count=1 iflag=direct", targetSize32))
+
+		bucketName16 := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
+		bucketName32 := volumeResource2.VolSource.CSI.VolumeAttributes["bucketName"]
+
+		ginkgo.By("Verifying Volume 1 (16MiB) I/O traces in sidecar logs")
+		assertFuseIO(tPod, "write", chunkSize1MiBBytes, expectedChunkCount, bucketName16)
+		assertFuseIO(tPod, "read", targetSize16, 1, bucketName16)
+
+		ginkgo.By("Verifying Volume 2 (32MiB) I/O traces in sidecar logs")
+		assertFuseIO(tPod, "write", chunkSize1MiBBytes, testFileSize32MiB, bucketName32)
+		assertFuseIO(tPod, "read", targetSize32, 1, bucketName32)
+	})
+
+	ginkgo.It("should verify that once the GCSFuse mount is done the FUSE max_pages_limit on the host is reverted back to its original default value", func() {
+		if driver, ok := driver.(*specs.GCSFuseCSITestDriver); ok && driver.EnableZB {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
+		init(specs.EnableKernelParamsPrefix)
+		defer cleanup()
+
+		driverNamespace := "gcs-fuse-csi-driver"
+		if os.Getenv(specs.IsOSSEnvVar) != "true" {
+			driverNamespace = "kube-system"
+		}
+
+		ginkgo.By("Listing CSI driver pods to select a node")
+		pods, err := f.ClientSet.CoreV1().Pods(driverNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "k8s-app=gcs-fuse-csi-driver",
+		})
+		framework.ExpectNoError(err)
+		gomega.Expect(pods.Items).ToNot(gomega.BeEmpty())
+
+		// Pick the first driver pod to pin our test pods to its node
+		driverPod := pods.Items[0]
+		nodeName := driverPod.Spec.NodeName
+
+		ginkgo.By("Configuring a host-reader helper pod pinned to the selected node")
+		helperPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		hostFuseVol := &storageframework.VolumeResource{
+			VolSource: &corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/proc/sys/fs/fuse",
+				},
+			},
+		}
+		helperPod.SetupVolume(hostFuseVol, "host-fuse", "/host-proc-sys-fs-fuse", false)
+		helperPod.SetNodeAffinity(nodeName, true)
+
+		ginkgo.By("Deploying the host-reader helper pod")
+		helperPod.Create(ctx)
+		defer helperPod.Cleanup(ctx)
+		helperPod.WaitForRunning(ctx)
+
+		ginkgo.By("Reading the initial FUSE max_pages_limit on the host via the helper pod")
+		limitStr := helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs-fuse/max_pages_limit")
+		initialLimit, err := strconv.ParseInt(strings.TrimSpace(limitStr), 10, 64)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Configuring the GCSFuse test pod with GCSFuse volume and node affinity")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false, "enable-kernel-reader=true")
+		tPod.SetupTmpVolumeMount(tmpMountPath)
+		tPod.SetNodeAffinity(nodeName, true)
+
+		ginkgo.By("Deploying the GCSFuse test pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the GCSFuse mount is active")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mountpoint %q", mountPath))
+
+		ginkgo.By("Reading the FUSE max_pages_limit on the host again via the helper pod")
+		limitStr = helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs-fuse/max_pages_limit")
+		currentLimit, err := strconv.ParseInt(strings.TrimSpace(limitStr), 10, 64)
+		framework.ExpectNoError(err)
+
+		gomega.Expect(currentLimit).To(gomega.Equal(initialLimit), "host max_pages_limit (%d) should be reverted back to its initial value (%d)", currentLimit, initialLimit)
+	})
+}
+
+func countWriteSizes(stdout string, targetSize int64, bucketName string) int {
+	re := regexp.MustCompile(fmt.Sprintf(`<- WriteFile \([^)]*?, (%d) bytes\).*?"mount-id":"%s-`, targetSize, regexp.QuoteMeta(bucketName)))
+	matches := re.FindAllStringSubmatch(stdout, -1)
+	return len(matches)
+}
+
+func countReadSizes(stdout string, targetSize int64, bucketName string) int {
+	re := regexp.MustCompile(fmt.Sprintf(`<- ReadFile \([^)]*?, (%d) bytes\).*?"mount-id":"%s-`, targetSize, regexp.QuoteMeta(bucketName)))
+	matches := re.FindAllStringSubmatch(stdout, -1)
+	return len(matches)
+}
+
+func assertFuseIO(tPod *specs.TestPod, opType string, targetSize int64, expectedCount int, bucketName string) {
+	gomega.Eventually(func() int {
+		stdout, err := tPod.GetSidecarLogs()
+		if err != nil {
+			return 0
+		}
+		if opType == "write" {
+			return countWriteSizes(stdout, targetSize, bucketName)
+		}
+		return countReadSizes(stdout, targetSize, bucketName)
+	}, retryTimeout, retryPolling).Should(gomega.Equal(expectedCount))
 }

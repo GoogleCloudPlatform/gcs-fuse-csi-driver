@@ -66,7 +66,6 @@ const (
 	VolumeContextKeyIdentityPool               = "identityPool"
 	VolumeContextKeyMultiNICIndex              = "multiNICIndex"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
-	VolumeContextSharedNodeMount               = "sharedMount"
 	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
@@ -92,8 +91,6 @@ const (
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
 	GCSFuseProfileFlag                     = "profile"
 	LocalSocketAddressArg                  = "experimental-local-socket-address"
-	PublishContextKeyMounterPodName        = "mounter-pod-name"
-	PublishContextKeyMounterPodNamespace   = "mounter-pod-namespace"
 )
 
 var (
