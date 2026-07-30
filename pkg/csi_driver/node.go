@@ -1044,6 +1044,12 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
+	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
+	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
+	if err := s.setupMultiNIC(&args, pod, canUseMultiNIC); err != nil {
+		return nil, err
+	}
+
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
 	if s.isGcsFuseKernelParamsFeatureSupported(podImage, vs) {
 		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseKernelParams + "=true"})
