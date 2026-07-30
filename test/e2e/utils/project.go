@@ -92,7 +92,7 @@ func setEnvProject(project string) error {
 }
 
 func setEnvProjectNumberUsingID(projectID string) (string, error) {
-	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)", "--billing-project="+projectID)
+	cmd := exec.Command("gcloud", "projects", "describe", projectID, "--format=value(projectNumber)")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to get project number for %s: %s, err: %w", projectID, out, err)

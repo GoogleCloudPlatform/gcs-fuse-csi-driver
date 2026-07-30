@@ -82,6 +82,7 @@ func main() {
 	}
 	flag.Parse()
 
+	// explicitFlags forces the flag overrides in the testing only if the flag has it's default value and is not explicitly set by the user.
 	explicitFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {
 		explicitFlags[f.Name] = true

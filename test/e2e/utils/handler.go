@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientset "k8s.io/client-go/kubernetes"
@@ -115,10 +114,7 @@ func Handle(testParams *TestParameters) error {
 
 	// Always ensure ProjectID is set and PROJECT env var is exported for all test runs.
 	if testParams.ProjectID == "" {
-		klog.Infof("Getting default gcloud project...")
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		output, err := gcloudCommandContext(ctx, testParams, "config", "get-value", "project").CombinedOutput()
-		cancel()
+		output, err := gcloudCommand(testParams, "config", "get-value", "project").CombinedOutput()
 		if err != nil {
 			klog.Fatalf("Failed to get gcloud project: %v (output: %s)", err, string(output))
 		}
@@ -135,14 +131,12 @@ func Handle(testParams *TestParameters) error {
 	oldMask := syscall.Umask(0o000)
 	defer syscall.Umask(oldMask)
 
-	// If we need to manage the cluster lifecycle (create and destroy cluster):
+	// For inProw tests, both ManageClusterLifecycle and UseBoskos are set to true.
+	// If we need to manage the cluster lifecycle (create and destroy cluster)
 	if testParams.ManageClusterLifecycle {
 		if testParams.UseBoskos {
 			// 1. Get the old project ID.
-			klog.Infof("Getting old gcloud project...")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			output, err := gcloudCommandContext(ctx, testParams, "config", "get-value", "project").CombinedOutput()
-			cancel()
+			output, err := gcloudCommand(testParams, "config", "get-value", "project").CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err)
 			}
