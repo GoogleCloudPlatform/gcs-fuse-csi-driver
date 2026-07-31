@@ -120,8 +120,7 @@ func Handle(testParams *TestParameters) error {
 		}
 		// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
 		// "Your active configuration is: [...]" to the project ID. Take the last line.
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		testParams.ProjectID = strings.TrimSpace(lines[len(lines)-1])
+		testParams.ProjectID = parseProjectNameFromCombinedOutput(output)
 	}
 	if err := os.Setenv(ProjectEnvVar, testParams.ProjectID); err != nil {
 		klog.Fatalf("failed to set %s env var: %v", ProjectEnvVar, err)
@@ -140,7 +139,9 @@ func Handle(testParams *TestParameters) error {
 			if err != nil {
 				return fmt.Errorf("failed to get gcloud project, output: %v, err: %w", string(output), err)
 			}
-			oldProject := string(output)
+			// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
+			// "Your active configuration is: [...]" to the project ID. Take the last line.
+			oldProject := parseProjectNameFromCombinedOutput(output)
 
 			// 2. Acquire and set up a new project through Boskos.
 			newProject := setupProwConfig(testParams.BoskosResourceType)
@@ -154,7 +155,6 @@ func Handle(testParams *TestParameters) error {
 				return fmt.Errorf("failed to set project environment to %s: %w", newProject, err)
 			}
 			testParams.ProjectID = newProject
-			testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(newProject))
 
 			// Restore old project at the end.
 			defer func() {
@@ -162,13 +162,20 @@ func Handle(testParams *TestParameters) error {
 					klog.Errorf("failed to set project environment to %s: %v", oldProject, err)
 				}
 			}()
-		} else {
-			if testParams.ImageRegistry == "" {
-				testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(testParams.ProjectID))
-			}
+		}
+		// testParams.ProjectID is updated with the new project ID if using Boskos, otherwise it is the same as the old project ID.
+		if testParams.ImageRegistry == "" {
+			testParams.ImageRegistry = fmt.Sprintf("gcr.io/%s/gcs-fuse-csi-driver", strings.TrimSpace(testParams.ProjectID))
 		}
 
-		// 3. Create a GKE cluster.
+		// 3. After the test, tear down the cluster. This is called before create cluster to ensure we clean up clusters even if the cluster creation fails.
+		defer func() {
+			if err := clusterDownGKE(testParams); err != nil {
+				klog.Errorf("failed to cluster down: %v", err)
+			}
+		}()
+
+		// 4. Create a GKE cluster.
 		testParams.GkeClusterName = "gcsfuse" + string(uuid.NewUUID())[0:4]
 		if err := clusterUpGKE(testParams); err != nil {
 			return fmt.Errorf("failed to cluster up: %w", err)
@@ -182,13 +189,6 @@ func Handle(testParams *TestParameters) error {
 		if err := os.Setenv(ClusterLocationEnvVar, testParams.GkeClusterRegion); err != nil {
 			klog.Fatalf(`env variable %q could not be set: %v`, ClusterLocationEnvVar, err)
 		}
-
-		// 4. After the test, tear down the cluster.
-		defer func() {
-			if err := clusterDownGKE(testParams); err != nil {
-				klog.Errorf("failed to cluster down: %v", err)
-			}
-		}()
 
 		// Fetch the cluster version.
 		cmd := gcloudCommand(testParams, "container", "clusters", "describe", testParams.GkeClusterName,

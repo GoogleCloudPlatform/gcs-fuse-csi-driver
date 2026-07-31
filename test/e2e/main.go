@@ -99,7 +99,9 @@ func main() {
 
 	if *manageClusterLifecycle {
 		utils.EnsureVariable(gkeClusterRegion, true, "'gke-cluster-region' must be set when managing cluster lifecycle")
-		utils.EnsureVariable(gkeClusterVersion, true, "'gke-cluster-version' must be set when managing cluster lifecycle")
+		if *gkeClusterVersion == "" {
+			*gkeClusterVersion = "latest"
+		}
 		utils.EnsureVariable(gkeReleaseChannel, true, "'gke-release-channel' must be set when managing cluster lifecycle")
 	}
 
