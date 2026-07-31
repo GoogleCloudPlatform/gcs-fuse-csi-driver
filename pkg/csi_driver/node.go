@@ -650,7 +650,7 @@ func (s *nodeServer) unmountWithRetry(ctx context.Context, targetPath string, ti
 		if lastErr == nil {
 			return true, nil
 		}
-		klog.Warningf("Failed to unmount %q: %v. Retrying...", targetPath, lastErr)
+		klog.Warningf("Retrying failed unmount of %q: %v", targetPath, lastErr)
 		return false, nil
 	})
 
