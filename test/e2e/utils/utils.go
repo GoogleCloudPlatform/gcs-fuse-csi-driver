@@ -551,3 +551,10 @@ func ExpandFlagVariables(flag string, vars map[string]string) string {
 		return os.Getenv(envVar)
 	})
 }
+
+// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
+// "Your active configuration is: [...]" to the project ID. Take the last line.
+func parseProjectNameFromCombinedOutput(output []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
