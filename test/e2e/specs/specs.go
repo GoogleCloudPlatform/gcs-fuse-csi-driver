@@ -1122,6 +1122,40 @@ func GCSFuseVersionAndBranch() (*version.Version, string) {
 	return v, branch
 }
 
+// GetGKEClusterVersion returns the GKE cluster version being tested.
+// The env var is set by handler.go before running the tests.
+func GetGKEClusterVersion() string {
+	return os.Getenv(utils.GkeClusterVersionVarName)
+}
+
+// GKEClusterVersion returns the parsed semantic version of the GKE cluster.
+func GKEClusterVersion() *version.Version {
+	vStr := GetGKEClusterVersion()
+	if vStr == "" {
+		return nil
+	}
+	v, err := version.ParseGeneric(vStr)
+	framework.ExpectNoError(err, "Failed to parse GKE Cluster version string %s into version.Version", vStr)
+	return v
+}
+
+// GKEClusterVersionAtLeast returns true if the GKE cluster version is at least minVersionStr.
+func GKEClusterVersionAtLeast(minVersionStr string) bool {
+	vStr := GetGKEClusterVersion()
+	if vStr == "" {
+		return true
+	}
+	v, err := version.ParseGeneric(vStr)
+	if err != nil {
+		return false
+	}
+	minV, err := version.ParseGeneric(minVersionStr)
+	if err != nil {
+		return false
+	}
+	return v.AtLeast(minV)
+}
+
 func DeployIstioSidecar(namespace string) {
 	runKubectlOrDie(namespace, "apply", "--filename", "./specs/istio-sidecar.yaml")
 }
