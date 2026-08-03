@@ -27,12 +27,14 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	mount "k8s.io/mount-utils"
@@ -81,6 +83,19 @@ const (
 	MounterPodNamePrefix                = "gcsfusecsi-mount"
 	SidecarImageConfigMapName           = "gcsfusecsi-image-config"
 	SidecarImageConfigMapKey            = "sidecar-image"
+	// Note: All variables here are in KiB instead of KB but they are added like this to ensure consistency in codebase.
+
+	readAheadKBMountFlagRegexPattern = "^read_ahead_kb=(.+)$"
+	readAheadKBMountFlag             = "read_ahead_kb"
+	// Hidden CSI flag never to be passed to gcsfuse
+	nodeFuseMaxRequestLimitKBMountFlag             = "node_fuse_max_request_limit_kb"
+	nodeFuseMaxRequestLimitKBMountFlagRegexPattern = "^" + nodeFuseMaxRequestLimitKBMountFlag + "=(.+)$"
+	// Hidden CSI flag never to be passed to gcsfuse
+	defaultNodeFuseMaxRequestLimitKB = 16 * MiB / KiB // 16 MiB Request Size
+	// minPageSizeKB defines the minimum page size (4 KiB) to use as a fallback.
+	minPageSizeKB = 4
+	// maxFuseMaxPagesLimit defines the maximum pages limit supported by the Linux FUSE kernel (2^16 - 1).
+	maxFuseMaxPagesLimit = 65535
 )
 
 var (
@@ -91,6 +106,18 @@ var (
 		`^https://(?:[a-z0-9-]+-)?container(?:\.sandbox)?\.googleapis\.com/v1/projects/[^/]+/locations/[^/]+/clusters/[^/]+$`,
 	)
 	procMountsPath = "/proc/mounts"
+	allowedOptions = map[string]bool{
+		"exec":    true,
+		"noexec":  true,
+		"atime":   true,
+		"noatime": true,
+		"sync":    true,
+		"async":   true,
+		"dirsync": true,
+	}
+
+	readAheadKBMountFlagRegex               = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
+	nodeFuseMaxRequestLimitKBMountFlagRegex = regexp.MustCompile(nodeFuseMaxRequestLimitKBMountFlagRegexPattern)
 )
 
 // ConvertLabelsStringToMap converts the labels from string to map
@@ -392,4 +419,108 @@ func WaitForPathMounted(ctx context.Context, path string) error {
 // CeilDiv64 performs integer division of 'a' by 'b', rounding the result up.
 func CeilDiv64(a, b int64) int64 {
 	return (a + b - 1) / b
+}
+
+// PrepareSharedMountOptions prepares mount options specifically for shared node mount architecture.
+// It returns gcsfuseMO, sysfsBDI, fuseMaxPagesLimit, and error.
+func PrepareSharedMountOptions(options []string) ([]string, map[string]int64, int64, error) {
+	defaultCSIMountOptions := []string{"allow_other,default_permissions"}
+	linuxMO, sidecarMountOptions, sysfsBDI, fuseMaxPagesLimit, err := prepareMountOptions(options, defaultCSIMountOptions)
+	if err != nil {
+		return nil, nil, fuseMaxPagesLimit, err
+	}
+	for i, opt := range linuxMO {
+		linuxMO[i] = "o=" + opt
+	}
+	// For shared node mounts we pass both linux mo and sidecar mo, with linux mo being prefixed with "o=" to be passed to gcsfuse.
+	gcsfuseMO := append(linuxMO, sidecarMountOptions...)
+	return gcsfuseMO, sysfsBDI, fuseMaxPagesLimit, nil
+}
+
+// PrepareSidecarMountOptions prepares mount options specifically for sidecar mounter.
+func PrepareSidecarMountOptions(options []string) ([]string, []string, map[string]int64, int64, error) {
+	defaultOptions := []string{
+		"nodev",
+		"nosuid",
+		"allow_other",
+		"default_permissions",
+		"rootmode=40000",
+		fmt.Sprintf("user_id=%d", os.Getuid()),
+		fmt.Sprintf("group_id=%d", os.Getgid()),
+	}
+	return prepareMountOptions(options, defaultOptions)
+}
+
+// prepareMountOptions parses and separates raw mount options into CSI/gcsfuse mount options,
+// remaining options, sysfs BDI settings (such as read_ahead_kb), and the FUSE max pages limit.
+// It relies on the passed csiMountOptions slice to provide initial default mount options.
+// And uses allowedOptions map to filter out invalid linux options.
+func prepareMountOptions(options []string, csiMountOptions []string) ([]string, []string, map[string]int64, int64, error) {
+	// Copy csiMountOptions to avoid modifying the caller's slice or shared globals.
+	csiMountOptions = append([]string(nil), csiMountOptions...)
+
+	// users may pass options that should be used by Linux mount(8),
+	// filter out these options and not pass to the sidecar mounter.
+	validMountOptions := []string{"rw", "ro"}
+	optionSet := sets.NewString(options...)
+	for _, o := range validMountOptions {
+		if optionSet.Has(o) {
+			csiMountOptions = append(csiMountOptions, o)
+			optionSet.Delete(o)
+		}
+	}
+
+	sysfsBDI := make(map[string]int64)
+	pageSizeKB := max(minPageSizeKB, int64(os.Getpagesize()/KiB))
+	// Calculate default FUSE max pages limit. We use integer ceiling division to ensure we round
+	// up to the next page if the default size 16MB is not a perfect multiple of the page size on the machine.
+	fuseMaxPagesLimit := CeilDiv64(defaultNodeFuseMaxRequestLimitKB, pageSizeKB)
+
+	for _, o := range optionSet.List() {
+		if strings.HasPrefix(o, "o=") {
+			v := o[2:]
+			if allowedOptions[v] {
+				csiMountOptions = append(csiMountOptions, v)
+			} else {
+				klog.Warningf("got invalid mount option %q. Will discard invalid options and continue to mount.", v)
+			}
+			optionSet.Delete(o)
+		}
+
+		if readAheadKB := readAheadKBMountFlagRegex.FindStringSubmatch(o); len(readAheadKB) == 2 {
+			// There is only one matching pattern in readAheadKBMountFlagRegex
+			// If found, it will be at index 1
+			readAheadKBInt, err := strconv.ParseInt(readAheadKB[1], 10, 0)
+			if err != nil {
+				return nil, nil, nil, 0, fmt.Errorf("invalid read_ahead_kb mount flag %q: %w", o, err)
+			}
+			if readAheadKBInt < 0 {
+				return nil, nil, nil, 0, fmt.Errorf("invalid negative value for read_ahead_kb mount flag: %q", o)
+			}
+			sysfsBDI[readAheadKBMountFlag] = readAheadKBInt
+			optionSet.Delete(o)
+		}
+
+		if maxReqSize := nodeFuseMaxRequestLimitKBMountFlagRegex.FindStringSubmatch(o); len(maxReqSize) == 2 {
+			nodeFuseMaxRequestLimitKB, err := strconv.ParseInt(maxReqSize[1], 10, 0)
+			if err != nil {
+				return nil, nil, nil, 0, fmt.Errorf("invalid %s mount flag %q: %w", nodeFuseMaxRequestLimitKBMountFlag, o, err)
+			}
+			if nodeFuseMaxRequestLimitKB < 0 {
+				return nil, nil, nil, 0, fmt.Errorf("invalid negative value for %s mount flag: %q", nodeFuseMaxRequestLimitKBMountFlag, o)
+			}
+			maxAllowedSizeKB := maxFuseMaxPagesLimit * pageSizeKB
+			if nodeFuseMaxRequestLimitKB > maxAllowedSizeKB {
+				return nil, nil, nil, 0, fmt.Errorf("invalid value for %s mount flag %q: exceeds maximum allowed limit of %d KiB on this host", nodeFuseMaxRequestLimitKBMountFlag, o, maxAllowedSizeKB)
+			}
+			// Convert the requested size in KB to pages. We use integer ceiling division
+			// to round up to the next page if the requested size is not a multiple of the
+			// page size. This ensures we can accommodate the full requested buffer size in
+			// a single fuse request.
+			fuseMaxPagesLimit = CeilDiv64(nodeFuseMaxRequestLimitKB, pageSizeKB)
+			optionSet.Delete(o)
+		}
+	}
+
+	return csiMountOptions, optionSet.List(), sysfsBDI, fuseMaxPagesLimit, nil
 }

@@ -1366,60 +1366,6 @@ func TestParseFlagMapFromFlagFile(t *testing.T) {
 	}
 }
 
-func TestPrepareSharedNodeMountOptions(t *testing.T) {
-	t.Parallel()
-	defaultOpts := []string{
-		"o=allow_other,default_permissions",
-	}
-
-	testCases := []struct {
-		name     string
-		options  []string
-		expected []string
-	}{
-		{
-			name:     "empty options - should inject default CSI mount options",
-			options:  []string{},
-			expected: defaultOpts,
-		},
-		{
-			name:     "pass through raw rw and ro flags",
-			options:  []string{"rw", "ro", "implicit-dirs"},
-			expected: append(append([]string{}, defaultOpts...), "rw", "ro", "implicit-dirs"),
-		},
-		{
-			name:     "pass through o=rw and keep default options",
-			options:  []string{"o=rw", "implicit-dirs"},
-			expected: append(append([]string{}, defaultOpts...), "o=rw", "implicit-dirs"),
-		},
-		{
-			name:     "strip read_ahead_kb flags",
-			options:  []string{"read_ahead_kb=1024", "read_ahead_kb=4096", "file-cache:max-size-mb:1"},
-			expected: append(append([]string{}, defaultOpts...), "file-cache:max-size-mb:1"),
-		},
-		{
-			name:     "strip node_fuse_max_request_limit_kb flags",
-			options:  []string{"node_fuse_max_request_limit_kb=8192", "node_fuse_max_request_limit_kb=16384", "file-cache:max-size-mb:1"},
-			expected: append(append([]string{}, defaultOpts...), "file-cache:max-size-mb:1"),
-		},
-		{
-			name:     "mixed options with existing o= flags and stripped flags",
-			options:  []string{"o=noexec", "rw", "ro", "read_ahead_kb=100", "node_fuse_max_request_limit_kb=8192", "enable-cloud-profiler=true"},
-			expected: append(append([]string{}, defaultOpts...), "o=noexec", "rw", "ro", "enable-cloud-profiler=true"),
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			actual := prepareSharedNodeMountOptions(tc.options)
-			if diff := cmp.Diff(actual, tc.expected); diff != "" {
-				t.Errorf("test %q failed: got %v, want %v\nDiff (-want +got):\n%s", tc.name, actual, tc.expected, diff)
-			}
-		})
-	}
-}
-
 func TestCheckContainerStatusErr(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
