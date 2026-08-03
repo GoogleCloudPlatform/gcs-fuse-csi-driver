@@ -965,7 +965,10 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	resp, err := s.executeNodeStageVolume(ctx, req)
 
 	if err != nil {
-		klog.Errorf("NodeStageVolume failed on staging path %q for volume %q: %v)", stagingPath, volumeID, err)
+		klog.Errorf("NodeStageVolume failed on staging path %q for volume %q: %v, cleaning up", stagingPath, volumeID, err)
+		if cleanupErr := s.cleanupStagingPath(stagingPath); cleanupErr != nil {
+			klog.Errorf("Failed to clean up staging path %q for volume %q, err: %v", stagingPath, volumeID, cleanupErr)
+		}
 	}
 
 	return resp, err

@@ -3414,3 +3414,52 @@ func TestAppendCloudProfilerOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeStageVolumeCleanupStagingPathOnFailure(t *testing.T) {
+	t.Parallel()
+
+	stagingPath, cleanup := setupTestStagingPath(t)
+	defer cleanup()
+
+	nodeID := "test-node"
+	volID := testVolumeID
+	podName := createMounterPodName(nodeID, volID)
+
+	// Simulate an error in executeNodeStageVolume by simulating a non-existent mounter pod.
+	fakeClientset := clientset.NewFakeClientset()
+	fakeClientset.GetPodErr = apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, podName)
+
+	// Pretend the path is mounted initially on the fake mounter.
+	fakeMounter := mount.NewFakeMounter([]mount.MountPoint{
+		{Path: stagingPath, Device: "fuse"},
+	})
+
+	testEnv := initTestNodeServerWithCustomClientset(t, fakeClientset, false /*wiNodeLabelCheck*/)
+	ns, ok := testEnv.ns.(*nodeServer)
+	if !ok {
+		t.Fatalf("Failed to cast NodeServer to *nodeServer")
+	}
+	ns.mounter = fakeMounter
+
+	req := newTestNodeStageVolumeRequest(stagingPath, podName, "test-ns", nil)
+
+	// Call NodeStageVolume, which should fail due to missing mounter pod.
+	_, err := ns.NodeStageVolume(context.Background(), req)
+	if err == nil {
+		t.Fatal("Expected NodeStageVolume to fail, but it returned success")
+	}
+
+	// Verify that the fake mounter processed the Unmount call.
+	if len(fakeMounter.MountPoints) > 0 {
+		for _, mp := range fakeMounter.MountPoints {
+			if mp.Path == stagingPath {
+				t.Errorf("Expected staging path %q to be unmounted in fake mounter, but it is still mounted", stagingPath)
+			}
+		}
+	}
+
+	// Verify that the directory was physically removed by mount.CleanupMountPoint to prevent leakage.
+	if _, err := os.Stat(stagingPath); !os.IsNotExist(err) {
+		t.Errorf("Expected staging path directory %q to be deleted to prevent leakage, but it still exists", stagingPath)
+	}
+}
