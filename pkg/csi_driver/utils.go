@@ -818,21 +818,3 @@ func getInternalMountOptionValue(options []string, key string) string {
 	}
 	return ""
 }
-
-// prepareSharedNodeMountOptions processes and filters mount options to be directly passed to the gcsfuse process during shared node mounts.
-// Unlike prepareMountOptions (which splits options between those used to open fuse device and those passed to gcsfuse).
-func prepareSharedNodeMountOptions(options []string) []string {
-	// TODO(FUECHR): Investigate if we should only allow "allowedOptions" from prepareMountOptions for shared node mount.
-
-	csiMountOptions := []string{"o=allow_other,default_permissions"}
-	for _, o := range options {
-		// Strip read_ahead_kb and node_fuse_max_request_limit_kb flags so they are not passed to gcsfuse (which would reject them as unknown flags).
-		if strings.HasPrefix(o, "read_ahead_kb=") || strings.HasPrefix(o, "node_fuse_max_request_limit_kb=") {
-			continue
-		}
-
-		csiMountOptions = append(csiMountOptions, o)
-	}
-
-	return csiMountOptions
-}
