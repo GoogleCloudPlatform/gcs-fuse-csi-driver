@@ -1146,13 +1146,11 @@ func GKEClusterVersionAtLeast(minVersionStr string) bool {
 		return true
 	}
 	v, err := version.ParseGeneric(vStr)
-	if err != nil {
-		return false
-	}
+	framework.ExpectNoError(err, "Failed to parse GKE Cluster version string %s into version.Version", vStr)
+
 	minV, err := version.ParseGeneric(minVersionStr)
-	if err != nil {
-		return false
-	}
+	framework.ExpectNoError(err, "Failed to parse minimum GKE Cluster version string %s into version.Version", minVersionStr)
+
 	return v.AtLeast(minV)
 }
 

@@ -542,9 +542,15 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 
 // FetchGKEClusterVersion retrieves the Kubernetes master version directly from the cluster APIServer.
 func FetchGKEClusterVersion(cl clientset.Interface) (string, error) {
+	if cl == nil {
+		return "", fmt.Errorf("clientset interface is nil")
+	}
 	serverVersion, err := cl.Discovery().ServerVersion()
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch server version from cluster: %w", err)
+	}
+	if serverVersion == nil {
+		return "", fmt.Errorf("failed to fetch server version from cluster: serverVersion is nil")
 	}
 	return serverVersion.GitVersion, nil
 }
