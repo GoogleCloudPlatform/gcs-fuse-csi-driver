@@ -356,6 +356,7 @@ func TestPrepareEmptyDir(t *testing.T) {
 }
 
 func TestGetSocketBasePath(t *testing.T) {
+	t.Parallel()
 	fuseSocketDir := "/tmp/fuse-sockets"
 
 	testCases := []struct {

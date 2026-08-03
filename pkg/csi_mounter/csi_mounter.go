@@ -242,14 +242,10 @@ func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error 
 }
 
 func (m *Mounter) UnmountWithForce(target string, umountTimeout time.Duration) error {
-	m.cleanupSocket(target)
-
 	return m.MounterForceUnmounter.UnmountWithForce(target, umountTimeout)
 }
 
 func (m *Mounter) Unmount(target string) error {
-	m.cleanupSocket(target)
-
 	return m.MounterForceUnmounter.Unmount(target)
 }
 
@@ -347,10 +343,11 @@ func (m *Mounter) createSocket(target string, logPrefix string) (net.Listener, e
 	return l, nil
 }
 
-func (m *Mounter) cleanupSocket(target string) {
+func (m *Mounter) CleanupSocket(target string) {
 	podUID, volumeName, err := util.ParsePodIDVolumeFromTargetpath(target)
 	if err != nil {
 		klog.Warningf("Failed to parse pod ID and volume name from target path %q: %v.", target, err)
+		return
 	}
 	socketBasePath := util.GetSocketBasePath(podUID, volumeName, m.fuseSocketDir)
 	socketPath := filepath.Join(socketBasePath, socketName)
