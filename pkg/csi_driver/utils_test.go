@@ -437,6 +437,71 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 	})
 }
 
+func TestIsStrictManagedSidecarImage(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name      string
+		imageName string
+		want      bool
+	}{
+		{
+			name:      "official regional GCR - should return true",
+			imageName: "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official strict staging GCR - should return true",
+			imageName: "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official strict regional docker pkg dev - should return true",
+			imageName: "us-central1-docker.pkg.dev/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official strict regional docker pkg dev staging - should return true",
+			imageName: "us-central1-docker.pkg.dev/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official gke.gcr.io host - should return true",
+			imageName: "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "malicious suffix bypass AR - should return false",
+			imageName: "docker.io/attacker/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "malicious suffix bypass GCR - should return false",
+			imageName: "docker.io/attacker/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "customer GCR - should return false",
+			imageName: "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "malicious suffix bypass AR with gcr.io in path - should return false",
+			imageName: "docker.io/attacker/something.gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isStrictManagedSidecarImage(tc.imageName)
+			if got != tc.want {
+				t.Errorf("isStrictManagedSidecarImage(%q) = %v; want %v", tc.imageName, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseVolumeAttributes(t *testing.T) {
 	testCases := []struct {
 		name                                  string

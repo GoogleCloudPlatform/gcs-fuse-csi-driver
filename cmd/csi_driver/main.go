@@ -81,7 +81,8 @@ var (
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
 
 	// GCSFuse shared mount flags.
-	enableSharedMount = flag.Bool("enable-shared-mount", false, "Enable the shared mount feature.")
+	enableSharedMount        = flag.Bool("enable-shared-mount", false, "Enable the shared mount feature.")
+	allowCustomMounterImages = flag.Bool("allow-custom-mounter-images", false, "Allow arbitrary non-GKE-managed images to be used for mounter pods.")
 
 	// GCSFuse profiles flags.
 	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
@@ -247,9 +248,10 @@ func main() {
 			AutoGoMemLimitRatio:  *autoGoMemLimitRatio,
 		},
 		SharedMountOptions: &driver.SharedMountOptions{
-			Enabled:         *enableSharedMount,
-			FuseSocketDir:   *fuseSocketDir,
-			DriverNamespace: *driverNamespace,
+			Enabled:                  *enableSharedMount,
+			FuseSocketDir:            *fuseSocketDir,
+			DriverNamespace:          *driverNamespace,
+			AllowCustomMounterImages: *allowCustomMounterImages,
 			EmptyDirBasePath: func(podUID string) string {
 				return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			},

@@ -101,6 +101,10 @@ var (
 	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
 	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
 	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
+
+	strictManagedSidecarPatternAR = `^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+	strictManagedSidecarRegexAR   = regexp.MustCompile(strictManagedSidecarPatternAR)
+
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
 	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
@@ -649,6 +653,10 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 
 func isManagedSidecarImage(imageName string) bool {
 	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
+}
+
+func isStrictManagedSidecarImage(imageName string) bool {
+	return strictManagedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
