@@ -32,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -735,19 +736,19 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 // waitForPVCCapacity polls until the PVC's status.capacity.storage reaches at
 // least the requested quantity or the timeout expires.
 func waitForPVCCapacity(ctx context.Context, f *framework.Framework, pvcName string, requested resource.Quantity, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		pvc, err := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(ctx, pvcName, metav1.GetOptions{})
 		if err != nil {
-			return err
+			return false, err
 		}
-		if cap, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
-			if cap.Cmp(requested) >= 0 {
-				return nil
-			}
+		if cap, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok && cap.Cmp(requested) >= 0 {
+			return true, nil
 		}
 		framework.Logf("PVC %q capacity not yet %v, retrying...", pvcName, requested)
-		time.Sleep(5 * time.Second)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("PVC %q did not reach capacity %v within %v: %w", pvcName, requested, timeout, err)
 	}
-	return fmt.Errorf("PVC %q did not reach capacity %v within %v", pvcName, requested, timeout)
+	return nil
 }
