@@ -605,13 +605,12 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte) (codes.Code, error) {
 	return codes.OK, nil
 }
 
-func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code, error) {
-	code := codes.Internal
-	cs, err := getSidecarContainerStatus(isInitContainer, pod)
-	if err != nil {
-		return code, err
+func checkContainerStatusErr(cs *corev1.ContainerStatus) (codes.Code, error) {
+	if cs == nil {
+		return codes.Internal, errors.New("container status is nil")
 	}
 
+	code := codes.Internal
 	var reason string
 	var exitCode int32
 	if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
@@ -627,13 +626,28 @@ func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code
 			code = codes.ResourceExhausted
 		}
 
-		return code, fmt.Errorf("the sidecar container terminated due to %v, exit code: %v", reason, exitCode)
+		return code, fmt.Errorf("the %q container terminated due to %v, exit code: %v", cs.Name, reason, exitCode)
 	}
 
 	return codes.OK, nil
 }
 
+func getMounterPodContainerStatus(pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if strings.HasPrefix(pod.Status.ContainerStatuses[i].Name, util.MounterPodNamePrefix) {
+			return &pod.Status.ContainerStatuses[i], nil
+		}
+	}
+	return nil, errors.New("the mounter pod container was not found")
+}
+
 func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
 	var containerStatusList []corev1.ContainerStatus
 	// Use ContainerStatuses or InitContainerStatuses
 	if isInitContainer {
@@ -642,9 +656,9 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 		containerStatusList = pod.Status.ContainerStatuses
 	}
 
-	for _, cs := range containerStatusList {
-		if cs.Name == webhook.GcsFuseSidecarName {
-			return &cs, nil
+	for i := range containerStatusList {
+		if containerStatusList[i].Name == webhook.GcsFuseSidecarName {
+			return &containerStatusList[i], nil
 		}
 	}
 

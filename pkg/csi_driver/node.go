@@ -173,6 +173,15 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Error(code, err.Error())
 	}
 
+	cs, err := getMounterPodContainerStatus(mounterPod)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	code, err = checkContainerStatusErr(cs)
+	if code != codes.OK {
+		return nil, status.Error(code, err.Error())
+	}
+
 	// We ignore the pod UID parsed from the target path, since we register the mounter pod's UID instead.
 	_, volumeName, err := util.ParsePodIDVolumeFromTargetpath(targetPath)
 	if err != nil {
@@ -461,7 +470,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 
 		// Check if there is any error from the sidecar container
-		code, err = checkSidecarContainerErr(isInitContainer, pod)
+		cs, err := getSidecarContainerStatus(isInitContainer, pod)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		code, err = checkContainerStatusErr(cs)
 		if code != codes.OK {
 			return nil, status.Error(code, err.Error())
 		}
@@ -1120,8 +1133,25 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	// Send GRPC to mounter pod to start GCSFuse.
 	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, preparedMountOptions); err != nil {
 		klog.Errorf("Failed to mount volume %q to staging path %q: %v", volumeID, stagingPath, err)
-		if code, err := checkMounterPodErrorFile(emptyDirBasePath); err != nil {
-			return nil, status.Error(code, err.Error())
+		if code, fileErr := checkMounterPodErrorFile(emptyDirBasePath); fileErr != nil {
+			return nil, status.Error(code, fileErr.Error())
+		}
+		cs, csErr := func() (*corev1.ContainerStatus, error) {
+			// Re-fetch the mounter pod to get the updated container termination status
+			// (e.g. OOMKilled or crash) that occurred during mountToNode.
+			mounterPod, getErr := s.k8sClients.GetPod(podNamespace, podName)
+			if getErr != nil {
+				return nil, fmt.Errorf("failed to get mounter pod %s/%s: %w", podNamespace, podName, getErr)
+			}
+			if mounterPod == nil {
+				return nil, fmt.Errorf("mounter pod %s/%s cannot be nil", podNamespace, podName)
+			}
+			return getMounterPodContainerStatus(mounterPod)
+		}()
+		if csErr != nil {
+			klog.Warningf("Failed to inspect mounter pod container status: %v", csErr)
+		} else if code, cErr := checkContainerStatusErr(cs); code != codes.OK {
+			return nil, status.Error(code, cErr.Error())
 		}
 		return nil, err
 	}
