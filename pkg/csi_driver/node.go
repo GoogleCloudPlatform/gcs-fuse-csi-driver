@@ -591,6 +591,10 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 		s.volumeStateStore.Delete(targetPath)
 	}
 
+	if c, ok := s.mounter.(interface{ CleanupSocket(string) }); ok {
+		c.CleanupSocket(targetPath)
+	}
+
 	// Check if the target path is already mounted
 	if mounted, err := s.isDirMounted(targetPath); mounted || err != nil {
 		if err != nil {
@@ -1216,6 +1220,19 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 		// It is idempotent to unregister the same collector.
 		if s.driver.config.MetricsManager != nil {
 			s.driver.config.MetricsManager.UnregisterMetricsCollector(stagingPath, s.driver.config.NodeID, vs.MounterPodUID, vs.VolumeName)
+			if s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions != nil {
+				fuseSocketDir := s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir
+				if vs.MounterPodUID != "" && vs.VolumeName != "" && fuseSocketDir != "" {
+					socketBasePath := util.GetSocketBasePath(vs.MounterPodUID, vs.VolumeName, fuseSocketDir)
+					if err := os.Remove(socketBasePath); err != nil && !os.IsNotExist(err) {
+						klog.Errorf("failed to remove metrics collector symlink %q: %v", socketBasePath, err)
+					}
+				} else {
+					// TODO(yaozile): Implement a long-term solution to prevent leaking metrics collector
+					// symlinks when NodeUnstageVolume is called after a driver restart
+					klog.Errorf("failed to remove metrics collector symlink for staging path %q: empty podUID, volumeName, or fuseSocketDir, symlink leaked", stagingPath)
+				}
+			}
 		}
 
 		// Stop GCSFuse Kernel Params monitoring.
