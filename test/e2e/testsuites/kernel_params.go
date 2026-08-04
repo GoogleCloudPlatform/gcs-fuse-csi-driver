@@ -153,13 +153,14 @@ func skipIfKernelParamsNotSupported() {
 func skipIfFuseMaxRequestSizeNotSupported() {
 	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch()
 
-	// Running since we are on master branch.
-	if branch == utils.MasterBranchName {
-		return
-	}
 	// fuse-max-request-size-kb was introduced in v3.11.2-gke.0.
-	if !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseFuseMaxRequestSizeVersion)) {
+	if branch != utils.MasterBranchName && !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseFuseMaxRequestSizeVersion)) {
 		e2eskipper.Skipf("skip fuse max request size test for unsupported gcsfuse version %s", gcsfuseVersion.String())
+	}
+
+	// GKE version 1.34+ is required for /proc/sys/fs/fuse/max_pages_limit kernel support.
+	if !specs.GKEClusterVersionAtLeast("1.34.0-gke.0") {
+		e2eskipper.Skipf("skip fuse max request size test for unsupported GKE cluster version %s (requires GKE >= 1.34)", specs.GetGKEClusterVersion())
 	}
 }
 

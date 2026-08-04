@@ -338,6 +338,23 @@ func Handle(testParams *TestParameters) error {
 		}
 	}
 
+	if testParams.GkeClusterVersion != "" {
+		if err := os.Setenv(GkeClusterVersionVarName, testParams.GkeClusterVersion); err != nil {
+			return fmt.Errorf("failed to set %s env var: %w", GkeClusterVersionVarName, err)
+		}
+	} else {
+		gkeVersion, err := FetchGKEClusterVersion(k8sclientset)
+		if err != nil {
+			klog.Warningf("Failed to fetch GKE cluster version from APIServer: %v", err)
+		} else {
+			testParams.GkeClusterVersion = gkeVersion
+			klog.Infof("Fetched GKE cluster version from APIServer: %s", gkeVersion)
+			if err := os.Setenv(GkeClusterVersionVarName, gkeVersion); err != nil {
+				return fmt.Errorf("failed to set %s env var: %w", GkeClusterVersionVarName, err)
+			}
+		}
+	}
+
 	//nolint:gosec
 	cmd := exec.Command("ginkgo", "run", "-v",
 		"--procs", testParams.GinkgoProcs,

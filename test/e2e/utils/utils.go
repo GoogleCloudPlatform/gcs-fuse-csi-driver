@@ -50,7 +50,8 @@ const (
 	MinGCSFuseGrpcMetricsVersion             = "v3.8.0-gke.0"
 	MinGCSFuseFuseMaxRequestSizeVersion      = "v3.11.2-gke.0"
 
-	GcsfuseVersionVarName = "gcsfuse-version"
+	GcsfuseVersionVarName    = "gcsfuse-version"
+	GkeClusterVersionVarName = "gke-cluster-version"
 
 	testConfigUrlFormat                  = "https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/%s/tools/integration_tests/test_config.yaml"
 	flagFileCacheCapacity                = "file-cache-max-size-mb"
@@ -537,6 +538,21 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 		return "", fmt.Errorf("unexpected version output format: %s", output)
 	}
 	return l[2], nil
+}
+
+// FetchGKEClusterVersion retrieves the Kubernetes master version directly from the cluster APIServer.
+func FetchGKEClusterVersion(cl clientset.Interface) (string, error) {
+	if cl == nil {
+		return "", fmt.Errorf("clientset interface is nil")
+	}
+	serverVersion, err := cl.Discovery().ServerVersion()
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch server version from cluster: %w", err)
+	}
+	if serverVersion == nil {
+		return "", fmt.Errorf("failed to fetch server version from cluster: serverVersion is nil")
+	}
+	return serverVersion.GitVersion, nil
 }
 
 // ExpandFlagVariables allows for the expansion of custom parameterized fields
