@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	MinimumVolumeSizeInBytes int64 = 1 * util.Mb
+	MinimumVolumeSizeInBytes int64 = 1 * util.MiB
 )
 
 // CreateVolume parameters.
@@ -71,13 +71,6 @@ func newControllerServer(driver *GCSDriver, storageServiceManager storage.Servic
 		storageServiceManager: storageServiceManager,
 		volumeLocks:           util.NewVolumeLocks(),
 		features:              featureOptions,
-	}
-	if cs.features.FeatureGCSFuseProfiles.Enabled {
-		s, err := profiles.NewScanner(cs.features.FeatureGCSFuseProfiles.ScannerConfig)
-		if err != nil {
-			return nil, err
-		}
-		cs.scanner = s
 	}
 	return cs, nil
 }
@@ -157,7 +150,6 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	if !s.driver.sharedMount(vc) {
 		return &csi.ControllerPublishVolumeResponse{}, nil
 	}
-
 	// Find the workload namespace where the mounter pod should be created by identifying the PVC
 	// bound to this volume's PV.
 	clientset := s.driver.config.K8sClients
@@ -203,9 +195,28 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Extract overrides specifically from the container named "gcsfusecsi-mount".
 	var containerResources *corev1.ResourceRequirements
 	var containerImage string
-	if s.features != nil && s.features.SharedMountOptions != nil {
-		containerImage = s.features.SharedMountOptions.MounterPodImage
+
+	// Retrieve the mounter pod image from the ConfigMap.
+	if s.features == nil || s.features.SharedMountOptions == nil {
+		return nil, status.Error(codes.Internal, "shared mount options can't be nil")
 	}
+	driverNamespace := s.features.SharedMountOptions.DriverNamespace
+	if driverNamespace == "" {
+		return nil, status.Error(codes.Internal, "driver namespace can't be empty")
+	}
+	configMap, err := clientset.GetConfigMap(driverNamespace, util.SidecarImageConfigMapName)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get image configmap %s/%s: %v", driverNamespace, util.SidecarImageConfigMapName, err)
+	}
+	if configMap == nil || configMap.Data == nil {
+		return nil, status.Errorf(codes.Internal, "%s/%s ConfigMap data can't be empty", driverNamespace, util.SidecarImageConfigMapName)
+	}
+	var ok bool
+	containerImage, ok = configMap.Data[util.SidecarImageConfigMapKey]
+	if !ok || containerImage == "" {
+		return nil, status.Errorf(codes.Internal, "%s/%s ConfigMap is missing key %q or it is empty", driverNamespace, util.SidecarImageConfigMapName, util.SidecarImageConfigMapKey)
+	}
+
 	for i := range podTemplate.Template.Spec.Containers {
 		container := &podTemplate.Template.Spec.Containers[i]
 		if container.Name != util.MounterPodNamePrefix {
@@ -237,6 +248,16 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		}
 	}
 
+	hostNetworkEnabled := vc[VolumeContextKeyHostNetworkPodKSA] == util.TrueStr
+	identityProvider := vc[VolumeContextKeyIdentityProvider]
+
+	var tokenAudience string
+	if util.IsGKEIdentityProvider(identityProvider) || identityProvider == "" {
+		tokenAudience = s.driver.config.TokenManager.GetIdentityPool()
+	} else {
+		tokenAudience = identityProvider
+	}
+
 	// Prepare mounter pod config.
 	podName := createMounterPodName(nodeID, volumeID)
 	podConfig := &mounterPodConfig{
@@ -248,6 +269,9 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		image:              containerImage,
 		volumes:            podTemplate.Template.Spec.Volumes,
 		profilesEnabled:    profilesEnabled,
+		hostNetworkEnabled: hostNetworkEnabled,
+		tokenAudience:      tokenAudience,
+		dnsPolicy:          podTemplate.Template.Spec.DNSPolicy,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {
@@ -295,7 +319,7 @@ func (s *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *c
 
 	// Delete the mounter pod, if it exists.
 	podName := createMounterPodName(nodeID, volumeID)
-	mounterPods, err := s.driver.config.K8sClients.GetPodsByName(podName)
+	mounterPods, err := s.driver.config.K8sClients.GetMounterPodsByName(podName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list pods: %v", err)
 	}

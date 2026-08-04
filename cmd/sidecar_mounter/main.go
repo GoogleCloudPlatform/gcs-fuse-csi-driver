@@ -26,14 +26,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/profiler"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"k8s.io/klog/v2"
 )
@@ -50,10 +47,47 @@ var (
 	storageServiceAndBucketAccessJitter   = flag.Float64("storage-service-check-retry-jitter", 0.1, "storage service creation and bucket access check exponential retry jitter")
 	storageServiceAndBucketAccessDuration = flag.Duration("storage-service-check-retry-duration", 5*time.Second, "storage service creation and bucket access check exponential retry initial duration")
 	requireApplicationCredentials         = flag.Bool("require-application-credentials", false, "When true, the sidecar mounter refuses to start if GOOGLE_APPLICATION_CREDENTIALS is not set.")
+	enableSharedMount                     = flag.Bool("enable-shared-mount", false, "whether to run gcsfuse in a mounter pod")
 
 	// This is set at compile time.
 	version = "unknown"
 )
+
+func runNodeMounter(ctx context.Context, cancel context.CancelFunc, mounter *sidecarmounter.Mounter) {
+	klog.Infof("Running node mounter...")
+	s := driver.NewNonBlockingGRPCServer()
+	ms := sidecarmounter.NewMounterServer(ctx, mounter)
+
+	socketFile := filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, driver.MounterPodSocketFile)
+
+	if err := os.Remove(socketFile); err != nil && !os.IsNotExist(err) {
+		klog.Warningf("failed to remove stale socket file %q: %v", socketFile, err)
+	}
+	defer func() {
+		if err := os.Remove(socketFile); err != nil && !os.IsNotExist(err) {
+			klog.Warningf("failed to remove socket file %q on exit: %v", socketFile, err)
+		}
+	}()
+	socketPath := fmt.Sprintf("unix:%s", socketFile)
+
+	s.Start(socketPath, nil, nil, nil, ms)
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
+	klog.Info("Waiting for SIGTERM signal or context cancellation...")
+	select {
+	case <-c:
+		klog.Info("Received SIGTERM signal, waiting for the gcsfuse process to exit...")
+	case <-ctx.Done():
+		klog.Info("Context cancelled, waiting for the gcsfuse process to exit...")
+	}
+
+	cancel()
+	s.Stop()
+	mounter.WaitGroup.Wait()
+	s.Wait()
+	klog.Info("Exiting node mounter...")
+}
 
 func main() {
 	klog.InitFlags(nil)
@@ -67,25 +101,25 @@ func main() {
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 
+	mounter := sidecarmounter.New(*gcsfusePath)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if *enableSharedMount {
+		runNodeMounter(ctx, cancel, mounter)
+		return
+	}
+
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPaths, err := filepath.Glob(socketPathPattern)
 	if err != nil {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
-	mounter := sidecarmounter.New(*gcsfusePath)
-	ctx, cancel := context.WithCancel(context.Background())
-	flagsFromDriver := map[string]string{}
-	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
+	defaultingFlagFilePath := filepath.Join(*volumeBasePath, driver.FlagFileForDefaultingPath)
 	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
-	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
-		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
-		if err != nil {
-			klog.Fatalf("failed to read defaulting-flag file: %v", err)
-		}
-		fileContent := string(machineTypeBytes)
-		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
+	flagsFromDriver, err := sidecarmounter.ReadDriverFlagsForDefaulting(defaultingFlagFilePath)
+	if err != nil {
+		klog.Fatalf("failed to read defaulting-flag file: %v", err)
 	}
-	var startProfilerOnce sync.Once
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
@@ -96,23 +130,7 @@ func main() {
 		if mc != nil {
 			mc.EnsureErrWriter()
 			if mc.EnableCloudProfilerForSidecar {
-				serviceVersion := util.GetCloudProfilerServiceVersion(mc.PodName, mc.PodUID)
-				if serviceVersion == "" {
-					klog.Warning("Cloud Profiler is disabled because both PodName and PodUID are empty.")
-				} else {
-					// Use sync.Once to ensure Cloud Profiler only start once per process.
-					startProfilerOnce.Do(func() {
-						cfg := profiler.Config{
-							Service:        "gke-gcsfuse-sidecar",
-							ServiceVersion: serviceVersion,
-						}
-						if err := profiler.Start(cfg); err != nil {
-							klog.Errorf("Errored while starting cloud profiler, got %v", err)
-						} else {
-							klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
-						}
-					})
-				}
+				sidecarmounter.StartCloudProfiler(webhook.GcsFuseSidecarName, mc.PodName, mc.PodUID)
 			}
 			if mc.EnableSidecarBucketAccessCheck {
 				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap

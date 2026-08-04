@@ -18,12 +18,17 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"crypto/sha1"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestConvertLabelsStringToMap(t *testing.T) {
@@ -354,24 +359,19 @@ func TestGetSocketBasePath(t *testing.T) {
 	fuseSocketDir := "/tmp/fuse-sockets"
 
 	testCases := []struct {
-		targetPath   string
 		expectedBase string
-		parseError   bool
+		podUID       string
+		volumeName   string
 	}{
 		{
-			targetPath:   "/var/lib/kubelet/pods/pod-xyz123/volumes/kubernetes.io~csi/pvc-abc456/mount",
+			podUID:       "pod-xyz123",
+			volumeName:   "pvc-abc456",
 			expectedBase: filepath.Join(fuseSocketDir, fmt.Sprintf("%x", sha1.Sum([]byte("pod-xyz123_pvc-abc456")))),
-			parseError:   false,
 		},
 		{
-			targetPath:   "/var/lib/kubelet/pods/pod-def789/volumes/kubernetes.io~csi/data-uvw012/mount",
+			podUID:       "pod-def789",
+			volumeName:   "data-uvw012",
 			expectedBase: filepath.Join(fuseSocketDir, fmt.Sprintf("%x", sha1.Sum([]byte("pod-def789_data-uvw012")))),
-			parseError:   false,
-		},
-		{
-			targetPath:   "/invalid/path",
-			expectedBase: "",
-			parseError:   true,
 		},
 	}
 
@@ -383,17 +383,9 @@ func TestGetSocketBasePath(t *testing.T) {
 	defer os.RemoveAll(fuseSocketDir) // Clean up after the test
 
 	for _, tc := range testCases {
-		actualBase := GetSocketBasePath(tc.targetPath, fuseSocketDir)
-
-		if tc.parseError {
-			podID, volumeName, err := ParsePodIDVolumeFromTargetpath(tc.targetPath)
-			if err == nil {
-				t.Errorf("GetSocketBasePath(%q, %q) expected ParsePodIDVolumeFromTargetpath to return an error, but got podID: %q, volumeName: %q", tc.targetPath, fuseSocketDir, podID, volumeName)
-			}
-		} else {
-			if actualBase != tc.expectedBase {
-				t.Errorf("GetSocketBasePath(%q, %q) = %q, expected %q", tc.targetPath, fuseSocketDir, actualBase, tc.expectedBase)
-			}
+		actualBase := GetSocketBasePath(tc.podUID, tc.volumeName, fuseSocketDir)
+		if actualBase != tc.expectedBase {
+			t.Errorf("GetSocketBasePath(%q, %q, %q) = %q, expected %q", tc.podUID, tc.volumeName, fuseSocketDir, actualBase, tc.expectedBase)
 		}
 	}
 }
@@ -550,6 +542,39 @@ func TestIsGKEIdentityProvider(t *testing.T) {
 	}
 }
 
+func TestGetCloudProfilerServiceVersion(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                   string
+		podName                string
+		podUID                 string
+		expectedServiceVersion string
+	}{
+		{
+			name:                   "both empty",
+			podName:                "",
+			podUID:                 "",
+			expectedServiceVersion: "",
+		},
+		{
+			name:                   "short pod name and standard uid",
+			podName:                "test-pod",
+			podUID:                 "12345678-1234-1234-1234-123456789012",
+			expectedServiceVersion: "test-pod_12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := GetCloudProfilerServiceVersion(tc.podName, tc.podUID)
+			if got != tc.expectedServiceVersion {
+				t.Errorf("GetCloudProfilerServiceVersion(%q, %q) = %q (len %d), want %q (len %d)", tc.podName, tc.podUID, got, len(got), tc.expectedServiceVersion, len(tc.expectedServiceVersion))
+			}
+		})
+	}
+}
+
 func TestCheckNotSymlink(t *testing.T) {
 	t.Parallel()
 
@@ -620,4 +645,138 @@ func TestCheckNotSymlink(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsDirMounted(t *testing.T) {
+	tempDir := t.TempDir()
+	fakeProcMounts := filepath.Join(tempDir, "mounts")
+	mountedPath := "/path/to/mounted"
+	content := fmt.Sprintf("device %s fuse.gcsfuse rw 0 0\n", mountedPath)
+	if err := os.WriteFile(fakeProcMounts, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write fake proc mounts: %v", err)
+	}
+
+	oldProcMountsPath := procMountsPath
+	procMountsPath = fakeProcMounts
+	t.Cleanup(func() {
+		procMountsPath = oldProcMountsPath
+	})
+
+	mounted, err := IsDirMounted(mountedPath)
+	if err != nil {
+		t.Fatalf("IsDirMounted failed: %v", err)
+	}
+	if !mounted {
+		t.Errorf("expected path %q to be mounted", mountedPath)
+	}
+
+	notMounted, err := IsDirMounted("/path/to/not/mounted")
+	if err != nil {
+		t.Fatalf("IsDirMounted failed: %v", err)
+	}
+	if notMounted {
+		t.Errorf("expected path not to be mounted")
+	}
+}
+
+func TestWaitForPathMounted(t *testing.T) {
+	mountedPath := "/path/to/mounted"
+	mountContent := fmt.Sprintf("device %s fuse.gcsfuse rw 0 0\n", mountedPath)
+
+	t.Run("already mounted", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(mountContent), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if err := WaitForPathMounted(ctx, mountedPath); err != nil {
+			t.Fatalf("WaitForPathMounted failed: %v", err)
+		}
+	})
+
+	t.Run("mounted after delay", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		timer := time.AfterFunc(500*time.Millisecond, func() {
+			_ = os.WriteFile(fakeProcMounts, []byte(mountContent), 0644)
+		})
+		defer timer.Stop()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := WaitForPathMounted(ctx, mountedPath); err != nil {
+			t.Fatalf("WaitForPathMounted failed: %v", err)
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+
+		err := WaitForPathMounted(ctx, mountedPath)
+		if err == nil {
+			t.Fatal("expected error on timeout, got nil")
+		}
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.DeadlineExceeded {
+			t.Errorf("expected DeadlineExceeded error code, got %v", err)
+		}
+	})
+
+	t.Run("context canceled", func(t *testing.T) {
+		tempDir := t.TempDir()
+		fakeProcMounts := filepath.Join(tempDir, "mounts")
+		if err := os.WriteFile(fakeProcMounts, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to write fake proc mounts: %v", err)
+		}
+
+		oldProcMountsPath := procMountsPath
+		procMountsPath = fakeProcMounts
+		t.Cleanup(func() {
+			procMountsPath = oldProcMountsPath
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := WaitForPathMounted(ctx, mountedPath)
+		if err == nil {
+			t.Fatal("expected error on canceled context, got nil")
+		}
+		if st, ok := status.FromError(err); !ok || st.Code() != codes.Canceled {
+			t.Errorf("expected Canceled error code, got %v", err)
+		}
+	})
 }

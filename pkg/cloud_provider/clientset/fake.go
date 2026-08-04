@@ -27,10 +27,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 )
 
 type FakeNodeConfig struct {
@@ -80,6 +80,12 @@ type FakePodTemplateConfig struct {
 	Template  corev1.PodTemplateSpec
 }
 
+type FakeConfigMapConfig struct {
+	Name      string
+	Namespace string
+	Data      map[string]string
+}
+
 type FakeClientset struct {
 	Client            kubernetes.Interface
 	fakePod           *corev1.Pod
@@ -87,22 +93,23 @@ type FakeClientset struct {
 	fakePVs           map[string]*corev1.PersistentVolume
 	fakePVCs          map[string]*corev1.PersistentVolumeClaim
 	fakeSCs           map[string]*storagev1.StorageClass
-	fakePods          []*corev1.Pod
 	fakePodTemplates  map[string]*corev1.PodTemplate
-	ListPVErr         error
+	fakeConfigMaps    map[string]*corev1.ConfigMap
+	fakePods          []*corev1.Pod
 	ListPodErr        error
 	GetPodErr         error
 	GetPodTemplateErr error
 }
 
-func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
-	fakeK8sClient := fake.NewSimpleClientset(objects...)
+func NewFakeClientset() *FakeClientset {
+	fakeK8sClient := fake.NewSimpleClientset()
 	fakeClientSet := &FakeClientset{
 		Client:           fakeK8sClient,
 		fakePVs:          make(map[string]*corev1.PersistentVolume),
 		fakePVCs:         make(map[string]*corev1.PersistentVolumeClaim),
 		fakeSCs:          make(map[string]*storagev1.StorageClass),
 		fakePodTemplates: make(map[string]*corev1.PodTemplate),
+		fakeConfigMaps:   make(map[string]*corev1.ConfigMap),
 		fakePods:         []*corev1.Pod{},
 	}
 	// Default setting for most unit tests is pod doesn't use host network & workload identity is enabled on the node
@@ -112,6 +119,7 @@ func NewFakeClientset(objects ...runtime.Object) *FakeClientset {
 	fakeClientSet.CreatePVC(FakePVCConfig{})
 	fakeClientSet.CreateSC(FakeSCConfig{})
 	fakeClientSet.CreatePodTemplate(FakePodTemplateConfig{})
+	fakeClientSet.CreateConfigMap(FakeConfigMapConfig{})
 
 	return fakeClientSet
 }
@@ -120,11 +128,12 @@ func (c *FakeClientset) K8sClient() kubernetes.Interface {
 	return c.Client
 }
 
-func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string) {}
+func (c *FakeClientset) ConfigurePodLister(_ context.Context, _ string, _ *cache.ResourceEventHandlerFuncs) {
+}
 
 func (c *FakeClientset) ConfigureNodeLister(_ context.Context, _ string) {}
 
-func (c *FakeClientset) ConfigurePVLister(_ context.Context) {}
+func (c *FakeClientset) ConfigurePVLister(_ context.Context, _ *cache.ResourceEventHandlerFuncs) {}
 
 func (c *FakeClientset) ConfigurePVCLister(_ context.Context) {}
 
@@ -151,7 +160,8 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 				if podConfig.IsMounterPod {
 					return []corev1.Container{
 						{
-							Name: util.MounterPodNamePrefix,
+							Name:  util.MounterPodNamePrefix,
+							Image: webhook.FakeConfig().ContainerImage,
 							Resources: corev1.ResourceRequirements{
 								Limits: podConfig.SidecarLimits,
 							},
@@ -290,6 +300,10 @@ func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	return c.fakePod, nil
 }
 
+func (c *FakeClientset) GetMounterPod(namespace, name string) (*corev1.Pod, error) {
+	return c.GetPod(namespace, name)
+}
+
 func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
 	c.fakeNode.ObjectMeta.Name = name
 
@@ -304,18 +318,7 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 	return c.fakePVs[""], nil
 }
 
-func (c *FakeClientset) ListPVs() ([]*corev1.PersistentVolume, error) {
-	if c.ListPVErr != nil {
-		return nil, c.ListPVErr
-	}
-	var pvs []*corev1.PersistentVolume
-	for _, pv := range c.fakePVs {
-		pvs = append(pvs, pv)
-	}
-	return pvs, nil
-}
-
-func (c *FakeClientset) GetPodsByName(podName string) ([]*corev1.Pod, error) {
+func (c *FakeClientset) GetMounterPodsByName(podName string) ([]*corev1.Pod, error) {
 	if c.ListPodErr != nil {
 		return nil, c.ListPodErr
 	}
@@ -353,6 +356,27 @@ func (c *FakeClientset) GetPodTemplate(namespace, name string) (*corev1.PodTempl
 	}
 
 	return c.fakePodTemplates[""], nil
+}
+
+func (c *FakeClientset) ConfigureConfigMapLister(_ context.Context, _ string) {}
+
+func (c *FakeClientset) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
+	if cm, ok := c.fakeConfigMaps[name]; ok {
+		return cm, nil
+	}
+	return c.fakeConfigMaps[""], nil
+}
+
+func (c *FakeClientset) CreateConfigMap(cmConfig FakeConfigMapConfig) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmConfig.Name,
+			Namespace: cmConfig.Namespace,
+		},
+		Data: cmConfig.Data,
+	}
+
+	c.fakeConfigMaps[cmConfig.Name] = cm
 }
 
 func (c *FakeClientset) CreateServiceAccountToken(_ context.Context, _, _ string, _ *authenticationv1.TokenRequest) (*authenticationv1.TokenRequest, error) {

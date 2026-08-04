@@ -47,8 +47,8 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
 			SharedMountOptions: &SharedMountOptions{
 				Enabled:         true,
-				MounterPodImage: testImage,
 				FuseSocketDir:   "/tmp/fuse-sockets",
+				DriverNamespace: "gcs-fuse-csi-driver",
 			},
 		},
 	}
@@ -83,8 +83,8 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
 			SharedMountOptions: &SharedMountOptions{
 				Enabled:         true,
-				MounterPodImage: testImage,
 				FuseSocketDir:   "/tmp/fuse-sockets",
+				DriverNamespace: "gcs-fuse-csi-driver",
 			},
 		},
 		AssumeGoodSidecarVersion: true,

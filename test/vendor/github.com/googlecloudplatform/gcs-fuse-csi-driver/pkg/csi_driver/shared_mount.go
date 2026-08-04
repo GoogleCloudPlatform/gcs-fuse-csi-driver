@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"context"
@@ -41,10 +42,9 @@ import (
 )
 
 const (
-	mounterPodNamePrefix          = "gcsfusecsi-mount"
 	mounterPodPriorityClass       = "gcsfusecsi-mount-priority"
 	mounterPodMountDir            = "mount-dir"
-	mounterPodSocketFile          = "mounter.sock"
+	MounterPodSocketFile          = "mounter.sock"
 	mounterPodManagedImageKeyword = "managed"
 	mounterPodSocketDir           = "mount-socket"
 )
@@ -62,15 +62,38 @@ type mounterPodConfig struct {
 	serviceAccountName string                       // The KSA name for the mounter pod.
 	resources          *corev1.ResourceRequirements // The resource requirements for the mounter pod container.
 	volumes            []corev1.Volume              // The volumes for the mounter pod.
+	profilesEnabled    bool                         // Whether the profiles feature is enabled.
+	hostNetworkEnabled bool                         // Whether hostNetwork is enabled for the mounter pod.
+	tokenAudience      string                       // Token audience for projected service account volume.
+	dnsPolicy          corev1.DNSPolicy             // The DNS policy for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
 // by checking the sharedMount: true volumeAttribute.
-func sharedMount(vc map[string]string) bool {
+func (driver *GCSDriver) sharedMount(vc map[string]string) bool {
+	if driver.config.FeatureOptions == nil ||
+		driver.config.FeatureOptions.SharedMountOptions == nil ||
+		!driver.config.FeatureOptions.SharedMountOptions.Enabled {
+		return false
+	}
 	if v, ok := vc[VolumeContextSharedNodeMount]; ok && v == util.TrueStr {
 		return true
 	}
 	return false
+}
+
+// mounterPodImage extracts the container image specified for the mounter pod container
+// with name matching MounterPodNamePrefix from the given Pod.
+func mounterPodImage(pod *corev1.Pod) (string, error) {
+	if pod == nil {
+		return "", fmt.Errorf("pod is nil")
+	}
+	for _, container := range pod.Spec.Containers {
+		if strings.HasPrefix(container.Name, util.MounterPodNamePrefix) {
+			return container.Image, nil
+		}
+	}
+	return "", fmt.Errorf("failed to find mounter container with prefix %q", util.MounterPodNamePrefix)
 }
 
 // createMounterPodName returns a unique name for the mounter pod. The name is composed by
@@ -82,7 +105,7 @@ func createMounterPodName(nodeID, volumeID string) string {
 	io.WriteString(h, str)
 	// Convert the byte slice to a hexadecimal string
 	sha1Hash := fmt.Sprintf("%x", h.Sum(nil))
-	return fmt.Sprintf("%s-%s", mounterPodNamePrefix, sha1Hash)
+	return fmt.Sprintf("%s-%s", util.MounterPodNamePrefix, sha1Hash)
 }
 
 // createMounterPod handles the creation of the mounter pod using the Kubernetes API client.
@@ -93,9 +116,8 @@ func createMounterPod(clientset clientset.Interface, ctx context.Context, config
 	if config == nil {
 		return status.Error(codes.Internal, "mounter pod config cannot be nil")
 	}
-	// Check if the mounter pod already exists, but was marked for deletion.
-	// This requires calling the API server directly to retrieve the most up-to-date pod status.
-	pod, err := clientset.K8sClient().CoreV1().Pods(config.namespace).Get(ctx, config.podName, metav1.GetOptions{})
+	// Check if the mounter pod already exists.
+	pod, err := clientset.GetMounterPod(config.namespace, config.podName)
 	if err != nil && !errors.IsNotFound(err) {
 		return status.Errorf(codes.Internal, "failed to get mounter pod %s/%s: %v", config.namespace, config.podName, err)
 	}
@@ -129,13 +151,50 @@ func createMounterPod(clientset clientset.Interface, ctx context.Context, config
 
 // createMounterPodSpec returns the pod spec for the mounter pod.
 func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:             mounterPodMountDir,
+			MountPath:        util.KubeletPluginsGCSFuseDir,
+			MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
+		},
+		{
+			Name:      util.SidecarContainerTmpVolumeName,
+			MountPath: webhook.SidecarContainerTmpVolumeMountPath,
+		},
+		{
+			Name:      webhook.SidecarContainerBufferVolumeName,
+			MountPath: webhook.SidecarContainerBufferVolumeMountPath,
+		},
+		{
+			Name:      webhook.SidecarContainerCacheVolumeName,
+			MountPath: webhook.SidecarContainerCacheVolumeMountPath,
+		},
+	}
+	if config.profilesEnabled {
+		if !webhook.VolumeMountExists(volumeMounts, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName) {
+			volumeMounts = append(volumeMounts, webhook.EphemeralFileCacheVolumeMount)
+		}
+		if !webhook.VolumeMountExists(volumeMounts, webhook.SidecarContainerFileCacheRamDiskVolumeName) {
+			volumeMounts = append(volumeMounts, webhook.RamFileCacheVolumeMount)
+		}
+	}
+
+	if config.hostNetworkEnabled {
+		volumeMounts = append(volumeMounts, webhook.SATokenVolumeMount)
+	}
+
+	labels := map[string]string{
+		webhook.SharedMountLabel: util.TrueStr,
+	}
+	if webhook.VolumeExists(config.volumes, webhook.SidecarContainerCacheVolumeName) {
+		labels[webhook.GcsfuseCacheCreatedByUserLabel] = util.TrueStr
+	}
+
 	spec := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      config.podName,
 			Namespace: config.namespace,
-			Labels: map[string]string{
-				webhook.SharedMountLabel: util.TrueStr,
-			},
+			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{
@@ -145,35 +204,17 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 				"kubernetes.io/os":       "linux",
 			},
 			PriorityClassName: mounterPodPriorityClass,
+			HostNetwork:       config.hostNetworkEnabled,
 			Containers: []corev1.Container{
 				{
-					Name:            mounterPodNamePrefix,
+					Name:            util.MounterPodNamePrefix,
 					Image:           config.image,
 					ImagePullPolicy: corev1.PullAlways,
+					Args:            []string{"--enable-shared-mount"},
 					SecurityContext: &corev1.SecurityContext{
 						Privileged: ptr.To(true),
 					},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:             mounterPodMountDir,
-							MountPath:        util.KubeletDir,
-							MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
-						},
-						{
-							Name:      util.SidecarContainerTmpVolumeName,
-							MountPath: util.SidecarContainerTmpVolumePath,
-						},
-						{
-							Name:      webhook.SidecarContainerBufferVolumeName,
-							MountPath: webhook.SidecarContainerBufferVolumeMountPath,
-						},
-						{
-							Name:      webhook.SidecarContainerCacheVolumeName,
-							MountPath: webhook.SidecarContainerCacheVolumeMountPath,
-						},
-						// TODO(urielguzman): Add host network and profiles volume mounts when those features are implemented
-						// for shared mount.
-					},
+					VolumeMounts: volumeMounts,
 				},
 			},
 			Volumes: mounterPodVolumes(config),
@@ -192,6 +233,10 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 		spec.Spec.ServiceAccountName = config.serviceAccountName
 	}
 
+	if config.dnsPolicy != "" {
+		spec.Spec.DNSPolicy = config.dnsPolicy
+	}
+
 	spec.Spec.Containers[0].Resources = *mounterPodResources(config)
 
 	return spec
@@ -204,7 +249,7 @@ func waitForMounterPodScheduled(clientset clientset.Interface, ctx context.Conte
 	}
 
 	checkIfScheduled := func() (bool, error) {
-		pod, err := clientset.GetPod(namespace, podName)
+		pod, err := clientset.GetMounterPod(namespace, podName)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return false, nil
@@ -302,7 +347,7 @@ func deleteMounterPod(ctx context.Context, clientset clientset.Interface, podNam
 			}
 			return status.Errorf(code, "timed out waiting for mounter pod %s/%s to be deleted", podNamespace, podName)
 		case <-ticker.C:
-			if _, err := clientset.GetPod(podNamespace, podName); err != nil {
+			if _, err := clientset.GetMounterPod(podNamespace, podName); err != nil {
 				if errors.IsNotFound(err) {
 					klog.Infof("Mounter pod %s/%s was successfully deleted.", podNamespace, podName)
 					return nil
@@ -354,15 +399,23 @@ func mounterPodVolumes(config *mounterPodConfig) []corev1.Volume {
 	volumes = append(volumes, corev1.Volume{Name: mounterPodMountDir,
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				// TODO(urielguzman): Check if we can use /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
-				// instead, to decrease the host path scope.
-				Path: util.KubeletDir,
+				Path: util.KubeletPluginsGCSFuseDir,
 				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 			},
 		}})
 
-	// TODO(urielguzman): Add profiles and host network volumes when those features are implemnented for
-	// shared mount.
+	if config.hostNetworkEnabled {
+		volumes = append(volumes, webhook.GetSATokenVolume(config.tokenAudience))
+	}
+
+	if config.profilesEnabled {
+		if !webhook.VolumeExists(volumes, webhook.SidecarContainerFileCacheEphemeralDiskVolumeName) {
+			volumes = append(volumes, webhook.EphemeralFileCacheVolume)
+		}
+		if !webhook.VolumeExists(volumes, webhook.SidecarContainerFileCacheRamDiskVolumeName) {
+			volumes = append(volumes, webhook.RamFileCacheVolume)
+		}
+	}
 	return volumes
 }
 
@@ -400,7 +453,7 @@ func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mo
 	}
 
 	// Construct the mounter socket file path.
-	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), mounterPodSocketFile)
+	mounterSocketFilePath := filepath.Join(emptyDirBasePath(podUID), MounterPodSocketFile)
 	var pod *corev1.Pod
 	var err error
 
@@ -468,4 +521,17 @@ func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mo
 			return status.Error(code, errMsg)
 		}
 	}
+}
+
+func checkMounterPodErrorFile(emptyDirPath string) (codes.Code, error) {
+	if emptyDirPath == "" {
+		return codes.Internal, fmt.Errorf("empty dir path is empty")
+	}
+	errorFilePath := filepath.Join(emptyDirPath, util.ErrorFileName)
+	errMsg, err := extractErrorMsgFromGcsFuseErrorFile(errorFilePath)
+	if err != nil {
+		return codes.Internal, err
+	}
+
+	return extractErrorFromGcsFuseErrorFile(errMsg)
 }

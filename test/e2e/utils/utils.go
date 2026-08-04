@@ -48,8 +48,10 @@ const (
 	MinGCSFuseTestConfigVersion              = "v3.7.0-gke.0"
 	MinGCSFuseMetricsCardinalityFixesVersion = "v3.7.2-gke.0" // The minimum version where we stop exporting metrics if a pod has more than 10 GCSFuse volumes
 	MinGCSFuseGrpcMetricsVersion             = "v3.8.0-gke.0"
+	MinGCSFuseFuseMaxRequestSizeVersion      = "v3.11.2-gke.0"
 
-	GcsfuseVersionVarName = "gcsfuse-version"
+	GcsfuseVersionVarName    = "gcsfuse-version"
+	GkeClusterVersionVarName = "gke-cluster-version"
 
 	testConfigUrlFormat                  = "https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/%s/tools/integration_tests/test_config.yaml"
 	flagFileCacheCapacity                = "file-cache-max-size-mb"
@@ -538,6 +540,21 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 	return l[2], nil
 }
 
+// FetchGKEClusterVersion retrieves the Kubernetes master version directly from the cluster APIServer.
+func FetchGKEClusterVersion(cl clientset.Interface) (string, error) {
+	if cl == nil {
+		return "", fmt.Errorf("clientset interface is nil")
+	}
+	serverVersion, err := cl.Discovery().ServerVersion()
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch server version from cluster: %w", err)
+	}
+	if serverVersion == nil {
+		return "", fmt.Errorf("failed to fetch server version from cluster: serverVersion is nil")
+	}
+	return serverVersion.GitVersion, nil
+}
+
 // ExpandFlagVariables allows for the expansion of custom parameterized fields
 // (e.g., ${BUCKET_NAME}) in a flag string based on the provided vars map.
 // It is used to dynamically populate flags parsed from the gcsfuse test_config.yaml file.
@@ -549,4 +566,11 @@ func ExpandFlagVariables(flag string, vars map[string]string) string {
 		}
 		return os.Getenv(envVar)
 	})
+}
+
+// CombinedOutput captures both stdout and stderr, so Cloud Shell may prepend
+// "Your active configuration is: [...]" to the project ID. Take the last line.
+func parseProjectNameFromCombinedOutput(output []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }

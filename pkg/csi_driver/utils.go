@@ -664,7 +664,7 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
 	// since it's built off latest code in main
 	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
-	if strings.Contains(imageName, "prow-gob-internal-boskos") {
+	if strings.Contains(imageName, "prow-gob-internal-boskos") || strings.Contains(imageName, "oss-gcp-community") {
 		return true
 	}
 
@@ -680,27 +680,24 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 	return false
 }
 
-func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string, fileName string) error {
-	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
-	if err != nil {
-		return fmt.Errorf("failed to get emptyDir path: %w", err)
+func writeDriverFlagsFile(flagMap map[string]string, emptyDirBasePath string) error {
+	if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
+		return fmt.Errorf("failed to create directory %q: %w", emptyDirBasePath, err)
 	}
 
-	absolutePath := filepath.Dir(emptyDirBasePath) + "/" + fileName
+	absolutePath := filepath.Join(emptyDirBasePath, FlagFileForDefaultingPath)
 	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %q: %v", absolutePath, flagMap)
-
-	parentDir := filepath.Dir(emptyDirBasePath)
 
 	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
 	// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
 	// attacks during subsequent relative operations (using unix.Openat).
-	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	parentFd, err := unix.Open(emptyDirBasePath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
+		return fmt.Errorf("failed to open parent directory %q: %w", emptyDirBasePath, err)
 	}
 	defer unix.Close(parentFd)
 
-	fd, err := unix.Openat(parentFd, filepath.Base(fileName), unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
+	fd, err := unix.Openat(parentFd, FlagFileForDefaultingPath, unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to securely open defaulting-flag file: %w", err)
 	}
@@ -730,12 +727,10 @@ func ParseFlagMapFromFlagFile(flagFileContent string) map[string]string {
 	configFlags := make(map[string]string)
 	lines := strings.Split(flagFileContent, "\n")
 	for _, line := range lines {
-		if line == "" { // Skip empty lines
+		key, value, found := strings.Cut(line, ":")
+		if !found || key == "" {
 			continue
 		}
-		parts := strings.Split(line, ":")
-		key := parts[0]
-		value := parts[1]
 		configFlags[key] = value
 	}
 	return configFlags
@@ -800,4 +795,22 @@ func getInternalMountOptionValue(options []string, key string) string {
 		}
 	}
 	return ""
+}
+
+// prepareSharedNodeMountOptions processes and filters mount options to be directly passed to the gcsfuse process during shared node mounts.
+// Unlike prepareMountOptions (which splits options between those used to open fuse device and those passed to gcsfuse).
+func prepareSharedNodeMountOptions(options []string) []string {
+	// TODO(FUECHR): Investigate if we should only allow "allowedOptions" from prepareMountOptions for shared node mount.
+
+	csiMountOptions := []string{"o=allow_other,default_permissions"}
+	for _, o := range options {
+		// Strip read_ahead_kb and node_fuse_max_request_limit_kb flags so they are not passed to gcsfuse (which would reject them as unknown flags).
+		if strings.HasPrefix(o, "read_ahead_kb=") || strings.HasPrefix(o, "node_fuse_max_request_limit_kb=") {
+			continue
+		}
+
+		csiMountOptions = append(csiMountOptions, o)
+	}
+
+	return csiMountOptions
 }

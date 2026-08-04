@@ -136,9 +136,9 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
-# Required to get PodTemplates when using shared node mount feature.
+# Required to get PodTemplates and ConfigMaps when using shared node mount feature.
   - apiGroups: [""]
-    resources: ["podtemplates"]
+    resources: ["podtemplates", "configmaps"]
     verbs: ["get", "list", "watch"]
 ---
 kind: ClusterRoleBinding

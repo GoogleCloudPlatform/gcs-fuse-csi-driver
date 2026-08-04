@@ -43,16 +43,16 @@ kubectl delete -f ./examples/ephemeral/deployment-two-vols.yaml
 # replace <bucket-name> with your pre-provisioned GCS bucket name
 GCS_BUCKET_NAME=your-bucket-name
 sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deployment.yaml
-sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deploymen-non-root.yaml
+sed -i "s/<bucket-name>/$GCS_BUCKET_NAME/g" ./examples/static/pv-pvc-deployment-non-root.yaml
 
 # install PV/PVC and a Deployment
 kubectl apply -f ./examples/static/pv-pvc-deployment.yaml
-kubectl apply -f ./examples/static/pv-pvc-deploymen-non-root.yaml
+kubectl apply -f ./examples/static/pv-pvc-deployment-non-root.yaml
 
 # clean up
 # the PV deletion will not delete your GCS bucket
 kubectl delete -f ./examples/static/pv-pvc-deployment.yaml
-kubectl delete -f ./examples/static/pv-pvc-deploymen-non-root.yaml
+kubectl delete -f ./examples/static/pv-pvc-deployment-non-root.yaml
 ```
 
 ## Batch Job Example
@@ -115,11 +115,11 @@ following (the exact ranges used will depend on your specifics). The router
 commands are necessary to expose the network externally, so it can reach GCS
 endpoints. The parameters used are not critical and depend on your setup as
 well. The network and subnet names are only used for node pool creation and are
-not critcal for your pod configuration.
+not critical for your pod configuration.
 
 ```bash
 gcloud compute networks create additional
-gcloud compute networks subnests create alt \
+gcloud compute networks subnets create alt \
   --range=10.144.16.0/20 \
   --network=additional \
   --secondary-range=alt=10.144.32.0/20

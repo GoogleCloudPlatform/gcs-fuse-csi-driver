@@ -41,7 +41,7 @@ spec:
             - "--controller=true"
             - "--enable-gcsfuse-profiles=true"
             - "--leader-election=true"
-            - "--leader-election-namespace=$(CLOUDSTORAGECSI_NAMESPACE)"
+            - "--driver-namespace=$(CLOUDSTORAGECSI_NAMESPACE)"
             - "--cluster-location=$(CLUSTER_LOCATION)"
             - "--project-number=$(PROJECT_NUMBER)"
             - "--http-endpoint=:29633"

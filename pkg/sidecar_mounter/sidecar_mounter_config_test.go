@@ -166,6 +166,27 @@ func TestPrepareMountArgs(t *testing.T) {
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
 		},
 		{
+			name: "should concatenate multiple o= flags for shared node mount",
+			mc: &MountConfig{
+				BucketName:       "test-bucket",
+				BufferDir:        "test-buffer-dir",
+				CacheDir:         "test-cache-dir",
+				ConfigFile:       "test-config-file",
+				SharedMountPoint: "/shared-mount",
+				Options:          []string{"o=allow_other,default_permissions", "o=ro", "o=noexec"},
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+				"o":           "allow_other,default_permissions,ro,noexec",
+			},
+			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
 			name: "should return valid args when file cache is disabled",
 			mc: &MountConfig{
 				BucketName: "test-bucket",
@@ -277,6 +298,31 @@ func TestPrepareMountArgs(t *testing.T) {
 				"logging:file-path": "/dev/fd/1",
 				"logging:format":    "json",
 				"cache-dir":         "/gcsfuse-file-cache-ram-disk/.volumes/volume-name",
+			},
+		},
+		{
+			name: "should override cache-dir without .volumes subdirectory when SharedMountPoint is set",
+			mc: &MountConfig{
+				BucketName:       "test-bucket",
+				BufferDir:        "test-buffer-dir",
+				CacheDir:         "test-cache-dir",
+				ConfigFile:       "test-config-file",
+				FileCacheMedium:  "ram",
+				VolumeName:       "volume-name",
+				SharedMountPoint: "/mnt/shared",
+			},
+			expectedArgs: map[string]string{
+				"app-name":    GCSFuseAppName,
+				"temp-dir":    "test-buffer-dir/temp-dir",
+				"config-file": "test-config-file",
+				"foreground":  "",
+				"uid":         "0",
+				"gid":         "0",
+			},
+			expectedConfigMapArgs: map[string]string{
+				"logging:file-path": "/dev/fd/1",
+				"logging:format":    "json",
+				"cache-dir":         "/gcsfuse-file-cache-ram-disk",
 			},
 		},
 		{
@@ -761,6 +807,46 @@ func TestPrepareConfigFile(t *testing.T) {
 			},
 		},
 		{
+			name: "should create valid config file without .volumes subdirectory when SharedMountPoint is set",
+			mc: &MountConfig{
+				ConfigFile: "./test-config-file.yaml",
+				TempDir:    "test-temp-dir",
+				ConfigFileFlagMap: map[string]string{
+					"logging:file-path":                     "/dev/fd/1",
+					"logging:format":                        "json",
+					"logging:severity":                      "error",
+					"write:create-empty-file":               "true",
+					"file-cache:max-size-mb":                "10000",
+					"file-cache:cache-file-for-range-read":  "true",
+					"metadata-cache:stat-cache-max-size-mb": "1000",
+					"metadata-cache:type-cache-max-size-mb": "-1",
+					"cache-dir":                             "/gcsfuse-file-cache-ram-disk",
+				},
+				VolumeName:       "volume-name",
+				FileCacheMedium:  "ram",
+				SharedMountPoint: "/mnt/shared",
+			},
+			expectedConfig: map[string]interface{}{
+				"logging": map[string]interface{}{
+					"file-path": "/dev/fd/1",
+					"format":    "json",
+					"severity":  "error",
+				},
+				"write": map[string]interface{}{
+					"create-empty-file": true,
+				},
+				"file-cache": map[string]interface{}{
+					"max-size-mb":               10000,
+					"cache-file-for-range-read": true,
+				},
+				"metadata-cache": map[string]interface{}{
+					"stat-cache-max-size-mb": 1000,
+					"type-cache-max-size-mb": -1,
+				},
+				"cache-dir": "/gcsfuse-file-cache-ram-disk",
+			},
+		},
+		{
 			name: "should throw error when incorrect flag is passed",
 			mc: &MountConfig{
 				ConfigFile: "./test-config-file.yaml",
@@ -819,7 +905,7 @@ func TestPrepareConfigFile(t *testing.T) {
 }
 
 func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
-	t.Parallel()
+	// Do not parallelize because prepareMountArgs modifies shared prometheusPort.
 
 	testCases := []struct {
 		name           string
@@ -870,6 +956,74 @@ func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
 
 			if mc.AutoGoMemLimitRatio != tc.expectedRatio {
 				t.Errorf("Got AutoGoMemLimitRatio %v, expected %v", mc.AutoGoMemLimitRatio, tc.expectedRatio)
+			}
+		})
+	}
+}
+
+func TestReadDriverFlagsForDefaulting(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name          string
+		fileExists    bool
+		unreadable    bool
+		fileContent   string
+		expectedFlags map[string]string
+		expectErr     bool
+	}{
+		{
+			name:          "File does not exist",
+			fileExists:    false,
+			expectedFlags: map[string]string{},
+			expectErr:     false,
+		},
+		{
+			name:        "File exists and contains flags",
+			fileExists:  true,
+			fileContent: "machine-type:e2-standard-4\ndisable-autoconfig:false\n",
+			expectedFlags: map[string]string{
+				"machine-type":       "e2-standard-4",
+				"disable-autoconfig": "false",
+			},
+			expectErr: false,
+		},
+		{
+			name:        "File exists but is unreadable",
+			fileExists:  true,
+			unreadable:  true,
+			fileContent: "machine-type:e2-standard-4\n",
+			expectErr:   true,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			flagFilePath := filepath.Join(t.TempDir(), "flags-for-defaulting")
+
+			if tc.fileExists {
+				if err := os.WriteFile(flagFilePath, []byte(tc.fileContent), 0644); err != nil {
+					t.Fatalf("Failed to write mock flag file: %v", err)
+				}
+				if tc.unreadable {
+					_ = os.Chmod(flagFilePath, 0000)
+				}
+			}
+
+			flagMap, err := ReadDriverFlagsForDefaulting(flagFilePath)
+
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("Expected error reading %s, got nil", flagFilePath)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error reading %s: %v", flagFilePath, err)
+				}
+				if !reflect.DeepEqual(flagMap, tc.expectedFlags) {
+					t.Errorf("Expected flags %v, got: %v", tc.expectedFlags, flagMap)
+				}
 			}
 		})
 	}

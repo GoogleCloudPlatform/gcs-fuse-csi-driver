@@ -32,6 +32,7 @@ import (
 
 	"github.com/googleapis/gax-go/v2"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/oauth2"
@@ -41,12 +42,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"gopkg.in/gcfg.v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -77,8 +75,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	v1listers "k8s.io/client-go/listers/core/v1"
-	storagelisters "k8s.io/client-go/listers/storage/v1"
 )
 
 const (
@@ -192,10 +188,7 @@ type DatafluxConfig struct {
 
 // ScannerConfig holds the configuration for the Scanner.
 type ScannerConfig struct {
-	KubeAPIQPS                       float64       // QPS limit for Kubernetes API client.
-	KubeAPIBurst                     int           // Burst limit for Kubernetes API client.
-	ResyncPeriod                     time.Duration // Resync period for informers.
-	KubeConfigPath                   string        // Optional: Path to kubeconfig file. If empty, InClusterConfig is used.
+	K8SClients                       clientset.Interface // Kubernetes clientset.
 	CloudConfigPath                  string
 	RateLimiter                      workqueue.TypedRateLimiter[string]
 	DatafluxConfig                   *DatafluxConfig
@@ -240,17 +233,6 @@ type EventInfo struct {
 
 // Scanner is the main controller structure.
 type Scanner struct {
-	kubeClient           kubernetes.Interface
-	pvLister             v1listers.PersistentVolumeLister
-	pvcLister            v1listers.PersistentVolumeClaimLister
-	scLister             storagelisters.StorageClassLister
-	podLister            v1listers.PodLister
-	pvSynced             cache.InformerSynced
-	pvcSynced            cache.InformerSynced
-	scSynced             cache.InformerSynced
-	podSynced            cache.InformerSynced
-	factory              informers.SharedInformerFactory
-	podFactory           informers.SharedInformerFactory
 	queue                workqueue.TypedRateLimitingInterface[string]
 	eventRecorder        record.EventRecorder
 	datafluxConfig       *DatafluxConfig
@@ -314,35 +296,6 @@ func buildKubeConfig(kubeconfigPath string) (*rest.Config, error) {
 	return cfg, nil
 }
 
-// trimPodObject is a transform function for the Pod informer to reduce memory usage.
-// It keeps only the fields relevant to the scanner logic.
-func trimPodObject(obj any) (any, error) {
-	if accessor, err := meta.Accessor(obj); err == nil {
-		accessor.SetManagedFields(nil)
-	} else {
-		klog.Warningf("Failed to get meta accessor for object: %v", err)
-	}
-
-	podObj, ok := obj.(*v1.Pod)
-	if !ok {
-		return obj, nil
-	}
-
-	// Create a new Pod object with only the fields we need.
-	trimmedPod := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podObj.ObjectMeta.Name,      // Needed for workqueue key.
-			Namespace: podObj.ObjectMeta.Namespace, // Needed for workqueue key.
-		},
-		Spec: v1.PodSpec{
-			Volumes:         podObj.Spec.Volumes,         // Needed to check PVs requiring scans.
-			SchedulingGates: podObj.Spec.SchedulingGates, // Needed to remove scheduling gates.
-		},
-	}
-
-	return trimmedPod, nil
-}
-
 func generateTokenSource(ctx context.Context, configFile *ConfigFile) (oauth2.TokenSource, error) {
 	// If configFile.Global.TokenURL is defined use AltTokenSource
 	if configFile != nil && configFile.Global.TokenURL != "" && configFile.Global.TokenURL != "nil" {
@@ -362,7 +315,7 @@ func generateTokenSource(ctx context.Context, configFile *ConfigFile) (oauth2.To
 	} else {
 		klog.Warningf("GOOGLE_APPLICATION_CREDENTIALS env var not set")
 	}
-	klog.Infof("Using DefaultTokenSource %#v", tokenSource)
+	klog.Info("Using DefaultTokenSource")
 
 	return tokenSource, err
 }
@@ -388,9 +341,11 @@ func buildCloudConfig(configPath string) (*ConfigFile, error) {
 
 // NewScanner creates a new Scanner instance.
 func NewScanner(config *ScannerConfig) (*Scanner, error) {
-	kubeconfig, err := buildKubeConfig(config.KubeConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build kubeconfig: %w", err)
+	if config == nil {
+		return nil, errors.New("config must not be nil")
+	}
+	if config.K8SClients == nil {
+		return nil, errors.New("K8SClients must be provided in ScannerConfig")
 	}
 
 	// Add a uniquifier so that two processes on the same host don't accidentally both become active.
@@ -401,58 +356,18 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	}
 	id := hostname + "_" + string(uuid.NewUUID())
 
-	kubeconfig.QPS = float32(config.KubeAPIQPS)
-	kubeconfig.Burst = config.KubeAPIBurst
-	klog.Infof("KubeClient QPS: %f, Burst: %d", kubeconfig.QPS, kubeconfig.Burst)
-	kubeClient, err := kubernetes.NewForConfig(kubeconfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
-	}
-
 	rateLimiter := config.RateLimiter
 	if rateLimiter == nil {
 		rateLimiter = workqueue.DefaultTypedControllerRateLimiter[string]()
 	}
 
-	// Factory for PV, PVC and SC informers
-	factory := informers.NewSharedInformerFactory(kubeClient, config.ResyncPeriod)
-	pvInformer := factory.Core().V1().PersistentVolumes()
-	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
-	scInformer := factory.Storage().V1().StorageClasses()
-
-	// Factory for Pod informer with label selector and transform
-	// The label is patched by the mutating webhook.
-	podLabelSelector := fmt.Sprintf("%s=%s", profileManagedLabelKey, profileManagedLabelValue)
-	tweakFunc := func(options *metav1.ListOptions) {
-		options.LabelSelector = podLabelSelector
-	}
-	podFactory := informers.NewSharedInformerFactoryWithOptions(
-		kubeClient,
-		config.ResyncPeriod,
-		informers.WithTweakListOptions(tweakFunc),
-		informers.WithTransform(trimPodObject),
-	)
-	podInformer := podFactory.Core().V1().Pods()
-	klog.Infof("Pod informer configured with label selector: %q and a transform function", podLabelSelector)
-
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
-	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
+	eventBroadcaster.StartRecordingToSink(&typedv1.EventSinkImpl{Interface: config.K8SClients.K8sClient().CoreV1().Events("")})
 	eventRecorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: scannerComponentName})
 	mux := http.NewServeMux()
 
 	scanner := &Scanner{
-		kubeClient:     kubeClient,
-		factory:        factory,
-		podFactory:     podFactory,
-		pvLister:       pvInformer.Lister(),
-		pvcLister:      pvcInformer.Lister(),
-		scLister:       scInformer.Lister(),
-		podLister:      podInformer.Lister(),
-		pvSynced:       pvInformer.Informer().HasSynced,
-		pvcSynced:      pvcInformer.Informer().HasSynced,
-		scSynced:       scInformer.Informer().HasSynced,
-		podSynced:      podInformer.Informer().HasSynced,
 		queue:          workqueue.NewTypedRateLimitingQueue(rateLimiter),
 		trackedPVs:     make(map[string]syncInfo),
 		eventRecorder:  eventRecorder,
@@ -463,20 +378,6 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 		metricManager:  metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
 		mux:            mux,
 	}
-
-	klog.Info("Setting up event handlers for PersistentVolumes")
-	pvInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    scanner.addPV,
-		DeleteFunc: scanner.deletePV,
-		// UpdateFunc is not required because the scan will be re-triggered
-		// after success with a time delay.
-	})
-
-	klog.Info("Setting up event handlers for Pods")
-	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    scanner.addPod,
-		DeleteFunc: scanner.deletePod,
-	})
 
 	return scanner, nil
 }
@@ -545,17 +446,6 @@ func (s *Scanner) run(ctx context.Context) {
 
 	stopCh := ctx.Done()
 
-	klog.Info("Starting informers")
-	s.factory.Start(stopCh)
-	s.podFactory.Start(stopCh)
-
-	klog.Info("Waiting for informer caches to sync")
-	if !cache.WaitForCacheSync(stopCh, s.pvSynced, s.pvcSynced, s.scSynced, s.podSynced) {
-		klog.Error("Failed to wait for caches to sync")
-		return
-	}
-	klog.Info("Informer caches synced successfully")
-
 	klog.Info("Starting worker")
 	go wait.Until(func() { s.runWorker(ctx) }, time.Second, ctx.Done())
 
@@ -595,7 +485,7 @@ func (s *Scanner) runWithLeaderElection(ctx context.Context, cancel context.Canc
 		s.config.LeaderElectionNamespace,
 		leaseName,
 		nil,
-		s.kubeClient.CoordinationV1(),
+		s.config.K8SClients.K8sClient().CoordinationV1(),
 		resourcelock.ResourceLockConfig{
 			Identity: s.id,
 		})
@@ -743,7 +633,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		return status.Errorf(codes.Internal, "failed to split meta namespace key %q: %v", key, err)
 	}
 
-	pod, err := s.podLister.Pods(namespace).Get(name)
+	pod, err := s.config.K8SClients.GetPod(namespace, name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Infof("Pod %q in namespace %q has been deleted", name, namespace)
@@ -764,7 +654,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		}
 
 		pvcName := vol.PersistentVolumeClaim.ClaimName
-		pvc, err := s.pvcLister.PersistentVolumeClaims(namespace).Get(pvcName)
+		pvc, err := s.config.K8SClients.GetPVC(namespace, pvcName)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("PVC %q/%q for Pod %q not found, will recheck Pod later", namespace, pvcName, key)
@@ -782,7 +672,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			continue
 		}
 
-		pv, err := s.pvLister.Get(pvName)
+		pv, err := s.config.K8SClients.GetPV(pvName)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				klog.Warningf("PV %q (from PVC %q/%q) for Pod %q not found, this should not happen if PVC is bound", pvName, namespace, pvcName, key)
@@ -862,7 +752,7 @@ func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
 		return fmt.Errorf("failed to marshal patch data for Pod %q/%q: %w", pod.Namespace, pod.Name, err)
 	}
 
-	_, err = s.kubeClient.CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	_, err = s.config.K8SClients.K8sClient().CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Warningf("Failed to patch Pod %q/%q because it was not found", pod.Namespace, pod.Name)
@@ -945,7 +835,7 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	syncStartTime := timeNow()
 	klog.Infof("Started syncing PV %q", key)
 
-	pv, err := s.pvLister.Get(key)
+	pv, err := s.config.K8SClients.GetPV(key)
 	if err != nil {
 		// The PV may have already been deleted. This is normal and we should remove it from tracking.
 		if apierrors.IsNotFound(err) {
@@ -1544,6 +1434,39 @@ func defaultScanBucketWithDataflux(ctx context.Context, gcsClient *storage.Clien
 	}
 }
 
+// ensurePVTrackingLabel applies the PV tracking label if it's currently missing.
+func (s *Scanner) ensurePVTrackingLabel(ctx context.Context, pv *v1.PersistentVolume) error {
+	if err := ctx.Err(); err != nil {
+		return status.Errorf(codes.Canceled, "context cancelled: %v", err)
+	}
+	if pv == nil {
+		return status.Error(codes.Internal, "persistent volume is nil")
+	}
+	if _, hasTrackedLabel := pv.Labels[profileManagedLabelKey]; hasTrackedLabel {
+		return nil
+	}
+
+	patchData := map[string]any{
+		"metadata": map[string]any{"labels": map[string]string{profileManagedLabelKey: util.TrueStr}},
+	}
+	patchBytes, marshalErr := json.Marshal(patchData)
+	if marshalErr != nil {
+		return status.Errorf(codes.Internal, "failed to marshal label patch data for PV %q: %v", pv.Name, marshalErr)
+	}
+	klog.V(6).Infof("PV %q is missing the tracking label. Patching it with: %q", pv.Name, string(patchBytes))
+	_, patchErr := s.config.K8SClients.K8sClient().CoreV1().PersistentVolumes().Patch(ctx, pv.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if patchErr != nil {
+		if apierrors.IsNotFound(patchErr) {
+			klog.Warningf("Failed to patch PV %q because it was not found", pv.Name)
+			return nil
+		}
+		return status.Errorf(codes.Internal, "failed to patch PV %q with label: %v", pv.Name, patchErr)
+	}
+
+	klog.V(6).Infof("Successfully added %s=%s label to PV %q", profileManagedLabelKey, util.TrueStr, pv.Name)
+	return nil
+}
+
 // patchPVAnnotations updates the annotations for a given PV.
 // annotationsToUpdate should contain the desired state of the annotations to be patched.
 func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotationsToUpdate map[string]*string) error {
@@ -1558,7 +1481,7 @@ func (s *Scanner) patchPVAnnotations(ctx context.Context, pvName string, annotat
 		return status.Errorf(codes.Internal, "failed to marshal annotation patch data for PV %q: %v", pvName, err)
 	}
 	klog.V(6).Infof("Patching PV %q annotations with: %q", pvName, string(patchBytes))
-	_, err = s.kubeClient.CoreV1().PersistentVolumes().Patch(ctx, pvName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	_, err = s.config.K8SClients.K8sClient().CoreV1().PersistentVolumes().Patch(ctx, pvName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Warningf("Failed to patch PV %q because it was not found", pvName)
@@ -1637,6 +1560,14 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 	if !profilesutil.IsProfile(sc) {
 		klog.Warningf("profile label was not found in StorageClass %q for PV %q", sc.Name, pv.Name)
 		return nil, false, nil
+	}
+
+	// We intentionally only patch the tracking label onto PVs that utilize the GCS Fuse Profiles feature.
+	// This ensures that the Node driver (which filters its informer cache based on this label)
+	// only loads precisely the metadata it needs for profiling, preventing OOM crashes in large clusters
+	// that have thousands of generic GCS Fuse PVs or PDCSI PVs.
+	if err := s.ensurePVTrackingLabel(ctx, pv); err != nil {
+		return nil, false, fmt.Errorf("failed to ensure tracking label for PV %q: %w", pv.Name, err)
 	}
 
 	// ---- At this stage, there is clearly a customer intent to use the scanner feature, so we start logging warnings -----
@@ -1779,8 +1710,8 @@ func (s *Scanner) enqueuePV(pv *v1.PersistentVolume) {
 	s.queue.Add(pvPrefix + key)
 }
 
-// addPV is the add event handler for PersistentVolumes.
-func (s *Scanner) addPV(obj any) {
+// AddPV is the add event handler for PersistentVolumes.
+func (s *Scanner) AddPV(obj any) {
 	pv, ok := obj.(*v1.PersistentVolume)
 	if !ok {
 		klog.Errorf("AddFunc PV: Expected PersistentVolume but got %T", obj)
@@ -1790,9 +1721,9 @@ func (s *Scanner) addPV(obj any) {
 	s.enqueuePV(pv)
 }
 
-// deletePV is the event handler for PersistentVolume Delete events.
+// DeletePV is the event handler for PersistentVolume Delete events.
 // It removes the PV from the workqueue and the internal tracking map.
-func (s *Scanner) deletePV(obj any) {
+func (s *Scanner) DeletePV(obj any) {
 	pv, ok := obj.(*v1.PersistentVolume)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -1837,9 +1768,9 @@ func (s *Scanner) enqueueTrackedPVs() {
 }
 
 // addPod is the add event handler for Pods.
-func (s *Scanner) addPod(obj any) {
+func (s *Scanner) AddPod(obj any) {
 	pod, ok := obj.(*v1.Pod)
-	if !ok {
+	if !ok || pod == nil {
 		klog.Errorf("AddFunc Pod: Expected Pod but got %T", obj)
 		return
 	}
@@ -1848,9 +1779,9 @@ func (s *Scanner) addPod(obj any) {
 }
 
 // deletePod is the event handler for Pod Delete events.
-func (s *Scanner) deletePod(obj any) {
+func (s *Scanner) DeletePod(obj any) {
 	pod, ok := obj.(*v1.Pod)
-	if !ok {
+	if !ok || pod == nil {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			klog.Errorf("DeleteFunc Pod: Expected Pod or Tombstone but got %T", obj)
@@ -1895,7 +1826,7 @@ func (s *Scanner) getStorageClass(pv *v1.PersistentVolume) (*storagev1.StorageCl
 	if scName == "" {
 		return nil, nil
 	}
-	sc, err := s.scLister.Get(scName)
+	sc, err := s.config.K8SClients.GetSC(scName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get StorageClass %q: %w", scName, err)

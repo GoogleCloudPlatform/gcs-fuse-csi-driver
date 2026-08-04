@@ -98,8 +98,11 @@ spec:
                   name: gcsfusecsi-node-config
                   key: universe-domain
           volumeMounts:
-            - name: kubelet-dir
+            - name: kubelet-pods-dir
               mountPath: /var/lib/kubelet/pods
+              mountPropagation: "Bidirectional"
+            - name: kubelet-plugins-dir
+              mountPath: /var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
@@ -109,6 +112,9 @@ spec:
               mountPath: /sys
             - name: host-iproute
               mountPath: /etc/iproute2
+            - name: host-proc-sys-fs-fuse
+              mountPath: /host-proc-sys-fs-fuse
+
             - name: tmp
               mountPath: /tmp
         - name: csi-driver-registrar
@@ -144,10 +150,14 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
             type: Directory
-        - name: kubelet-dir
+        - name: kubelet-pods-dir
           hostPath:
             path: /var/lib/kubelet/pods/
             type: Directory
+        - name: kubelet-plugins-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io/
+            type: DirectoryOrCreate
         - name: socket-dir
           hostPath:
             path: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/
@@ -161,6 +171,10 @@ spec:
         - name: host-iproute
           hostPath:
             path: /etc/iproute2
+            type: Directory
+        - name: host-proc-sys-fs-fuse
+          hostPath:
+            path: /proc/sys/fs/fuse
             type: Directory
         - name: tmp
           emptyDir:

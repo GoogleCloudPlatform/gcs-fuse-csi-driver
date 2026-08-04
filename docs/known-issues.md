@@ -56,7 +56,7 @@ After GKE 1.29, because of the native sidecar container feature, the CSI driver 
 
 ### Solutions
 
-The GCS FUSE SCI Driver now utilizes the [Kubernetes native sidecar container feature](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers), available in GKE versions 1.29.3-gke.1093000 or later.
+The GCS FUSE CSI Driver now utilizes the [Kubernetes native sidecar container feature](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers), available in GKE versions 1.29.3-gke.1093000 or later.
 
 The Kubernetes native sidecar container feature introduces sidecar containers, a new type of init container that starts before other containers but remains running for the full duration of the pod's lifecycle and will not block pod termination.
 
@@ -76,7 +76,7 @@ Here are some of the webhooks that may be affected:
 
 - The webhook `pod-admission-controller.spiffe.gke.io` used by [Managed Workload Identities](https://cloud.google.com/iam/docs/managed-workload-identity).
 - The webhook `istio-inject.webhook.crfa.internal.knative.dev` used by [Cloud Run for Anthos](https://cloud.google.com/anthos/run/archive/docs).
-- The webhook `gtoken.doit-intl.com` bused by [gtoken](https://github.com/doitintl/gtoken/tree/master).
+- The webhook `gtoken.doit-intl.com` used by [gtoken](https://github.com/doitintl/gtoken/tree/master).
 - The webhook `k8s-image-swapper.github.io` used by [k8s-image-swapper](https://github.com/estahn/k8s-image-swapper), with version smaller than `v1.5.10`.
 - The webhook `logsidecar-injector.logging.kubesphere.io` used by [logsidecar-injector](https://github.com/kubesphere/logsidecar-injector).
 

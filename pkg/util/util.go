@@ -28,15 +28,19 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+	mount "k8s.io/mount-utils"
 )
 
 const (
-	Mb = 1024 * 1024
+	KiB = 1024
+	MiB = 1024 * KiB
 
 	TrueStr  = "true"
 	FalseStr = "false"
@@ -60,7 +64,6 @@ const (
 	EnableCloudProfilerForSidecarConst  = "enable-cloud-profiler-for-sidecar"
 	EnableCloudProfilerConst            = "enable-cloud-profiler"
 	SidecarContainerTmpVolumeName       = "gke-gcsfuse-tmp"
-	SidecarContainerTmpVolumePath       = "/gke-gcsfuse-tmp"
 	SidecarBucketAccessCheckErrorPrefix = "sidecar bucket access check error"
 	StorageServiceErrorStr              = "failed to setup storage service"
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
@@ -73,8 +76,11 @@ const (
 	GoMemLimitCgroupPercentage          = 0.95
 	StorageEndpointInternal             = "storage-endpoint-internal"
 	KubeletDir                          = "/var/lib/kubelet"
+	KubeletPluginsGCSFuseDir            = "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io"
 	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
 	MounterPodNamePrefix                = "gcsfusecsi-mount"
+	SidecarImageConfigMapName           = "gcsfusecsi-image-config"
+	SidecarImageConfigMapKey            = "sidecar-image"
 )
 
 var (
@@ -84,6 +90,7 @@ var (
 	gkeIdentityProviderRegex = regexp.MustCompile(
 		`^https://(?:[a-z0-9-]+-)?container(?:\.sandbox)?\.googleapis\.com/v1/projects/[^/]+/locations/[^/]+/clusters/[^/]+$`,
 	)
+	procMountsPath = "/proc/mounts"
 )
 
 // ConvertLabelsStringToMap converts the labels from string to map
@@ -207,17 +214,15 @@ func sha1Hash(str string) string {
 }
 
 // GetSocketBasePath constructs the base path for a Unix domain socket.
-// It takes the target path and the directory where Fuse sockets are stored as input.
-func GetSocketBasePath(targetPath, fuseSocketDir string) string {
-	podID, volumeName, _ := ParsePodIDVolumeFromTargetpath(targetPath)
-
+// It takes the podUID, volumeName, and the directory where Fuse sockets are stored as input.
+func GetSocketBasePath(podUID, volumeName, fuseSocketDir string) string {
 	// We hash the combined pod ID and volume name because Unix domain socket paths
 	// have a length limitation (often around 104 characters). Directly using potentially
 	// long pod IDs and volume names could easily violate this limit. SHA1 provides a
 	// fixed-length, short representation (40 hexadecimal characters) that ensures
 	// we stay within these constraints while still providing a unique identifier
 	// based on the pod and volume.
-	return filepath.Join(fuseSocketDir, sha1Hash(podID+"_"+volumeName))
+	return filepath.Join(fuseSocketDir, sha1Hash(podUID+"_"+volumeName))
 }
 
 func CheckAndDeleteStaleFile(dirPath, fileName string) error {
@@ -336,4 +341,55 @@ func CheckNotSymlink(path string) error {
 		return fmt.Errorf("security error: path %q is a symlink", path)
 	}
 	return nil
+}
+
+// IsDirMounted checks if the path is already a mount point.
+func IsDirMounted(targetPath string) (bool, error) {
+	mps, err := mount.ListProcMounts(procMountsPath)
+	if err != nil {
+		return false, err
+	}
+	cleanTargetPath := filepath.Clean(targetPath)
+	for _, m := range mps {
+		if filepath.Clean(m.Path) == cleanTargetPath {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// WaitForPathMounted waits until the given path is mounted or the context expires.
+func WaitForPathMounted(ctx context.Context, path string) error {
+	pollInterval := 1 * time.Second
+	klog.Infof("Waiting for path %q to be mounted. Polling every %q", path, pollInterval)
+
+	condition := func(ctx context.Context) (bool, error) {
+		mounted, err := IsDirMounted(path)
+		if err != nil {
+			klog.Warningf("failed to check if path %q is already mounted (will retry): %v", path, err)
+			return false, nil // Continue polling
+		}
+		if mounted {
+			klog.Infof("path %q was mounted", path)
+			return true, nil
+		}
+		return false, nil
+	}
+
+	if err := wait.PollUntilContextCancel(ctx, pollInterval, true, condition); err != nil {
+		// wait.PollUntilContextCancel returns context.DeadlineExceeded or context.Canceled on timeout/cancellation.
+		code := codes.DeadlineExceeded
+		if errors.Is(err, context.Canceled) {
+			code = codes.Canceled
+		}
+		return status.Errorf(code, "timeout waiting for path %q to be mounted: %v", path, err)
+	}
+
+	return nil
+}
+
+// CeilDiv64 performs integer division of 'a' by 'b', rounding the result up.
+func CeilDiv64(a, b int64) int64 {
+	return (a + b - 1) / b
 }

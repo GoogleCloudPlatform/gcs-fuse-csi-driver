@@ -317,6 +317,15 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-node-config --behavior=merge --disableNameSuffixHash --from-literal=universe-domain=${UNIVERSE_DOMAIN};
+# The /proc/sys/fs/fuse sysctl directory and its max_pages_limit parameter were introduced in newer Linux kernels (specifically kernel 6.13+ or 6.12+ with backports).
+# Since GKE 1.33 is pinned to older Container-Optimized OS (COS) Milestones (COS 121) using older kernel versions, this path is physically absent on the host nodes.
+# On GKE 1.34, the node runs COS 125 with kernel 6.12+ which contains the backported FUSE sysctl support and successfully exposes the directory.
+	@MINOR_VERSION=$$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.minor' 2>/dev/null || echo "34"); \
+	if [ "$$MINOR_VERSION" -le 33 ]; then \
+		echo "⚠️ Detected GKE/Kubernetes version 1.$$MINOR_VERSION (<= 1.33). Applying patch to remove host-proc-sys-fs-fuse volume."; \
+		printf 'apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: gcsfusecsi-node\nspec:\n  template:\n    spec:\n      containers:\n      - name: gcs-fuse-csi-driver\n        volumeMounts:\n        - $$patch: delete\n          mountPath: /host-proc-sys-fs-fuse\n          name: host-proc-sys-fs-fuse\n      volumes:\n      - $$patch: delete\n        name: host-proc-sys-fs-fuse\n' > ./deploy/overlays/${OVERLAY}/remove-fuse-hostpath-patch.yaml; \
+		cd ./deploy/overlays/${OVERLAY} && ${BINDIR}/kustomize edit add patch --path remove-fuse-hostpath-patch.yaml; \
+	fi
 # Must be unindented. When Make sees indented text, it attempts to pass it to the shell (/bin/sh) to execute. The shell doesn't know what ifeq is, so it crashes.
 ifeq ($(SELF_MANAGED_K8S), true)
 	echo "[{\"op\": \"replace\",\"path\": \"/spec/tokenRequests/0/audience\",\"value\": \"${IDENTITY_PROVIDER}\"}]" > ./deploy/overlays/${OVERLAY}/project_patch_csi_driver.json
@@ -334,6 +343,7 @@ endif
 	git restore ./deploy/overlays/${OVERLAY}/identity_provider_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/identity_pool_patch_csi_node.json
 	git restore ./deploy/overlays/${OVERLAY}/wi_node_label_check_patch.json
+	rm -f ./deploy/overlays/${OVERLAY}/remove-fuse-hostpath-patch.yaml
 
 verify:
 	hack/verify-all.sh
@@ -346,6 +356,7 @@ sanity-test:
 
 build-e2e-test:
 	cd test && go build -o ../bin/e2e-test-ci ./e2e
+	cd test && go test -c -o ../bin/e2e-test ./e2e
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh

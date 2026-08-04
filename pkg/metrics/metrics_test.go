@@ -19,6 +19,8 @@ package metrics
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,11 +72,79 @@ func TestNewMetricsManager(t *testing.T) {
 			if manager.registry == nil {
 				t.Errorf("NewMetricsManager did not initialize registry")
 			}
-			if manager.volumePublishPathRegistered == nil {
-				t.Errorf("NewMetricsManager did not initialize volumePublishPathRegistered")
+			if manager.volumeMountPathRegistered == nil {
+				t.Errorf("NewMetricsManager did not initialize volumeMountPathRegistered")
 			}
 		}
 	})
+}
+
+func TestRegisterUnregisterMetricsCollector(t *testing.T) {
+	tempDir := t.TempDir()
+	fuseSocketDir := filepath.Join(tempDir, "sockets")
+	emptyDirBasePath := filepath.Join(tempDir, "emptyDir")
+
+	// Pre-create sockets directory as the symlink is created inside it.
+	if err := os.MkdirAll(fuseSocketDir, 0755); err != nil {
+		t.Fatalf("failed to create fuseSocketDir: %v", err)
+	}
+	if err := os.MkdirAll(emptyDirBasePath, 0755); err != nil {
+		t.Fatalf("failed to create emptyDirBasePath: %v", err)
+	}
+
+	clientset := clientset.NewFakeClientset()
+	mm := NewMetricsManager(":9920", fuseSocketDir, 5, clientset, false).(*manager)
+
+	mountPath := "/mnt/test-volume"
+	podNamespace := "default"
+	podName := "test-pod"
+	bucketName := "test-bucket"
+	nodeName := "test-node"
+	podUID := "test-pod-uid-123"
+	volumeName := "test-volume-abc"
+
+	// 1. Test Registration
+	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName)
+
+	if !mm.volumeMountPathRegistered.Has(mountPath) {
+		t.Errorf("expected mountPath %q to be registered in volumeMountPathRegistered", mountPath)
+	}
+
+	// Verify collector is actually in the Prometheus registry by trying to register a dummy with same descriptors
+	cDummy := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, false)
+	err := mm.registry.Register(cDummy)
+	if err == nil {
+		t.Errorf("expected duplicate registration to fail, but it succeeded")
+		mm.registry.Unregister(cDummy) // Clean up
+	} else if !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
+		t.Errorf("expected AlreadyRegisteredError, but got: %v", err)
+	}
+
+	// 2. Test Unregistration with incorrect identifiers
+	mm.UnregisterMetricsCollector(mountPath, nodeName, "wrong-uid", "wrong-volume")
+	if !mm.volumeMountPathRegistered.Has(mountPath) {
+		t.Errorf("expected mountPath %q to still be registered after incorrect unregistration identifiers", mountPath)
+	}
+
+	// 3. Test Unregistration with empty identifiers
+	mm.UnregisterMetricsCollector(mountPath, nodeName, "", "")
+	if !mm.volumeMountPathRegistered.Has(mountPath) {
+		t.Errorf("expected mountPath %q to still be registered after empty unregistration identifiers", mountPath)
+	}
+
+	// 4. Test Unregistration with correct identifiers
+	mm.UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName)
+	if mm.volumeMountPathRegistered.Has(mountPath) {
+		t.Errorf("expected mountPath %q to be unregistered from volumeMountPathRegistered", mountPath)
+	}
+
+	// Verify that the collector is no longer in the registry by attempting to register again
+	err = mm.registry.Register(cDummy)
+	if err != nil {
+		t.Errorf("expected registration of collector to succeed after unregistration, but failed: %v", err)
+	} else {
+		mm.registry.Unregister(cDummy) // Clean up
+	}
 }
 
 func TestPrometheusCounters(t *testing.T) {

@@ -234,7 +234,7 @@ The following steps create a pool of Cloud Build workers that run inside your ne
 
 **Part 1: Set up the Private Connection**
 
-These first three steps establish the private "bridge" between your VPC and Google's network. For the offical documentation and more details on setting parameters in the commands below, refer to [setting up a private connection](https://cloud.google.com/build/docs/private-pools/set-up-private-pool-to-use-in-vpc-network#setup-private-connection).
+These first three steps establish the private "bridge" between your VPC and Google's network. For the official documentation and more details on setting parameters in the commands below, refer to [setting up a private connection](https://cloud.google.com/build/docs/private-pools/set-up-private-pool-to-use-in-vpc-network#setup-private-connection).
 
 1.  **Enable the Service Networking API.** This is a one-time setup step that grants your project permission to create private connections to Google services, including Cloud Build.
 
@@ -274,7 +274,7 @@ These first three steps establish the private "bridge" between your VPC and Goog
 
 Now that the network bridge exists, this final step creates the pool of workers. For additional background, refer to the official documentation for [creating a new private pool](https://cloud.google.com/build/docs/private-pools/create-manage-private-pools#creating_a_new_private_pool).
 
-4.  **Create the Private Pool.** This command builds the pool and connects it to your VPC via the peering you just created. We recommend creating the pool in the same region as your Kubernetes cluster to ensure low latency and avoid network data transfer costs. Replace `WORKER_POOL_NAME` with a name for your pool,  `CLUSTER_LOCATION` with the region of your K8s cluster, and `VPC_NAME` with the name of your VPC network. To have permissionsn to create the private pool, ask your administrator to grant you the Cloud Build WorkerPool Owner role (`roles/cloudbuild.workerPoolOwner`).
+4.  **Create the Private Pool.** This command builds the pool and connects it to your VPC via the peering you just created. We recommend creating the pool in the same region as your Kubernetes cluster to ensure low latency and avoid network data transfer costs. Replace `WORKER_POOL_NAME` with a name for your pool,  `CLUSTER_LOCATION` with the region of your K8s cluster, and `VPC_NAME` with the name of your VPC network. To have permissions to create the private pool, ask your administrator to grant you the Cloud Build WorkerPool Owner role (`roles/cloudbuild.workerPoolOwner`).
 
     ```bash
     export WORKER_POOL_NAME=<your pool name>

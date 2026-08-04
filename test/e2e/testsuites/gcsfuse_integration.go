@@ -60,6 +60,7 @@ const (
 	testNameBufferedReads         = "buffered_read"
 	testNameRenameSymlink         = "rename_symlink"
 	testNameRapidAppends          = "rapid_appends"
+	testNameRapidOperations       = "rapid_operations"
 	testNameCloudProfiler         = "cloud_profiler"
 	testNameBenchmarking          = "benchmarking"
 	testNameUnsupportedPath       = "unsupported_path"
@@ -87,6 +88,7 @@ var testPackageTimeoutMap = map[string]int{
 	testNameWriteLargeFiles: 60,
 	testNameReadLargeFiles:  60,
 	testNameRapidAppends:    60,
+	testNameRapidOperations: 60,
 	testNameCloudProfiler:   30,
 }
 
@@ -400,8 +402,8 @@ func generateTestCommand(opts TestCommandConfig) string {
 }
 
 // configureLargeFileResources configures the pod and sidecar resources for memory-intensive large file tests.
-// Note: We only increase memory limits for specific tests like testNameWriteLargeFiles, testNameReadLargeFiles
-// and testNameRapidAppends. Other test cases run stable within the default memory for now
+// Note: We only increase memory limits for specific tests like testNameWriteLargeFiles, testNameReadLargeFiles,
+// testNameRapidAppends and testNameRapidOperations. Other test cases run stable within the default memory for now
 // limits and do not require additional resources.
 func configureLargeFileResources(tPod *specs.TestPod, testNameOrPkg string, driver storageframework.TestDriver) (string, string) {
 	sidecarMemoryLimit := defaultSidecarMemoryLimit
@@ -415,7 +417,7 @@ func configureLargeFileResources(tPod *specs.TestPod, testNameOrPkg string, driv
 			sidecarMemoryLimit = "2Gi"
 		}
 	}
-	if testNameOrPkg == testNameRapidAppends {
+	if testNameOrPkg == testNameRapidAppends || testNameOrPkg == testNameRapidOperations {
 		tPod.SetResource("1", "3Gi", "5Gi")
 		sidecarMemoryRequest = "2Gi"
 		sidecarMemoryLimit = "3Gi"

@@ -3,23 +3,5 @@
     "op": "add",
     "path": "/spec/template/spec/containers/1/args/-",
     "value": "--enable-shared-mount=true"
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/containers/1/args/-",
-    "value": "--mounter-pod-image=$(MOUNTER_POD_IMAGE)"
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/containers/1/env/-",
-    "value": {
-      "name": "MOUNTER_POD_IMAGE",
-      "valueFrom": {
-        "configMapKeyRef": {
-          "name": "gcsfusecsi-image-config",
-          "key": "sidecar-image"
-        }
-      }
-    }
   }
 ]

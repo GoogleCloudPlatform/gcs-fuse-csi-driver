@@ -38,14 +38,17 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	compute "google.golang.org/api/compute/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -158,6 +161,34 @@ func (f *fakeScanBucketImplFunc) Scan(scanner *Scanner, ctx context.Context, buc
 	}
 }
 
+type fakeK8sClients struct {
+	kubeClient kubernetes.Interface
+	clientset.Interface
+	pvLister  corelisters.PersistentVolumeLister
+	podLister corelisters.PodLister
+	scLister  storagelisters.StorageClassLister
+	pvcLister corelisters.PersistentVolumeClaimLister
+}
+
+func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
+	return f.pvLister.Get(name)
+}
+
+func (f *fakeK8sClients) GetPod(namespace, name string) (*v1.Pod, error) {
+	return f.podLister.Pods(namespace).Get(name)
+}
+
+func (f *fakeK8sClients) GetSC(name string) (*storagev1.StorageClass, error) {
+	return f.scLister.Get(name)
+}
+
+func (f *fakeK8sClients) GetPVC(namespace, name string) (*v1.PersistentVolumeClaim, error) {
+	return f.pvcLister.PersistentVolumeClaims(namespace).Get(name)
+}
+func (f *fakeK8sClients) K8sClient() kubernetes.Interface {
+	return f.kubeClient
+}
+
 // testFixture holds the necessary components for testing the Scanner.
 // It encapsulates the fake Kubernetes client, listers, recorders, and mock functions.
 type testFixture struct {
@@ -184,19 +215,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 	pvInformer := factory.Core().V1().PersistentVolumes()
 	pvcInformer := factory.Core().V1().PersistentVolumeClaims()
 	scInformer := factory.Storage().V1().StorageClasses()
-
-	// Factory for Pod informer
-	podLabelSelector := fmt.Sprintf("%s=%s", profileManagedLabelKey, profileManagedLabelValue)
-	tweakFunc := func(options *metav1.ListOptions) {
-		options.LabelSelector = podLabelSelector
-	}
-	podFactory := informers.NewSharedInformerFactoryWithOptions(
-		kubeClient,
-		0, // No resync period for tests
-		informers.WithTweakListOptions(tweakFunc),
-		informers.WithTransform(trimPodObject),
-	)
-	podInformer := podFactory.Core().V1().Pods()
+	podInformer := factory.Core().V1().Pods()
 
 	// Manually add initial objects to the informer indexers to ensure they are available in listers.
 	for _, obj := range initialObjects {
@@ -214,12 +233,7 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 				t.Fatalf("Failed to add SC to indexer: %v", err)
 			}
 		case *v1.Pod:
-			// Must apply transform before adding to indexer to mimic real behavior
-			trimmedObj, err := trimPodObject(obj)
-			if err != nil {
-				t.Fatalf("Failed to transform Pod: %v", err)
-			}
-			if err := podInformer.Informer().GetIndexer().Add(trimmedObj); err != nil {
+			if err := podInformer.Informer().GetIndexer().Add(obj); err != nil {
 				t.Fatalf("Failed to add Pod to indexer: %v", err)
 			}
 		}
@@ -240,28 +254,25 @@ func newTestFixture(t *testing.T, initialObjects ...runtime.Object) *testFixture
 
 	// Create the Scanner instance with fake/mock components.
 	s := &Scanner{
-		kubeClient:     kubeClient,
-		pvLister:       pvInformer.Lister(),
-		pvcLister:      pvcInformer.Lister(),
-		scLister:       scInformer.Lister(),
-		podLister:      podInformer.Lister(),
-		pvSynced:       pvInformer.Informer().HasSynced,
-		pvcSynced:      pvcInformer.Informer().HasSynced,
-		scSynced:       scInformer.Informer().HasSynced,
-		podSynced:      podInformer.Informer().HasSynced,
-		factory:        factory,
-		podFactory:     podFactory,
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		eventRecorder:  recorder,
 		trackedPVs:     make(map[string]syncInfo),
 		datafluxConfig: &DatafluxConfig{}, // Use default or test-specific config
 		scanBucketImpl: fsb.Scan,          // Inject the fake scan function
 		metricManager:  metrics.NewFakePrometheusMetricsManager(),
+		config: &ScannerConfig{
+			K8SClients: &fakeK8sClients{
+				kubeClient: kubeClient,
+				pvLister:   pvInformer.Lister(),
+				podLister:  podInformer.Lister(),
+				scLister:   scInformer.Lister(),
+				pvcLister:  pvcInformer.Lister(),
+			},
+		},
 	}
 
 	factory.Start(stopCh)
-	podFactory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, s.pvSynced, s.pvcSynced, s.scSynced, s.podSynced) {
+	if !cache.WaitForCacheSync(stopCh, pvInformer.Informer().HasSynced, pvcInformer.Informer().HasSynced, scInformer.Informer().HasSynced, podInformer.Informer().HasSynced) {
 		t.Fatalf("Failed to sync caches")
 	}
 
@@ -291,6 +302,7 @@ func createStorageClass(name string, params map[string]string) *storagev1.Storag
 // createPV is a helper function to create a PersistentVolume object.
 func createPV(name, scName, volumeHandle, driver string, mountOptions []string, annotations map[string]string, volAttributes map[string]string) *v1.PersistentVolume {
 	return &v1.PersistentVolume{
+		TypeMeta:   metav1.TypeMeta{Kind: "PersistentVolume", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: annotations},
 		Spec: v1.PersistentVolumeSpec{
 			StorageClassName: scName,
@@ -606,6 +618,8 @@ func TestSyncPV(t *testing.T) {
 	scName := testSCName
 	bucketName := testBucketName
 	basePV := createPV(pvName, scName, bucketName, csiDriverName, nil, nil, nil)
+	basePVTracked := basePV.DeepCopy()
+	basePVTracked.Labels = map[string]string{profileManagedLabelKey: util.TrueStr}
 	relevantSC := createStorageClass(scName, validSCParams)
 	irrelevantSC := createStorageClass("irrelevant-sc", map[string]string{"some": "param"})
 	irrelevantSC.Labels = nil
@@ -719,9 +733,17 @@ func TestSyncPV(t *testing.T) {
 			expectScanCall: true,
 		},
 		{
-			name:           "Patch Error",
+			name:           "Tracking Label Patch Error",
 			key:            pvName,
 			initialObjects: []runtime.Object{basePV.DeepCopy(), relevantSC},
+			patchErr:       fmt.Errorf("patch failed"),
+			wantErr:        true,
+			expectScanCall: false,
+		},
+		{
+			name:           "Patch Error",
+			key:            pvName,
+			initialObjects: []runtime.Object{basePVTracked.DeepCopy(), relevantSC},
 			bucketI:        scanResult,
 			patchErr:       fmt.Errorf("patch failed"),
 			wantErr:        true,
@@ -1165,7 +1187,7 @@ func TestAddPV(t *testing.T) {
 	scValid := createStorageClass(testSCName, validSCParams)
 	f := newTestFixture(t, pvRelevant, scValid)
 
-	f.scanner.addPV(pvRelevant)
+	f.scanner.AddPV(pvRelevant)
 
 	// Expect the PV to be added to the queue and tracked.
 	if f.scanner.queue.Len() != 1 {
@@ -1173,7 +1195,7 @@ func TestAddPV(t *testing.T) {
 	}
 
 	// Adding the same PV again should not change the queue length (it's a set).
-	f.scanner.addPV(pvRelevant)
+	f.scanner.AddPV(pvRelevant)
 	if f.scanner.queue.Len() != 1 {
 		t.Errorf("Queue length after duplicate add: got %d, want 1", f.scanner.queue.Len())
 	}
@@ -1190,7 +1212,7 @@ func TestDeletePV(t *testing.T) {
 	f.scanner.queue.Add(queueKey)
 	f.scanner.trackedPVs[pvName] = syncInfo{}
 
-	f.scanner.deletePV(pv)
+	f.scanner.DeletePV(pv)
 
 	// PV should no longer be in the tracked set.
 	if _, exists := f.scanner.trackedPVs[pvName]; exists {
@@ -1208,7 +1230,7 @@ func TestAddPod(t *testing.T) {
 	pod := createPod(testPodName, testNamespace, nil, podLabels, false)
 	f := newTestFixture(t, pod)
 
-	f.scanner.addPod(pod)
+	f.scanner.AddPod(pod)
 
 	if f.scanner.queue.Len() != 1 {
 		t.Errorf("Queue length: got %d, want 1", f.scanner.queue.Len())
@@ -1228,7 +1250,7 @@ func TestDeletePod(t *testing.T) {
 	f.scanner.queue.AddRateLimited(queueKey)
 	// NumRequeues check can be flaky with fake rate limiters, so we don't assert on it.
 
-	f.scanner.deletePod(pod)
+	f.scanner.DeletePod(pod)
 
 	// After deletePod, the key should be "forgotten", resetting its rate limiting.
 	if f.scanner.queue.NumRequeues(queueKey) != 0 {
@@ -1399,6 +1421,57 @@ func TestPatchPVAnnotations(t *testing.T) {
 	expectedAnnotations := map[string]string{newAnnotationKey: newAnnotationVal}
 	if !reflect.DeepEqual(updatedPV.Annotations, expectedAnnotations) {
 		t.Errorf("Annotations: got %v, want %v", updatedPV.Annotations, expectedAnnotations)
+	}
+}
+
+func TestEnsurePVTrackingLabel(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialLabels  map[string]string
+		expectedLabels map[string]string
+	}{
+		{
+			name:           "No Labels",
+			initialLabels:  nil,
+			expectedLabels: map[string]string{profileManagedLabelKey: util.TrueStr},
+		},
+		{
+			name:           "Labels exist, but not tracked",
+			initialLabels:  map[string]string{"env": "dev"},
+			expectedLabels: map[string]string{"env": "dev", profileManagedLabelKey: util.TrueStr},
+		},
+		{
+			name:           "Tracked label explicitly FALSE",
+			initialLabels:  map[string]string{profileManagedLabelKey: util.FalseStr},
+			expectedLabels: map[string]string{profileManagedLabelKey: util.FalseStr},
+		},
+		{
+			name:           "Tracked label explicitly TRUE (no-op expected)",
+			initialLabels:  map[string]string{profileManagedLabelKey: util.TrueStr},
+			expectedLabels: map[string]string{profileManagedLabelKey: util.TrueStr},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pv := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
+			pv.Labels = tc.initialLabels
+			f := newTestFixture(t, pv)
+
+			if err := f.scanner.ensurePVTrackingLabel(context.Background(), pv); err != nil {
+				t.Fatalf("ensurePVTrackingLabel() returned error: %v", err)
+			}
+
+			// Get the updated PV.
+			updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), testPVName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("Failed to get PV: %v", err)
+			}
+
+			if !reflect.DeepEqual(updatedPV.Labels, tc.expectedLabels) {
+				t.Errorf("Labels: got %v, want %v", updatedPV.Labels, tc.expectedLabels)
+			}
+		})
 	}
 }
 

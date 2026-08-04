@@ -351,21 +351,21 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 	return args, nil
 }
 
-// parseRequestArguments parses arguments from given NodePublishVolumeRequest.
-func parseRequestArguments(req *csi.NodePublishVolumeRequest, vc map[string]string) (requestArgs, error) {
-	bucketName := util.ParseVolumeID(req.GetVolumeId())
+// parseRequestArguments parses volume arguments from the given CSI request parameters.
+func parseRequestArguments(volumeID string, readOnly bool, volumeCapability *csi.VolumeCapability, vc map[string]string) (requestArgs, error) {
+	bucketName := util.ParseVolumeID(volumeID)
 	if vc[VolumeContextKeyEphemeral] == util.TrueStr {
 		bucketName = vc[VolumeContextKeyBucketName]
 		if len(bucketName) == 0 {
-			return requestArgs{}, fmt.Errorf("NodePublishVolume VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
+			return requestArgs{}, fmt.Errorf("VolumeContext %q must be provided for ephemeral storage", VolumeContextKeyBucketName)
 		}
 	}
 	fuseMountOptions := []string{}
-	if req.GetReadonly() {
+	if readOnly {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"ro"})
 	}
 
-	if capMount := req.GetVolumeCapability().GetMount(); capMount != nil {
+	if capMount := volumeCapability.GetMount(); capMount != nil {
 		// Delegate fsGroup to CSI Driver
 		// Set gid, file-mode, and dir-mode for gcsfuse.
 		// Allow users to overwrite these flags.
@@ -487,10 +487,9 @@ func putExitFile(pod *corev1.Pod, targetPath string) error {
 }
 
 func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (codes.Code, error) {
-	code := codes.Internal
 	cs, err := getSidecarContainerStatus(isInitContainer, pod)
 	if err != nil {
-		return code, err
+		return codes.Internal, err
 	}
 
 	// the sidecar container has not started, skip the check
@@ -500,12 +499,21 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 
 	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, false)
 	if err != nil {
-		return code, fmt.Errorf("failed to get emptyDir path: %w", err)
+		return codes.Internal, fmt.Errorf("failed to get emptyDir path: %w", err)
 	}
 
-	errorFilePath := emptyDirBasePath + "/error"
+	errorFilePath := filepath.Join(emptyDirBasePath, util.ErrorFileName)
 	klog.V(4).Infof("[Pod %v/%v] checking sidecar container error status", pod.Namespace, pod.Name)
 
+	errMsg, err := extractErrorMsgFromGcsFuseErrorFile(errorFilePath)
+	if err != nil {
+		return codes.Internal, err
+	}
+
+	return extractErrorFromGcsFuseErrorFile(errMsg)
+}
+
+func extractErrorMsgFromGcsFuseErrorFile(errorFilePath string) ([]byte, error) {
 	parentDir := filepath.Dir(errorFilePath)
 
 	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
@@ -514,18 +522,18 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return codes.OK, nil
+			return nil, nil
 		}
-		return code, fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
+		return nil, fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
 	}
 	defer unix.Close(parentFd)
 
 	fd, err := unix.Openat(parentFd, filepath.Base(errorFilePath), unix.O_RDONLY|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return codes.OK, nil
+			return nil, nil
 		}
-		return code, fmt.Errorf("failed to open error file %q: %w", errorFilePath, err)
+		return nil, fmt.Errorf("failed to open error file %q: %w", errorFilePath, err)
 	}
 
 	f := os.NewFile(uintptr(fd), errorFilePath)
@@ -533,10 +541,10 @@ func checkGcsFuseErr(isInitContainer bool, pod *corev1.Pod, targetPath string) (
 
 	errMsg, err := io.ReadAll(f)
 	if err != nil {
-		return code, fmt.Errorf("failed to read error file %q: %w", errorFilePath, err)
+		return nil, fmt.Errorf("failed to read error file %q: %w", errorFilePath, err)
 	}
 
-	return extractErrorFromGcsFuseErrorFile(errMsg)
+	return errMsg, nil
 }
 
 func extractErrorFromGcsFuseErrorFile(errMsg []byte) (codes.Code, error) {

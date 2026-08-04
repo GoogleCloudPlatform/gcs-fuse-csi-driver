@@ -23,6 +23,7 @@ import (
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
 )
@@ -30,7 +31,7 @@ import (
 // Defines Non blocking GRPC server interfaces.
 type NonBlockingGRPCServer interface {
 	// Start services at the endpoint
-	Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer)
+	Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer, ms mounter.MounterServer)
 	// Waits for the service to stop
 	Wait()
 	// Stops the service gracefully
@@ -49,10 +50,10 @@ type nonBlockingGRPCServer struct {
 	server *grpc.Server
 }
 
-func (s *nonBlockingGRPCServer) Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) {
+func (s *nonBlockingGRPCServer) Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer, ms mounter.MounterServer) {
 	s.wg.Add(1)
 
-	go s.serve(endpoint, ids, cs, ns)
+	go s.serve(endpoint, ids, cs, ns, ms)
 }
 
 func (s *nonBlockingGRPCServer) Wait() {
@@ -67,7 +68,7 @@ func (s *nonBlockingGRPCServer) ForceStop() {
 	s.server.Stop()
 }
 
-func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) {
+func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer, ms mounter.MounterServer) {
 	scheme, addr, err := util.ParseEndpoint(endpoint, true)
 	if err != nil {
 		klog.Fatalf("failed to parse endpoint %v", err)
@@ -93,6 +94,9 @@ func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, c
 	}
 	if ns != nil {
 		csi.RegisterNodeServer(server, ns)
+	}
+	if ms != nil {
+		mounter.RegisterMounterServer(server, ms)
 	}
 
 	klog.Infof("Listening for connections on address: %#v", listener.Addr())

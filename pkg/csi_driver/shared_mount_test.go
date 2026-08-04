@@ -119,7 +119,7 @@ func TestWaitForMounterServer(t *testing.T) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	validSocketFile := filepath.Join(mounterSocketDirValid, mounterPodSocketFile)
+	validSocketFile := filepath.Join(mounterSocketDirValid, MounterPodSocketFile)
 	if file, err := os.Create(validSocketFile); err != nil {
 		t.Fatalf("failed to create socket file: %v", err)
 	} else {
@@ -251,6 +251,84 @@ func TestCreateMounterPodName(t *testing.T) {
 	}
 }
 
+func TestMounterPodImage(t *testing.T) {
+	testCases := []struct {
+		name        string
+		pod         *corev1.Pod
+		expected    string
+		expectError bool
+	}{
+		{
+			name:        "nil pod returns error",
+			pod:         nil,
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name: "pod without mounter container returns error",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "other-container",
+							Image: "nginx:latest",
+						},
+					},
+				},
+			},
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name: "pod with mounter container returns container image",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  util.MounterPodNamePrefix + "-123",
+							Image: "gcr.io/gke-release/gcsfuse-csi-mounter:v1.0.0",
+						},
+					},
+				},
+			},
+			expected:    "gcr.io/gke-release/gcsfuse-csi-mounter:v1.0.0",
+			expectError: false,
+		},
+		{
+			name: "pod with multiple containers returns correct mounter container image",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "sidecar",
+							Image: "sidecar-image:v1",
+						},
+						{
+							Name:  util.MounterPodNamePrefix + "-abc",
+							Image: "mounter-image:v2",
+						},
+					},
+				},
+			},
+			expected:    "mounter-image:v2",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mounterPodImage(tc.pod)
+			if (err != nil) != tc.expectError {
+				t.Errorf("mounterPodImage() error = %v, expectError %v", err, tc.expectError)
+				return
+			}
+			if got != tc.expected {
+				t.Errorf("mounterPodImage() = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
 func sortVolumes(volumes []corev1.Volume) {
 	sort.Slice(volumes, func(i, j int) bool {
 		return volumes[i].Name < volumes[j].Name
@@ -272,12 +350,12 @@ func TestCreateMounterPodSpec(t *testing.T) {
 	expectedVolumeMounts := []corev1.VolumeMount{
 		{
 			Name:             mounterPodMountDir,
-			MountPath:        util.KubeletDir,
+			MountPath:        util.KubeletPluginsGCSFuseDir,
 			MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
 		},
 		{
 			Name:      util.SidecarContainerTmpVolumeName,
-			MountPath: util.SidecarContainerTmpVolumePath,
+			MountPath: webhook.SidecarContainerTmpVolumeMountPath,
 		},
 		{
 			Name:      webhook.SidecarContainerBufferVolumeName,
@@ -294,7 +372,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 		Name: mounterPodMountDir,
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				Path: util.KubeletDir,
+				Path: util.KubeletPluginsGCSFuseDir,
 				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 			},
 		},
@@ -348,6 +426,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -403,6 +482,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -459,6 +539,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -507,6 +588,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -554,6 +636,7 @@ func TestCreateMounterPodSpec(t *testing.T) {
 							Name:            util.MounterPodNamePrefix,
 							Image:           "gcr.io/my-project/my-image:v1.0.0",
 							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: ptr.To(true),
 							},
@@ -571,6 +654,108 @@ func TestCreateMounterPodSpec(t *testing.T) {
 						kubeletHostPathVolume,
 						webhook.EphemeralFileCacheVolume,
 						webhook.RamFileCacheVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "hostNetworkEnabled true - should set hostNetwork, saToken volume and volumeMount",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				hostNetworkEnabled: true,
+				tokenAudience:      "test-audience",
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					HostNetwork:        true,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources: defaultResources,
+							VolumeMounts: append(expectedVolumeMounts,
+								webhook.SATokenVolumeMount,
+							),
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+						webhook.GetSATokenVolume("test-audience"),
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "custom dnsPolicy specified in config - should set DNSPolicy on pod spec",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				dnsPolicy:          corev1.DNSClusterFirstWithHostNet,
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					PriorityClassName:  mounterPodPriorityClass,
+					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
 					},
 					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
 				},
@@ -605,42 +790,43 @@ func TestCreateMounterPod(t *testing.T) {
 		image:     testImage,
 	}
 
-	timeNow := metav1.Now()
-
-	makePod := func(deletionTimestamp *metav1.Time) *corev1.Pod {
-		p := createMounterPodSpec(baseConfig)
-		p.ObjectMeta.DeletionTimestamp = deletionTimestamp
-		p.ResourceVersion = "1" // Needed for some fake client operations
-		return p
-	}
-
 	tests := []struct {
-		name         string
-		initialState []runtime.Object
-		getErr       error
-		createErr    error
-		wantErr      bool
-		wantCode     codes.Code
-		wantCreates  int
+		name        string
+		getErr      error
+		createErr   error
+		wantErr     bool
+		wantCode    codes.Code
+		wantCreates int
+		setupFake   func() *clientset.FakeClientset
 	}{
 		{
-			name:         "pod does not exist - create pod successfully",
-			initialState: []runtime.Object{},
-			wantErr:      false,
-			wantCreates:  1,
+			name:        "pod does not exist - create pod successfully",
+			wantErr:     false,
+			wantCreates: 1,
+			getErr:      k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 		},
 		{
-			name: "pod exists - no-op success",
-			initialState: []runtime.Object{
-				makePod(nil),
-			},
+			name:        "pod exists - no-op success",
 			wantErr:     false,
 			wantCreates: 0,
 		},
 		{
 			name: "pod exists with deletion timestamp - return error",
-			initialState: []runtime.Object{
-				makePod(&timeNow),
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.podConfig = &clientset.FakePodConfig{
+					NodeName: testNodeID,
+					PodStatus: &corev1.PodStatus{
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodScheduled,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+					DeletionTimestamp: &metav1.Time{},
+				}
+				return setupFakeBase(cfg)
 			},
 			wantErr:     true,
 			wantCode:    codes.Aborted,
@@ -656,24 +842,30 @@ func TestCreateMounterPod(t *testing.T) {
 			name:        "pod create fails with error - return error",
 			createErr:   errors.New("simulated create failed"),
 			wantErr:     true,
+			getErr:      k8serrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			wantCreates: 1, // Create was attempted
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// NewFakeClientset now initializes the standard fake client
-			testClientset := clientset.NewFakeClientset(tc.initialState...)
+			var testClientset *clientset.FakeClientset
+			if tc.setupFake != nil {
+				testClientset = tc.setupFake()
+			} else {
+				testClientset = clientset.NewFakeClientset()
+			}
 			fakeK8sClient := testClientset.K8sClient().(*fake.Clientset)
 
 			// Inject errors using reactors on the standard fake client
 			if tc.getErr != nil {
-				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, tc.getErr
-				})
+				testClientset.GetPodErr = tc.getErr
 			}
 			if tc.createErr != nil {
 				fakeK8sClient.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					if k8serrors.IsNotFound(testClientset.GetPodErr) {
+						testClientset.GetPodErr = nil // Clear any previous GetPodErr to simulate successful retrieval after creation
+					}
 					return true, nil, tc.createErr
 				})
 			}
@@ -1085,7 +1277,7 @@ func TestDeleteMounterPod(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond) // Short timeout for testing
 			defer cancel()
 
-			testClientset := clientset.NewFakeClientset(tc.initialObjects...)
+			testClientset := clientset.NewFakeClientset()
 			fakeK8sClient := testClientset.K8sClient().(*fake.Clientset)
 
 			deleteCalled := false
@@ -1306,7 +1498,7 @@ func TestMounterPodVolumes(t *testing.T) {
 		Name: mounterPodMountDir,
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				Path: util.KubeletDir,
+				Path: util.KubeletPluginsGCSFuseDir,
 				Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 			},
 		},

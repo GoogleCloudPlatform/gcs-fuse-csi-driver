@@ -42,6 +42,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -75,7 +76,6 @@ var (
 	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 	universeDomain                 = flag.String("universe-domain", "googleapis.com", "The universe domain. The default value is googleapis.com.")
-	mounterPodImage                = flag.String("mounter-pod-image", "", "The image for the mounter pod.")
 
 	// GCSFuse kernel params feature.
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
@@ -97,7 +97,7 @@ var (
 
 	// Leader election flags.
 	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
-	leaderElectionNamespace          = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Should be set in deployments to use the pod's namespace.")
+	driverNamespace                  = flag.String("driver-namespace", "gcs-fuse-csi-driver", "The namespace where the driver resources are deployed.")
 	leaderElectionLeaseDuration      = flag.Duration("leader-election-lease-duration", 15*time.Second, "Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.")
 	leaderElectionRenewDeadline      = flag.Duration("leader-election-renew-deadline", 10*time.Second, "Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.")
 	leaderElectionRetryPeriod        = flag.Duration("leader-election-retry-period", 5*time.Second, "Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.")
@@ -194,7 +194,7 @@ func main() {
 		}()
 	}
 
-	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController)
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec, *runController, *kubeAPIBurst, *kubeAPIQPS, *enableGCSFuseProfiles, *enableSharedMount)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
@@ -221,14 +221,11 @@ func main() {
 		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
 			Enabled: *enableGCSFuseProfiles,
 			ScannerConfig: &profiles.ScannerConfig{
-				KubeAPIQPS:                       *kubeAPIQPS,
-				KubeAPIBurst:                     *kubeAPIBurst,
-				ResyncPeriod:                     time.Duration(*informerResyncDurationSec) * time.Second,
-				KubeConfigPath:                   *kubeconfigPath,
+				K8SClients:                       clientset,
 				CloudConfigPath:                  *cloudConfigFilePath,
 				RateLimiter:                      workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
 				LeaderElection:                   *leaderElection,
-				LeaderElectionNamespace:          *leaderElectionNamespace,
+				LeaderElectionNamespace:          *driverNamespace,
 				LeaderElectionLeaseDuration:      *leaderElectionLeaseDuration,
 				LeaderElectionRenewDeadline:      *leaderElectionRenewDeadline,
 				LeaderElectionRetryPeriod:        *leaderElectionRetryPeriod,
@@ -251,8 +248,8 @@ func main() {
 		},
 		SharedMountOptions: &driver.SharedMountOptions{
 			Enabled:         *enableSharedMount,
-			MounterPodImage: *mounterPodImage,
 			FuseSocketDir:   *fuseSocketDir,
+			DriverNamespace: *driverNamespace,
 			EmptyDirBasePath: func(podUID string) string {
 				return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			},
@@ -261,18 +258,21 @@ func main() {
 
 	var mounter mount.Interface
 	var mm metrics.Manager
+
+	if *enableGCSFuseProfiles {
+		clientset.ConfigureSCLister(ctx)
+	}
+
 	if *runNode {
 		if *nodeID == "" {
 			klog.Fatalf("NodeID cannot be empty for node service")
 		}
 
-		clientset.ConfigurePodLister(ctx, *nodeID)
+		clientset.ConfigurePodLister(ctx, *nodeID, nil)
 		clientset.ConfigureNodeLister(ctx, *nodeID)
 
-		if featureOptions.FeatureGCSFuseProfiles.Enabled {
-			// Curently, only the gcsfuse profiles feature actually uses these listers.
-			clientset.ConfigureSCLister(ctx)
-			clientset.ConfigurePVLister(ctx)
+		if *enableGCSFuseProfiles {
+			clientset.ConfigurePVLister(ctx, nil)
 		}
 
 		mounter, err = csimounter.New("", *fuseSocketDir)
@@ -284,15 +284,32 @@ func main() {
 			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport)
 			mm.InitializeHTTPHandler()
 		}
-	}
-
-	if *runController && *enableSharedMount {
-		clientset.ConfigurePVLister(ctx)
-		clientset.ConfigurePVCLister(ctx)
-		clientset.ConfigurePodTemplateLister(ctx)
-		clientset.ConfigurePodLister(ctx, "")
-		if featureOptions.FeatureGCSFuseProfiles.Enabled {
-			clientset.ConfigureSCLister(ctx)
+	} else if *runController {
+		var pvEventHandlerFuncs *cache.ResourceEventHandlerFuncs
+		var podEventHandlerFuncs *cache.ResourceEventHandlerFuncs
+		if *enableGCSFuseProfiles {
+			s, err := profiles.NewScanner(featureOptions.FeatureGCSFuseProfiles.ScannerConfig)
+			if err != nil {
+				klog.Fatalf("Failed to initialize scanner: %v", err)
+			}
+			pvEventHandlerFuncs = &cache.ResourceEventHandlerFuncs{
+				AddFunc:    s.AddPV,
+				DeleteFunc: s.DeletePV,
+			}
+			podEventHandlerFuncs = &cache.ResourceEventHandlerFuncs{
+				AddFunc:    s.AddPod,
+				DeleteFunc: s.DeletePod,
+			}
+			featureOptions.FeatureGCSFuseProfiles.Scanner = s
+		}
+		if *enableSharedMount || *enableGCSFuseProfiles {
+			clientset.ConfigurePVLister(ctx, pvEventHandlerFuncs)
+			clientset.ConfigurePodLister(ctx, "", podEventHandlerFuncs)
+			clientset.ConfigurePVCLister(ctx)
+		}
+		if *enableSharedMount {
+			clientset.ConfigurePodTemplateLister(ctx)
+			clientset.ConfigureConfigMapLister(ctx, *driverNamespace)
 		}
 	}
 

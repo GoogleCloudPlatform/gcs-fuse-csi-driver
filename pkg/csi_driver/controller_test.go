@@ -63,16 +63,16 @@ func initTestController(t *testing.T, clientset clientset.Interface) csi.Control
 }
 
 type fakeClientsetConfig struct {
-	existingObjects []runtime.Object
-	pvConfig        *clientset.FakePVConfig
-	pvcConfig       *clientset.FakePVCConfig
-	ptConfig        *clientset.FakePodTemplateConfig
-	podConfig       *clientset.FakePodConfig
-	scConfig        *clientset.FakeSCConfig
+	pvConfig  *clientset.FakePVConfig
+	pvcConfig *clientset.FakePVCConfig
+	ptConfig  *clientset.FakePodTemplateConfig
+	podConfig *clientset.FakePodConfig
+	scConfig  *clientset.FakeSCConfig
+	cmConfig  *clientset.FakeConfigMapConfig
 }
 
 func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
-	fc := clientset.NewFakeClientset(cfg.existingObjects...)
+	fc := clientset.NewFakeClientset()
 	if cfg.pvConfig != nil {
 		fc.CreatePV(*cfg.pvConfig)
 	}
@@ -87,6 +87,9 @@ func setupFakeBase(cfg fakeClientsetConfig) *clientset.FakeClientset {
 	}
 	if cfg.scConfig != nil {
 		fc.CreateSC(*cfg.scConfig)
+	}
+	if cfg.cmConfig != nil {
+		fc.CreateConfigMap(*cfg.cmConfig)
 	}
 	return fc
 }
@@ -111,6 +114,13 @@ func getDefaultFakeClientsetConfig() fakeClientsetConfig {
 		ptConfig: &clientset.FakePodTemplateConfig{
 			Name:      testMounterPodTemplate,
 			Namespace: testNamespace,
+		},
+		cmConfig: &clientset.FakeConfigMapConfig{
+			Name:      util.SidecarImageConfigMapName,
+			Namespace: "gcs-fuse-csi-driver",
+			Data: map[string]string{
+				util.SidecarImageConfigMapKey: testImage,
+			},
 		},
 	}
 }
@@ -145,7 +155,7 @@ func TestCreateVolume(t *testing.T) {
 			},
 			resp: &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
-					CapacityBytes: 1 * util.Mb,
+					CapacityBytes: 1 * util.MiB,
 					VolumeId:      testVolumeID,
 				},
 			},
@@ -241,23 +251,6 @@ func TestControllerPublishVolume(t *testing.T) {
 	oldInterval := mounterPodPollInterval
 	mounterPodPollInterval = 10 * time.Millisecond
 	defer func() { mounterPodPollInterval = oldInterval }()
-
-	timeNow := metav1.Now()
-
-	// Helper to create a mounter pod for initial state
-	makeMounterPod := func(config *mounterPodConfig, deletionTimestamp *metav1.Time) *corev1.Pod {
-		p := createMounterPodSpec(config)
-		p.ObjectMeta.DeletionTimestamp = deletionTimestamp
-		p.ResourceVersion = "1"
-		return p
-	}
-
-	defaultMounterPodConfig := &mounterPodConfig{
-		podName:   createMounterPodName(testNodeID, testVolumeID),
-		namespace: testNamespace,
-		nodeID:    testNodeID,
-		image:     testImage,
-	}
 
 	cases := []struct {
 		name               string
@@ -382,6 +375,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 		},
 		{
@@ -424,6 +418,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				if len(pod.Spec.Containers) != 1 {
@@ -488,6 +483,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				if len(pod.Spec.Containers) != 1 {
@@ -505,6 +501,188 @@ func TestControllerPublishVolume(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "sharedMount true - sidecar image from ConfigMap - should create pod with image from ConfigMap",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				fakeClient := setupFakeBase(cfg)
+				fakeClient.CreateConfigMap(clientset.FakeConfigMapConfig{
+					Name:      util.SidecarImageConfigMapName,
+					Namespace: "gcs-fuse-csi-driver",
+					Data: map[string]string{
+						util.SidecarImageConfigMapKey: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-from-configmap",
+					},
+				})
+				return fakeClient
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if len(pod.Spec.Containers) != 1 {
+					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
+				}
+				container := pod.Spec.Containers[0]
+				expectedImage := "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0-from-configmap"
+				if container.Image != expectedImage {
+					t.Errorf("Expected image %q, got %q", expectedImage, container.Image)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - mounter pod with dnsPolicy override - should create pod with overridden dnsPolicy",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.ptConfig.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if pod.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+					t.Errorf("Expected DNSPolicy %q, got %q", corev1.DNSClusterFirstWithHostNet, pod.Spec.DNSPolicy)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - hostNetwork true with GKE IDP - should set SA token volume with identity pool audience",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":                     "true",
+					util.VolumeContextKeyPVName:       testPV,
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "https://container.googleapis.com/v1/projects/my-proj/locations/us-central1/clusters/my-cluster",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				wantVolume := webhook.GetSATokenVolume("fake.identity.pool")
+				found := false
+				for _, v := range pod.Spec.Volumes {
+					if v.Name == wantVolume.Name {
+						found = true
+						if !reflect.DeepEqual(v, wantVolume) {
+							t.Errorf("SA token volume mismatch.\nGot: %+v\nWant: %+v", v, wantVolume)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("SA token volume %q not found in pod volumes", wantVolume.Name)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - hostNetwork true with custom IDP - should set SA token volume with custom IDP audience",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":                     "true",
+					util.VolumeContextKeyPVName:       testPV,
+					VolumeContextKeyHostNetworkPodKSA: "true",
+					VolumeContextKeyIdentityProvider:  "https://custom.identity.provider",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				wantVolume := webhook.GetSATokenVolume("https://custom.identity.provider")
+				found := false
+				for _, v := range pod.Spec.Volumes {
+					if v.Name == wantVolume.Name {
+						found = true
+						if !reflect.DeepEqual(v, wantVolume) {
+							t.Errorf("SA token volume mismatch.\nGot: %+v\nWant: %+v", v, wantVolume)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("SA token volume %q not found in pod volumes", wantVolume.Name)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - hostNetwork true with empty IDP - should default SA token volume with identity pool audience",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":                     "true",
+					util.VolumeContextKeyPVName:       testPV,
+					VolumeContextKeyHostNetworkPodKSA: "true",
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				return setupFakeBase(getDefaultFakeClientsetConfig())
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				wantVolume := webhook.GetSATokenVolume("fake.identity.pool")
+				found := false
+				for _, v := range pod.Spec.Volumes {
+					if v.Name == wantVolume.Name {
+						found = true
+						if !reflect.DeepEqual(v, wantVolume) {
+							t.Errorf("SA token volume mismatch.\nGot: %+v\nWant: %+v", v, wantVolume)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("SA token volume %q not found in pod volumes", wantVolume.Name)
+				}
+			},
+		},
+
 		{
 			name: "sharedMount true - missing mounter pod template annotation - should return error",
 			req: &csi.ControllerPublishVolumeRequest{
@@ -576,9 +754,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				existingPod := makeMounterPod(defaultMounterPodConfig, nil)
 				cfg := getDefaultFakeClientsetConfig()
-				cfg.existingObjects = []runtime.Object{existingPod}
 				cfg.podConfig = &clientset.FakePodConfig{
 					NodeName: testNodeID,
 					PodStatus: &corev1.PodStatus{
@@ -610,9 +786,19 @@ func TestControllerPublishVolume(t *testing.T) {
 				},
 			},
 			setupFake: func() *clientset.FakeClientset {
-				existingPod := makeMounterPod(defaultMounterPodConfig, &timeNow)
 				cfg := getDefaultFakeClientsetConfig()
-				cfg.existingObjects = []runtime.Object{existingPod}
+				cfg.podConfig = &clientset.FakePodConfig{
+					NodeName: testNodeID,
+					PodStatus: &corev1.PodStatus{
+						Conditions: []corev1.PodCondition{
+							{
+								Type:   corev1.PodScheduled,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+					DeletionTimestamp: &metav1.Time{},
+				}
 				return setupFakeBase(cfg)
 			},
 			expectErr:     true,
@@ -650,6 +836,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			setupFake: func() *clientset.FakeClientset {
 				return setupFakeBase(getDefaultFakeClientsetConfig())
 			},
+			podGetErr:     apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			podCreateErr:  errors.New("simulated create error"),
 			expectErr:     true,
 			expectErrCode: codes.Internal,
@@ -693,6 +880,7 @@ func TestControllerPublishVolume(t *testing.T) {
 				PublishContextKeyMounterPodNamespace: testNamespace,
 				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
 			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
 			expectErr: false,
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				// The profile volumes must be injected if profilesEnabled was true
@@ -719,9 +907,7 @@ func TestControllerPublishVolume(t *testing.T) {
 			var createdPod *corev1.Pod
 
 			if test.podGetErr != nil {
-				fakeK8sClient.PrependReactor("get", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, test.podGetErr
-				})
+				fc.GetPodErr = test.podGetErr
 			}
 			if test.podCreateErr != nil {
 				fakeK8sClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
@@ -749,6 +935,9 @@ func TestControllerPublishVolume(t *testing.T) {
 						PodStatus: &pod.Status,
 					})
 
+					if apierrors.IsNotFound(fc.GetPodErr) {
+						fc.GetPodErr = nil // Clear any previous GetPodErr to simulate successful retrieval after creation
+					}
 					return false, pod, nil // Return false to allow default fake client handling to store the object
 				})
 			}

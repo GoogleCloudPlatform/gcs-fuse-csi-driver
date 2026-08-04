@@ -396,6 +396,7 @@ github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util/goclientobjectcommands
 github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook
+github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter
 # github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 ## explicit; go 1.20
 github.com/gorilla/websocket
