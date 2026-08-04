@@ -1141,12 +1141,10 @@ func GKEClusterVersion() *version.Version {
 
 // GKEClusterVersionAtLeast returns true if the GKE cluster version is at least minVersionStr.
 func GKEClusterVersionAtLeast(minVersionStr string) bool {
-	vStr := GetGKEClusterVersion()
-	if vStr == "" {
+	v := GKEClusterVersion()
+	if v == nil {
 		return true
 	}
-	v, err := version.ParseGeneric(vStr)
-	framework.ExpectNoError(err, "Failed to parse GKE Cluster version string %s into version.Version", vStr)
 
 	minV, err := version.ParseGeneric(minVersionStr)
 	framework.ExpectNoError(err, "Failed to parse minimum GKE Cluster version string %s into version.Version", minVersionStr)
