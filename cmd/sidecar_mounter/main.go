@@ -83,17 +83,19 @@ func main() {
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
-		if mc.EnableCloudProfilerForSidecar {
-			cfg := profiler.Config{
-				Service: "gke-gcsfuse-sidecar",
-			}
-			if err := profiler.Start(cfg); err != nil {
-				klog.Errorf("Errored while starting cloud profiler, got %v", err)
-			} else {
-				klog.Infof("Running cloud profiler on %s", cfg.Service)
-			}
-		}
 		if mc != nil {
+			mc.EnsureErrWriter()
+			if mc.EnableCloudProfilerForSidecar {
+				cfg := profiler.Config{
+					Service: "gke-gcsfuse-sidecar",
+				}
+				if err := profiler.Start(cfg); err != nil {
+					klog.Errorf("Errored while starting cloud profiler, got %v", err)
+				} else {
+					klog.Infof("Running cloud profiler on %s", cfg.Service)
+				}
+			}
+
 			if mc.EnableSidecarBucketAccessCheck {
 				mc.SidecarRetryConfig.Cap = *storageServiceAndBucketAccessCap
 				mc.SidecarRetryConfig.Steps = *storageServiceAndBucketAccessSteps
@@ -105,6 +107,11 @@ func main() {
 					klog.Fatalf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %v", err)
 				}
 			}
+			// Clean up any errors raised until this point due to transient metadata and storage service creation issues.
+			if err := mc.ErrWriter.Clean(); err != nil {
+				klog.Warningf("failed to cleanup error file: %v", err)
+			}
+
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}

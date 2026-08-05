@@ -28,6 +28,7 @@ import (
 type stderrWriterInterface interface {
 	io.Writer
 	WriteMsg(errMsg string)
+	Clean() error
 }
 
 type stderrWriter struct {
@@ -36,6 +37,22 @@ type stderrWriter struct {
 
 func NewErrorWriter(errorFile string) stderrWriterInterface {
 	return &stderrWriter{errorFile: errorFile}
+}
+
+func (w *stderrWriter) Clean() error {
+	if w.errorFile != "" {
+		err := os.Remove(w.errorFile)
+		if os.IsNotExist(err) {
+			// File does not exist.
+			klog.V(4).Infof("File '%s' not found. No action needed.", w.errorFile)
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("failed to clean up error file %q: %w", w.errorFile, err)
+		}
+		klog.V(4).Infof("Cleaned up error file %q", w.errorFile)
+	}
+	return nil
 }
 
 // Write writes the error message to a given local file.
