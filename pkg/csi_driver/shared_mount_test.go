@@ -180,13 +180,77 @@ func TestWaitForMounterServer(t *testing.T) {
 			expectErr:    true,
 			expectedCode: codes.DeadlineExceeded,
 		},
+		{
+			name: "pod running but container oom killed - should return resource exhausted",
+			podStatus: &corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: util.MounterPodNamePrefix,
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 137,
+								Reason:   "OOMKilled",
+							},
+						},
+					},
+				},
+			},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.ResourceExhausted,
+		},
+		{
+			name: "pod running but container restarted due to oom - should return resource exhausted",
+			podStatus: &corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name:         util.MounterPodNamePrefix,
+						RestartCount: 1,
+						LastTerminationState: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 137,
+								Reason:   "OOMKilled",
+							},
+						},
+					},
+				},
+			},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.ResourceExhausted,
+		},
+		{
+			name: "pod running but container terminated with error - should return internal",
+			podStatus: &corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: util.MounterPodNamePrefix,
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 1,
+								Reason:   "Error",
+							},
+						},
+					},
+				},
+			},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.Internal,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fc := clientset.NewFakeClientset()
 			if tc.podStatus != nil {
-				fc.CreatePod(clientset.FakePodConfig{PodStatus: tc.podStatus})
+				fc.CreatePod(clientset.FakePodConfig{PodStatus: tc.podStatus, IsMounterPod: true})
 			}
 			if tc.getPodErr != nil {
 				fc.GetPodErr = tc.getPodErr

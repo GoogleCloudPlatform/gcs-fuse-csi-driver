@@ -2546,6 +2546,90 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			expectErrCode:    codes.NotFound,
 		},
 		{
+			name: "mounter pod container oom killed - should return ResourceExhausted error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{
+						Phase: corev1.PodRunning,
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: util.MounterPodNamePrefix,
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 137,
+										Reason:   "OOMKilled",
+									},
+								},
+							},
+						},
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.ResourceExhausted,
+		},
+		{
+			name: "mounter pod container crashed - should return Internal error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{
+						Phase: corev1.PodRunning,
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: util.MounterPodNamePrefix,
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 1,
+										Reason:   "Error",
+									},
+								},
+							},
+						},
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.Internal,
+		},
+		{
 			name: "target path already mounted - should return early success",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
@@ -3573,5 +3657,76 @@ func TestNodeStageVolumeCleanupStagingPathOnFailure(t *testing.T) {
 	// Verify that the directory was physically removed by mount.CleanupMountPoint to prevent leakage.
 	if _, err := os.Stat(stagingPath); !os.IsNotExist(err) {
 		t.Errorf("Expected staging path directory %q to be deleted to prevent leakage, but it still exists", stagingPath)
+	}
+}
+
+func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
+	t.Parallel()
+
+	stagingPath, cleanup := setupTestStagingPath(t)
+	defer cleanup()
+	nodeID := "test-node"
+	volID := testVolumeID
+	podName := createMounterPodName(nodeID, volID)
+
+	kubeletDir := t.TempDir()
+	mounterSocketDirValid := filepath.Join(kubeletDir, "pods", podName, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	validSocketFile := filepath.Join(mounterSocketDirValid, MounterPodSocketFile)
+
+	if f, err := os.Create(validSocketFile); err != nil {
+		t.Fatalf("failed to create socket file: %v", err)
+	} else {
+		f.Close()
+	}
+
+	fakeClientset := clientset.NewFakeClientset()
+	fakeClientset.CreateNode(clientset.FakeNodeConfig{
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+			},
+		},
+	})
+	fakeClientset.CreatePod(clientset.FakePodConfig{
+		Name:         podName,
+		Namespace:    "test-ns",
+		UID:          types.UID(podName),
+		IsMounterPod: true,
+		PodStatus: &corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: util.MounterPodNamePrefix,
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 137,
+							Reason:   "OOMKilled",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	testEnv := initTestNodeServerWithCustomClientset(t, fakeClientset, false)
+	ns, ok := testEnv.ns.(*nodeServer)
+	if !ok {
+		t.Fatalf("Failed to cast NodeServer to *nodeServer")
+	}
+	ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
+		return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	}
+
+	req := newTestNodeStageVolumeRequest(stagingPath, podName, "test-ns", nil)
+	_, err := ns.NodeStageVolume(context.Background(), req)
+	if err == nil {
+		t.Fatal("Expected NodeStageVolume to fail with OOM error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.ResourceExhausted {
+		t.Fatalf("Expected error code ResourceExhausted, got %v (err: %v)", st.Code(), err)
 	}
 }
