@@ -159,6 +159,25 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
 	}
 
+	// Verify workload service account name matches mounter pod.
+	// If neither the workload nor the mounter pod specifies a service account, the Kubernetes ServiceAccount
+	// admission controller defaults both to "default", so the equality check passes as expected.
+	targetDesc := "mounter pod"
+	vc := req.GetVolumeContext()
+	if err := webhook.ValidateServiceAccountName(vc[VolumeContextKeyServiceAccountName], mounterPod.Spec.ServiceAccountName, targetDesc); err != nil {
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+
+	// Verify workload fsGroup matches mounter pod.
+	var mounterFSGroup string
+	if mounterPod.Spec.SecurityContext != nil && mounterPod.Spec.SecurityContext.FSGroup != nil {
+		mounterFSGroup = strconv.FormatInt(*mounterPod.Spec.SecurityContext.FSGroup, 10)
+	}
+	workloadFSGroup := req.GetVolumeCapability().GetMount().GetVolumeMountGroup()
+	if err := webhook.ValidateFSGroup(workloadFSGroup, mounterFSGroup, targetDesc); err != nil {
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+
 	// Surface any GCSFuse error to the user.
 	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
 		return nil, status.Error(codes.Internal, "shared mount options can't be nil")

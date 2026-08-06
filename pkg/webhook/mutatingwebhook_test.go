@@ -2682,3 +2682,155 @@ func TestHandleEviction(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateFSGroup(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		workloadFSGroup string
+		targetFSGroup   string
+		targetDesc      string
+		wantErr         bool
+		wantErrMsg      string
+	}{
+		{
+			name:            "both workload and target have no fsGroup - should succeed",
+			workloadFSGroup: "",
+			targetFSGroup:   "",
+			targetDesc:      "volume's PodTemplate \"mounter-template\"",
+			wantErr:         false,
+		},
+		{
+			name:            "workload and target have matching fsGroup - should succeed",
+			workloadFSGroup: "1000",
+			targetFSGroup:   "1000",
+			targetDesc:      "volume's PodTemplate \"mounter-template\"",
+			wantErr:         false,
+		},
+		{
+			name:            "target has fsGroup, workload has no fsGroup - should return error",
+			workloadFSGroup: "",
+			targetFSGroup:   "1000",
+			targetDesc:      "volume's PodTemplate \"mounter-template\"",
+			wantErr:         true,
+			wantErrMsg:      "Pod fsGroup is not set, but volume's PodTemplate \"mounter-template\" requires fsGroup 1000",
+		},
+		{
+			name:            "target and workload have different fsGroups - should return error",
+			workloadFSGroup: "2000",
+			targetFSGroup:   "1000",
+			targetDesc:      "volume's PodTemplate \"mounter-template\"",
+			wantErr:         true,
+			wantErrMsg:      "Pod fsGroup 2000 does not match the one specified in volume's PodTemplate \"mounter-template\" (1000)",
+		},
+		{
+			name:            "workload has fsGroup, target has no fsGroup - should return error",
+			workloadFSGroup: "1000",
+			targetFSGroup:   "",
+			targetDesc:      "volume's PodTemplate \"mounter-template\"",
+			wantErr:         true,
+			wantErrMsg:      "Pod has fsGroup set, but volume's PodTemplate \"mounter-template\" does not specify one (not allowed for shared node mount)",
+		},
+		{
+			name:            "mounter pod targetDesc formatting",
+			workloadFSGroup: "2000",
+			targetFSGroup:   "1000",
+			targetDesc:      "mounter pod",
+			wantErr:         true,
+			wantErrMsg:      "Pod fsGroup 2000 does not match the one specified in mounter pod (1000)",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateFSGroup(tc.workloadFSGroup, tc.targetFSGroup, tc.targetDesc)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateFSGroup(%q, %q, %q) expected error, got nil", tc.workloadFSGroup, tc.targetFSGroup, tc.targetDesc)
+				}
+				if tc.wantErrMsg != "" && !strings.Contains(err.Error(), tc.wantErrMsg) {
+					t.Errorf("ValidateFSGroup(%q, %q, %q) error = %q, want substring %q", tc.workloadFSGroup, tc.targetFSGroup, tc.targetDesc, err.Error(), tc.wantErrMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("ValidateFSGroup(%q, %q, %q) unexpected error: %v", tc.workloadFSGroup, tc.targetFSGroup, tc.targetDesc, err)
+			}
+		})
+	}
+}
+
+func TestValidateServiceAccountName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		workloadSA string
+		targetSA   string
+		targetDesc string
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name:       "both SA empty - should succeed (default to default)",
+			workloadSA: "",
+			targetSA:   "",
+			targetDesc: "volume's PodTemplate \"mounter-template\"",
+			wantErr:    false,
+		},
+		{
+			name:       "workload specifies default, target empty - should succeed",
+			workloadSA: "default",
+			targetSA:   "",
+			targetDesc: "volume's PodTemplate \"mounter-template\"",
+			wantErr:    false,
+		},
+		{
+			name:       "workload empty, target specifies default - should succeed",
+			workloadSA: "",
+			targetSA:   "default",
+			targetDesc: "volume's PodTemplate \"mounter-template\"",
+			wantErr:    false,
+		},
+		{
+			name:       "both specify matching custom SA - should succeed",
+			workloadSA: "custom-sa",
+			targetSA:   "custom-sa",
+			targetDesc: "volume's PodTemplate \"mounter-template\"",
+			wantErr:    false,
+		},
+		{
+			name:       "SA mismatch with PodTemplate targetDesc - should return error",
+			workloadSA: "wrong-sa",
+			targetSA:   "mounter-sa",
+			targetDesc: "volume's PodTemplate \"mounter-template\"",
+			wantErr:    true,
+			wantErrMsg: "Pod serviceAccountName \"wrong-sa\" does not match the one specified in volume's PodTemplate \"mounter-template\" (\"mounter-sa\")",
+		},
+		{
+			name:       "SA mismatch with mounter pod targetDesc - should return error",
+			workloadSA: "sa-1",
+			targetSA:   "sa-2",
+			targetDesc: "mounter pod",
+			wantErr:    true,
+			wantErrMsg: "Pod serviceAccountName \"sa-1\" does not match the one specified in mounter pod (\"sa-2\")",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateServiceAccountName(tc.workloadSA, tc.targetSA, tc.targetDesc)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateServiceAccountName(%q, %q, %q) expected error, got nil", tc.workloadSA, tc.targetSA, tc.targetDesc)
+				}
+				if tc.wantErrMsg != "" && !strings.Contains(err.Error(), tc.wantErrMsg) {
+					t.Errorf("ValidateServiceAccountName(%q, %q, %q) error = %q, want substring %q", tc.workloadSA, tc.targetSA, tc.targetDesc, err.Error(), tc.wantErrMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("ValidateServiceAccountName(%q, %q, %q) unexpected error: %v", tc.workloadSA, tc.targetSA, tc.targetDesc, err)
+			}
+		})
+	}
+}

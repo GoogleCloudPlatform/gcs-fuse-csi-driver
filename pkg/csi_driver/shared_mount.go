@@ -66,6 +66,7 @@ type mounterPodConfig struct {
 	hostNetworkEnabled bool                         // Whether hostNetwork is enabled for the mounter pod.
 	tokenAudience      string                       // Token audience for projected service account volume.
 	dnsPolicy          corev1.DNSPolicy             // The DNS policy for the mounter pod.
+	securityContext    *corev1.PodSecurityContext   // The pod-level security context for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -235,6 +236,12 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 
 	if config.dnsPolicy != "" {
 		spec.Spec.DNSPolicy = config.dnsPolicy
+	}
+
+	if config.securityContext != nil && config.securityContext.FSGroup != nil {
+		spec.Spec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup: config.securityContext.FSGroup,
+		}
 	}
 
 	spec.Spec.Containers[0].Resources = *mounterPodResources(config)

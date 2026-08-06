@@ -49,6 +49,8 @@ type FakePodConfig struct {
 	PodStatus          *corev1.PodStatus
 	NodeName           string
 	IsMounterPod       bool
+	SecurityContext    *corev1.PodSecurityContext
+	ServiceAccountName string
 }
 
 type FakePVConfig struct {
@@ -209,6 +211,14 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	if podConfig.NodeName != "" {
 		c.fakePod.Spec.NodeName = podConfig.NodeName
+	}
+
+	if podConfig.SecurityContext != nil {
+		c.fakePod.Spec.SecurityContext = podConfig.SecurityContext
+	}
+
+	if podConfig.ServiceAccountName != "" {
+		c.fakePod.Spec.ServiceAccountName = podConfig.ServiceAccountName
 	}
 
 	c.fakePods = append(c.fakePods, c.fakePod)
