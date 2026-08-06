@@ -277,6 +277,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		hostNetworkEnabled: hostNetworkEnabled,
 		tokenAudience:      tokenAudience,
 		dnsPolicy:          podTemplate.Template.Spec.DNSPolicy,
+		securityContext:    podTemplate.Template.Spec.SecurityContext,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

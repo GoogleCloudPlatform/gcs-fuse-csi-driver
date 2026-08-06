@@ -825,6 +825,60 @@ func TestCreateMounterPodSpec(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "config with securityContext - should propagate only fsGroup",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				securityContext: &corev1.PodSecurityContext{
+					RunAsUser: ptr.To(int64(2000)),
+					FSGroup:   ptr.To(testFSGroup),
+				},
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(testFSGroup),
+					},
+					PriorityClassName: mounterPodPriorityClass,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {

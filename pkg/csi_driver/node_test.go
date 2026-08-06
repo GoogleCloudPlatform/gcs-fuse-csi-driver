@@ -47,6 +47,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
+	"k8s.io/utils/ptr"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -2835,6 +2836,153 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			targetPathMounted: false,
 			expectErrCode:     codes.OK,
 			expectedBindOpts:  []string{"bind"},
+		},
+		{
+			name: "workload SA matches mounter SA and both have matching fsGroup - should succeed",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId: testVolumeID,
+					VolumeCapability: &csi.VolumeCapability{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{
+								VolumeMountGroup: "1000",
+							},
+						},
+						AccessMode: testVolumeCapability.AccessMode,
+					},
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount:       "true",
+						VolumeContextKeyServiceAccountName: "custom-sa",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:               podName,
+					Namespace:          podNamespace,
+					UID:                podUID,
+					PodStatus:          &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod:       true,
+					ServiceAccountName: "custom-sa",
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(int64(1000)),
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.OK,
+		},
+		{
+			name: "workload SA mismatches mounter SA - should return PermissionDenied error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount:       "true",
+						VolumeContextKeyServiceAccountName: "sa-1",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:               podName,
+					Namespace:          podNamespace,
+					UID:                podUID,
+					PodStatus:          &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod:       true,
+					ServiceAccountName: "sa-2",
+				})
+				return fc
+			},
+			expectErrCode: codes.PermissionDenied,
+		},
+		{
+			name: "workload fsGroup mismatches mounter fsGroup - should return PermissionDenied error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId: testVolumeID,
+					VolumeCapability: &csi.VolumeCapability{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{
+								VolumeMountGroup: "2000",
+							},
+						},
+						AccessMode: testVolumeCapability.AccessMode,
+					},
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(int64(1000)),
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.PermissionDenied,
+		},
+		{
+			name: "mounter has fsGroup, workload has no fsGroup - should return PermissionDenied error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(int64(1000)),
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.PermissionDenied,
 		},
 	}
 
