@@ -1298,6 +1298,60 @@ func TestNodeStageVolume(t *testing.T) {
 				util.PodUIDConst + "=" + createMounterPodName("test-node", testVolumeID),
 			}, defaultSharedOpts...),
 		},
+		{
+			name: "valid request with sharedMount true and sysfsBDI mount option",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+					VolumeContextKeyMountOptions: "read_ahead_kb=1024",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectedMountOptions: defaultSharedOpts,
+		},
+		{
+			name: "invalid request with sharedMount true and negative sysfsBDI mount option",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+					VolumeContextKeyMountOptions: "read_ahead_kb=-1",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectErr: status.Errorf(codes.InvalidArgument, "failed to prepare mount options: invalid negative value for read_ahead_kb mount flag: %q", "read_ahead_kb=-1"),
+		},
+		{
+			name: "invalid request with sharedMount true and non-integer sysfsBDI mount option",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+					VolumeContextKeyMountOptions: "read_ahead_kb=abc",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectErr: status.Errorf(codes.InvalidArgument, "failed to prepare mount options: invalid read_ahead_kb mount flag %q: strconv.ParseInt: parsing \"abc\": invalid syntax", "read_ahead_kb=abc"),
+		},
 	}
 
 	for _, test := range cases {

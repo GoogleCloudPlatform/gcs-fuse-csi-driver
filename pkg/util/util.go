@@ -24,9 +24,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -523,4 +525,59 @@ func prepareMountOptions(options []string, csiMountOptions []string) ([]string, 
 	}
 
 	return csiMountOptions, optionSet.List(), sysfsBDI, fuseMaxPagesLimit, nil
+}
+
+// updateSysfsConfig modifies the kernel page cache settings based on the read_ahead_kb provided in the mountOption,
+// and verifies that the values are successfully updated after the operation completes.
+func updateSysfsConfig(targetMountPath string, sysfsBDI map[string]int64) error {
+	// Command will hang until mount completes.
+	cmd := exec.Command("mountpoint", "-d", targetMountPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		klog.Errorf("Error executing mountpoint command on target path %s: %v", targetMountPath, err)
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			klog.Errorf("Exit code: %d", exitError.ExitCode())
+		}
+
+		return err
+	}
+
+	targetDevice := strings.TrimSpace(string(output))
+	klog.Infof("Output of mountpoint for target mount path %s: %s", targetMountPath, output)
+
+	for key, value := range sysfsBDI {
+		// Update the target value.
+		sysfsBDIPath := filepath.Join("/sys/class/bdi/", targetDevice, key)
+		file, err := os.OpenFile(sysfsBDIPath, os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("failed to open file %q: %w", sysfsBDIPath, err)
+		}
+		defer file.Close()
+
+		_, err = file.WriteString(fmt.Sprintf("%d\n", value))
+		if err != nil {
+			return fmt.Errorf("failed to write to file %q: %w", sysfsBDIPath, err)
+		}
+
+		klog.Infof("Updated %s to %d", sysfsBDIPath, value)
+	}
+
+	return nil
+}
+
+func ApplySysfsConfig(targetMountPath string, sysfsBDI map[string]int64, mountOptions []string, logPrefix string) {
+	if len(sysfsBDI) != 0 {
+		go func() {
+			if slices.Contains(mountOptions, fmt.Sprintf("%s=true", EnableGCSFuseKernelParams)) {
+				klog.Warning("The mount option read_ahead_kb is soft deprecated for zonal buckets. GCSFuse automatically applies appropriate Read Ahead Kb kernel setting for best performance by default for Zonal Buckets.")
+			}
+			// updateSysfsConfig may hang until the file descriptor (fd) is either consumed or canceled.
+			// It will succeed once gcsfuse finishes the mount process, or it will fail if gcsfuse fails
+			// or the mount point is cleaned up due to mounting failures.
+			if err := updateSysfsConfig(targetMountPath, sysfsBDI); err != nil {
+				klog.Errorf("%v failed to update kernel parameters: %v", logPrefix, err)
+			}
+		}()
+	}
 }
