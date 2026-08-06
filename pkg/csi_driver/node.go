@@ -1145,12 +1145,12 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Prepare mount options specifically for shared node mount architecture before sending to mounter pod.
-	gcsfuseMO, _, _, err := util.PrepareSharedMountOptions(args.fuseMountOptions)
+	gcsfuseMO, sysfsBDI, _, err := util.PrepareSharedMountOptions(args.fuseMountOptions)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to prepare mount options: %v", err)
 	}
 
-	// TODO(FUECHR): Pass read_ahead_kb and node_fuse_max_request_limit_kb to gcsfuse config correctly for shared node mounts.
+	// TODO(FUECHR): Pass node_fuse_max_request_limit_kb to gcsfuse config correctly for shared node mounts.
 
 	// Send GRPC to mounter pod to start GCSFuse.
 	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, gcsfuseMO); err != nil {
@@ -1177,6 +1177,9 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		}
 		return nil, err
 	}
+
+	logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podUID, pvName, args.bucketName)
+	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
