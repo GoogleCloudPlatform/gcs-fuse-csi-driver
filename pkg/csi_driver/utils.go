@@ -18,14 +18,17 @@ limitations under the License.
 package driver
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -40,6 +43,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
@@ -86,6 +90,7 @@ const (
 	GCSFuseProfilesMinVersion              = "v1.19.3-gke.0"
 	GCSFuseFileCacheMediumMinVersion       = "v1.21.0-gke.0"
 	GCSFuseKernelParamsMinVersion          = "v1.22.0-gke.0"
+	GCSFuseMountRetriesMinVersion          = "v999.999.999-gke.0"
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
 	SidecarAutoGoMemLimitMinVersion        = "v1.23.11-gke.0"
 	StorageEndpointInternalMinVersion      = "v1.23.14-gke.0"
@@ -817,4 +822,33 @@ func getInternalMountOptionValue(options []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func queryVolumeStatus(socketBasePath string) (codes.Code, string) {
+	socketPath := filepath.Join(socketBasePath, util.StatusSocketName)
+
+	var statusPayload util.StatusPayload
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		conn, err := net.Dial("unix", socketPath)
+		if err != nil {
+			return false, nil
+		}
+		defer conn.Close()
+
+		if err := json.NewDecoder(conn).Decode(&statusPayload); err != nil {
+			return false, nil
+		}
+
+		return true, nil
+	})
+
+	if err != nil {
+		// Only return status obtained from the volume status payload, otherwise fallback safely.
+		return codes.OK, ""
+	}
+
+	return statusPayload.Status, statusPayload.Error
 }

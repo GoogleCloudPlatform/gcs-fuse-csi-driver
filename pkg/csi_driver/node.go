@@ -214,6 +214,13 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "failed to get image of mounter pod %s/%s: %v", mounterPodNamespace, mounterPodName, err)
 	}
 
+	enableMountRetries := s.isGcsFuseMountRetriesFeatureSupported(mounterPodImage, args.bucketName)
+	if enableMountRetries {
+		if err := s.checkSharedMounterVolumeStatus(mounterPodUID, emptyDirPath); err != nil {
+			return nil, err
+		}
+	}
+
 	// NodePublish is guaranteed to be called after NodeStage has waited for mounter pod to become running.
 	// Mounter pod not running at this stage means that the pod started and failed (e.g. killed by Kubelet
 	// during OOMKILL).
@@ -251,7 +258,6 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 			klog.V(4).Infof("NodePublishVolume enabling metrics collector for staging path %q", stagingPath)
 			s.driver.config.MetricsManager.RegisterMetricsCollector(stagingPath, mounterPodNamespace, mounterPodName, args.bucketName, s.driver.config.NodeID, emptyDirPath, mounterPodUID, volumeName)
 		}
-		return
 	}
 
 	// Succeed if the target path was already mounted.
@@ -393,7 +399,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
 	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
-	if vs != nil && !args.skipCSIBucketAccessCheck {
+	enableMountRetries := s.isGcsFuseMountRetriesFeatureSupported(gcsFuseSidecarImage, args.bucketName)
+	if vs != nil && !args.skipCSIBucketAccessCheck && !enableMountRetries {
 		if !vs.BucketAccessCheckPassed {
 			storageService, err := s.prepareStorageService(ctx, vc, storageEndpoint)
 			if err != nil {
@@ -409,7 +416,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
+	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], enableMountRetries)
 	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
@@ -498,6 +505,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			return nil, status.Error(code, err.Error())
 		}
 
+		if enableMountRetries && podUID != "" && volumeName != "" {
+			if err := s.checkSidecarVolumeStatus(podUID, volumeName, emptyDirBasePath); err != nil {
+				return nil, err
+			}
+		}
+
 		// TODO: Check if the socket listener timed out
 
 		// Restart monitoring goroutine if the driver restarts for existing mounts.
@@ -535,6 +548,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if err != nil {
 			return nil, fmt.Errorf("failed to recommend mount options: %w", err)
 		}
+	}
+
+	// Pass mount retries flag to GCSFuse iff GCSFuse Mount Retries feature is supported.
+	if s.isGcsFuseMountRetriesFeatureSupported(gcsFuseSidecarImage, args.bucketName) {
+		// Note: enable-gcsfuse-mount-retries *must* be delimited with an "=" sign, since it's an internal CSI flag.
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseMountRetries + "=true"})
 	}
 
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
@@ -589,6 +608,44 @@ func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseContainerImage
 		s.driver.config.FeatureOptions != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
 		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseContainerImage, GCSFuseKernelParamsMinVersion)
+}
+
+// isGcsFuseMountRetriesFeatureSupported returns true if the GCSFuse mount retries feature is enabled and supported by sidecar version.
+// GCSFuse mount retries feature is not applicable for dynamic mounts.
+func (s *nodeServer) isGcsFuseMountRetriesFeatureSupported(gcsFuseContainerImage, bucketName string) bool {
+	return bucketName != "_" &&
+		s.driver.config.FeatureOptions != nil &&
+		s.driver.config.FeatureOptions.EnableGCSFuseMountRetries &&
+		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseContainerImage, GCSFuseMountRetriesMinVersion)
+}
+
+func (s *nodeServer) getFuseSocketDir() string {
+	if s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir != "" {
+		return s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir
+	}
+	return "/sockets"
+}
+
+func (s *nodeServer) checkSidecarVolumeStatus(podUID, volumeName, emptyDirBasePath string) error {
+	socketBasePath := util.GetSocketBasePath(podUID, volumeName, s.getFuseSocketDir())
+	return s.checkSocketVolumeStatus(socketBasePath, emptyDirBasePath)
+}
+
+func (s *nodeServer) checkSharedMounterVolumeStatus(mounterPodUID, emptyDirPath string) error {
+	socketBasePath := filepath.Join(s.getFuseSocketDir(), mounterPodSocketDir, mounterPodUID)
+	return s.checkSocketVolumeStatus(socketBasePath, emptyDirPath)
+}
+
+func (s *nodeServer) checkSocketVolumeStatus(socketBasePath, emptyDirPath string) error {
+	if emptyDirPath != "" {
+		_ = os.MkdirAll(filepath.Dir(socketBasePath), 0750)
+		_ = os.Symlink(emptyDirPath, socketBasePath)
+	}
+	code, errMsg := queryVolumeStatus(socketBasePath)
+	if code != codes.OK {
+		return status.Error(code, errMsg)
+	}
+	return nil
 }
 
 func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -801,11 +858,12 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 
 // populateTokenAndBucketAccessCheckOptions populates fuseMountOptions with token server identity provider
 // for host network workloads and bucket access check parameters for both sidecar and shared mount modes.
-func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, image string, vc map[string]string, args *requestArgs, podNamespace, serviceAccountName string) {
+func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, image string, vc map[string]string, args *requestArgs, podNamespace, serviceAccountName string, enableMountRetries bool) {
 	sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
 	userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
 	userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
-	enableBucketAccessCheckForVersion := s.driver.isSidecarVersionSupportedForGivenFeature(image, SidecarBucketAccessCheckMinVersion) &&
+	enableBucketAccessCheckForVersion := !enableMountRetries &&
+		s.driver.isSidecarVersionSupportedForGivenFeature(image, SidecarBucketAccessCheckMinVersion) &&
 		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
 	identityProvider := ""
 	userSpecifiedIDP := args.userSpecifiedIdentityProvider
@@ -1096,7 +1154,8 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, status.Errorf(codes.Internal, "failed to get image of mounter pod %s/%s: %v", podNamespace, podName, err)
 	}
 
-	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
+	enableMountRetries := s.isGcsFuseMountRetriesFeatureSupported(podImage, args.bucketName)
+	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName, enableMountRetries)
 	args.fuseMountOptions = s.appendCloudProfilerOptions(podImage, args.enableCloudProfilerForSidecar, podName, string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
 
@@ -1118,6 +1177,11 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
 	if err := s.setupMultiNIC(&args, pod, canUseMultiNIC); err != nil {
 		return nil, err
+	}
+
+	// Pass mount retries flag to GCSFuse iff GCSFuse Mount Retries feature is supported.
+	if enableMountRetries {
+		args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.EnableGCSFuseMountRetries + "=true"})
 	}
 
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
@@ -1187,6 +1251,13 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		} else if code, cErr := checkContainerStatusErr(cs); code != codes.OK {
 			return nil, status.Error(code, cErr.Error())
 		}
+
+		if enableMountRetries {
+			if statusErr := s.checkSharedMounterVolumeStatus(podUID, emptyDirBasePath); statusErr != nil {
+				return nil, statusErr
+			}
+		}
+
 		return nil, err
 	}
 

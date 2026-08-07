@@ -18,7 +18,9 @@ limitations under the License.
 package driver
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -384,6 +386,18 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.0@sha256:abcd",
 				expectedSupported:          false,
 				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "GCSFuse Mount Retries - should return false for sidecar version lower than v999.999.999",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-gke.2@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseMountRetriesMinVersion,
+			},
+			{
+				name:                       "GCSFuse Mount Retries - should return true for supported sidecar version >= v999.999.999",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v999.999.999-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseMountRetriesMinVersion,
 			},
 			{
 				name:                       "storage-endpoint-internal - should return true for supported sidecar version",
@@ -1669,4 +1683,87 @@ func TestGetSidecarContainerStatus(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueryVolumeStatus(t *testing.T) {
+	t.Parallel()
+
+	t.Run("socket exists and returns NotFound error", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+		socketPath := filepath.Join(tempDir, util.StatusSocketName)
+
+		l, err := net.Listen("unix", socketPath)
+		if err != nil {
+			t.Fatalf("failed to listen on socket: %v", err)
+		}
+		defer l.Close()
+
+		go func() {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			_ = json.NewEncoder(conn).Encode(util.StatusPayload{
+				Status: codes.NotFound,
+				Error:  "bucket not found",
+			})
+		}()
+
+		code, errMsg := queryVolumeStatus(tempDir)
+		if code != codes.NotFound {
+			t.Errorf("expected code %v, got %v", codes.NotFound, code)
+		}
+		if errMsg != "bucket not found" {
+			t.Errorf("expected errMsg 'bucket not found', got %q", errMsg)
+		}
+	})
+
+	t.Run("socket exists and returns OK", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+		socketPath := filepath.Join(tempDir, util.StatusSocketName)
+
+		l, err := net.Listen("unix", socketPath)
+		if err != nil {
+			t.Fatalf("failed to listen on socket: %v", err)
+		}
+		defer l.Close()
+
+		go func() {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			_ = json.NewEncoder(conn).Encode(util.StatusPayload{
+				Status: codes.OK,
+				Error:  "",
+			})
+		}()
+
+		code, errMsg := queryVolumeStatus(tempDir)
+		if code != codes.OK {
+			t.Errorf("expected code %v, got %v", codes.OK, code)
+		}
+		if errMsg != "" {
+			t.Errorf("expected empty errMsg, got %q", errMsg)
+		}
+	})
+
+	t.Run("socket does not exist - fallback to OK", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+
+		code, errMsg := queryVolumeStatus(tempDir)
+		if code != codes.OK {
+			t.Errorf("expected code %v on fallback, got %v", codes.OK, code)
+		}
+		if errMsg != "" {
+			t.Errorf("expected empty errMsg on fallback, got %q", errMsg)
+		}
+	})
 }

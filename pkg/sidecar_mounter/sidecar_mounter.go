@@ -74,6 +74,92 @@ func New(mounterPath string) *Mounter {
 	}
 }
 
+type VolumeStatusManager struct {
+	sync.RWMutex
+	status codes.Code
+	err    string
+}
+
+func startStatusServer(statusMgr *VolumeStatusManager, tempDir string) {
+	socketPath := filepath.Join(tempDir, util.StatusSocketName)
+	_ = os.Remove(socketPath)
+
+	l, err := net.Listen("unix", socketPath)
+	if err != nil {
+		klog.Errorf("failed to start status server: %v", err)
+		return
+	}
+
+	go func() {
+		defer l.Close()
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+
+			statusMgr.RLock()
+			payload := util.StatusPayload{
+				Status: statusMgr.status,
+				Error:  statusMgr.err,
+			}
+			statusMgr.RUnlock()
+
+			_ = json.NewEncoder(conn).Encode(payload)
+			conn.Close()
+		}
+	}()
+}
+
+func startStatusReader(statusMgr *VolumeStatusManager, r io.Reader) {
+	go func() {
+		decoder := json.NewDecoder(r)
+		var update util.StatusPayload
+
+		for {
+			if err := decoder.Decode(&update); err != nil {
+				// Ignore EOF or other errors, as gcsfuse may have exited
+				// cleanly or closed the fd. We rely on the process state
+				// or wait logic for exit status.
+				return
+			}
+
+			statusMgr.Lock()
+			statusMgr.status = update.Status
+			statusMgr.err = update.Error
+			statusMgr.Unlock()
+		}
+	}()
+}
+
+func (m *Mounter) setupStatusPipe(cmd *exec.Cmd, mc *MountConfig) (*VolumeStatusManager, *os.File, *os.File, error) {
+	if !mc.EnableMountRetries {
+		return nil, nil, nil, nil
+	}
+	statusMgr := &VolumeStatusManager{
+		status: codes.Unavailable,
+		err:    "mount is initializing",
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create status pipe: %w", err)
+	}
+	statusFD := 3 + len(cmd.ExtraFiles)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, w)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("GCSFUSE_STATUS_FD=%d", statusFD))
+	return statusMgr, r, w, nil
+}
+
+func startStatusReporting(statusMgr *VolumeStatusManager, tempDir string, r, w *os.File) {
+	if w != nil {
+		w.Close()
+	}
+	if statusMgr != nil && r != nil {
+		startStatusServer(statusMgr, tempDir)
+		startStatusReader(statusMgr, r)
+	}
+}
+
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
@@ -120,6 +206,11 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
 
+	statusMgr, r, w, err := m.setupStatusPipe(cmd, mc)
+	if err != nil {
+		return err
+	}
+
 	// when the ctx.Done() is closed,
 	// the main workload containers have exited,
 	// so it is safe to force kill the gcsfuse process.
@@ -140,9 +231,17 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		defer m.WaitGroup.Done()
 		if err := cmd.Start(); err != nil {
 			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
+			if w != nil {
+				w.Close()
+			}
+			if r != nil {
+				r.Close()
+			}
 
 			return
 		}
+
+		startStatusReporting(statusMgr, mc.TempDir, r, w)
 
 		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
 
@@ -205,17 +304,30 @@ func (m *Mounter) MountToNode(ctx context.Context, mountServerContext context.Co
 	processCtx, processCancel := context.WithCancel(mountServerContext)
 	var success bool
 	defer func() {
-		if !success {
+		if !success && !mc.EnableMountRetries {
 			processCancel()
 		}
 	}()
 
 	cmd := m.prepareMountCommand(processCtx, mc, mc.SharedMountPoint)
 
+	statusMgr, r, w, err := m.setupStatusPipe(cmd, mc)
+	if err != nil {
+		return status.Errorf(codes.Internal, "%v", err)
+	}
+
 	klog.Infof("GCSFuse CSI Driver starting gcsfuse in node mounter...")
 	if err := cmd.Start(); err != nil {
+		if w != nil {
+			w.Close()
+		}
+		if r != nil {
+			r.Close()
+		}
 		return status.Errorf(codes.Internal, "failed to start gcsfuse with error: %v", err)
 	}
+
+	startStatusReporting(statusMgr, mc.TempDir, r, w)
 
 	klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
 
@@ -243,11 +355,14 @@ func (m *Mounter) MountToNode(ctx context.Context, mountServerContext context.Co
 	// Kill the gcsfuse process if the path has not been mounted within a timeout.
 	// This allows the next Mount attempt to start a fresh gcsfuse process.
 	if err := util.WaitForPathMounted(pollCtx, mc.SharedMountPoint); err != nil {
-		klog.Errorf("gcsfuse process did not mount path %q within the context timeout: %v, killing gcsfuse process with id %d", mc.SharedMountPoint, err, cmd.Process.Pid)
-		// Terminate the gcsfuse process asynchronously to avoid blocking the gRPC response.
-		go func() {
-			forceKillCmd(cmd, cmdDone)
-		}()
+		klog.Errorf("gcsfuse process did not mount path %q within the context timeout: %v", mc.SharedMountPoint, err)
+		if !mc.EnableMountRetries {
+			klog.Errorf("killing gcsfuse process with id %d", cmd.Process.Pid)
+			// Terminate the gcsfuse process asynchronously to avoid blocking the gRPC response.
+			go func() {
+				forceKillCmd(cmd, cmdDone)
+			}()
+		}
 		return err
 	}
 

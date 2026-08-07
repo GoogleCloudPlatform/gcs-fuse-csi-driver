@@ -18,6 +18,8 @@ package sidecarmounter
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,8 +28,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 func TestMain(m *testing.M) {
@@ -430,5 +434,68 @@ func TestMountToNode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestVolumeStatusManager(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	statusMgr := &VolumeStatusManager{
+		status: codes.Unavailable,
+		err:    "mount is initializing",
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+
+	startStatusServer(statusMgr, tempDir)
+	startStatusReader(statusMgr, r)
+
+	socketPath := filepath.Join(tempDir, util.StatusSocketName)
+
+	// 1. Initial status query
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("failed to dial socket: %v", err)
+	}
+	var payload util.StatusPayload
+	if err := json.NewDecoder(conn).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode payload: %v", err)
+	}
+	conn.Close()
+
+	if payload.Status != codes.Unavailable || payload.Error != "mount is initializing" {
+		t.Errorf("unexpected initial payload: %+v", payload)
+	}
+
+	// 2. Send update through pipe
+	update := util.StatusPayload{
+		Status: codes.NotFound,
+		Error:  "bucket does not exist",
+	}
+	if err := json.NewEncoder(w).Encode(update); err != nil {
+		t.Fatalf("failed to encode update: %v", err)
+	}
+	w.Close()
+
+	// Wait for statusMgr to receive update
+	err = wait.PollUntilContextTimeout(context.Background(), 10*time.Millisecond, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+		conn, err := net.Dial("unix", socketPath)
+		if err != nil {
+			return false, nil
+		}
+		defer conn.Close()
+
+		var p util.StatusPayload
+		if err := json.NewDecoder(conn).Decode(&p); err != nil {
+			return false, nil
+		}
+		return p.Status == codes.NotFound && p.Error == "bucket does not exist", nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for status update to reflect on status server: %v", err)
 	}
 }

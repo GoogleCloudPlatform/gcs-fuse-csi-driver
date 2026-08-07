@@ -201,7 +201,7 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 		--user $$(id -u):$$(id -g) \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
-		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release && chown $(shell id -u 2>/dev/null || echo 0):$(shell id -g 2>/dev/null || echo 0) /release/gcsfuse"
 ifeq (${BUILD_ARM}, true)
 	docker buildx build \
 		--load \
@@ -218,7 +218,7 @@ ifeq (${BUILD_ARM}, true)
 		--user $$(id -u):$$(id -g) \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
-		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release && chown $(shell id -u 2>/dev/null || echo 0):$(shell id -g 2>/dev/null || echo 0) /release/gcsfuse"
 endif
 else
 	gcloud storage cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
@@ -259,15 +259,11 @@ endif
 
 	docker manifest push --purge ${DRIVER_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${SIDECAR_IMAGE}:${STAGINGVERSION}
-	docker manifest push --purge ${PREFETCH_IMAGE}:${STAGINGVERSION}
 	docker manifest push --purge ${WEBHOOK_IMAGE}:${STAGINGVERSION}
+	docker manifest push --purge ${PREFETCH_IMAGE}:${STAGINGVERSION}
 
 build-image-linux-amd64:
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/metadata_prefetch/Dockerfile \
-		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 \
-		--build-arg TARGETPLATFORM=linux/amd64 .
+
 
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
@@ -300,12 +296,14 @@ build-image-linux-amd64:
 		--tag ${WEBHOOK_IMAGE}:${STAGINGVERSION}_linux_amd64 \
 		--platform linux/amd64 .
 
-build-image-linux-arm64:
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/metadata_prefetch/Dockerfile \
-		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 \
-		--build-arg TARGETPLATFORM=linux/arm64 .
+		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 .
+
+build-image-linux-arm64:
+
 
 	docker buildx build \
 		--file ./cmd/csi_driver/Dockerfile \
@@ -333,6 +331,12 @@ build-image-linux-arm64:
 		--platform linux/arm64 \
 		--build-arg TARGETPLATFORM=linux/arm64 .
 
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/metadata_prefetch/Dockerfile \
+		--tag ${PREFETCH_IMAGE}:${STAGINGVERSION}_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 .
+
 install:
 	$(MAKE) generate-spec-yaml OVERLAY=${OVERLAY} REGISTRY=${REGISTRY} STAGINGVERSION=${STAGINGVERSION}
 	kubectl apply -f ${BINDIR}/gcs-fuse-csi-driver-specs-generated.yaml
@@ -350,7 +354,8 @@ generate-spec-yaml:
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit set image gke.gcr.io/gcs-fuse-csi-driver-webhook=${WEBHOOK_IMAGE}:${STAGINGVERSION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=sidecar-image=${SIDECAR_IMAGE}:${STAGINGVERSION};
-	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
+	# cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-image-config --behavior=merge --disableNameSuffixHash --from-literal=metadata-sidecar-image=${PREFETCH_IMAGE}:${STAGINGVERSION};
+
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=cluster-location=${CLUSTER_LOCATION};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-profiles-config --behavior=merge --disableNameSuffixHash --from-literal=project-number=${PROJECT_NUMBER};
 	cd ./deploy/overlays/${OVERLAY}; ${BINDIR}/kustomize edit add configmap gcsfusecsi-node-config --behavior=merge --disableNameSuffixHash --from-literal=universe-domain=${UNIVERSE_DOMAIN};
@@ -393,7 +398,6 @@ sanity-test:
 
 build-e2e-test:
 	cd test && go build -o ../bin/e2e-test-ci ./e2e
-	cd test && go test -c -o ../bin/e2e-test ./e2e
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh

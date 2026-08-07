@@ -80,6 +80,9 @@ var (
 	// GCSFuse kernel params feature.
 	enableGCSFuseKernelParams = flag.Bool("enable-gcsfuse-kernel-params", false, "Enable gcsfuse kernel params feature.")
 
+	// GCSFuse mount retries feature.
+	enableGCSFuseMountRetries = flag.Bool("enable-gcsfuse-mount-retries", false, "Enable gcsfuse mount retries feature.")
+
 	// GCSFuse shared mount flags.
 	enableSharedMount        = flag.Bool("enable-shared-mount", false, "Enable the shared mount feature.")
 	allowCustomMounterImages = flag.Bool("allow-custom-mounter-images", false, "Allow arbitrary non-GKE-managed images to be used for mounter pods.")
@@ -243,6 +246,7 @@ func main() {
 			EnableGcsfuseProfilesInternal: *enableGcsfuseProfilesInternal,
 		},
 		EnableGCSFuseKernelParams: *enableGCSFuseKernelParams,
+		EnableGCSFuseMountRetries: *enableGCSFuseMountRetries,
 		GoMemLimitOptions: &driver.GoMemLimitOptions{
 			EnableAutoGoMemLimit: *enableAutoGoMemLimit,
 			AutoGoMemLimitRatio:  *autoGoMemLimitRatio,

@@ -52,6 +52,8 @@ const (
 	// mount options that both CSI mounter and sidecar mounter should understand.
 	DisableMetricsForGKE                = "disable-metrics-for-gke"
 	EnableSidecarBucketAccessCheckConst = "enable-sidecar-bucket-access-check"
+	EnableGCSFuseMountRetries           = "enable-gcsfuse-mount-retries"
+	StatusSocketName                    = "status.sock"
 	TokenServerIdentityPoolConst        = "token-server-identity-pool"
 	ServiceAccountNameConst             = "service-account-name"
 	PodNamespaceConst                   = "pod-namespace"
@@ -590,4 +592,11 @@ func ApplySysfsConfig(targetMountPath string, sysfsBDI map[string]int64, mountOp
 			}
 		}()
 	}
+}
+
+// StatusPayload defines the JSON structure sent to the CSI sidecar over the UDS pipe.
+// It maps the internal mount state to a gRPC code and descriptive error message.
+type StatusPayload struct {
+	Status codes.Code `json:"status"`
+	Error  string     `json:"error"`
 }
