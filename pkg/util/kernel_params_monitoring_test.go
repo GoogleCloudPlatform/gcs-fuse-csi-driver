@@ -385,9 +385,9 @@ func TestValidateParamValue(t *testing.T) {
 }
 
 func TestFuseMaxMaxPagesUpdateSupported(t *testing.T) {
-	origPath := procSysFsFuseMaxPagesLimitPath
+	origPath := ProcSysFsFuseMaxPagesLimitPath
 	t.Cleanup(func() {
-		procSysFsFuseMaxPagesLimitPath = origPath
+		ProcSysFsFuseMaxPagesLimitPath = origPath
 	})
 
 	testCases := []struct {
@@ -418,7 +418,7 @@ func TestFuseMaxMaxPagesUpdateSupported(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
-			procSysFsFuseMaxPagesLimitPath = tc.setup(t, tempDir)
+			ProcSysFsFuseMaxPagesLimitPath = tc.setup(t, tempDir)
 			result := FuseMaxMaxPagesUpdateSupported()
 			if result != tc.expectedResult {
 				t.Errorf("Expected %v, got %v", tc.expectedResult, result)
@@ -428,9 +428,9 @@ func TestFuseMaxMaxPagesUpdateSupported(t *testing.T) {
 }
 
 func TestReadFuseMaxPagesLimit(t *testing.T) {
-	origPath := procSysFsFuseMaxPagesLimitPath
+	origPath := ProcSysFsFuseMaxPagesLimitPath
 	t.Cleanup(func() {
-		procSysFsFuseMaxPagesLimitPath = origPath
+		ProcSysFsFuseMaxPagesLimitPath = origPath
 	})
 
 	testCases := []struct {
@@ -476,7 +476,7 @@ func TestReadFuseMaxPagesLimit(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
-			procSysFsFuseMaxPagesLimitPath = tc.setup(t, tempDir)
+			ProcSysFsFuseMaxPagesLimitPath = tc.setup(t, tempDir)
 			val, err := ReadFuseMaxPagesLimit()
 			if tc.expectError {
 				if err == nil {
@@ -495,9 +495,9 @@ func TestReadFuseMaxPagesLimit(t *testing.T) {
 }
 
 func TestSetFuseMaxPagesLimit(t *testing.T) {
-	origPath := procSysFsFuseMaxPagesLimitPath
+	origPath := ProcSysFsFuseMaxPagesLimitPath
 	t.Cleanup(func() {
-		procSysFsFuseMaxPagesLimitPath = origPath
+		ProcSysFsFuseMaxPagesLimitPath = origPath
 	})
 
 	testCases := []struct {
@@ -526,7 +526,7 @@ func TestSetFuseMaxPagesLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
 			tempFile := filepath.Join(tempDir, "max_pages_limit")
-			procSysFsFuseMaxPagesLimitPath = tempFile
+			ProcSysFsFuseMaxPagesLimitPath = tempFile
 
 			if err := SetFuseMaxPagesLimit(tc.inputLimit); err != nil {
 				t.Fatalf("SetFuseMaxPagesLimit failed: %v", err)
@@ -544,9 +544,9 @@ func TestSetFuseMaxPagesLimit(t *testing.T) {
 }
 
 func TestMountUsingElevatedFuseMaxPagesLimit(t *testing.T) {
-	origPath := procSysFsFuseMaxPagesLimitPath
+	origPath := ProcSysFsFuseMaxPagesLimitPath
 	t.Cleanup(func() {
-		procSysFsFuseMaxPagesLimitPath = origPath
+		ProcSysFsFuseMaxPagesLimitPath = origPath
 	})
 
 	testCases := []struct {
@@ -614,7 +614,7 @@ func TestMountUsingElevatedFuseMaxPagesLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
 			tempFile := filepath.Join(tempDir, "max_pages_limit")
-			procSysFsFuseMaxPagesLimitPath = tempFile
+			ProcSysFsFuseMaxPagesLimitPath = tempFile
 
 			if err := SetFuseMaxPagesLimit(tc.initialLimit); err != nil {
 				t.Fatalf("SetFuseMaxPagesLimit failed: %v", err)
@@ -640,14 +640,14 @@ func TestMountUsingElevatedFuseMaxPagesLimit(t *testing.T) {
 }
 
 func TestMountUsingElevatedFuseMaxPagesLimitPanic(t *testing.T) {
-	origPath := procSysFsFuseMaxPagesLimitPath
+	origPath := ProcSysFsFuseMaxPagesLimitPath
 	t.Cleanup(func() {
-		procSysFsFuseMaxPagesLimitPath = origPath
+		ProcSysFsFuseMaxPagesLimitPath = origPath
 	})
 
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "max_pages_limit")
-	procSysFsFuseMaxPagesLimitPath = tempFile
+	ProcSysFsFuseMaxPagesLimitPath = tempFile
 
 	if err := SetFuseMaxPagesLimit(256); err != nil {
 		t.Fatalf("SetFuseMaxPagesLimit failed: %v", err)

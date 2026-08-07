@@ -439,6 +439,16 @@ func PrepareSharedMountOptions(options []string) ([]string, map[string]int64, in
 	return gcsfuseMO, sysfsBDI, fuseMaxPagesLimit, nil
 }
 
+// CheckForKernelReader returns true if kernel reader is enabled in mount options.
+func CheckForKernelReader(options []string) bool {
+	for _, o := range options {
+		if o == "enable-kernel-reader" || o == "enable-kernel-reader=true" || o == "file-system:enable-kernel-reader:true" {
+			return true
+		}
+	}
+	return false
+}
+
 // PrepareSidecarMountOptions prepares mount options specifically for sidecar mounter.
 func PrepareSidecarMountOptions(options []string) ([]string, []string, map[string]int64, int64, error) {
 	defaultOptions := []string{

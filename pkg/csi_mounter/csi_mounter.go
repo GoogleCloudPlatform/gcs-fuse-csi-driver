@@ -99,7 +99,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return m.MountSensitiveWithoutSystemdWithMountFlags(source, target, fstype, csiMountOptions, nil, []string{"--internal-only"})
 	}
 	// TODO(mohitkyadav): Remove this check when kernel reader is enabled by default for Regional Buckets.
-	isKernelReaderEnabled := checkForKernelReader(options)
+	isKernelReaderEnabled := util.CheckForKernelReader(options)
 	shouldMountUsingElevatedFuseMaxPagesLimit := util.FuseMaxMaxPagesUpdateSupported() && fuseMaxPagesLimit > 0 && isKernelReaderEnabled
 	if shouldMountUsingElevatedFuseMaxPagesLimit {
 		err = util.MountUsingElevatedFuseMaxPagesLimit(fuseMaxPagesLimit, logPrefix, mountFn)
@@ -309,13 +309,4 @@ func startAcceptConn(l net.Listener, logPrefix string, msg []byte, fd int, cance
 	}
 
 	klog.V(4).Infof("%v exiting the listener goroutine.", logPrefix)
-}
-
-func checkForKernelReader(options []string) bool {
-	for _, o := range options {
-		if o == "enable-kernel-reader" || o == "enable-kernel-reader=true" || o == "file-system:enable-kernel-reader:true" {
-			return true
-		}
-	}
-	return false
 }

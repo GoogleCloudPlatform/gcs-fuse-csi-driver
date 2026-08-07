@@ -35,19 +35,19 @@ import (
 var (
 	// fuseMaxMaxPagesMu serializes concurrent updates to the host's FUSE max_pages_limit.
 	fuseMaxMaxPagesMu sync.Mutex
-	// procSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
-	procSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs-fuse/max_pages_limit"
+	// ProcSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
+	ProcSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs-fuse/max_pages_limit"
 )
 
 // FuseMaxMaxPagesUpdateSupported returns true if the host supports FUSE max_pages_limit tuning.
 func FuseMaxMaxPagesUpdateSupported() bool {
-	_, err := os.Lstat(procSysFsFuseMaxPagesLimitPath)
+	_, err := os.Lstat(ProcSysFsFuseMaxPagesLimitPath)
 	return err == nil
 }
 
 // ReadFuseMaxPagesLimit reads the host's current FUSE max_pages_limit.
 func ReadFuseMaxPagesLimit() (int64, error) {
-	bytes, err := os.ReadFile(procSysFsFuseMaxPagesLimitPath)
+	bytes, err := os.ReadFile(ProcSysFsFuseMaxPagesLimitPath)
 	if err != nil {
 		return 0, err
 	}
@@ -56,7 +56,7 @@ func ReadFuseMaxPagesLimit() (int64, error) {
 
 // SetFuseMaxPagesLimit writes the target limit to the host's FUSE max_pages_limit file.
 func SetFuseMaxPagesLimit(target int64) error {
-	return os.WriteFile(procSysFsFuseMaxPagesLimitPath, []byte(strconv.FormatInt(target, 10)+"\n"), 0o644)
+	return os.WriteFile(ProcSysFsFuseMaxPagesLimitPath, []byte(strconv.FormatInt(target, 10)+"\n"), 0o644)
 }
 
 // getDeviceMajorMinor returns the major and minor device numbers
