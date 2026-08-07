@@ -91,6 +91,7 @@ var _ = func() bool {
 
 	testsuites.LustreStorageClass = *lustreStorageClass
 	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
+	testsuites.PDStorageClass = *pdStorageClass
 	return true
 }()
 

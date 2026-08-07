@@ -65,6 +65,8 @@ func InitGcsFuseCSIDualCSIVolumeTestSuite() storageframework.TestSuite {
 	return &gcsFuseCSIDualCSIVolumeTestSuite{
 		tsInfo: storageframework.TestSuiteInfo{
 			Name: "dual-csi-volume",
+			// PreprovisionedPV only: PD PVC lifecycle is managed manually here,
+			// independent of the storageframework volume pattern.
 			TestPatterns: []storageframework.TestPattern{
 				storageframework.DefaultFsPreprovisionedPV,
 			},
@@ -401,4 +403,114 @@ func (t *gcsFuseCSIDualCSIVolumeTestSuite) DefineTests(driver storageframework.T
 		)
 	})
 
+	// ── Test: Same-pod dual mount + R/W ──────────────────────────────────────
+	//
+	//           [pod]
+	//           /   \
+	//    [gcs-vol] [pd-vol]
+	//        |         |
+	//     [GCS]   [PD disk]
+	//
+	// Both volumes are mounted in the same pod. The test verifies that writes
+	// and reads succeed on each mount independently, with no cross-mount bleed.
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should mount a GCS Fuse volume and a PD-backed PVC in the same pod and allow independent R/W on both", func() {
+		skipIfPDCSINotInstalled("same-pod dual mount test")
+
+		init()
+		defer cleanup()
+
+		ginkgo.By(fmt.Sprintf("Creating PD-backed PVC using StorageClass %q", PDStorageClass))
+		pvc, cleanupPVC := createPDPVC("dual-csi-pd-pvc-", "1Gi")
+		defer cleanupPVC()
+
+		ginkgo.By("Configuring the pod with both GCS Fuse and PD volumes")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, pdVolName, pdMountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the pod to be running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Writing and reading a file on the GCS Fuse volume")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'hello-gcs' > %v/gcs-test.txt && grep 'hello-gcs' %v/gcs-test.txt",
+				gcsFuseMountPath, gcsFuseMountPath))
+
+		ginkgo.By("Writing and reading a file on the PD volume")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("echo 'hello-pd' > %v/pd-test.txt && grep 'hello-pd' %v/pd-test.txt",
+				pdMountPath, pdMountPath))
+
+		ginkgo.By("Verifying the GCS file is not visible on the PD mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test ! -f %v/gcs-test.txt", pdMountPath))
+
+		ginkgo.By("Verifying the PD file is not visible on the GCS Fuse mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("test ! -f %v/pd-test.txt", gcsFuseMountPath))
+	})
+
+	// ── Test 2: GCS → PD data pipeline ──────────────────────────────────────
+	//
+	//           [pod]
+	//           /   \
+	//    [gcs-vol] [pd-vol]
+	//        |         |
+	//     [GCS]   [PD disk]
+	//
+	// A file is pre-seeded directly into the GCS bucket via the GCS API before
+	// the pod starts. The pod mounts both volumes and copies the file from the
+	// GCS mount to the PD mount. The test verifies that the file is readable on
+	// the GCS mount and that the copy on the PD mount has identical content.
+	ginkgo.It("[Feature: GCSFuse-PDCSI] should copy a pre-seeded file from the GCS Fuse mount to a PD-backed volume (GCS to PD data pipeline)", func() {
+		skipIfPDCSINotInstalled("GCS-to-PD pipeline test")
+
+		init()
+		defer cleanup()
+
+		// Get the bucket name from the provisioned PV so we can pre-seed a file
+		// into it via the GCS API before the pod starts.
+		bucketName := l.gcsFuseResource.Pv.Spec.CSI.VolumeHandle
+		const seedFileName = "pipeline-seed.txt"
+
+		gcsfuseDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+		if !ok {
+			framework.Failf("driver is not *specs.GCSFuseCSITestDriver, cannot pre-seed GCS object")
+		}
+
+		ginkgo.By(fmt.Sprintf("Pre-seeding file %q in GCS bucket %q via the GCS API", seedFileName, bucketName))
+		gcsfuseDriver.CreateTestFileInBucket(ctx, seedFileName, bucketName)
+
+		ginkgo.By(fmt.Sprintf("Creating PD-backed PVC using StorageClass %q", PDStorageClass))
+		pvc, cleanupPVC := createPDPVC("pipeline-pd-pvc-", "1Gi")
+		defer cleanupPVC()
+
+		ginkgo.By("Configuring the pod with both GCS Fuse and PD volumes")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.gcsFuseResource, gcsFuseVolName, gcsFuseMountPath, false)
+		tPod.SetupVolume(&storageframework.VolumeResource{Pvc: pvc}, pdVolName, pdMountPath, false)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the pod to be running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying the pre-seeded file is readable on the GCS Fuse mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("grep %q %v/%v", seedFileName, gcsFuseMountPath, seedFileName))
+
+		ginkgo.By("Copying the file from the GCS Fuse mount to the PD mount")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("cp %v/%v %v/%v", gcsFuseMountPath, seedFileName, pdMountPath, seedFileName))
+
+		ginkgo.By("Verifying the copied file on the PD mount has identical content")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName,
+			fmt.Sprintf("diff %v/%v %v/%v", gcsFuseMountPath, seedFileName, pdMountPath, seedFileName))
+	})
 }
