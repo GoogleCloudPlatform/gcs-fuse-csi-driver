@@ -58,6 +58,7 @@ var (
 		"o",
 		"cache-dir",
 		"kernel-params-file",
+		"enable-mount-retries",
 	}
 )
 
@@ -133,6 +134,24 @@ func TestPrepareMountArgs(t *testing.T) {
 				"max-conns-per-host": "10",
 			},
 			expectedConfigMapArgs: defaultConfigFileFlagMap,
+		},
+		{
+			name: "should handle enable-gcsfuse-mount-retries via CLI flag",
+			mc: &MountConfig{
+				BucketName: "test-bucket",
+				BufferDir:  "test-buffer-dir",
+				CacheDir:   "test-cache-dir",
+				ConfigFile: "test-config-file",
+				Options:    []string{"enable-gcsfuse-mount-retries=true"},
+				ErrWriter:  NewErrorWriter("test-error-file"),
+			},
+			expectedArgs: defaultFlagMap,
+			expectedConfigMapArgs: map[string]string{
+				"cache-dir":                                "",
+				"logging:file-path":                        "/dev/fd/1",
+				"logging:format":                           "json",
+				"gcs-retries:enable-mount-retries":         "true",
+			},
 		},
 		{
 			name: "should return valid args with error correctly",

@@ -74,6 +74,64 @@ func New(mounterPath string) *Mounter {
 	}
 }
 
+type VolumeStatusManager struct {
+	sync.RWMutex
+	status codes.Code
+	err    string
+}
+
+func startStatusServer(statusMgr *VolumeStatusManager, tempDir string) {
+	socketPath := filepath.Join(tempDir, "status.sock")
+	_ = os.Remove(socketPath)
+
+	l, err := net.Listen("unix", socketPath)
+	if err != nil {
+		klog.Errorf("failed to start status server: %v", err)
+		return
+	}
+
+	go func() {
+		defer l.Close()
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+
+			statusMgr.RLock()
+			payload := util.StatusPayload{
+				Status: statusMgr.status,
+				Error:  statusMgr.err,
+			}
+			statusMgr.RUnlock()
+
+			_ = json.NewEncoder(conn).Encode(payload)
+			conn.Close()
+		}
+	}()
+}
+
+func startStatusReader(statusMgr *VolumeStatusManager, r io.Reader) {
+	go func() {
+		decoder := json.NewDecoder(r)
+		var update util.StatusPayload
+
+		for {
+			if err := decoder.Decode(&update); err != nil {
+				// Ignore EOF or other errors, as gcsfuse may have exited
+				// cleanly or closed the fd. We rely on the process state
+				// or wait logic for exit status.
+				return
+			}
+
+			statusMgr.Lock()
+			statusMgr.status = update.Status
+			statusMgr.err = update.Error
+			statusMgr.Unlock()
+		}
+	}()
+}
+
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
@@ -120,6 +178,22 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
 	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
 
+	var r, w *os.File
+	var statusMgr *VolumeStatusManager
+	if mc.EnableMountRetries {
+		statusMgr = &VolumeStatusManager{
+			status: codes.Unavailable,
+			err:    "mount is initializing",
+		}
+		var err error
+		r, w, err = os.Pipe()
+		if err != nil {
+			return fmt.Errorf("failed to create status pipe: %w", err)
+		}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, w)
+		cmd.Env = append(cmd.Environ(), "GCSFUSE_STATUS_FD=4")
+	}
+
 	// when the ctx.Done() is closed,
 	// the main workload containers have exited,
 	// so it is safe to force kill the gcsfuse process.
@@ -140,8 +214,20 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		defer m.WaitGroup.Done()
 		if err := cmd.Start(); err != nil {
 			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
+			if w != nil {
+				w.Close()
+			}
+			if r != nil {
+				r.Close()
+			}
 
 			return
+		}
+
+		if mc.EnableMountRetries && w != nil && r != nil {
+			w.Close()
+			startStatusServer(statusMgr, mc.TempDir)
+			startStatusReader(statusMgr, r)
 		}
 
 		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
