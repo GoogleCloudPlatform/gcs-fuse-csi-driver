@@ -979,11 +979,14 @@ func countOptionOccurrence(options []string) map[string]int {
 func TestPrepareSharedMountOptions(t *testing.T) {
 	t.Parallel()
 
+	pageSizeKB := max(minPageSizeKB, int64(os.Getpagesize()/KiB))
+
 	testCases := []struct {
-		name              string
-		options           []string
-		expectedGcsfuseMO []string
-		expectErr         bool
+		name                      string
+		options                   []string
+		expectedGcsfuseMO         []string
+		expectedFuseMaxPagesLimit *int64
+		expectErr                 bool
 	}{
 		{
 			name:    "empty options",
@@ -1003,6 +1006,21 @@ func TestPrepareSharedMountOptions(t *testing.T) {
 			},
 		},
 		{
+			name:    "with custom node_fuse_max_request_limit_kb",
+			options: []string{"ro", "implicit-dirs", "node_fuse_max_request_limit_kb=8192"},
+			expectedGcsfuseMO: []string{
+				"o=allow_other,default_permissions",
+				"o=ro",
+				"implicit-dirs",
+			},
+			expectedFuseMaxPagesLimit: ptr(8192 / pageSizeKB),
+		},
+		{
+			name:      "invalid node_fuse_max_request_limit_kb",
+			options:   []string{"node_fuse_max_request_limit_kb=-1"},
+			expectErr: true,
+		},
+		{
 			name:      "invalid read_ahead_kb",
 			options:   []string{"read_ahead_kb=-1"},
 			expectErr: true,
@@ -1012,7 +1030,7 @@ func TestPrepareSharedMountOptions(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, _, _, err := PrepareSharedMountOptions(tc.options)
+			got, _, fuseMaxPagesLimit, err := PrepareSharedMountOptions(tc.options)
 			if (err != nil) != tc.expectErr {
 				t.Fatalf("expected error: %v, got: %v", tc.expectErr, err)
 			}
@@ -1022,10 +1040,78 @@ func TestPrepareSharedMountOptions(t *testing.T) {
 			if !reflect.DeepEqual(got, tc.expectedGcsfuseMO) {
 				t.Errorf("PrepareSharedMountOptions() = %v, want %v", got, tc.expectedGcsfuseMO)
 			}
+			expectedPages := CeilDiv64(defaultNodeFuseMaxRequestLimitKB, pageSizeKB)
+			if tc.expectedFuseMaxPagesLimit != nil {
+				expectedPages = *tc.expectedFuseMaxPagesLimit
+			}
+			if fuseMaxPagesLimit != expectedPages {
+				t.Errorf("Got fuseMaxPagesLimit %d, expected %d", fuseMaxPagesLimit, expectedPages)
+			}
 		})
 	}
 }
 
 func ptr[T any](v T) *T {
 	return &v
+}
+
+func TestCheckForKernelReader(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		options  []string
+		expected bool
+	}{
+		{
+			name:     "empty options",
+			options:  []string{},
+			expected: false,
+		},
+		{
+			name:     "unrelated options",
+			options:  []string{"ro", "implicit-dirs", "node_fuse_max_request_limit_kb=8192"},
+			expected: false,
+		},
+		{
+			name:     "enable-kernel-reader flag only",
+			options:  []string{"enable-kernel-reader"},
+			expected: true,
+		},
+		{
+			name:     "enable-kernel-reader=true flag",
+			options:  []string{"enable-kernel-reader=true"},
+			expected: true,
+		},
+		{
+			name:     "enable-kernel-reader=false flag",
+			options:  []string{"enable-kernel-reader=false"},
+			expected: false,
+		},
+		{
+			name:     "file-system:enable-kernel-reader:true config",
+			options:  []string{"file-system:enable-kernel-reader:true"},
+			expected: true,
+		},
+		{
+			name:     "file-system:enable-kernel-reader:false config",
+			options:  []string{"file-system:enable-kernel-reader:false"},
+			expected: false,
+		},
+		{
+			name:     "multiple options with enable-kernel-reader",
+			options:  []string{"ro", "implicit-dirs", "enable-kernel-reader=true", "node_fuse_max_request_limit_kb=8192"},
+			expected: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := CheckForKernelReader(tc.options)
+			if got != tc.expected {
+				t.Errorf("CheckForKernelReader() = %v, expected %v", got, tc.expected)
+			}
+		})
+	}
 }

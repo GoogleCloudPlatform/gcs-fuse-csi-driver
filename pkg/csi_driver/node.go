@@ -1145,15 +1145,27 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Prepare mount options specifically for shared node mount architecture before sending to mounter pod.
-	gcsfuseMO, sysfsBDI, _, err := util.PrepareSharedMountOptions(args.fuseMountOptions)
+	gcsfuseMO, sysfsBDI, fuseMaxPagesLimit, err := util.PrepareSharedMountOptions(args.fuseMountOptions)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to prepare mount options: %v", err)
 	}
 
-	// TODO(FUECHR): Pass node_fuse_max_request_limit_kb to gcsfuse config correctly for shared node mounts.
+	logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podUID, pvName, args.bucketName)
+	mountFn := func() error {
+		klog.V(4).Infof("%v sending mount request to mounter pod for volume %q", logPrefix, volumeID)
+		return s.mountToNode(ctx, podUID, stagingPath, volumeID, gcsfuseMO)
+	}
 
 	// Send GRPC to mounter pod to start GCSFuse.
-	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, gcsfuseMO); err != nil {
+	isKernelReaderEnabled := util.CheckForKernelReader(args.fuseMountOptions)
+	shouldMountUsingElevatedFuseMaxPagesLimit := util.FuseMaxMaxPagesUpdateSupported() && fuseMaxPagesLimit > 0 && isKernelReaderEnabled
+	if shouldMountUsingElevatedFuseMaxPagesLimit {
+		err = util.MountUsingElevatedFuseMaxPagesLimit(fuseMaxPagesLimit, logPrefix, mountFn)
+	} else {
+		err = mountFn()
+	}
+
+	if err != nil {
 		klog.Errorf("Failed to mount volume %q to staging path %q: %v", volumeID, stagingPath, err)
 		if code, fileErr := checkMounterPodErrorFile(emptyDirBasePath); fileErr != nil {
 			return nil, status.Error(code, fileErr.Error())
@@ -1178,7 +1190,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return nil, err
 	}
 
-	logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podUID, pvName, args.bucketName)
 	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
