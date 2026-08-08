@@ -36,9 +36,10 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
-// LustreStorageClass is the StorageClass used to provision the Lustre-backed
-// PVC in Lustre + GCS Fuse data pipeline tests. Overridden via
-// --lustre-storage-class in e2e_test.go if needed.
+// LustreStorageClass is the StorageClass used to dynamically provision
+// Lustre-backed PVCs, shared by the data pipeline tests in this file and the
+// GCS Fuse + Lustre combination tests in gcsfuse_lustre.go. Overridden via
+// --lustre-storage-class in e2e_test.go.
 var LustreStorageClass = "lustre-rwx"
 
 const (
