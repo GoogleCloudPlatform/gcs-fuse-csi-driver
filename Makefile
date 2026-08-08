@@ -15,6 +15,26 @@
 
 BINDIR ?= $(shell pwd)/bin
 
+GCSFUSE_DEFAULT_REPO = https://github.com/GoogleCloudPlatform/gcsfuse.git
+
+# Helper to check if a tag exists in GCSFuse
+# Usage: $(call check_gcsfuse_tag,tag_name)
+# Returns 'true' if tag exists, 'false' otherwise
+# Example:
+#   ifeq ($(call check_gcsfuse_tag,v3.9.1),true)
+#       $(info Tag v3.9.1 exists)
+#   endif
+check_gcsfuse_tag = $(shell git ls-remote --exit-code --tags $(GCSFUSE_DEFAULT_REPO) refs/tags/$(1) > /dev/null 2>&1 && echo true || echo false)
+
+# Helper to check if a branch exists in GCSFuse
+# Usage: $(call check_gcsfuse_branch,branch_name)
+# Returns 'true' if branch exists, 'false' otherwise
+# Example:
+#   ifeq ($(call check_gcsfuse_branch,master),true)
+#       $(info Branch master exists)
+#   endif
+check_gcsfuse_branch = $(shell git ls-remote --exit-code --heads $(GCSFUSE_DEFAULT_REPO) refs/heads/$(1) > /dev/null 2>&1 && echo true || echo false)
+
 ifeq ($(ENABLE_ZB), true)
     export GCSFUSE_CLIENT_PROTOCOL = grpc
 endif
@@ -28,6 +48,7 @@ export REGISTRY ?= gcr.io/gke-release
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
+# GCSFUSE_TAG can be a valid GCSFuse tag (e.g., v3.9.1), a branch (e.g., feature-x).
 export GCSFUSE_TAG ?= master
 export GCSFUSE_REPO ?=
 export BUILD_ARM ?= false
@@ -149,11 +170,16 @@ endif
 ifneq ($(GCSFUSE_PR_NUMBER),)
 	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-pr-$(GCSFUSE_PR_NUMBER))
 else ifeq ($(GCSFUSE_TAG), master)
-	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
-else
+	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote $(GCSFUSE_DEFAULT_REPO) HEAD | cut -c1-7))
+else ifeq ($(call check_gcsfuse_tag,$(GCSFUSE_TAG)),true)
 	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
+else ifeq ($(call check_gcsfuse_branch,$(GCSFUSE_TAG)),true)
+	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-branch-$(shell git ls-remote $(GCSFUSE_DEFAULT_REPO) ${GCSFUSE_TAG} | head -n 1 | cut -c1-7))
+else
+	@echo "Invalid GCSFUSE_TAG provided: $(GCSFUSE_TAG). It is neither a valid tag nor a branch. Please provide a valid tag or branch from GCSFuse."
+	@exit 1
 endif
-	@echo "Building GCSFuse from GCSFUSE_TAG ${GCSFUSE_TAG} commit id: $$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | head -n 1 | cut -f1)"
+	@echo "Building GCSFuse from GCSFUSE_TAG ${GCSFUSE_TAG} commit id: $$(git ls-remote $(GCSFUSE_DEFAULT_REPO) ${GCSFUSE_TAG} | head -n 1 | cut -f1)"
 	docker buildx build \
 		--load \
 		--file ${BINDIR}/Dockerfile.gcsfuse \
@@ -164,10 +190,13 @@ endif
 		--build-arg ARCHITECTURE=amd64 \
 		--platform=linux/amd64 .
 
+	# Run the container to extract the binary. We chown it to the current user/group
+	# because files written to bind mounts from containers running as root end up
+	# owned by root on the host, causing permission errors.
 	docker run \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
-		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release && chown $(shell id -u 2>/dev/null || echo 0):$(shell id -g 2>/dev/null || echo 0) /release/gcsfuse"
 ifeq (${BUILD_ARM}, true)
 	docker buildx build \
 		--load \
@@ -178,10 +207,13 @@ ifeq (${BUILD_ARM}, true)
 		$(if $(GCSFUSE_REPO),--build-arg GCSFUSE_REPO=${GCSFUSE_REPO}) \
 		--build-arg ARCHITECTURE=arm64 \
 		--platform=linux/arm64 .
+	# Run the container to extract the binary. We chown it to the current user/group
+	# because files written to bind mounts from containers running as root end up
+	# owned by root on the host, causing permission errors.
 	docker run \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
-		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
+		sh -c "cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release && chown $(shell id -u 2>/dev/null || echo 0):$(shell id -g 2>/dev/null || echo 0) /release/gcsfuse"
 endif
 else
 	gcloud storage cp ${GCSFUSE_PATH}/linux/amd64/gcsfuse ${BINDIR}/linux/amd64/gcsfuse
