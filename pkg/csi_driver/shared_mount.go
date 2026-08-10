@@ -45,7 +45,7 @@ const (
 	mounterPodPriorityClass       = "gcsfusecsi-mount-priority"
 	mounterPodMountDir            = "mount-dir"
 	MounterPodSocketFile          = "mounter.sock"
-	mounterPodManagedImageKeyword = "managed"
+	MounterPodManagedImageKeyword = "managed"
 	mounterPodSocketDir           = "mount-socket"
 )
 

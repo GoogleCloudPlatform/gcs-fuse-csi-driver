@@ -32,6 +32,8 @@ type VolumeStateStore struct {
 type VolumeState struct {
 	BucketAccessCheckPassed   bool
 	GCSFuseKernelMonitorState GCSFuseKernelParamsMonitor
+	VolumeName                string
+	MounterPodUID             string
 }
 
 // GCSFuseKernelParamsMonitor holds the state for a goroutine that monitors the GCSFuse kernel parameters file.
@@ -68,6 +70,17 @@ func (vss *VolumeStateStore) Load(volumeID string) (*VolumeState, bool) {
 	}
 
 	return nil, false
+}
+
+// LoadOrStore returns the existing value for the key if present.
+// Otherwise, it stores and returns the given value.
+// The loaded result is true if the value was loaded, false if stored.
+func (vss *VolumeStateStore) LoadOrStore(volumeID string, state *VolumeState) (*VolumeState, bool) {
+	actual, loaded := vss.store.LoadOrStore(volumeID, state)
+	if !loaded {
+		atomic.AddInt32(&vss.size, 1)
+	}
+	return actual.(*VolumeState), loaded
 }
 
 // Delete removes a volume from the store.

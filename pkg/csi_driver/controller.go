@@ -223,7 +223,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 			continue
 		}
 		containerResources = &container.Resources
-		if container.Image != "" && container.Image != mounterPodManagedImageKeyword {
+		if container.Image != "" && container.Image != MounterPodManagedImageKeyword {
 			// If the image isn't the placeholder managed keyword, the user is trying to
 			// override the mounter pod's image.
 			// Validate that the image is trustworthy (either it is an official GKE-managed image,

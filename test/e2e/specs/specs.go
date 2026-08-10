@@ -27,6 +27,7 @@ import (
 
 	"local/test/e2e/utils"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
@@ -54,8 +55,9 @@ import (
 )
 
 const (
-	TesterContainerName   = "volume-tester"
-	K8sServiceAccountName = "gcsfuse-csi-sa"
+	TesterContainerName           = "volume-tester"
+	K8sServiceAccountName         = "gcsfuse-csi-sa"
+	DefaultMounterPodTemplateName = "default-mounter-pod-template"
 	//nolint:gosec
 	K8sSecretName                                              = "gcsfuse-csi-test-secret"
 	FakeVolumePrefix                                           = "gcsfuse-csi-fake-volume"
@@ -130,6 +132,52 @@ var InvalidVolume = fmt.Sprintf("non-existent-test-bucket-%s", rand.String(8))
 // Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
 // konnectivity agents are wrapped with retry logic, see `runKubectlWithFullOutputWithRetry` as an example.
 // See here for the list of commands that require the agents - go/konnectivity-network-proxy#egress_traffic.
+
+type MounterPodTemplateOptions struct {
+	Name               string
+	ServiceAccountName string
+	FSGroup            *int64
+	Resources          *corev1.ResourceRequirements
+	Image              string
+}
+
+func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namespace string, opts MounterPodTemplateOptions) (*corev1.PodTemplate, error) {
+	image := opts.Image
+	if image == "" {
+		image = driver.MounterPodManagedImageKeyword
+	}
+	saName := opts.ServiceAccountName
+	if saName == "" {
+		saName = K8sServiceAccountName
+	}
+	podSpec := corev1.PodSpec{
+		ServiceAccountName: saName,
+		Containers: []corev1.Container{
+			{
+				Name:  util.MounterPodNamePrefix,
+				Image: image,
+			},
+		},
+	}
+	if opts.Resources != nil {
+		podSpec.Containers[0].Resources = *opts.Resources
+	}
+	if opts.FSGroup != nil {
+		podSpec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup: opts.FSGroup,
+		}
+	}
+	template := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      opts.Name,
+			Namespace: namespace,
+		},
+		Template: corev1.PodTemplateSpec{
+			Spec: podSpec,
+		},
+	}
+	return c.CoreV1().PodTemplates(namespace).Create(ctx, template, metav1.CreateOptions{})
+}
 
 type TestPod struct {
 	client    clientset.Interface
@@ -542,11 +590,29 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 	}
 }
 
+// ensureMounterPodTemplateAnnotation ensures that when shared node mount is enabled,
+// the PVC references a mounter PodTemplate via the gke-gcsfuse/mounter-pod-template annotation.
+// If absent, it defaults to the default mounter PodTemplate provisioned during PrepareTest.
+func (t *TestPod) ensureMounterPodTemplateAnnotation(volumeResource *storageframework.VolumeResource) {
+	if volumeResource.Pvc != nil && volumeResource.Pv != nil && volumeResource.Pv.Spec.CSI != nil && volumeResource.Pv.Spec.CSI.VolumeAttributes[driver.VolumeContextSharedNodeMount] == util.TrueStr {
+		if volumeResource.Pvc.Annotations == nil {
+			volumeResource.Pvc.Annotations = make(map[string]string)
+		}
+		if _, ok := volumeResource.Pvc.Annotations[webhook.MounterPodTemplateAnnotation]; !ok {
+			volumeResource.Pvc.Annotations[webhook.MounterPodTemplateAnnotation] = DefaultMounterPodTemplateName
+			updatedPVC, err := t.client.CoreV1().PersistentVolumeClaims(volumeResource.Pvc.Namespace).Update(context.Background(), volumeResource.Pvc, metav1.UpdateOptions{})
+			framework.ExpectNoError(err)
+			volumeResource.Pvc = updatedPVC
+		}
+	}
+}
+
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
 	volume := corev1.Volume{
 		Name: name,
 	}
 	if volumeResource.Pvc != nil {
+		t.ensureMounterPodTemplateAnnotation(volumeResource)
 		volume.VolumeSource = corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeResource.Pvc.Name,
@@ -570,6 +636,7 @@ func (t *TestPod) SetupVolumeWithHostNetworkKSAOptIn(volumeResource *storagefram
 		Name: name,
 	}
 	if volumeResource.Pvc != nil {
+		t.ensureMounterPodTemplateAnnotation(volumeResource)
 		volume.VolumeSource = corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeResource.Pvc.Name,
@@ -838,6 +905,24 @@ func (t *TestPVC) Create(ctx context.Context) {
 	var err error
 	t.PVC, err = t.client.CoreV1().PersistentVolumeClaims(t.namespace.Name).Create(ctx, t.PVC, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
+}
+
+// SetMounterPodTemplate sets the gke-gcsfuse/mounter-pod-template annotation on the PVC.
+// By default, if this annotation is not set, setupVolume will automatically associate the PVC
+// with the default mounter PodTemplate (DefaultMounterPodTemplateName).
+// Calling this method allows tests to bind the PVC to a custom PodTemplate (e.g. for testing
+// custom fsGroup, custom ServiceAccountName). If the PVC has already been created on the
+// API server, it actively updates the PVC resource.
+func (t *TestPVC) SetMounterPodTemplate(ctx context.Context, templateName string) {
+	if t.PVC.Annotations == nil {
+		t.PVC.Annotations = make(map[string]string)
+	}
+	t.PVC.Annotations[webhook.MounterPodTemplateAnnotation] = templateName
+	if t.PVC.ResourceVersion != "" {
+		updatedPVC, err := t.client.CoreV1().PersistentVolumeClaims(t.namespace.Name).Update(ctx, t.PVC, metav1.UpdateOptions{})
+		framework.ExpectNoError(err)
+		t.PVC = updatedPVC
+	}
 }
 
 func (t *TestPVC) Cleanup(ctx context.Context) {

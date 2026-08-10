@@ -26,9 +26,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/profiler"
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"gopkg.in/yaml.v3"
@@ -102,7 +105,10 @@ type sidecarRetryConfig struct {
 	Jitter   float64
 }
 
-var prometheusPort = 62990
+var (
+	prometheusPort    = 62990
+	startProfilerOnce sync.Once
+)
 
 // DisallowedFlags is a map of flags that are disallowed to be passed to sidecar mounter directly.
 // They are mapped to their config file style representation so that they can be passed in config file format
@@ -203,6 +209,20 @@ func mergeFlags(mountConfigFlagMap map[string]string, driverFlagMap map[string]s
 	}
 }
 
+// ReadDriverFlagsForDefaulting reads the defaulting flags file written by the CSI driver
+// into the emptyDir volume and parses its content into a map of flag key-value pairs.
+// If the file does not exist, it returns an empty map and nil error.
+func ReadDriverFlagsForDefaulting(defaultFilePath string) (map[string]string, error) {
+	machineTypeBytes, err := os.ReadFile(defaultFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("failed to read defaulting-flag file %q: %w", defaultFilePath, err)
+	}
+	return driver.ParseFlagMapFromFlagFile(string(machineTypeBytes)), nil
+}
+
 func (mc *MountConfig) prepareMountArgs() {
 	flagMap := map[string]string{
 		"app-name":        GCSFuseAppName,
@@ -270,9 +290,13 @@ func (mc *MountConfig) prepareMountArgs() {
 
 		flag := argPair[0]
 		if _, ok := DisallowedFlags[flag]; ok {
-			invalidArgs = append(invalidArgs, arg)
-
-			continue
+			// Reject all disallowed flags EXCEPT "-o" when SharedMountPoint is set.
+			// SharedMountPoint is set when the shared mount feature is enabled, during which the "-o" flag is needed to pass mount options to gcsfuse.
+			isAllowedOFlag := flag == "o" && mc.SharedMountPoint != ""
+			if !isAllowedOFlag {
+				invalidArgs = append(invalidArgs, arg)
+				continue
+			}
 		}
 
 		value := ""
@@ -356,7 +380,18 @@ func (mc *MountConfig) prepareMountArgs() {
 			value = GCSFuseAppName + "-" + value
 		}
 
-		flagMap[flag] = value
+		// The "-o" flag can be passed multiple times, and gcsfuse expects them to be comma-separated.
+		if flag == "o" {
+			if value != "" {
+				if existing, ok := flagMap["o"]; ok && existing != "" {
+					flagMap["o"] = existing + "," + value
+				} else {
+					flagMap["o"] = value
+				}
+			}
+		} else {
+			flagMap[flag] = value
+		}
 	}
 
 	if len(invalidArgs) > 0 {
@@ -378,8 +413,13 @@ func (mc *MountConfig) prepareMountArgs() {
 		default:
 			klog.Warningf("got invalid value for %q: %q. Will discard and continue to mount.", util.FileCacheMediumConst, mc.FileCacheMedium)
 		}
-		// Ensure a unique directory is passed for each volume.
-		cacheDir = filepath.Join(cacheDir, ".volumes", mc.VolumeName)
+
+		isSidecarMounted := mc.SharedMountPoint == ""
+		// Ensure a unique directory is passed for each volume for sidecar architecture.
+		if isSidecarMounted {
+			cacheDir = filepath.Join(cacheDir, ".volumes", mc.VolumeName)
+		}
+
 		configFileFlagMap["cache-dir"] = cacheDir
 		mc.CacheDir = cacheDir
 		klog.Infof("Overriding cache-dir with %q for medium %q", cacheDir, mc.FileCacheMedium)
@@ -466,4 +506,25 @@ func (mc *MountConfig) prepareConfigFile() error {
 	klog.Infof("gcsfuse config file content: %v", configMap)
 
 	return os.WriteFile(mc.ConfigFile, yamlData, 0o400)
+}
+
+// StartCloudProfiler starts the Google Cloud Profiler.
+// It uses sync.Once to ensure the profiler is started at most once per process.
+func StartCloudProfiler(serviceName string, podName string, podUID string) {
+	if podName == "" || podUID == "" {
+		klog.Warningf("Cloud Profiler is disabled because PodName (%q) or PodUID (%q) is empty.", podName, podUID)
+		return
+	}
+	serviceVersion := util.GetCloudProfilerServiceVersion(podName, podUID)
+	startProfilerOnce.Do(func() {
+		cfg := profiler.Config{
+			Service:        serviceName,
+			ServiceVersion: serviceVersion,
+		}
+		if err := profiler.Start(cfg); err != nil {
+			klog.Errorf("Errored while starting cloud profiler, got %v", err)
+		} else {
+			klog.Infof("Running cloud profiler on %s with version %s", cfg.Service, cfg.ServiceVersion)
+		}
+	})
 }

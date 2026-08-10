@@ -45,7 +45,7 @@ const (
 	mounterPodPriorityClass       = "gcsfusecsi-mount-priority"
 	mounterPodMountDir            = "mount-dir"
 	MounterPodSocketFile          = "mounter.sock"
-	mounterPodManagedImageKeyword = "managed"
+	MounterPodManagedImageKeyword = "managed"
 	mounterPodSocketDir           = "mount-socket"
 )
 
@@ -66,6 +66,7 @@ type mounterPodConfig struct {
 	hostNetworkEnabled bool                         // Whether hostNetwork is enabled for the mounter pod.
 	tokenAudience      string                       // Token audience for projected service account volume.
 	dnsPolicy          corev1.DNSPolicy             // The DNS policy for the mounter pod.
+	securityContext    *corev1.PodSecurityContext   // The pod-level security context for the mounter pod.
 }
 
 // sharedMount checks if the VolumeContext enables the shared node mount feature
@@ -235,6 +236,12 @@ func createMounterPodSpec(config *mounterPodConfig) *corev1.Pod {
 
 	if config.dnsPolicy != "" {
 		spec.Spec.DNSPolicy = config.dnsPolicy
+	}
+
+	if config.securityContext != nil && config.securityContext.FSGroup != nil {
+		spec.Spec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup: config.securityContext.FSGroup,
+		}
 	}
 
 	spec.Spec.Containers[0].Resources = *mounterPodResources(config)
@@ -476,6 +483,17 @@ func waitForMounterServer(ctx context.Context, clientset clientset.Interface, mo
 		if pod.Status.Phase == corev1.PodPending {
 			klog.Infof("Mounter pod %s/%s is still Pending. Retrying...", mounterPodNamespace, mounterPodName)
 			return false, nil
+		}
+
+		// Retry if container status is not yet available.
+		cs, err := getMounterPodContainerStatus(pod)
+		if err != nil {
+			klog.V(4).Infof("Mounter pod %s/%s container status not yet available: %v. Retrying...", mounterPodNamespace, mounterPodName, err)
+			return false, nil
+		}
+		// Fail fast if the mounter container terminates with an error or OOM.
+		if code, err := checkContainerStatusErr(cs); code != codes.OK {
+			return false, status.Error(code, err.Error())
 		}
 
 		// Mounter pod is running, check if the socket file is available.
