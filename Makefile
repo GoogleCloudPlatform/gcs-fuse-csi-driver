@@ -13,7 +13,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+export GCSFUSE_REPO ?= https://github.com/GoogleCloudPlatform/gcsfuse.git
 BINDIR ?= $(shell pwd)/bin
+
+# ------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------
+
+# Resolves GCSFUSE_REPO and GCSFUSE_TAG from PR number if specified.
+_resolve_gcsfuse_pr = $(if $(GCSFUSE_PR_NUMBER),\
+	$(eval _PR_INFO := $(shell curl -sf -H "User-Agent: gcs-fuse-csi-driver" "https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/pulls/$(GCSFUSE_PR_NUMBER)" | jq -r '.head.repo.clone_url, .head.ref')) \
+	$(if $(_PR_INFO),\
+		$(eval GCSFUSE_REPO := $(word 1,$(_PR_INFO))) \
+		$(eval GCSFUSE_TAG := $(word 2,$(_PR_INFO))) \
+		$(info Resolved from PR $(GCSFUSE_PR_NUMBER): GCSFUSE_REPO=$(GCSFUSE_REPO) GCSFUSE_TAG=$(GCSFUSE_TAG)),\
+		$(error Failed to resolve PR $(GCSFUSE_PR_NUMBER) from GitHub API. Please check your network connection or API rate limits.)))
+
+# Computes GCSFUSE_VERSION from git remote lazily on first access.
+_compute_gcsfuse_version = $(shell \
+	if [ -n "$(GCSFUSE_PR_NUMBER)" ]; then \
+		echo "0.0.1-gcsfuse-pr-$(GCSFUSE_PR_NUMBER)"; \
+	elif [ "$(GCSFUSE_TAG)" = "master" ]; then \
+		commit=$$(git ls-remote $(GCSFUSE_REPO) HEAD 2>/dev/null | cut -c1-7); \
+		if [ -n "$$commit" ]; then \
+			echo "0.0.1-gcsfuse-git-master-$$commit"; \
+		else \
+			echo "INVALID"; \
+		fi; \
+	else \
+		ref=$$(git ls-remote $(GCSFUSE_REPO) refs/tags/$(GCSFUSE_TAG) refs/heads/$(GCSFUSE_TAG) 2>/dev/null); \
+		if echo "$$ref" | grep -q "refs/tags/"; then \
+			echo "$(GCSFUSE_TAG)" | sed 's/^v//'; \
+		elif echo "$$ref" | grep -q "refs/heads/"; then \
+			echo "0.0.1-gcsfuse-git-branch-$$(echo "$$ref" | head -n 1 | cut -c1-7)"; \
+		else \
+			echo "INVALID"; \
+		fi; \
+	fi)
+
+# Lazily evaluates and memoizes GCSFUSE_VERSION on first access to avoid parse-time network overhead.
+GCSFUSE_VERSION = $(eval GCSFUSE_VERSION := $(_compute_gcsfuse_version))$(GCSFUSE_VERSION)
+
+# Derives "owner/repo" and the Dockerfile URL from GCSFUSE_REPO using Make string substitution
+# (e.g., https://github.com/GoogleCloudPlatform/gcsfuse.git or git@github.com:GoogleCloudPlatform/gcsfuse.git -> GoogleCloudPlatform/gcsfuse)
+GCSFUSE_REPO_PATH = $(subst git@github.com:,,$(subst https://github.com/,,$(subst .git,,$(GCSFUSE_REPO))))
+GCSFUSE_DOCKERFILE_URL = https://raw.githubusercontent.com/$(GCSFUSE_REPO_PATH)/$(GCSFUSE_TAG)/tools/package_gcsfuse_docker/Dockerfile
+
+# ------------------------------------------------------------------------------
+# End of Helpers
+# ------------------------------------------------------------------------------
 
 ifeq ($(ENABLE_ZB), true)
     export GCSFUSE_CLIENT_PROTOCOL = grpc
@@ -28,8 +76,8 @@ export REGISTRY ?= gcr.io/gke-release
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 export OVERLAY ?= stable
 export BUILD_GCSFUSE_FROM_SOURCE ?= false
+# GCSFUSE_TAG can be a valid GCSFuse tag (e.g., v3.9.1), a branch (e.g., feature-x).
 export GCSFUSE_TAG ?= master
-export GCSFUSE_REPO ?=
 export BUILD_ARM ?= false
 export SELF_MANAGED_K8S ?= false
 export GCSFUSE_PR_NUMBER ?=
@@ -129,42 +177,27 @@ webhook:
 download-gcsfuse:
 	mkdir -p ${BINDIR}/linux/amd64 ${BINDIR}/linux/arm64
 ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
-# When building from a PR, resolve GCSFUSE_REPO and GCSFUSE_TAG from the
-# GitHub API.  $(eval) defers execution to recipe time so that `make e2e-test`
-# (which triggers a nested `make build-image-and-push-multi-arch` via
-# test/e2e/utils/image.go) does not pay for these curl calls at parse time.
-ifneq ($(GCSFUSE_PR_NUMBER),)
-ifeq ($(GCSFUSE_REPO),)
-	$(eval GCSFUSE_REPO := $(shell curl -sf -H "User-Agent: gcs-fuse-csi-driver" \
-	  "https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/pulls/$(GCSFUSE_PR_NUMBER)" \
-	  | jq -r '.head.repo.clone_url'))
-	$(eval GCSFUSE_TAG := $(shell curl -sf -H "User-Agent: gcs-fuse-csi-driver" \
-	  "https://api.github.com/repos/GoogleCloudPlatform/gcsfuse/pulls/$(GCSFUSE_PR_NUMBER)" \
-	  | jq -r '.head.ref'))
-	$(info Resolved from PR $(GCSFUSE_PR_NUMBER): GCSFUSE_REPO=$(GCSFUSE_REPO) GCSFUSE_TAG=$(GCSFUSE_TAG))
-endif
-endif
+	$(_resolve_gcsfuse_pr)
+	@if [ "$(GCSFUSE_VERSION)" = "INVALID" ]; then \
+		echo "Invalid GCSFUSE_TAG provided: $(GCSFUSE_TAG). It is neither a valid tag nor a branch in $(GCSFUSE_REPO)." >&2; \
+		exit 1; \
+	fi
+	@echo "Building GCSFuse from GCSFUSE_TAG ${GCSFUSE_TAG} commit id: $$(git ls-remote $(GCSFUSE_REPO) ${GCSFUSE_TAG} | head -n 1 | cut -f1)"
 	rm -f ${BINDIR}/Dockerfile.gcsfuse
-	curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/${GCSFUSE_TAG}/tools/package_gcsfuse_docker/Dockerfile -o ${BINDIR}/Dockerfile.gcsfuse
-ifneq ($(GCSFUSE_PR_NUMBER),)
-	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-pr-$(GCSFUSE_PR_NUMBER))
-else ifeq ($(GCSFUSE_TAG), master)
-	$(eval GCSFUSE_VERSION = 0.0.1-gcsfuse-git-master-$(shell git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git HEAD | cut -c1-7))
-else
-	$(eval GCSFUSE_VERSION=$(shell echo ${GCSFUSE_TAG} | sed 's/^v//'))
-endif
-	@echo "Building GCSFuse from GCSFUSE_TAG ${GCSFUSE_TAG} commit id: $$(git ls-remote https://github.com/GoogleCloudPlatform/gcsfuse.git ${GCSFUSE_TAG} | head -n 1 | cut -f1)"
+	curl -sf -L "$(GCSFUSE_DOCKERFILE_URL)" -o ${BINDIR}/Dockerfile.gcsfuse
 	docker buildx build \
 		--load \
 		--file ${BINDIR}/Dockerfile.gcsfuse \
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
 		--build-arg BRANCH_NAME=${GCSFUSE_TAG} \
-		$(if $(GCSFUSE_REPO),--build-arg GCSFUSE_REPO=${GCSFUSE_REPO}) \
+		--build-arg GCSFUSE_REPO=${GCSFUSE_REPO} \
 		--build-arg ARCHITECTURE=amd64 \
 		--platform=linux/amd64 .
 
+	# Run the container to extract the binary as current user/group to avoid permission issues.
 	docker run \
+		--user $$(id -u):$$(id -g) \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
 		cp /gcsfuse_${GCSFUSE_VERSION}_amd64/usr/bin/gcsfuse /release
@@ -175,10 +208,12 @@ ifeq (${BUILD_ARM}, true)
 		--tag gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		--build-arg GCSFUSE_VERSION=${GCSFUSE_VERSION} \
 		--build-arg BRANCH_NAME=${GCSFUSE_TAG} \
-		$(if $(GCSFUSE_REPO),--build-arg GCSFUSE_REPO=${GCSFUSE_REPO}) \
+		--build-arg GCSFUSE_REPO=${GCSFUSE_REPO} \
 		--build-arg ARCHITECTURE=arm64 \
 		--platform=linux/arm64 .
+	# Run the container to extract the binary as current user/group to avoid permission issues.
 	docker run \
+		--user $$(id -u):$$(id -g) \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
 		cp /gcsfuse_${GCSFUSE_VERSION}_arm64/usr/bin/gcsfuse /release
