@@ -50,6 +50,7 @@ var (
 	zbFlag             = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
 	profilesFlag       = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
 	kernelParamsFlag   = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
+	sharedMountFlag    = flag.Bool("enable-shared-mount-test", false, "enable shared mount for the tests")
 	pdStorageClass     = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
 	lustreStorageClass = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass for Lustre-backed PVC in lustre gcsfuse data pipeline tests")
 )
@@ -146,7 +147,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		return suites
 	}()
 
-	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag)
+	testDriver := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, false, *clientProtocol, *zbFlag, *sharedMountFlag)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s]", testDriver.GetDriverInfo().Name), func() {
 		storageframework.DefineTestSuites(testDriver, GCSFuseCSITestSuites)
@@ -158,7 +159,7 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 		testsuites.InitGcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite,
 	}
 
-	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *zbFlag)
+	testDriverHNS := specs.InitGCSFuseCSITestDriver(c, m, *bucketLocation, *skipGcpSaTest, true, *clientProtocol, *zbFlag, *sharedMountFlag)
 
 	ginkgo.Context(fmt.Sprintf("[Driver: %s HNS]", testDriverHNS.GetDriverInfo().Name), func() {
 		// Skip HNS tests suites for ZB since enable ZB will automatically enable HNS

@@ -49,6 +49,8 @@ type FakePodConfig struct {
 	PodStatus          *corev1.PodStatus
 	NodeName           string
 	IsMounterPod       bool
+	SecurityContext    *corev1.PodSecurityContext
+	ServiceAccountName string
 }
 
 type FakePVConfig struct {
@@ -177,7 +179,12 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 		Status: corev1.PodStatus{
 			ContainerStatuses: []corev1.ContainerStatus{
 				{
-					Name: webhook.GcsFuseSidecarName,
+					Name: func() string {
+						if podConfig.IsMounterPod {
+							return util.MounterPodNamePrefix
+						}
+						return webhook.GcsFuseSidecarName
+					}(),
 					State: corev1.ContainerState{
 						Running: &corev1.ContainerStateRunning{},
 					},
@@ -195,11 +202,23 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 	}
 
 	if podConfig.PodStatus != nil {
+		containerStatuses := c.fakePod.Status.ContainerStatuses
 		c.fakePod.Status = *podConfig.PodStatus
+		if len(c.fakePod.Status.ContainerStatuses) == 0 {
+			c.fakePod.Status.ContainerStatuses = containerStatuses
+		}
 	}
 
 	if podConfig.NodeName != "" {
 		c.fakePod.Spec.NodeName = podConfig.NodeName
+	}
+
+	if podConfig.SecurityContext != nil {
+		c.fakePod.Spec.SecurityContext = podConfig.SecurityContext
+	}
+
+	if podConfig.ServiceAccountName != "" {
+		c.fakePod.Spec.ServiceAccountName = podConfig.ServiceAccountName
 	}
 
 	c.fakePods = append(c.fakePods, c.fakePod)

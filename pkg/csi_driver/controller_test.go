@@ -400,7 +400,7 @@ func TestControllerPublishVolume(t *testing.T) {
 						Containers: []corev1.Container{
 							{
 								Name:  util.MounterPodNamePrefix,
-								Image: mounterPodManagedImageKeyword,
+								Image: MounterPodManagedImageKeyword,
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("150m"),

@@ -561,13 +561,17 @@ func (c *Clientset) ConfigurePodLister(ctx context.Context, nodeName string, eve
 		volumes := podObj.Spec.Volumes
 		restartPolicy := podObj.Spec.RestartPolicy
 		hostNetwork := podObj.Spec.HostNetwork
+		securityContext := podObj.Spec.SecurityContext
+		serviceAccountName := podObj.Spec.ServiceAccountName
 		podObj.Spec = corev1.PodSpec{
-			NodeName:       nodeName,
-			Volumes:        volumes,
-			Containers:     newContainers,
-			InitContainers: newInitContainers,
-			RestartPolicy:  restartPolicy,
-			HostNetwork:    hostNetwork,
+			NodeName:           nodeName,
+			Volumes:            volumes,
+			Containers:         newContainers,
+			InitContainers:     newInitContainers,
+			RestartPolicy:      restartPolicy,
+			HostNetwork:        hostNetwork,
+			SecurityContext:    securityContext,
+			ServiceAccountName: serviceAccountName,
 		}
 
 		return obj, nil

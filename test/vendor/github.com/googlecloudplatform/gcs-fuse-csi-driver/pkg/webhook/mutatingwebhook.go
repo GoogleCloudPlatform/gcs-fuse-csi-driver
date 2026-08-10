@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"cloud.google.com/go/compute/metadata"
@@ -188,13 +189,22 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 				}
 
 				// Validate that Pod fsGroup matches the requirements of the referenced PVC PodTemplate.
-				if err := si.validateFSGroup(pod, podTemplate); err != nil {
+				var workloadFSGroup string
+				if pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.FSGroup != nil {
+					workloadFSGroup = strconv.FormatInt(*pod.Spec.SecurityContext.FSGroup, 10)
+				}
+				var templateFSGroup string
+				if podTemplate.Template.Spec.SecurityContext != nil && podTemplate.Template.Spec.SecurityContext.FSGroup != nil {
+					templateFSGroup = strconv.FormatInt(*podTemplate.Template.Spec.SecurityContext.FSGroup, 10)
+				}
+				targetDesc := fmt.Sprintf("volume's PodTemplate %q", podTemplate.Name)
+				if err := ValidateFSGroup(workloadFSGroup, templateFSGroup, targetDesc); err != nil {
 					klog.Errorf("fsGroup validation failed: %v", err)
 					return admission.Errored(http.StatusBadRequest, err)
 				}
 
 				// Validate that Pod serviceAccountName matches the requirements of the referenced PVC PodTemplate.
-				if err := si.validateServiceAccountName(pod, podTemplate); err != nil {
+				if err := ValidateServiceAccountName(pod.Spec.ServiceAccountName, podTemplate.Template.Spec.ServiceAccountName, targetDesc); err != nil {
 					klog.Errorf("serviceAccountName validation failed: %v", err)
 					return admission.Errored(http.StatusBadRequest, err)
 				}
@@ -692,45 +702,36 @@ func (si *SidecarInjector) getMounterPodTemplate(namespace string, pvc *corev1.P
 	return podTemplate, nil
 }
 
-// validateFSGroup checks if the Pod's fsGroup matches the one specified in the volume's referenced mounter PodTemplate.
-func (si *SidecarInjector) validateFSGroup(pod *corev1.Pod, podTemplate *corev1.PodTemplate) error {
-	templateName := podTemplate.Name
-	templateHasFSGroup := podTemplate.Template.Spec.SecurityContext != nil && podTemplate.Template.Spec.SecurityContext.FSGroup != nil
-	podHasFSGroup := pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.FSGroup != nil
-
-	// Enforce strict matching between Pod and PodTemplate fsGroup settings to prevent shared mount permission conflicts.
-	if templateHasFSGroup {
-		expectedFSGroup := *podTemplate.Template.Spec.SecurityContext.FSGroup
-		if !podHasFSGroup {
-			return fmt.Errorf("Pod fsGroup is not set, but volume's PodTemplate %q requires fsGroup %d", templateName, expectedFSGroup)
+// ValidateFSGroup checks if the workload fsGroup matches the target fsGroup.
+func ValidateFSGroup(workloadFSGroup, targetFSGroup, targetDesc string) error {
+	if targetFSGroup != "" {
+		if workloadFSGroup == "" {
+			return fmt.Errorf("Pod fsGroup is not set, but %s requires fsGroup %s", targetDesc, targetFSGroup)
 		}
-		actualFSGroup := *pod.Spec.SecurityContext.FSGroup
-		if actualFSGroup != expectedFSGroup {
-			return fmt.Errorf("Pod fsGroup %d does not match the one specified in volume's PodTemplate %q (%d)", actualFSGroup, templateName, expectedFSGroup)
+		if workloadFSGroup != targetFSGroup {
+			return fmt.Errorf("Pod fsGroup %s does not match the one specified in %s (%s)", workloadFSGroup, targetDesc, targetFSGroup)
 		}
 		return nil
 	}
 
-	if podHasFSGroup {
-		return fmt.Errorf("Pod has fsGroup set, but volume's PodTemplate %q does not specify one (not allowed for shared node mount)", templateName)
+	if workloadFSGroup != "" {
+		return fmt.Errorf("Pod has fsGroup set, but %s does not specify one (not allowed for shared node mount)", targetDesc)
 	}
 
 	return nil
 }
 
-// validateServiceAccountName checks if the Pod's serviceAccountName matches the one specified in the volume's referenced mounter PodTemplate.
-func (si *SidecarInjector) validateServiceAccountName(pod *corev1.Pod, podTemplate *corev1.PodTemplate) error {
-	templateSA := podTemplate.Template.Spec.ServiceAccountName
-	if templateSA == "" {
-		templateSA = "default"
+// ValidateServiceAccountName checks if the workload serviceAccountName matches the target's serviceAccountName.
+func ValidateServiceAccountName(workloadSA, targetSA, targetDesc string) error {
+	if targetSA == "" {
+		targetSA = "default"
 	}
-	podSA := pod.Spec.ServiceAccountName
-	if podSA == "" {
-		podSA = "default"
+	if workloadSA == "" {
+		workloadSA = "default"
 	}
 
-	if templateSA != podSA {
-		return fmt.Errorf("Pod serviceAccountName %q does not match the one specified in volume's PodTemplate %q (%q)", podSA, podTemplate.Name, templateSA)
+	if targetSA != workloadSA {
+		return fmt.Errorf("Pod serviceAccountName %q does not match the one specified in %s (%q)", workloadSA, targetDesc, targetSA)
 	}
 
 	return nil

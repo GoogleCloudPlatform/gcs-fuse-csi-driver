@@ -33,15 +33,13 @@ use_gke_managed_driver="${E2E_TEST_USE_GKE_MANAGED_DRIVER:-true}"
 readonly skip_csi_driver_install="${E2E_TEST_SKIP_CSI_DRIVER_INSTALL:-false}"
 readonly build_gcs_fuse_csi_driver="${E2E_TEST_BUILD_DRIVER:-false}"
 readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
-# Default to dev overlay so that --assume-good-sidecar-version is used.
-readonly overlay="${OVERLAY:-dev}"
 readonly manage_cluster_lifecycle="${E2E_TEST_MANAGE_CLUSTER_LIFECYCLE:-false}"
 readonly use_boskos="${E2E_TEST_USE_BOSKOS:-false}"
 readonly project_id="${E2E_TEST_PROJECT_ID:-}"
 readonly num_nodes="${E2E_TEST_NUM_NODES:-3}"
 readonly boskos_resource_type="${E2E_TEST_BOSKOS_RESOURCE_TYPE:-${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}}"
 
-readonly ginkgo_focus="${E2E_TEST_FOCUS:-}"
+ginkgo_focus="${E2E_TEST_FOCUS:-}"
 # TODO(amacaskill): Remove oidc from default skip when the test can be run without additional configuration.
 readonly ginkgo_skip="${E2E_TEST_SKIP:-should.succeed.in.performance.test|oidc}"
 readonly ginkgo_procs="${E2E_TEST_GINKGO_PROCS:-40}"
@@ -52,6 +50,23 @@ readonly enable_zb=${ENABLE_ZB:-false}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-true}
 readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
+readonly enable_shared_mount=${ENABLE_SHARED_MOUNT:-false}
+# TODO(yaozile): Remove overlay default once shared-mount overlay is promoted to stable.
+if [ "${enable_shared_mount}" = true ]; then
+  if [ -z "${E2E_TEST_FOCUS:-}" ]; then
+    ginkgo_focus="shared-mount"
+  fi
+  if [ -z "${OVERLAY:-}" ] || [ "${OVERLAY}" = "stable" ] || [ "${OVERLAY}" = "dev" ]; then
+    overlay="shared-mount"
+  else
+    overlay="${OVERLAY}"
+  fi
+else
+  # Default to dev overlay so that --assume-good-sidecar-version is used.
+  overlay="${OVERLAY:-dev}"
+fi
+readonly overlay
+readonly ginkgo_focus
 readonly gcsfuse_pr_number=${GCSFUSE_PR_NUMBER:-}
 
 if [ "${skip_csi_driver_install}" = true ]; then
@@ -104,5 +119,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
             --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params} \
+            --enable-shared-mount=${enable_shared_mount} \
             ${gcsfuse_pr_number:+--gcsfuse-pr-number=${gcsfuse_pr_number}}"
 eval "$base_cmd"

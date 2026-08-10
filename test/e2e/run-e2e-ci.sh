@@ -27,7 +27,7 @@ readonly gke_cluster_region=${GCE_CLUSTER_REGION:-us-central1}
 readonly use_gke_autopilot=${USE_GKE_AUTOPILOT:-false}
 readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
 readonly use_gke_managed_driver="${USE_GKE_MANAGED_DRIVER:-true}"
-readonly ginkgo_focus="${TEST_FOCUS:-}"
+ginkgo_focus="${TEST_FOCUS:-}"
 raw_skip="${TEST_SKIP:-}"
 readonly ginkgo_skip="${raw_skip//\"/}"
 readonly ginkgo_timeout="${E2E_TEST_GINKGO_TIMEOUT:-4h}"
@@ -48,7 +48,22 @@ readonly gke_gcloud_args=${GKE_GCLOUD_ARGS:-}
 readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK:-true}
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-true}
 readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
-readonly overlay="${OVERLAY:-stable}"
+readonly enable_shared_mount=${ENABLE_SHARED_MOUNT:-false}
+# TODO(yaozile): Remove overlay default once shared-mount overlay is promoted to stable.
+if [ "${enable_shared_mount}" = true ]; then
+  if [ -z "${TEST_FOCUS:-}" ]; then
+    ginkgo_focus="shared-mount"
+  fi
+  if [ -z "${OVERLAY:-}" ] || [ "${OVERLAY}" = "stable" ] || [ "${OVERLAY}" = "dev" ]; then
+    overlay="shared-mount"
+  else
+    overlay="${OVERLAY}"
+  fi
+else
+  overlay="${OVERLAY:-stable}"
+fi
+readonly overlay
+readonly ginkgo_focus
 readonly gcsfuse_pr_number=${GCSFUSE_PR_NUMBER:-}
 
 # Install golang
@@ -96,6 +111,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --enable-sidecar-bucket-access-check=${enable_sidecar_bucket_access_check} \
             --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
             --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params} \
+            --enable-shared-mount=${enable_shared_mount} \
             --gke-gcloud-command='${gke_gcloud_command}' \
             --gke-gcloud-args='${gke_gcloud_args}'\
             --deploy-overlay-name=${overlay} \

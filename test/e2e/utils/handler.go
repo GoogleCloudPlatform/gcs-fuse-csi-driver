@@ -85,6 +85,7 @@ type TestParameters struct {
 	EnableSidecarBucketAccessCheck bool
 	EnableGcsFuseProfiles          bool
 	EnableGCSFuseKernelParams      bool
+	EnableSharedMount              bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
@@ -107,7 +108,7 @@ const (
 	NodeServiceAccountEnvVar               = "NODE_SERVICE_ACCOUNT"
 )
 
-var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles"}
+var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles", "shared-mount"}
 
 func Handle(testParams *TestParameters) error {
 	setTestEnvVars(testParams)
@@ -373,6 +374,7 @@ func Handle(testParams *TestParameters) error {
 		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
 		fmt.Sprintf("--enable-gcsfuse-profiles-test=%s", strconv.FormatBool(testParams.EnableGcsFuseProfiles)),
 		fmt.Sprintf("--enable-gcsfuse-kernel-params-test=%s", strconv.FormatBool(testParams.EnableGCSFuseKernelParams)),
+		fmt.Sprintf("--enable-shared-mount-test=%s", strconv.FormatBool(testParams.EnableSharedMount)),
 		"--api-env", envAPIMap[testParams.APIEndpointOverride],
 	)
 
