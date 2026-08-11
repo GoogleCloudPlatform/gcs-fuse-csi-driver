@@ -76,7 +76,7 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+		l.volumeResource = specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
 	cleanup := func() {
@@ -86,10 +86,7 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	ginkgo.It("should support non-existent paths", func() {
-		init()
-		defer cleanup()
-
+	testNonExistentPaths := func() {
 		ginkgo.By("Configuring the first pod")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod1.SetupVolumeWithSubPath(l.volumeResource, volumeName, mountPath+"1", false, "subpath1", false /* add the first volume */)
@@ -125,12 +122,9 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/subpath1/data", mountPath))
 		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world' %v/subpath2/data", mountPath))
-	})
+	}
 
-	ginkgo.It("should support existing paths", func() {
-		init()
-		defer cleanup()
-
+	testExistingPaths := func() {
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
@@ -161,12 +155,9 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath+"1", mountPath+"1"))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath+"2"))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath+"2", mountPath+"2"))
-	})
+	}
 
-	ginkgo.It("should support files as paths", func(ctx context.Context) {
-		init()
-		defer cleanup()
-
+	testFilesAsPaths := func(ctx context.Context) {
 		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
 		bucketName := l.config.Prefix
 
@@ -197,12 +188,9 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v && grep 'hello world' %v", mountPath+"1", mountPath+"1"))
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath+"2"))
 		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v && grep 'hello world' %v", mountPath+"2", mountPath+"2"))
-	})
+	}
 
-	ginkgo.It("[read-only] should fail when write", func() {
-		init()
-		defer cleanup()
-
+	testReadOnlyFailWhenWrite := func() {
 		ginkgo.By("Configuring the writer pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetName("gcsfuse-volume-tester-writer")
@@ -246,5 +234,66 @@ func (t *gcsFuseCSISubPathTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Expecting error when write to read-only volumes")
 		tPod.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data", mountPath+"1"), 1)
 		tPod.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v", mountPath+"2"), 1)
+	}
+
+	ginkgo.It("should support non-existent paths", func() {
+		init()
+		defer cleanup()
+
+		testNonExistentPaths()
+	})
+
+	ginkgo.It("should support existing paths", func() {
+		init()
+		defer cleanup()
+
+		testExistingPaths()
+	})
+
+	ginkgo.It("should support files as paths", func(ctx context.Context) {
+		init()
+		defer cleanup()
+
+		testFilesAsPaths(ctx)
+	})
+
+	ginkgo.It("[read-only] should fail when write", func() {
+		init()
+		defer cleanup()
+
+		testReadOnlyFailWhenWrite()
+	})
+
+	// ---- [shared-mount] test duplicates ----
+	// Each test below mirrors an existing test case above but is tagged with [shared-mount]
+	// so that ginkgo --focus="shared-mount" selects only these. When shared mount is not
+	// enabled, the driver automatically skips them via SkipUnsupportedTest.
+
+	ginkgo.It("[shared-mount] should support non-existent paths", func() {
+		init()
+		defer cleanup()
+
+		testNonExistentPaths()
+	})
+
+	ginkgo.It("[shared-mount] should support existing paths", func() {
+		init()
+		defer cleanup()
+
+		testExistingPaths()
+	})
+
+	ginkgo.It("[shared-mount] should support files as paths", func(ctx context.Context) {
+		init()
+		defer cleanup()
+
+		testFilesAsPaths(ctx)
+	})
+
+	ginkgo.It("[shared-mount] [read-only] should fail when write", func() {
+		init()
+		defer cleanup()
+
+		testReadOnlyFailWhenWrite()
 	})
 }

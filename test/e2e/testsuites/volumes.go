@@ -95,7 +95,7 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 		if len(configPrefix) > 0 {
 			l.config.Prefix = configPrefix[0]
 		}
-		l.volumeResource = storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
+		l.volumeResource = specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{})
 	}
 
 	cleanup := func() {
@@ -203,6 +203,9 @@ func (t *gcsFuseCSIVolumesTestSuite) DefineTests(driver storageframework.TestDri
 	}
 
 	ginkgo.It("[read-only] should fail when write", func() {
+		testCaseReadOnlyFailedWrite("")
+	})
+	ginkgo.It("[shared-mount] [read-only] should fail when write", func() {
 		testCaseReadOnlyFailedWrite("")
 	})
 	ginkgo.It("[read-only][csi-skip-bucket-access-check] should fail when write", func() {

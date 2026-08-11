@@ -989,10 +989,9 @@ func TestReadDriverFlagsForDefaulting(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:        "File exists but is unreadable",
-			unreadable:  true,
-			fileContent: "machine-type:e2-standard-4\n",
-			expectErr:   true,
+			name:       "File exists but is unreadable",
+			unreadable: true,
+			expectErr:  true,
 		},
 	}
 
