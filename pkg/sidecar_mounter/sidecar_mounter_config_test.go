@@ -990,7 +990,6 @@ func TestReadDriverFlagsForDefaulting(t *testing.T) {
 		},
 		{
 			name:        "File exists but is unreadable",
-			fileExists:  true,
 			unreadable:  true,
 			fileContent: "machine-type:e2-standard-4\n",
 			expectErr:   true,
@@ -1002,12 +1001,15 @@ func TestReadDriverFlagsForDefaulting(t *testing.T) {
 			t.Parallel()
 			flagFilePath := filepath.Join(t.TempDir(), "flags-for-defaulting")
 
-			if tc.fileExists {
+			if tc.unreadable {
+				// Create a directory to fail os.ReadFile with EISDIR.
+				// This simulates an unreadable file consistently across root and non-root environments.
+				if err := os.MkdirAll(flagFilePath, 0755); err != nil {
+					t.Fatalf("Failed to create dir: %v", err)
+				}
+			} else if tc.fileExists {
 				if err := os.WriteFile(flagFilePath, []byte(tc.fileContent), 0644); err != nil {
 					t.Fatalf("Failed to write mock flag file: %v", err)
-				}
-				if tc.unreadable {
-					_ = os.Chmod(flagFilePath, 0000)
 				}
 			}
 
