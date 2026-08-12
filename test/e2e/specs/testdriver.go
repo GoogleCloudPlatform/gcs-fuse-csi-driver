@@ -137,6 +137,9 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 	if n.EnableSharedMount && (pattern.VolType == storageframework.CSIInlineVolume || pattern.VolType == storageframework.DynamicPV) {
 		e2eskipper.Skipf("Shared node mount does not support %s -- skipping", pattern.VolType)
 	}
+	if isSharedMountTest() && !n.EnableSharedMount {
+		e2eskipper.Skipf("Shared node mount is not enabled -- skipping")
+	}
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.Framework) *storageframework.PerTestConfig {
@@ -734,4 +737,9 @@ func isProfilerTest() bool {
 func isBillingTest() bool {
 	report := ginkgo.CurrentSpecReport()
 	return strings.Contains(report.FullText(), "billing-project")
+}
+
+func isSharedMountTest() bool {
+	report := ginkgo.CurrentSpecReport()
+	return strings.Contains(report.FullText(), SharedMountTag)
 }
