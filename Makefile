@@ -197,6 +197,7 @@ ifeq (${BUILD_GCSFUSE_FROM_SOURCE}, true)
 
 	# Run the container to extract the binary as current user/group to avoid permission issues.
 	docker run \
+		--rm \
 		--user $$(id -u):$$(id -g) \
 		-v ${BINDIR}/linux/amd64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-amd \
@@ -213,6 +214,7 @@ ifeq (${BUILD_ARM}, true)
 		--platform=linux/arm64 .
 	# Run the container to extract the binary as current user/group to avoid permission issues.
 	docker run \
+		--rm \
 		--user $$(id -u):$$(id -g) \
 		-v ${BINDIR}/linux/arm64:/release \
 		gcsfuse-release:${GCSFUSE_VERSION}-arm \
