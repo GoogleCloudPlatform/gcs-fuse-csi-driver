@@ -116,9 +116,15 @@ var _ = ginkgo.AfterSuite(func() {
 	}
 	k8sClient := buildK8sClient()
 	ctx := context.Background()
-	if err := utils.SetWebhookWIFEnforcement(ctx, k8sClient, webhookWIFEnforcementBeforeRun); err != nil {
-		klog.Errorf("AfterSuite: failed to restore WIF enforcement to %v: %v", webhookWIFEnforcementBeforeRun, err)
+
+	var restoreErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if restoreErr = utils.SetWebhookWIFEnforcement(ctx, k8sClient, webhookWIFEnforcementBeforeRun); restoreErr == nil {
+			return
+		}
+		klog.Errorf("AfterSuite: attempt %d to restore WIF enforcement to %v failed: %v", attempt, webhookWIFEnforcementBeforeRun, restoreErr)
 	}
+	klog.Fatalf("AfterSuite: giving up restoring WIF enforcement to %v after 3 attempts: %v", webhookWIFEnforcementBeforeRun, restoreErr)
 })
 
 func buildK8sClient() k8sclient.Interface {
