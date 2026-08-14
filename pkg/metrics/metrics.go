@@ -321,7 +321,13 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 	var cachedLabelNames []string
 
 	for _, metric := range metricFamily.GetMetric() {
-		labels := metric.GetLabel()
+		rawLabels := metric.GetLabel()
+		labels := make([]*dto.LabelPair, 0, len(rawLabels))
+		for _, label := range rawLabels {
+			if _, exists := c.constLabels[label.GetName()]; !exists {
+				labels = append(labels, label)
+			}
+		}
 
 		var desc *prometheus.Desc
 		// Reuse cached prometheus.Desc assuming identical label ordering.
