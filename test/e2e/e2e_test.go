@@ -43,19 +43,19 @@ import (
 )
 
 var (
-	err                error
-	c                  clientset.Interface
-	m                  metadata.Service
-  webhookWIFEnforcementBeforeRun bool
-	clientProtocol     = flag.String("client-protocol", "http", "the test bucket location")
-	bucketLocation     = flag.String("test-bucket-location", "us-central1", "the test bucket location")
-	skipGcpSaTest      = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
-	apiEnv             = flag.String("api-env", "prod", "cluster API env")
-	zbFlag             = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
-	profilesFlag       = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
-	kernelParamsFlag   = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
-	pdStorageClass     = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
-	lustreStorageClass = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass for Lustre-backed PVC in lustre gcsfuse data pipeline tests")
+	err                            error
+	c                              clientset.Interface
+	m                              metadata.Service
+	webhookWIFEnforcementBeforeRun bool
+	clientProtocol                 = flag.String("client-protocol", "http", "the test bucket location")
+	bucketLocation                 = flag.String("test-bucket-location", "us-central1", "the test bucket location")
+	skipGcpSaTest                  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
+	apiEnv                         = flag.String("api-env", "prod", "cluster API env")
+	zbFlag                         = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
+	profilesFlag                   = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
+	kernelParamsFlag               = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
+	pdStorageClass                 = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
+	lustreStorageClass             = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass for Lustre-backed PVC in lustre gcsfuse data pipeline tests")
 )
 
 var _ = func() bool {
@@ -98,19 +98,33 @@ var _ = func() bool {
 	return true
 }()
 
-var _ = ginkgo.BeforeSuite(func() {
+// WIF enforcement on the shared webhook Deployment is cluster-global, but with
+// --ginkgo-procs > 1 this test binary runs as multiple parallel OS processes.
+// Plain BeforeSuite/AfterSuite run once per process, which races all of them
+// against the same deployment. SynchronizedBeforeSuite/SynchronizedAfterSuite
+// ensure only parallel process #1 ever reads or restores the original value.
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	if os.Getenv(utils.IsOSSEnvVar) != "true" {
-		return
+		return nil
 	}
 	k8sClient := buildK8sClient()
 	ctx := context.Background()
-	webhookWIFEnforcementBeforeRun = utils.GetWebhookWIFEnforcement(ctx, k8sClient)
+	before := utils.GetWebhookWIFEnforcement(ctx, k8sClient)
 	if err := utils.SetWebhookWIFEnforcement(ctx, k8sClient, false); err != nil {
 		klog.Fatalf("BeforeSuite: failed to disable WIF enforcement: %v", err)
 	}
+	if before {
+		return []byte("true")
+	}
+	return []byte("false")
+}, func(data []byte) {
+	webhookWIFEnforcementBeforeRun = string(data) == "true"
 })
 
-var _ = ginkgo.AfterSuite(func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
+	// Runs on every parallel process; the actual restore only happens once,
+	// in the process-#1-only function below.
+}, func() {
 	if os.Getenv(utils.IsOSSEnvVar) != "true" {
 		return
 	}
