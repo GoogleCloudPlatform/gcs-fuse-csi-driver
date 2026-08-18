@@ -412,7 +412,9 @@ func generateTestSkip(testParams *TestParameters) string {
 	}
 
 	if testParams.UseGKEAutopilot {
-		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration", "istio")
+		skipTests = append(skipTests, "OOM", "high.resource.usage", "gcsfuseIntegration", "istio", "hostnetwork.enabled.pods")
+		// TODO(yaozile): Remove skip once GCW supports mounting /proc/sys/fs/fuse hostPath on Autopilot clusters.
+		skipTests = append(skipTests, "reverted.back.to.its.original.default.value")
 	}
 
 	if testParams.EnableGcsFuseProfiles {
@@ -434,10 +436,6 @@ func generateTestSkip(testParams *TestParameters) string {
 	supportsLongMountOptions, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, longMountOptionsMinimumVersion)
 	if !supportsLongMountOptions {
 		skipTests = append(skipTests, "long.mount.options")
-	}
-
-	if testParams.UseGKEAutopilot {
-		skipTests = append(skipTests, "hostnetwork.enabled.pods")
 	}
 
 	if testParams.UseGKEManagedDriver {
