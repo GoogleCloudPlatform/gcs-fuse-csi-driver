@@ -101,6 +101,10 @@ var (
 	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
 	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
 	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
+
+	strictManagedSidecarPatternAR = `^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+	strictManagedSidecarRegexAR   = regexp.MustCompile(strictManagedSidecarPatternAR)
+
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
 	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
@@ -601,13 +605,12 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte) (codes.Code, error) {
 	return codes.OK, nil
 }
 
-func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code, error) {
-	code := codes.Internal
-	cs, err := getSidecarContainerStatus(isInitContainer, pod)
-	if err != nil {
-		return code, err
+func checkContainerStatusErr(cs *corev1.ContainerStatus) (codes.Code, error) {
+	if cs == nil {
+		return codes.Internal, errors.New("container status is nil")
 	}
 
+	code := codes.Internal
 	var reason string
 	var exitCode int32
 	if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
@@ -623,13 +626,28 @@ func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code
 			code = codes.ResourceExhausted
 		}
 
-		return code, fmt.Errorf("the sidecar container terminated due to %v, exit code: %v", reason, exitCode)
+		return code, fmt.Errorf("the %q container terminated due to %v, exit code: %v", cs.Name, reason, exitCode)
 	}
 
 	return codes.OK, nil
 }
 
+func getMounterPodContainerStatus(pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if strings.HasPrefix(pod.Status.ContainerStatuses[i].Name, util.MounterPodNamePrefix) {
+			return &pod.Status.ContainerStatuses[i], nil
+		}
+	}
+	return nil, errors.New("the mounter pod container was not found")
+}
+
 func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
 	var containerStatusList []corev1.ContainerStatus
 	// Use ContainerStatuses or InitContainerStatuses
 	if isInitContainer {
@@ -638,9 +656,9 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 		containerStatusList = pod.Status.ContainerStatuses
 	}
 
-	for _, cs := range containerStatusList {
-		if cs.Name == webhook.GcsFuseSidecarName {
-			return &cs, nil
+	for i := range containerStatusList {
+		if containerStatusList[i].Name == webhook.GcsFuseSidecarName {
+			return &containerStatusList[i], nil
 		}
 	}
 
@@ -649,6 +667,10 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 
 func isManagedSidecarImage(imageName string) bool {
 	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
+}
+
+func isStrictManagedSidecarImage(imageName string) bool {
+	return strictManagedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
@@ -664,7 +686,7 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
 	// since it's built off latest code in main
 	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
-	if strings.Contains(imageName, "prow-gob-internal-boskos") {
+	if strings.Contains(imageName, "prow-gob-internal-boskos") || strings.Contains(imageName, "oss-gcp-community") {
 		return true
 	}
 
@@ -680,27 +702,24 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 	return false
 }
 
-func PutFlagsFromDriverToTargetPath(flagMap map[string]string, targetPath string, fileName string) error {
-	emptyDirBasePath, err := util.PrepareEmptyDir(targetPath, true)
-	if err != nil {
-		return fmt.Errorf("failed to get emptyDir path: %w", err)
+func writeDriverFlagsFile(flagMap map[string]string, emptyDirBasePath string) error {
+	if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
+		return fmt.Errorf("failed to create directory %q: %w", emptyDirBasePath, err)
 	}
 
-	absolutePath := filepath.Dir(emptyDirBasePath) + "/" + fileName
+	absolutePath := filepath.Join(emptyDirBasePath, FlagFileForDefaultingPath)
 	klog.V(4).Infof("Writing flags needed for gcsfuse defaulting logic to file %q: %v", absolutePath, flagMap)
-
-	parentDir := filepath.Dir(emptyDirBasePath)
 
 	// Pin the parent directory by opening its file descriptor with O_DIRECTORY and O_NOFOLLOW.
 	// This locks the parent directory inode in memory, preventing concurrent TOCTOU symlink-swapping
 	// attacks during subsequent relative operations (using unix.Openat).
-	parentFd, err := unix.Open(parentDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	parentFd, err := unix.Open(emptyDirBasePath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open parent directory %q: %w", parentDir, err)
+		return fmt.Errorf("failed to open parent directory %q: %w", emptyDirBasePath, err)
 	}
 	defer unix.Close(parentFd)
 
-	fd, err := unix.Openat(parentFd, filepath.Base(fileName), unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
+	fd, err := unix.Openat(parentFd, FlagFileForDefaultingPath, unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to securely open defaulting-flag file: %w", err)
 	}
@@ -730,12 +749,10 @@ func ParseFlagMapFromFlagFile(flagFileContent string) map[string]string {
 	configFlags := make(map[string]string)
 	lines := strings.Split(flagFileContent, "\n")
 	for _, line := range lines {
-		if line == "" { // Skip empty lines
+		key, value, found := strings.Cut(line, ":")
+		if !found || key == "" {
 			continue
 		}
-		parts := strings.Split(line, ":")
-		key := parts[0]
-		value := parts[1]
 		configFlags[key] = value
 	}
 	return configFlags

@@ -47,6 +47,7 @@ var (
 	enableSidecarBucketAccessCheck = flag.Bool("enable-sidecar-bucket-access-check", false, "enables bucket access check in sidecar")
 	enableGcsFuseProfiles          = flag.Bool("enable-gcsfuse-profiles", false, "enables gcsfuse profiles for e2e tests")
 	enableGCSFuseKernelParams      = flag.Bool("enable-gcsfuse-kernel-params", false, "enables kernel params for e2e tests")
+	enableSharedMount              = flag.Bool("enable-shared-mount", false, "enables shared mount overlay and features in e2e tests")
 	skipCSIDriverInstall           = flag.Bool("skip-csi-driver-install", false, "skips the install of the driver. You must have manually deployed the driver and webhook.")
 	gcsFusePrNumber                = flag.String("gcsfuse-pr-number", "", "PR number for gcsfuse to test against")
 
@@ -116,6 +117,14 @@ func main() {
 		}
 	}
 
+	if *enableSharedMount {
+		// TODO(yaozile): Remove hardset once shared-mount overlay is promoted to stable.
+		*deployOverlayName = "shared-mount"
+		if *ginkgoFocus == "" {
+			*ginkgoFocus = "shared-mount"
+		}
+	}
+
 	testParams := &utils.TestParameters{
 		PkgDir:                         *pkgDir,
 		InProw:                         *inProw,
@@ -152,6 +161,7 @@ func main() {
 		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheck,
 		EnableGcsFuseProfiles:          *enableGcsFuseProfiles,
 		EnableGCSFuseKernelParams:      *enableGCSFuseKernelParams,
+		EnableSharedMount:              *enableSharedMount,
 		SkipCSIDriverInstall:           *skipCSIDriverInstall,
 		GCSFusePRNumber:                *gcsFusePrNumber,
 	}

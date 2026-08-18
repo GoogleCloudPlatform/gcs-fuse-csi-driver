@@ -159,6 +159,25 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s cannot be nil", mounterPodNamespace, mounterPodName)
 	}
 
+	// Verify workload service account name matches mounter pod.
+	// If neither the workload nor the mounter pod specifies a service account, the Kubernetes ServiceAccount
+	// admission controller defaults both to "default", so the equality check passes as expected.
+	targetDesc := "mounter pod"
+	vc := req.GetVolumeContext()
+	if err := webhook.ValidateServiceAccountName(vc[VolumeContextKeyServiceAccountName], mounterPod.Spec.ServiceAccountName, targetDesc); err != nil {
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+
+	// Verify workload fsGroup matches mounter pod.
+	var mounterFSGroup string
+	if mounterPod.Spec.SecurityContext != nil && mounterPod.Spec.SecurityContext.FSGroup != nil {
+		mounterFSGroup = strconv.FormatInt(*mounterPod.Spec.SecurityContext.FSGroup, 10)
+	}
+	workloadFSGroup := req.GetVolumeCapability().GetMount().GetVolumeMountGroup()
+	if err := webhook.ValidateFSGroup(workloadFSGroup, mounterFSGroup, targetDesc); err != nil {
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+
 	// Surface any GCSFuse error to the user.
 	if s.driver.config.FeatureOptions == nil || s.driver.config.FeatureOptions.SharedMountOptions == nil {
 		return nil, status.Error(codes.Internal, "shared mount options can't be nil")
@@ -170,6 +189,15 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 	emptyDirPath := config.EmptyDirBasePath(string(mounterPod.UID))
 	code, err := checkMounterPodErrorFile(emptyDirPath)
 	if err != nil {
+		return nil, status.Error(code, err.Error())
+	}
+
+	cs, err := getMounterPodContainerStatus(mounterPod)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	code, err = checkContainerStatusErr(cs)
+	if code != codes.OK {
 		return nil, status.Error(code, err.Error())
 	}
 
@@ -461,7 +489,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 
 		// Check if there is any error from the sidecar container
-		code, err = checkSidecarContainerErr(isInitContainer, pod)
+		cs, err := getSidecarContainerStatus(isInitContainer, pod)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		code, err = checkContainerStatusErr(cs)
 		if code != codes.OK {
 			return nil, status.Error(code, err.Error())
 		}
@@ -589,6 +621,10 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 			vs.GCSFuseKernelMonitorState.CancelFunc()
 		}
 		s.volumeStateStore.Delete(targetPath)
+	}
+
+	if c, ok := s.mounter.(interface{ CleanupSocket(string) }); ok {
+		c.CleanupSocket(targetPath)
 	}
 
 	// Check if the target path is already mounted
@@ -1109,18 +1145,52 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Prepare mount options specifically for shared node mount architecture before sending to mounter pod.
-	preparedMountOptions := prepareSharedNodeMountOptions(args.fuseMountOptions)
+	gcsfuseMO, sysfsBDI, fuseMaxPagesLimit, err := util.PrepareSharedMountOptions(args.fuseMountOptions)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to prepare mount options: %v", err)
+	}
 
-	// TODO(FUECHR): Pass read_ahead_kb and node_fuse_max_request_limit_kb to gcsfuse config correctly for shared node mounts.
+	logPrefix := fmt.Sprintf("[Pod %v, Volume %v, Bucket %v]", podUID, pvName, args.bucketName)
+	mountFn := func() error {
+		klog.V(4).Infof("%v sending mount request to mounter pod for volume %q", logPrefix, volumeID)
+		return s.mountToNode(ctx, podUID, stagingPath, volumeID, gcsfuseMO)
+	}
 
 	// Send GRPC to mounter pod to start GCSFuse.
-	if err := s.mountToNode(ctx, podUID, stagingPath, volumeID, preparedMountOptions); err != nil {
+	isKernelReaderEnabled := util.CheckForKernelReader(args.fuseMountOptions)
+	shouldMountUsingElevatedFuseMaxPagesLimit := util.FuseMaxMaxPagesUpdateSupported() && fuseMaxPagesLimit > 0 && isKernelReaderEnabled
+	if shouldMountUsingElevatedFuseMaxPagesLimit {
+		err = util.MountUsingElevatedFuseMaxPagesLimit(fuseMaxPagesLimit, logPrefix, mountFn)
+	} else {
+		err = mountFn()
+	}
+
+	if err != nil {
 		klog.Errorf("Failed to mount volume %q to staging path %q: %v", volumeID, stagingPath, err)
-		if code, err := checkMounterPodErrorFile(emptyDirBasePath); err != nil {
-			return nil, status.Error(code, err.Error())
+		if code, fileErr := checkMounterPodErrorFile(emptyDirBasePath); fileErr != nil {
+			return nil, status.Error(code, fileErr.Error())
+		}
+		cs, csErr := func() (*corev1.ContainerStatus, error) {
+			// Re-fetch the mounter pod to get the updated container termination status
+			// (e.g. OOMKilled or crash) that occurred during mountToNode.
+			mounterPod, getErr := s.k8sClients.GetPod(podNamespace, podName)
+			if getErr != nil {
+				return nil, fmt.Errorf("failed to get mounter pod %s/%s: %w", podNamespace, podName, getErr)
+			}
+			if mounterPod == nil {
+				return nil, fmt.Errorf("mounter pod %s/%s cannot be nil", podNamespace, podName)
+			}
+			return getMounterPodContainerStatus(mounterPod)
+		}()
+		if csErr != nil {
+			klog.Warningf("Failed to inspect mounter pod container status: %v", csErr)
+		} else if code, cErr := checkContainerStatusErr(cs); code != codes.OK {
+			return nil, status.Error(code, cErr.Error())
 		}
 		return nil, err
 	}
+
+	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
 	klog.Infof("Mounter pod %s/%s is running and staging path %s is mounted", podNamespace, podName, stagingPath)
 
@@ -1216,6 +1286,19 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 		// It is idempotent to unregister the same collector.
 		if s.driver.config.MetricsManager != nil {
 			s.driver.config.MetricsManager.UnregisterMetricsCollector(stagingPath, s.driver.config.NodeID, vs.MounterPodUID, vs.VolumeName)
+			if s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.SharedMountOptions != nil {
+				fuseSocketDir := s.driver.config.FeatureOptions.SharedMountOptions.FuseSocketDir
+				if vs.MounterPodUID != "" && vs.VolumeName != "" && fuseSocketDir != "" {
+					socketBasePath := util.GetSocketBasePath(vs.MounterPodUID, vs.VolumeName, fuseSocketDir)
+					if err := os.Remove(socketBasePath); err != nil && !os.IsNotExist(err) {
+						klog.Errorf("failed to remove metrics collector symlink %q: %v", socketBasePath, err)
+					}
+				} else {
+					// TODO(yaozile): Implement a long-term solution to prevent leaking metrics collector
+					// symlinks when NodeUnstageVolume is called after a driver restart
+					klog.Errorf("failed to remove metrics collector symlink for staging path %q: empty podUID, volumeName, or fuseSocketDir, symlink leaked", stagingPath)
+				}
+			}
 		}
 
 		// Stop GCSFuse Kernel Params monitoring.

@@ -88,7 +88,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
 		for range volumeNumber {
-			l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
+			l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
 		}
 	}
 
@@ -163,6 +163,30 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		}
 	}
 
+	testOnePodMultipleBuckets := func() {
+		ginkgo.By("Configuring the pod")
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+
+		ginkgo.By("Sleeping 2 minutes for the service account being propagated")
+		time.Sleep(time.Minute * 2)
+
+		ginkgo.By("Deploying the pod")
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the pod is running")
+		tPod.WaitForRunning(ctx)
+
+		ginkgo.By("Checking that the pod command exits with no error")
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+
+		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
+		for i, bucketName := range strings.Split(l.config.Prefix, ",") {
+			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/%v/data-%v && grep 'hello world' %v/%v/data-%v", mountPath, bucketName, i, mountPath, bucketName, i))
+		}
+	}
+
 	// This tests below configuration:
 	//          [node1]
 	//          /    \
@@ -205,7 +229,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		init(1)
 		defer cleanup()
 
-		testTwoPodsSameBucket(false /* same volume */, false /* same node */)
+		testTwoPodsSameBucket(false /* same volume */, true /* same node */)
 	})
 
 	// This tests below configuration:
@@ -301,26 +325,75 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		init(1, specs.MultipleBucketsPrefix)
 		defer cleanup()
 
-		ginkgo.By("Configuring the pod")
-		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
-		tPod.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false)
+		testOnePodMultipleBuckets()
+	})
 
-		ginkgo.By("Sleeping 2 minutes for the service account being propagated")
-		time.Sleep(time.Minute * 2)
+	// ---- [shared-mount] test duplicates ----
+	// Each test below mirrors an existing test case above but is tagged with [shared-mount]
+	// so that ginkgo --focus="shared-mount" selects only these. When shared mount is not
+	// enabled, the driver automatically skips them via SkipUnsupportedTest.
 
-		ginkgo.By("Deploying the pod")
-		tPod.Create(ctx)
-		defer tPod.Cleanup(ctx)
+	ginkgo.It("[shared-mount] should access multiple volumes backed by the same bucket from different Pods on the same node", func() {
+		init(2)
+		defer cleanup()
 
-		ginkgo.By("Checking that the pod is running")
-		tPod.WaitForRunning(ctx)
+		testTwoPodsSameBucket(true /* different volumes */, true /* same node */)
+	})
 
-		ginkgo.By("Checking that the pod command exits with no error")
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+	ginkgo.It("[shared-mount] should access multiple volumes backed by the same bucket from different Pods on different nodes", func() {
+		init(2)
+		defer cleanup()
 
-		// The test driver uses config.Prefix to pass the bucket names back to the test suite.
-		for i, bucketName := range strings.Split(l.config.Prefix, ",") {
-			tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/%v/data-%v && grep 'hello world' %v/%v/data-%v", mountPath, bucketName, i, mountPath, bucketName, i))
+		testTwoPodsSameBucket(true /* different volumes */, false /* different nodes */)
+	})
+
+	ginkgo.It("[shared-mount] should access one volume backed by the same bucket from different Pods on the same node", func() {
+		init(1)
+		defer cleanup()
+
+		testTwoPodsSameBucket(false /* same volume */, true /* same node */)
+	})
+
+	ginkgo.It("[shared-mount] should access one volume backed by the same bucket from different Pods on different nodes", func() {
+		init(1)
+		defer cleanup()
+
+		testTwoPodsSameBucket(false /* same volume */, false /* different nodes */)
+	})
+
+	ginkgo.It("[shared-mount] should access multiple volumes backed by the same bucket from the same Pod", func() {
+		if pattern.VolType == storageframework.PreprovisionedPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.PreprovisionedPV)
 		}
+
+		init(2)
+		defer cleanup()
+
+		testOnePodTwoVols()
+	})
+
+	ginkgo.It("[shared-mount] should access multiple volumes backed by different buckets from the same Pod", func() {
+		init(2, specs.ForceNewBucketPrefix)
+		defer cleanup()
+
+		testOnePodTwoVols()
+	})
+
+	ginkgo.It("[shared-mount] should access different directories in the same GCS bucket via different volumes", func() {
+		if pattern.VolType == storageframework.PreprovisionedPV {
+			e2eskipper.Skipf("skip for volume type %v", storageframework.PreprovisionedPV)
+		}
+
+		init(2, specs.SubfolderInBucketPrefix)
+		defer cleanup()
+
+		testOnePodTwoVols()
+	})
+
+	ginkgo.It("[shared-mount] should access multiple GCS buckets via the same volume", func() {
+		init(1, specs.MultipleBucketsPrefix)
+		defer cleanup()
+
+		testOnePodMultipleBuckets()
 	})
 }

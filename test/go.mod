@@ -70,6 +70,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.8.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
+	cloud.google.com/go/profiler v0.4.3 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.31.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.53.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.53.0 // indirect
@@ -113,7 +114,7 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/mock v1.6.0 // indirect
+	github.com/golang/mock v1.7.0-rc.1 // indirect
 	github.com/google/cadvisor v0.52.1 // indirect
 	github.com/google/cel-go v0.23.2 // indirect
 	github.com/google/gnostic-models v0.6.9 // indirect

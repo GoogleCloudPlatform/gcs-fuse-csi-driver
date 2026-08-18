@@ -27,7 +27,50 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/utils/ptr"
 )
+
+func TestConfigurePodLister(t *testing.T) {
+	t.Parallel()
+
+	var wantFSGroup int64 = 1000
+	wantSA := "custom-sa"
+
+	testPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "test-ns",
+		},
+		Spec: corev1.PodSpec{
+			NodeName:           "test-node",
+			ServiceAccountName: wantSA,
+			SecurityContext: &corev1.PodSecurityContext{
+				FSGroup: ptr.To(wantFSGroup),
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(testPod)
+	c := &Clientset{
+		k8sClients:    fakeClient,
+		runController: false,
+	}
+
+	c.ConfigurePodLister(t.Context(), "test-node", nil)
+
+	gotPod, err := c.GetPod("test-ns", "test-pod")
+	if err != nil {
+		t.Fatalf("c.GetPod unexpected error: %v", err)
+	}
+
+	if gotPod.Spec.ServiceAccountName != wantSA {
+		t.Errorf("got ServiceAccountName %q, want %q", gotPod.Spec.ServiceAccountName, wantSA)
+	}
+
+	if gotPod.Spec.SecurityContext == nil || gotPod.Spec.SecurityContext.FSGroup == nil || *gotPod.Spec.SecurityContext.FSGroup != wantFSGroup {
+		t.Errorf("got SecurityContext %+v, want FSGroup %d", gotPod.Spec.SecurityContext, wantFSGroup)
+	}
+}
 
 func TestConfigurePVLister(t *testing.T) {
 	t.Parallel()

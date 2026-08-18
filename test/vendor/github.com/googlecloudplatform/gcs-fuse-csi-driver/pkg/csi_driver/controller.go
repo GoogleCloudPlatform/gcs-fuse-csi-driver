@@ -223,10 +223,15 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 			continue
 		}
 		containerResources = &container.Resources
-		if container.Image != "" && container.Image != mounterPodManagedImageKeyword {
+		if container.Image != "" && container.Image != MounterPodManagedImageKeyword {
 			// If the image isn't the placeholder managed keyword, the user is trying to
 			// override the mounter pod's image.
-			// TODO(urielguzman): Somehow validate image so that only trustworthy repositories are allowed.
+			// Validate that the image is trustworthy (either it is an official GKE-managed image,
+			// or the cluster administrator has explicitly allowed custom mounter images).
+			imageOverrideAllowed := s.features.SharedMountOptions.AllowCustomMounterImages || isStrictManagedSidecarImage(container.Image)
+			if !imageOverrideAllowed {
+				return nil, status.Errorf(codes.InvalidArgument, "image %q is not allowed. Only GKE managed images are allowed", container.Image)
+			}
 			containerImage = container.Image
 		}
 		break
@@ -272,6 +277,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		hostNetworkEnabled: hostNetworkEnabled,
 		tokenAudience:      tokenAudience,
 		dnsPolicy:          podTemplate.Template.Spec.DNSPolicy,
+		securityContext:    podTemplate.Template.Spec.SecurityContext,
 	}
 
 	if err := createMounterPod(clientset, ctx, podConfig); err != nil {

@@ -101,6 +101,10 @@ var (
 	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
 	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
 	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
+
+	strictManagedSidecarPatternAR = `^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+	strictManagedSidecarRegexAR   = regexp.MustCompile(strictManagedSidecarPatternAR)
+
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
 	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
@@ -601,13 +605,12 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte) (codes.Code, error) {
 	return codes.OK, nil
 }
 
-func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code, error) {
-	code := codes.Internal
-	cs, err := getSidecarContainerStatus(isInitContainer, pod)
-	if err != nil {
-		return code, err
+func checkContainerStatusErr(cs *corev1.ContainerStatus) (codes.Code, error) {
+	if cs == nil {
+		return codes.Internal, errors.New("container status is nil")
 	}
 
+	code := codes.Internal
 	var reason string
 	var exitCode int32
 	if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
@@ -623,13 +626,28 @@ func checkSidecarContainerErr(isInitContainer bool, pod *corev1.Pod) (codes.Code
 			code = codes.ResourceExhausted
 		}
 
-		return code, fmt.Errorf("the sidecar container terminated due to %v, exit code: %v", reason, exitCode)
+		return code, fmt.Errorf("the %q container terminated due to %v, exit code: %v", cs.Name, reason, exitCode)
 	}
 
 	return codes.OK, nil
 }
 
+func getMounterPodContainerStatus(pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if strings.HasPrefix(pod.Status.ContainerStatuses[i].Name, util.MounterPodNamePrefix) {
+			return &pod.Status.ContainerStatuses[i], nil
+		}
+	}
+	return nil, errors.New("the mounter pod container was not found")
+}
+
 func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.ContainerStatus, error) {
+	if pod == nil {
+		return nil, errors.New("pod is nil")
+	}
 	var containerStatusList []corev1.ContainerStatus
 	// Use ContainerStatuses or InitContainerStatuses
 	if isInitContainer {
@@ -638,9 +656,9 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 		containerStatusList = pod.Status.ContainerStatuses
 	}
 
-	for _, cs := range containerStatusList {
-		if cs.Name == webhook.GcsFuseSidecarName {
-			return &cs, nil
+	for i := range containerStatusList {
+		if containerStatusList[i].Name == webhook.GcsFuseSidecarName {
+			return &containerStatusList[i], nil
 		}
 	}
 
@@ -649,6 +667,10 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 
 func isManagedSidecarImage(imageName string) bool {
 	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
+}
+
+func isStrictManagedSidecarImage(imageName string) bool {
+	return strictManagedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
 }
 
 func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
@@ -795,22 +817,4 @@ func getInternalMountOptionValue(options []string, key string) string {
 		}
 	}
 	return ""
-}
-
-// prepareSharedNodeMountOptions processes and filters mount options to be directly passed to the gcsfuse process during shared node mounts.
-// Unlike prepareMountOptions (which splits options between those used to open fuse device and those passed to gcsfuse).
-func prepareSharedNodeMountOptions(options []string) []string {
-	// TODO(FUECHR): Investigate if we should only allow "allowedOptions" from prepareMountOptions for shared node mount.
-
-	csiMountOptions := []string{"o=allow_other,default_permissions"}
-	for _, o := range options {
-		// Strip read_ahead_kb and node_fuse_max_request_limit_kb flags so they are not passed to gcsfuse (which would reject them as unknown flags).
-		if strings.HasPrefix(o, "read_ahead_kb=") || strings.HasPrefix(o, "node_fuse_max_request_limit_kb=") {
-			continue
-		}
-
-		csiMountOptions = append(csiMountOptions, o)
-	}
-
-	return csiMountOptions
 }

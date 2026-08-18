@@ -47,6 +47,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
+	"k8s.io/utils/ptr"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -64,11 +65,17 @@ var testVolumeCapability = &csi.VolumeCapability{
 
 type fakeMounterServer struct {
 	mounter.UnimplementedMounterServer
-	req *mounter.MountRequest
+	req       *mounter.MountRequest
+	mountFunc func(req *mounter.MountRequest) error
 }
 
 func (f *fakeMounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (*mounter.MountResponse, error) {
 	f.req = req
+	if f.mountFunc != nil {
+		if err := f.mountFunc(req); err != nil {
+			return nil, err
+		}
+	}
 	return &mounter.MountResponse{}, nil
 }
 
@@ -1296,6 +1303,60 @@ func TestNodeStageVolume(t *testing.T) {
 				util.PodNameConst + "=" + createMounterPodName("test-node", testVolumeID),
 				util.PodUIDConst + "=" + createMounterPodName("test-node", testVolumeID),
 			}, defaultSharedOpts...),
+		},
+		{
+			name: "valid request with sharedMount true and sysfsBDI mount option",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+					VolumeContextKeyMountOptions: "read_ahead_kb=1024",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectedMountOptions: defaultSharedOpts,
+		},
+		{
+			name: "invalid request with sharedMount true and negative sysfsBDI mount option",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+					VolumeContextKeyMountOptions: "read_ahead_kb=-1",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectErr: status.Errorf(codes.InvalidArgument, "failed to prepare mount options: invalid negative value for read_ahead_kb mount flag: %q", "read_ahead_kb=-1"),
+		},
+		{
+			name: "invalid request with sharedMount true and non-integer sysfsBDI mount option",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+					util.VolumeContextKeyPVName:  testVolumeID,
+					VolumeContextKeyMountOptions: "read_ahead_kb=abc",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      createMounterPodName("test-node", testVolumeID),
+					PublishContextKeyMounterPodNamespace: "test-ns",
+				},
+			},
+			expectErr: status.Errorf(codes.InvalidArgument, "failed to prepare mount options: invalid read_ahead_kb mount flag %q: strconv.ParseInt: parsing \"abc\": invalid syntax", "read_ahead_kb=abc"),
 		},
 	}
 
@@ -2546,6 +2607,90 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			expectErrCode:    codes.NotFound,
 		},
 		{
+			name: "mounter pod container oom killed - should return ResourceExhausted error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{
+						Phase: corev1.PodRunning,
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: util.MounterPodNamePrefix,
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 137,
+										Reason:   "OOMKilled",
+									},
+								},
+							},
+						},
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.ResourceExhausted,
+		},
+		{
+			name: "mounter pod container crashed - should return Internal error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:      podName,
+					Namespace: podNamespace,
+					UID:       podUID,
+					PodStatus: &corev1.PodStatus{
+						Phase: corev1.PodRunning,
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: util.MounterPodNamePrefix,
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 1,
+										Reason:   "Error",
+									},
+								},
+							},
+						},
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.Internal,
+		},
+		{
 			name: "target path already mounted - should return early success",
 			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
 				return &csi.NodePublishVolumeRequest{
@@ -2751,6 +2896,153 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			targetPathMounted: false,
 			expectErrCode:     codes.OK,
 			expectedBindOpts:  []string{"bind"},
+		},
+		{
+			name: "workload SA matches mounter SA and both have matching fsGroup - should succeed",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId: testVolumeID,
+					VolumeCapability: &csi.VolumeCapability{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{
+								VolumeMountGroup: "1000",
+							},
+						},
+						AccessMode: testVolumeCapability.AccessMode,
+					},
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount:       "true",
+						VolumeContextKeyServiceAccountName: "custom-sa",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:               podName,
+					Namespace:          podNamespace,
+					UID:                podUID,
+					PodStatus:          &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod:       true,
+					ServiceAccountName: "custom-sa",
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(int64(1000)),
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.OK,
+		},
+		{
+			name: "workload SA mismatches mounter SA - should return PermissionDenied error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount:       "true",
+						VolumeContextKeyServiceAccountName: "sa-1",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:               podName,
+					Namespace:          podNamespace,
+					UID:                podUID,
+					PodStatus:          &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod:       true,
+					ServiceAccountName: "sa-2",
+				})
+				return fc
+			},
+			expectErrCode: codes.PermissionDenied,
+		},
+		{
+			name: "workload fsGroup mismatches mounter fsGroup - should return PermissionDenied error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId: testVolumeID,
+					VolumeCapability: &csi.VolumeCapability{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{
+								VolumeMountGroup: "2000",
+							},
+						},
+						AccessMode: testVolumeCapability.AccessMode,
+					},
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(int64(1000)),
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.PermissionDenied,
+		},
+		{
+			name: "mounter has fsGroup, workload has no fsGroup - should return PermissionDenied error",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(int64(1000)),
+					},
+				})
+				return fc
+			},
+			expectErrCode: codes.PermissionDenied,
 		},
 	}
 
@@ -3449,6 +3741,158 @@ func TestNodeStageVolumeWILabelCheck(t *testing.T) {
 	}
 }
 
+func TestNodeStageVolumeElevateFuseMaxPagesLimit(t *testing.T) {
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	pageSizeKB := max(int64(4), int64(os.Getpagesize()/util.KiB))
+
+	testCases := []struct {
+		name                 string
+		initialLimit         int64
+		mountOptions         string
+		supportSysFsFile     bool
+		expectedDuringMount  int64
+		expectedRevertedVal  int64
+		expectNodeStageError bool
+	}{
+		{
+			name:                "should elevate to custom limit and restore when kernel reader is enabled and custom limit is specified",
+			initialLimit:        256,
+			mountOptions:        "enable-kernel-reader,node_fuse_max_request_limit_kb=8192",
+			supportSysFsFile:    true,
+			expectedDuringMount: 8192 / pageSizeKB,
+			expectedRevertedVal: 256,
+		},
+		{
+			name:                "should elevate to default limit and restore when kernel reader is enabled and limit option is not specified",
+			initialLimit:        256,
+			mountOptions:        "enable-kernel-reader",
+			supportSysFsFile:    true,
+			expectedDuringMount: 16384 / pageSizeKB,
+			expectedRevertedVal: 256,
+		},
+		{
+			name:                "should not elevate fuse max_pages_limit when kernel reader is disabled",
+			initialLimit:        256,
+			mountOptions:        "enable-kernel-reader=false,node_fuse_max_request_limit_kb=16384",
+			supportSysFsFile:    true,
+			expectedDuringMount: 256,
+			expectedRevertedVal: 256,
+		},
+		{
+			name:                "should not elevate when initial limit on host is already higher than requested target",
+			initialLimit:        8192,
+			mountOptions:        "enable-kernel-reader,node_fuse_max_request_limit_kb=16384",
+			supportSysFsFile:    true,
+			expectedDuringMount: 8192,
+			expectedRevertedVal: 8192,
+		},
+		{
+			name:                "should succeed when fuse max_pages_limit sysfs file is not present on host",
+			initialLimit:        256,
+			mountOptions:        "enable-kernel-reader,node_fuse_max_request_limit_kb=16384",
+			supportSysFsFile:    false,
+			expectedDuringMount: 0,
+			expectedRevertedVal: 0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			origPath := util.ProcSysFsFuseMaxPagesLimitPath
+			t.Cleanup(func() {
+				util.ProcSysFsFuseMaxPagesLimitPath = origPath
+			})
+
+			var tempFile string
+			if tc.supportSysFsFile {
+				tempFile = filepath.Join(tempDir, "max_pages_limit")
+				if err := os.WriteFile(tempFile, []byte(strconv.FormatInt(tc.initialLimit, 10)+"\n"), 0o644); err != nil {
+					t.Fatalf("failed to write initial max_pages_limit: %v", err)
+				}
+				util.ProcSysFsFuseMaxPagesLimitPath = tempFile
+			} else {
+				util.ProcSysFsFuseMaxPagesLimitPath = filepath.Join(tempDir, "non_existent_file")
+			}
+
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
+
+			var observedDuringMount int64
+			mounterServer.mountFunc = func(req *mounter.MountRequest) error {
+				if tc.supportSysFsFile {
+					val, err := util.ReadFuseMaxPagesLimit()
+					if err != nil {
+						t.Errorf("failed to read max_pages_limit during mount: %v", err)
+					}
+					observedDuringMount = val
+				}
+				return nil
+			}
+
+			fakeClientSet := &clientset.FakeClientset{}
+			fakeClientSet.CreateNode(clientset.FakeNodeConfig{IsWorkloadIdentityEnabled: true})
+			fakeClientSet.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+			var extraVolContext map[string]string
+			if tc.mountOptions != "" {
+				extraVolContext = map[string]string{
+					"mountOptions": tc.mountOptions,
+				}
+			}
+			stagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			req := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, extraVolContext)
+
+			_, err := ns.NodeStageVolume(context.Background(), req)
+			if tc.expectNodeStageError && err == nil {
+				t.Fatalf("expected NodeStageVolume error, got nil")
+			}
+			if !tc.expectNodeStageError && err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(stagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if tc.supportSysFsFile {
+				if observedDuringMount != tc.expectedDuringMount {
+					t.Errorf("expected max_pages_limit during mount to be %d, got %d", tc.expectedDuringMount, observedDuringMount)
+				}
+				finalVal, err := util.ReadFuseMaxPagesLimit()
+				if err != nil {
+					t.Fatalf("failed to read final max_pages_limit: %v", err)
+				}
+				if finalVal != tc.expectedRevertedVal {
+					t.Errorf("expected final max_pages_limit to be reverted to %d, got %d", tc.expectedRevertedVal, finalVal)
+				}
+			}
+		})
+	}
+}
+
 func TestAppendCloudProfilerOptions(t *testing.T) {
 	t.Parallel()
 	fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
@@ -3573,5 +4017,76 @@ func TestNodeStageVolumeCleanupStagingPathOnFailure(t *testing.T) {
 	// Verify that the directory was physically removed by mount.CleanupMountPoint to prevent leakage.
 	if _, err := os.Stat(stagingPath); !os.IsNotExist(err) {
 		t.Errorf("Expected staging path directory %q to be deleted to prevent leakage, but it still exists", stagingPath)
+	}
+}
+
+func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
+	t.Parallel()
+
+	stagingPath, cleanup := setupTestStagingPath(t)
+	defer cleanup()
+	nodeID := "test-node"
+	volID := testVolumeID
+	podName := createMounterPodName(nodeID, volID)
+
+	kubeletDir := t.TempDir()
+	mounterSocketDirValid := filepath.Join(kubeletDir, "pods", podName, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	if err := os.MkdirAll(mounterSocketDirValid, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	validSocketFile := filepath.Join(mounterSocketDirValid, MounterPodSocketFile)
+
+	if f, err := os.Create(validSocketFile); err != nil {
+		t.Fatalf("failed to create socket file: %v", err)
+	} else {
+		f.Close()
+	}
+
+	fakeClientset := clientset.NewFakeClientset()
+	fakeClientset.CreateNode(clientset.FakeNodeConfig{
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+			},
+		},
+	})
+	fakeClientset.CreatePod(clientset.FakePodConfig{
+		Name:         podName,
+		Namespace:    "test-ns",
+		UID:          types.UID(podName),
+		IsMounterPod: true,
+		PodStatus: &corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: util.MounterPodNamePrefix,
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 137,
+							Reason:   "OOMKilled",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	testEnv := initTestNodeServerWithCustomClientset(t, fakeClientset, false)
+	ns, ok := testEnv.ns.(*nodeServer)
+	if !ok {
+		t.Fatalf("Failed to cast NodeServer to *nodeServer")
+	}
+	ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
+		return filepath.Join(kubeletDir, "pods", uid, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
+	}
+
+	req := newTestNodeStageVolumeRequest(stagingPath, podName, "test-ns", nil)
+	_, err := ns.NodeStageVolume(context.Background(), req)
+	if err == nil {
+		t.Fatal("Expected NodeStageVolume to fail with OOM error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.ResourceExhausted {
+		t.Fatalf("Expected error code ResourceExhausted, got %v (err: %v)", st.Code(), err)
 	}
 }

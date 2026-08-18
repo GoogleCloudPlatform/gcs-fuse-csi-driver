@@ -38,17 +38,19 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/utils/ptr"
 )
 
 const (
-	testVolumeID           = "test-volume-id"
-	testNodeID             = "test-node-id"
-	testPV                 = "test-pv"
-	testPVC                = "test-pvc"
-	testMounterPodTemplate = "test-mounter-pod-template"
-	testNamespace          = "test-namespace"
-	testPod                = "test-pod"
-	testImage              = "k8s.gcr.io/pause"
+	testVolumeID                 = "test-volume-id"
+	testNodeID                   = "test-node-id"
+	testPV                       = "test-pv"
+	testPVC                      = "test-pvc"
+	testMounterPodTemplate       = "test-mounter-pod-template"
+	testNamespace                = "test-namespace"
+	testPod                      = "test-pod"
+	testImage                    = "k8s.gcr.io/pause"
+	testFSGroup            int64 = 1000
 )
 
 func initTestController(t *testing.T, clientset clientset.Interface) csi.ControllerServer {
@@ -253,16 +255,17 @@ func TestControllerPublishVolume(t *testing.T) {
 	defer func() { mounterPodPollInterval = oldInterval }()
 
 	cases := []struct {
-		name               string
-		req                *csi.ControllerPublishVolumeRequest
-		setupFake          func() *clientset.FakeClientset
-		podGetErr          error
-		podCreateErr       error
-		expectErr          bool
-		expectErrCode      codes.Code
-		podTemplateGetErr  error
-		wantPublishContext map[string]string
-		verifyCreatedPod   func(t *testing.T, pod *corev1.Pod)
+		name                     string
+		req                      *csi.ControllerPublishVolumeRequest
+		setupFake                func() *clientset.FakeClientset
+		podGetErr                error
+		podCreateErr             error
+		expectErr                bool
+		expectErrCode            codes.Code
+		podTemplateGetErr        error
+		wantPublishContext       map[string]string
+		verifyCreatedPod         func(t *testing.T, pod *corev1.Pod)
+		allowCustomMounterImages bool
 	}{
 		{
 			name: "empty volume ID - should return error",
@@ -397,7 +400,7 @@ func TestControllerPublishVolume(t *testing.T) {
 						Containers: []corev1.Container{
 							{
 								Name:  util.MounterPodNamePrefix,
-								Image: mounterPodManagedImageKeyword,
+								Image: MounterPodManagedImageKeyword,
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("150m"),
@@ -500,6 +503,78 @@ func TestControllerPublishVolume(t *testing.T) {
 					t.Errorf("Mounter pod image does not match expected overrides.\nGot: %+v\nWant: %+v", container.Image, expectedImage)
 				}
 			},
+			allowCustomMounterImages: true,
+		},
+		{
+			name: "sharedMount true - mounter pod with untrusted image override - should return error when AllowCustomMounterImages is false",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.ptConfig.Template = corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  util.MounterPodNamePrefix,
+								Image: "gcr.io/some-project/some-random-image/v1.2.3",
+							},
+						},
+					},
+				}
+				return setupFakeBase(cfg)
+			},
+			podGetErr:     apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "sharedMount true - mounter pod with GKE managed image override - should succeed when AllowCustomMounterImages is false",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.ptConfig.Template = corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  util.MounterPodNamePrefix,
+								Image: "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+							},
+						},
+					},
+				}
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				if len(pod.Spec.Containers) != 1 {
+					t.Fatalf("Expected 1 container in created pod, got %d", len(pod.Spec.Containers))
+				}
+				container := pod.Spec.Containers[0]
+				expectedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1"
+				if container.Image != expectedImage {
+					t.Errorf("Expected image %q, got %q", expectedImage, container.Image)
+				}
+			},
 		},
 		{
 			name: "sharedMount true - sidecar image from ConfigMap - should create pod with image from ConfigMap",
@@ -566,6 +641,42 @@ func TestControllerPublishVolume(t *testing.T) {
 			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
 				if pod.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
 					t.Errorf("Expected DNSPolicy %q, got %q", corev1.DNSClusterFirstWithHostNet, pod.Spec.DNSPolicy)
+				}
+			},
+		},
+		{
+			name: "sharedMount true - mounter pod with SecurityContext override - should create pod with overridden SecurityContext",
+			req: &csi.ControllerPublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				NodeId:           testNodeID,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					"sharedMount":               "true",
+					util.VolumeContextKeyPVName: testPV,
+				},
+			},
+			setupFake: func() *clientset.FakeClientset {
+				cfg := getDefaultFakeClientsetConfig()
+				cfg.ptConfig.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+					RunAsUser:    ptr.To(int64(2000)),
+					RunAsGroup:   ptr.To(int64(2000)),
+					RunAsNonRoot: ptr.To(true),
+					FSGroup:      ptr.To(testFSGroup),
+				}
+				return setupFakeBase(cfg)
+			},
+			wantPublishContext: map[string]string{
+				PublishContextKeyMounterPodNamespace: testNamespace,
+				PublishContextKeyMounterPodName:      createMounterPodName(testNodeID, testVolumeID),
+			},
+			podGetErr: apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, ""),
+			expectErr: false,
+			verifyCreatedPod: func(t *testing.T, pod *corev1.Pod) {
+				expectedSC := &corev1.PodSecurityContext{
+					FSGroup: ptr.To(testFSGroup),
+				}
+				if !reflect.DeepEqual(pod.Spec.SecurityContext, expectedSC) {
+					t.Errorf("Expected SecurityContext %+v, got %+v", expectedSC, pod.Spec.SecurityContext)
 				}
 			},
 		},
@@ -902,6 +1013,13 @@ func TestControllerPublishVolume(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fc := test.setupFake()
 			s := initTestController(t, fc)
+			if test.allowCustomMounterImages {
+				if cs, ok := s.(*controllerServer); ok {
+					if cs.features != nil && cs.features.SharedMountOptions != nil {
+						cs.features.SharedMountOptions.AllowCustomMounterImages = true
+					}
+				}
+			}
 
 			fakeK8sClient := fc.K8sClient().(*fake.Clientset)
 			var createdPod *corev1.Pod

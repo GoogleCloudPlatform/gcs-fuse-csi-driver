@@ -20,6 +20,7 @@ import (
 	"context"
 	"path/filepath"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
@@ -32,12 +33,18 @@ type MounterServer struct {
 	mounter.UnimplementedMounterServer
 	mounter   *Mounter
 	serverCtx context.Context
+	tmpDir    string
+	bufferDir string
+	cacheDir  string
 }
 
 func NewMounterServer(ctx context.Context, mounter *Mounter) *MounterServer {
 	return &MounterServer{
 		mounter:   mounter,
 		serverCtx: ctx,
+		tmpDir:    webhook.SidecarContainerTmpVolumeMountPath,
+		bufferDir: webhook.SidecarContainerBufferVolumeMountPath,
+		cacheDir:  webhook.SidecarContainerCacheVolumeMountPath,
 	}
 }
 
@@ -53,26 +60,29 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 	}
 
 	mc := MountConfig{
-		VolumeName:       req.GetVolumeId(), // Set VolumeName to VolumeId for logging purposes.
-		BucketName:       util.ParseVolumeID(req.GetVolumeId()),
-		Options:          req.GetMountOptions(),
-		SharedMountPoint: req.GetMountPoint(),
-		TempDir:          webhook.SidecarContainerTmpVolumeMountPath,
-		ErrWriter:        NewErrorWriter(filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, util.ErrorFileName)),
-		BufferDir:        webhook.SidecarContainerBufferVolumeMountPath,
-		CacheDir:         webhook.SidecarContainerCacheVolumeMountPath,
-		ConfigFile:       filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, "config.yaml"),
-		// TODO(FUECHR): Implement Auto Go Mem Limit.
+		VolumeName:          req.GetVolumeId(), // Set VolumeName to VolumeId for logging purposes.
+		BucketName:          util.ParseVolumeID(req.GetVolumeId()),
+		Options:             req.GetMountOptions(),
+		SharedMountPoint:    req.GetMountPoint(),
+		TempDir:             ms.tmpDir,
+		ErrWriter:           NewErrorWriter(filepath.Join(ms.tmpDir, util.ErrorFileName)),
+		BufferDir:           ms.bufferDir,
+		CacheDir:            ms.cacheDir,
+		ConfigFile:          filepath.Join(ms.tmpDir, "config.yaml"),
+		AutoGoMemLimitRatio: util.GoMemLimitCgroupPercentage,
 	}
 
-	// TODO(FUECHR): Implement defaultingFlagFileParsing.
+	defaultingFlagFilePath := filepath.Join(webhook.SidecarContainerTmpVolumeMountPath, driver.FlagFileForDefaultingPath)
+	flagsFromDriver, err := ReadDriverFlagsForDefaulting(defaultingFlagFilePath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to read defaulting-flag file: %v", err)
+	}
 
 	mc.prepareMountArgs()
 
-	// TODO(FUECHR): Call mergeFlags(mc.ConfigFileFlagMap, flagMapFromDriver) (to be done with flag defaulting).
+	mergeFlags(mc.ConfigFileFlagMap, flagsFromDriver)
 
 	// TODO(FUECHR) SetupTokenAndStorageManager for bucket access check.
-	// TODO(FUECHR) Implement cloud profiler hook.
 	// TODO(FUECHR) Clean errors in preparation for mount.
 
 	if err := mc.prepareConfigFile(); err != nil {
@@ -80,6 +90,10 @@ func (ms *MounterServer) Mount(ctx context.Context, req *mounter.MountRequest) (
 	}
 
 	klog.Infof("Start mounting bucket %q to %q for volume %q", mc.BucketName, mc.SharedMountPoint, mc.VolumeName)
+
+	if mc.EnableCloudProfilerForSidecar {
+		StartCloudProfiler(util.MounterPodNamePrefix, mc.PodName, mc.PodUID)
+	}
 
 	// Use the mounter servers long running ctx to prevent the one from NodeStageVolume from killing the gcsfuse process.
 	if err := ms.mounter.MountToNode(ctx, ms.serverCtx, &mc); err != nil {

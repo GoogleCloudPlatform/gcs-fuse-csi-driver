@@ -31,6 +31,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+var defaultCsiMountOptions = []string{
+	"nodev",
+	"nosuid",
+	"allow_other",
+	"default_permissions",
+	"rootmode=40000",
+	fmt.Sprintf("user_id=%d", os.Getuid()),
+	fmt.Sprintf("group_id=%d", os.Getgid()),
+}
+
 func TestConvertLabelsStringToMap(t *testing.T) {
 	t.Parallel()
 	t.Run("parsing labels string into map", func(t *testing.T) {
@@ -356,6 +366,7 @@ func TestPrepareEmptyDir(t *testing.T) {
 }
 
 func TestGetSocketBasePath(t *testing.T) {
+	t.Parallel()
 	fuseSocketDir := "/tmp/fuse-sockets"
 
 	testCases := []struct {
@@ -779,4 +790,328 @@ func TestWaitForPathMounted(t *testing.T) {
 			t.Errorf("expected Canceled error code, got %v", err)
 		}
 	})
+}
+func TestPrepareMountOptions(t *testing.T) {
+	t.Parallel()
+
+	pageSizeKB := max(minPageSizeKB, int64(os.Getpagesize()/KiB))
+
+	testCases := []struct {
+		name                        string
+		inputMountOptions           []string
+		initialCsiMountOptions      []string
+		expectedCsiMountOptions     []string
+		expectedSidecarMountOptions []string
+		expectedSysfsBDI            map[string]int64
+		expectedFuseMaxPagesLimit   *int64
+		expectErr                   bool
+	}{
+		{
+			name:                        "should return valid options correctly with empty input and default csi mount options",
+			inputMountOptions:           []string{},
+			initialCsiMountOptions:      defaultCsiMountOptions,
+			expectedCsiMountOptions:     defaultCsiMountOptions,
+			expectedSidecarMountOptions: []string{},
+			expectedSysfsBDI:            map[string]int64{},
+		},
+		{
+			name:                        "should return valid options correctly with nil initial mount options",
+			inputMountOptions:           []string{"ro", "o=noexec"},
+			initialCsiMountOptions:      nil,
+			expectedCsiMountOptions:     append(defaultCsiMountOptions, "ro", "noexec"),
+			expectedSidecarMountOptions: []string{},
+			expectedSysfsBDI:            map[string]int64{},
+		},
+		{
+			name:                        "should return valid options correctly with shared mount initial options",
+			inputMountOptions:           []string{"ro", "o=noexec", "implicit-dirs"},
+			initialCsiMountOptions:      []string{"allow_other,default_permissions"},
+			expectedCsiMountOptions:     []string{"allow_other,default_permissions", "ro", "noexec"},
+			expectedSidecarMountOptions: []string{"implicit-dirs"},
+			expectedSysfsBDI:            map[string]int64{},
+		},
+		{
+			name:                        "should return valid options correctly with CSI mount options only",
+			inputMountOptions:           []string{"ro", "o=noexec", "o=noatime", "o=invalid"},
+			initialCsiMountOptions:      defaultCsiMountOptions,
+			expectedCsiMountOptions:     append(defaultCsiMountOptions, "ro", "noexec", "noatime"),
+			expectedSidecarMountOptions: []string{},
+			expectedSysfsBDI:            map[string]int64{},
+		},
+		{
+			name:                        "should return valid options correctly with sidecar mount options only",
+			inputMountOptions:           []string{"implicit-dirs", "max-conns-per-host=10"},
+			expectedCsiMountOptions:     defaultCsiMountOptions,
+			expectedSidecarMountOptions: []string{"implicit-dirs", "max-conns-per-host=10"},
+			expectedSysfsBDI:            map[string]int64{},
+		},
+		{
+			name:                        "should return valid options correctly with CSI and sidecar mount options",
+			inputMountOptions:           []string{"ro", "implicit-dirs", "max-conns-per-host=10", "o=noexec", "o=noatime", "o=invalid"},
+			expectedCsiMountOptions:     append(defaultCsiMountOptions, "ro", "noexec", "noatime"),
+			expectedSidecarMountOptions: []string{"implicit-dirs", "max-conns-per-host=10"},
+			expectedSysfsBDI:            map[string]int64{},
+		},
+		{
+			name:                        "should return valid options correctly with CSI and sidecar mount options with read ahead configs",
+			inputMountOptions:           []string{"ro", "implicit-dirs", "max-conns-per-host=10", "o=noexec", "o=noatime", "o=invalid", "read_ahead_kb=4096"},
+			expectedCsiMountOptions:     append(defaultCsiMountOptions, "ro", "noexec", "noatime"),
+			expectedSidecarMountOptions: []string{"implicit-dirs", "max-conns-per-host=10"},
+			expectedSysfsBDI:            map[string]int64{"read_ahead_kb": 4096},
+		},
+		{
+			name:              "invalid read ahead - not int",
+			inputMountOptions: append(defaultCsiMountOptions, "read_ahead_kb=abc"),
+			expectErr:         true,
+		},
+		{
+			name:              "invalid read ahead - negative",
+			inputMountOptions: append(defaultCsiMountOptions, "read_ahead_kb=-1"),
+			expectErr:         true,
+		},
+		{
+			name:                        "should return valid options correctly with node_fuse_max_request_limit_kb",
+			inputMountOptions:           []string{"ro", "implicit-dirs", "node_fuse_max_request_limit_kb=8192"},
+			expectedCsiMountOptions:     append(defaultCsiMountOptions, "ro"),
+			expectedSidecarMountOptions: []string{"implicit-dirs"},
+			expectedSysfsBDI:            map[string]int64{},
+			expectedFuseMaxPagesLimit:   ptr(8192 / pageSizeKB),
+		},
+		{
+			name:              "invalid node_fuse_max_request_limit_kb - not int",
+			inputMountOptions: []string{"node_fuse_max_request_limit_kb=abc"},
+			expectErr:         true,
+		},
+		{
+			name:              "invalid node_fuse_max_request_limit_kb - negative",
+			inputMountOptions: []string{"node_fuse_max_request_limit_kb=-100"},
+			expectErr:         true,
+		},
+		{
+			name:                        "should return valid options correctly with node_fuse_max_request_limit_kb - not multiple of page size (ceil up)",
+			inputMountOptions:           []string{"node_fuse_max_request_limit_kb=8193"},
+			expectedCsiMountOptions:     defaultCsiMountOptions,
+			expectedSidecarMountOptions: []string{},
+			expectedSysfsBDI:            map[string]int64{},
+			expectedFuseMaxPagesLimit:   ptr(CeilDiv64(8193, pageSizeKB)),
+		},
+		{
+			name:                        "should return valid options correctly with node_fuse_max_request_limit_kb at maximum allowed limit",
+			inputMountOptions:           []string{fmt.Sprintf("node_fuse_max_request_limit_kb=%d", maxFuseMaxPagesLimit*pageSizeKB)},
+			expectedCsiMountOptions:     defaultCsiMountOptions,
+			expectedSidecarMountOptions: []string{},
+			expectedSysfsBDI:            map[string]int64{},
+			expectedFuseMaxPagesLimit:   ptr(int64(maxFuseMaxPagesLimit)),
+		},
+		{
+			name:              "invalid node_fuse_max_request_limit_kb - exceeds max limit",
+			inputMountOptions: []string{fmt.Sprintf("node_fuse_max_request_limit_kb=%d", maxFuseMaxPagesLimit*pageSizeKB+1)},
+			expectErr:         true,
+		},
+		{
+			name:                        "should return valid options correctly with node_fuse_max_request_limit_kb=0",
+			inputMountOptions:           []string{"node_fuse_max_request_limit_kb=0"},
+			expectedCsiMountOptions:     defaultCsiMountOptions,
+			expectedSidecarMountOptions: []string{},
+			expectedSysfsBDI:            map[string]int64{},
+			expectedFuseMaxPagesLimit:   ptr(int64(0)),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			t.Logf("test case: %s", tc.name)
+
+			initialOpts := tc.initialCsiMountOptions
+			if initialOpts == nil {
+				initialOpts = defaultCsiMountOptions
+			}
+
+			c, s, sysfsBDI, fuseMaxPagesLimit, err := prepareMountOptions(tc.inputMountOptions, initialOpts)
+
+			if tc.expectErr && err == nil {
+				t.Errorf("test %q failed: expected an error, but got nil", tc.name)
+
+				return
+			}
+			if !tc.expectErr && err != nil {
+				t.Errorf("test %q failed: unexpected error: %v", tc.name, err)
+
+				return
+			}
+			if tc.expectErr {
+				return
+			}
+
+			if !reflect.DeepEqual(countOptionOccurrence(c), countOptionOccurrence(tc.expectedCsiMountOptions)) {
+				t.Errorf("Got options %v, but expected %v", c, tc.expectedCsiMountOptions)
+			}
+
+			if !reflect.DeepEqual(countOptionOccurrence(s), countOptionOccurrence(tc.expectedSidecarMountOptions)) {
+				t.Errorf("Got options %v, but expected %v", s, tc.expectedSidecarMountOptions)
+			}
+
+			if !reflect.DeepEqual(sysfsBDI, tc.expectedSysfsBDI) {
+				t.Errorf("Got sysfsBDI %v, expected %v", sysfsBDI, tc.expectedSysfsBDI)
+			}
+
+			expectedPages := CeilDiv64(defaultNodeFuseMaxRequestLimitKB, pageSizeKB)
+			if tc.expectedFuseMaxPagesLimit != nil {
+				expectedPages = *tc.expectedFuseMaxPagesLimit
+			}
+			if fuseMaxPagesLimit != expectedPages {
+				t.Errorf("Got fuseMaxPagesLimit %d, expected %d", fuseMaxPagesLimit, expectedPages)
+			}
+		})
+	}
+}
+
+func countOptionOccurrence(options []string) map[string]int {
+	dict := make(map[string]int)
+	for _, o := range options {
+		dict[o]++
+	}
+
+	return dict
+}
+
+func TestPrepareSharedMountOptions(t *testing.T) {
+	t.Parallel()
+
+	pageSizeKB := max(minPageSizeKB, int64(os.Getpagesize()/KiB))
+
+	testCases := []struct {
+		name                      string
+		options                   []string
+		expectedGcsfuseMO         []string
+		expectedFuseMaxPagesLimit *int64
+		expectErr                 bool
+	}{
+		{
+			name:    "empty options",
+			options: []string{},
+			expectedGcsfuseMO: []string{
+				"o=allow_other,default_permissions",
+			},
+		},
+		{
+			name:    "with allowed linux options and sidecar options",
+			options: []string{"ro", "o=noexec", "implicit-dirs"},
+			expectedGcsfuseMO: []string{
+				"o=allow_other,default_permissions",
+				"o=ro",
+				"o=noexec",
+				"implicit-dirs",
+			},
+		},
+		{
+			name:    "with custom node_fuse_max_request_limit_kb",
+			options: []string{"ro", "implicit-dirs", "node_fuse_max_request_limit_kb=8192"},
+			expectedGcsfuseMO: []string{
+				"o=allow_other,default_permissions",
+				"o=ro",
+				"implicit-dirs",
+			},
+			expectedFuseMaxPagesLimit: ptr(8192 / pageSizeKB),
+		},
+		{
+			name:      "invalid node_fuse_max_request_limit_kb",
+			options:   []string{"node_fuse_max_request_limit_kb=-1"},
+			expectErr: true,
+		},
+		{
+			name:      "invalid read_ahead_kb",
+			options:   []string{"read_ahead_kb=-1"},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, _, fuseMaxPagesLimit, err := PrepareSharedMountOptions(tc.options)
+			if (err != nil) != tc.expectErr {
+				t.Fatalf("expected error: %v, got: %v", tc.expectErr, err)
+			}
+			if tc.expectErr {
+				return
+			}
+			if !reflect.DeepEqual(got, tc.expectedGcsfuseMO) {
+				t.Errorf("PrepareSharedMountOptions() = %v, want %v", got, tc.expectedGcsfuseMO)
+			}
+			expectedPages := CeilDiv64(defaultNodeFuseMaxRequestLimitKB, pageSizeKB)
+			if tc.expectedFuseMaxPagesLimit != nil {
+				expectedPages = *tc.expectedFuseMaxPagesLimit
+			}
+			if fuseMaxPagesLimit != expectedPages {
+				t.Errorf("Got fuseMaxPagesLimit %d, expected %d", fuseMaxPagesLimit, expectedPages)
+			}
+		})
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
+func TestCheckForKernelReader(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		options  []string
+		expected bool
+	}{
+		{
+			name:     "empty options",
+			options:  []string{},
+			expected: false,
+		},
+		{
+			name:     "unrelated options",
+			options:  []string{"ro", "implicit-dirs", "node_fuse_max_request_limit_kb=8192"},
+			expected: false,
+		},
+		{
+			name:     "enable-kernel-reader flag only",
+			options:  []string{"enable-kernel-reader"},
+			expected: true,
+		},
+		{
+			name:     "enable-kernel-reader=true flag",
+			options:  []string{"enable-kernel-reader=true"},
+			expected: true,
+		},
+		{
+			name:     "enable-kernel-reader=false flag",
+			options:  []string{"enable-kernel-reader=false"},
+			expected: false,
+		},
+		{
+			name:     "file-system:enable-kernel-reader:true config",
+			options:  []string{"file-system:enable-kernel-reader:true"},
+			expected: true,
+		},
+		{
+			name:     "file-system:enable-kernel-reader:false config",
+			options:  []string{"file-system:enable-kernel-reader:false"},
+			expected: false,
+		},
+		{
+			name:     "multiple options with enable-kernel-reader",
+			options:  []string{"ro", "implicit-dirs", "enable-kernel-reader=true", "node_fuse_max_request_limit_kb=8192"},
+			expected: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := CheckForKernelReader(tc.options)
+			if got != tc.expected {
+				t.Errorf("CheckForKernelReader() = %v, expected %v", got, tc.expected)
+			}
+		})
+	}
 }

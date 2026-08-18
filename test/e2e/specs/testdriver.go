@@ -37,6 +37,7 @@ import (
 	ginkgo "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/version"
@@ -55,7 +56,8 @@ type GCSFuseCSITestDriver struct {
 	ClientProtocol              string
 	skipGcpSaTest               bool
 	EnableHierarchicalNamespace bool
-	EnableZB                    bool             // Enable Zonal Buckets
+	EnableZB                    bool // Enable Zonal Buckets
+	EnableSharedMount           bool
 	storageService              *storage.Service // Client to interact with GCS
 	gcsfuseVersion              *version.Version
 	gcsfuseBranch               string
@@ -74,7 +76,7 @@ type gcsVolume struct {
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
-func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool, clientProtocol string, enableZB bool) storageframework.TestDriver {
+func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl string, skipGcpSaTest, enableHierarchicalNamespace bool, clientProtocol string, enableZB, enableSharedMount bool) storageframework.TestDriver {
 	ssm, err := storage.NewGCSServiceManager()
 	if err != nil {
 		e2eframework.Failf("Failed to set up storage service manager: %v", err)
@@ -101,6 +103,7 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 		ClientProtocol:              clientProtocol,
 		EnableHierarchicalNamespace: enableHierarchicalNamespace || enableZB,
 		EnableZB:                    enableZB, // Enable Zonal Buckets
+		EnableSharedMount:           enableSharedMount,
 	}
 }
 
@@ -131,6 +134,12 @@ func (n *GCSFuseCSITestDriver) SkipUnsupportedTest(pattern storageframework.Test
 	if pattern.VolType == storageframework.InlineVolume || pattern.VolType == storageframework.GenericEphemeralVolume {
 		e2eskipper.Skipf("GCS CSI Fuse CSI Driver does not support %s -- skipping", pattern.VolType)
 	}
+	if n.EnableSharedMount && (pattern.VolType == storageframework.CSIInlineVolume || pattern.VolType == storageframework.DynamicPV) {
+		e2eskipper.Skipf("Shared node mount does not support %s -- skipping", pattern.VolType)
+	}
+	if isSharedMountTest() && !n.EnableSharedMount {
+		e2eskipper.Skipf("Shared node mount is not enabled -- skipping")
+	}
 }
 
 func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.Framework) *storageframework.PerTestConfig {
@@ -144,6 +153,17 @@ func (n *GCSFuseCSITestDriver) PrepareTest(ctx context.Context, f *e2eframework.
 		testK8sSA = utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, K8sServiceAccountName, testGcpSA.GetEmail())
 	}
 	testK8sSA.Create(ctx)
+
+	if n.EnableSharedMount {
+		_, err := CreateMounterPodTemplate(ctx, f.ClientSet, f.Namespace.Name, MounterPodTemplateOptions{
+			Name:               DefaultMounterPodTemplateName,
+			ServiceAccountName: K8sServiceAccountName,
+			Image:              driver.MounterPodManagedImageKeyword,
+		})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			e2eframework.Failf("Failed to create default mounter PodTemplate: %v", err)
+		}
+	}
 
 	// Grant the required consumer permission on the test project to the active identity.
 	// This ensures that tests using the `--billing-project` flag (like requester_pays_bucket)
@@ -398,6 +418,10 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 
 	if gv.enableMetrics {
 		va[driver.VolumeContextKeyDisableMetrics] = util.FalseStr
+	}
+
+	if n.EnableSharedMount {
+		va[driver.VolumeContextSharedNodeMount] = util.TrueStr
 	}
 
 	return &corev1.PersistentVolumeSource{
@@ -713,4 +737,9 @@ func isProfilerTest() bool {
 func isBillingTest() bool {
 	report := ginkgo.CurrentSpecReport()
 	return strings.Contains(report.FullText(), "billing-project")
+}
+
+func isSharedMountTest() bool {
+	report := ginkgo.CurrentSpecReport()
+	return strings.Contains(report.FullText(), SharedMountTag)
 }

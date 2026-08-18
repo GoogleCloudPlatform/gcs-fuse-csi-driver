@@ -180,13 +180,77 @@ func TestWaitForMounterServer(t *testing.T) {
 			expectErr:    true,
 			expectedCode: codes.DeadlineExceeded,
 		},
+		{
+			name: "pod running but container oom killed - should return resource exhausted",
+			podStatus: &corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: util.MounterPodNamePrefix,
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 137,
+								Reason:   "OOMKilled",
+							},
+						},
+					},
+				},
+			},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.ResourceExhausted,
+		},
+		{
+			name: "pod running but container restarted due to oom - should return resource exhausted",
+			podStatus: &corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name:         util.MounterPodNamePrefix,
+						RestartCount: 1,
+						LastTerminationState: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 137,
+								Reason:   "OOMKilled",
+							},
+						},
+					},
+				},
+			},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.ResourceExhausted,
+		},
+		{
+			name: "pod running but container terminated with error - should return internal",
+			podStatus: &corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: util.MounterPodNamePrefix,
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 1,
+								Reason:   "Error",
+							},
+						},
+					},
+				},
+			},
+			podUID:       testPod,
+			timeout:      200 * time.Millisecond,
+			expectErr:    true,
+			expectedCode: codes.Internal,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fc := clientset.NewFakeClientset()
 			if tc.podStatus != nil {
-				fc.CreatePod(clientset.FakePodConfig{PodStatus: tc.podStatus})
+				fc.CreatePod(clientset.FakePodConfig{PodStatus: tc.podStatus, IsMounterPod: true})
 			}
 			if tc.getPodErr != nil {
 				fc.GetPodErr = tc.getPodErr
@@ -738,6 +802,60 @@ func TestCreateMounterPodSpec(t *testing.T) {
 					ServiceAccountName: "my-ksa",
 					PriorityClassName:  mounterPodPriorityClass,
 					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
+					Containers: []corev1.Container{
+						{
+							Name:            util.MounterPodNamePrefix,
+							Image:           "gcr.io/my-project/my-image:v1.0.0",
+							ImagePullPolicy: corev1.PullAlways,
+							Args:            []string{"--enable-shared-mount"},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+							Resources:    defaultResources,
+							VolumeMounts: expectedVolumeMounts,
+						},
+					},
+					Volumes: []corev1.Volume{
+						testBuffVolume,
+						testCacheVolume,
+						testTmpVolume,
+						kubeletHostPathVolume,
+					},
+					Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+				},
+			},
+		},
+		{
+			name: "config with securityContext - should propagate only fsGroup",
+			config: &mounterPodConfig{
+				podName:            "my-mounter-pod",
+				namespace:          "my-namespace",
+				serviceAccountName: "my-ksa",
+				nodeID:             "node-123",
+				image:              "gcr.io/my-project/my-image:v1.0.0",
+				securityContext: &corev1.PodSecurityContext{
+					RunAsUser: ptr.To(int64(2000)),
+					FSGroup:   ptr.To(testFSGroup),
+				},
+			},
+			want: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-mounter-pod",
+					Namespace: "my-namespace",
+					Labels: map[string]string{
+						"gke-gcsfuse/shared-mount": "true",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/hostname": "node-123",
+						"kubernetes.io/os":       "linux",
+					},
+					ServiceAccountName: "my-ksa",
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup: ptr.To(testFSGroup),
+					},
+					PriorityClassName: mounterPodPriorityClass,
 					Containers: []corev1.Container{
 						{
 							Name:            util.MounterPodNamePrefix,

@@ -29,7 +29,9 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"google.golang.org/grpc/codes"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -435,6 +437,71 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestIsStrictManagedSidecarImage(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name      string
+		imageName string
+		want      bool
+	}{
+		{
+			name:      "official regional GCR - should return true",
+			imageName: "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official strict staging GCR - should return true",
+			imageName: "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official strict regional docker pkg dev - should return true",
+			imageName: "us-central1-docker.pkg.dev/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official strict regional docker pkg dev staging - should return true",
+			imageName: "us-central1-docker.pkg.dev/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "official gke.gcr.io host - should return true",
+			imageName: "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      true,
+		},
+		{
+			name:      "malicious suffix bypass AR - should return false",
+			imageName: "docker.io/attacker/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "malicious suffix bypass GCR - should return false",
+			imageName: "docker.io/attacker/gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "customer GCR - should return false",
+			imageName: "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "malicious suffix bypass AR with gcr.io in path - should return false",
+			imageName: "docker.io/attacker/something.gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isStrictManagedSidecarImage(tc.imageName)
+			if got != tc.want {
+				t.Errorf("isStrictManagedSidecarImage(%q) = %v; want %v", tc.imageName, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestParseVolumeAttributes(t *testing.T) {
@@ -1299,55 +1366,306 @@ func TestParseFlagMapFromFlagFile(t *testing.T) {
 	}
 }
 
-func TestPrepareSharedNodeMountOptions(t *testing.T) {
+func TestCheckContainerStatusErr(t *testing.T) {
 	t.Parallel()
-	defaultOpts := []string{
-		"o=allow_other,default_permissions",
-	}
-
 	testCases := []struct {
-		name     string
-		options  []string
-		expected []string
+		name         string
+		cs           *corev1.ContainerStatus
+		expectedCode codes.Code
+		expectErr    bool
+		expectedErr  string
 	}{
 		{
-			name:     "empty options - should inject default CSI mount options",
-			options:  []string{},
-			expected: defaultOpts,
+			name:         "nil container status - should return Internal error",
+			cs:           nil,
+			expectedCode: codes.Internal,
+			expectErr:    true,
+			expectedErr:  "container status is nil",
 		},
 		{
-			name:     "pass through raw rw and ro flags",
-			options:  []string{"rw", "ro", "implicit-dirs"},
-			expected: append(append([]string{}, defaultOpts...), "rw", "ro", "implicit-dirs"),
+			name: "running container - should return OK",
+			cs: &corev1.ContainerStatus{
+				Name: "gke-gcsfuse-sidecar",
+				State: corev1.ContainerState{
+					Running: &corev1.ContainerStateRunning{},
+				},
+			},
+			expectedCode: codes.OK,
+			expectErr:    false,
 		},
 		{
-			name:     "pass through o=rw and keep default options",
-			options:  []string{"o=rw", "implicit-dirs"},
-			expected: append(append([]string{}, defaultOpts...), "o=rw", "implicit-dirs"),
+			name: "terminated with exit code 0 - should return OK",
+			cs: &corev1.ContainerStatus{
+				Name: "gke-gcsfuse-sidecar",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 0,
+					},
+				},
+			},
+			expectedCode: codes.OK,
+			expectErr:    false,
 		},
 		{
-			name:     "strip read_ahead_kb flags",
-			options:  []string{"read_ahead_kb=1024", "read_ahead_kb=4096", "file-cache:max-size-mb:1"},
-			expected: append(append([]string{}, defaultOpts...), "file-cache:max-size-mb:1"),
+			name: "terminated with OOMKilled - should return ResourceExhausted",
+			cs: &corev1.ContainerStatus{
+				Name: "gke-gcsfuse-sidecar",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 137,
+						Reason:   "OOMKilled",
+					},
+				},
+			},
+			expectedCode: codes.ResourceExhausted,
+			expectErr:    true,
+			expectedErr:  `the "gke-gcsfuse-sidecar" container terminated due to OOMKilled, exit code: 137`,
 		},
 		{
-			name:     "strip node_fuse_max_request_limit_kb flags",
-			options:  []string{"node_fuse_max_request_limit_kb=8192", "node_fuse_max_request_limit_kb=16384", "file-cache:max-size-mb:1"},
-			expected: append(append([]string{}, defaultOpts...), "file-cache:max-size-mb:1"),
+			name: "terminated with exit code 137 - should return ResourceExhausted",
+			cs: &corev1.ContainerStatus{
+				Name: "gcsfusecsi-mount-test",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 137,
+						Reason:   "Error",
+					},
+				},
+			},
+			expectedCode: codes.ResourceExhausted,
+			expectErr:    true,
+			expectedErr:  `the "gcsfusecsi-mount-test" container terminated due to Error, exit code: 137`,
 		},
 		{
-			name:     "mixed options with existing o= flags and stripped flags",
-			options:  []string{"o=noexec", "rw", "ro", "read_ahead_kb=100", "node_fuse_max_request_limit_kb=8192", "enable-cloud-profiler=true"},
-			expected: append(append([]string{}, defaultOpts...), "o=noexec", "rw", "ro", "enable-cloud-profiler=true"),
+			name: "terminated with non-zero exit code - should return Internal",
+			cs: &corev1.ContainerStatus{
+				Name: "gke-gcsfuse-sidecar",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 1,
+						Reason:   "Error",
+					},
+				},
+			},
+			expectedCode: codes.Internal,
+			expectErr:    true,
+			expectedErr:  `the "gke-gcsfuse-sidecar" container terminated due to Error, exit code: 1`,
+		},
+		{
+			name: "restarted container with OOM in LastTerminationState - should return ResourceExhausted",
+			cs: &corev1.ContainerStatus{
+				Name:         "gke-gcsfuse-sidecar",
+				RestartCount: 1,
+				LastTerminationState: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 137,
+						Reason:   "OOMKilled",
+					},
+				},
+			},
+			expectedCode: codes.ResourceExhausted,
+			expectErr:    true,
+			expectedErr:  `the "gke-gcsfuse-sidecar" container terminated due to OOMKilled, exit code: 137`,
+		},
+		{
+			name: "restarted container with non-zero exit in LastTerminationState - should return Internal",
+			cs: &corev1.ContainerStatus{
+				Name:         "gcsfusecsi-mount-test",
+				RestartCount: 1,
+				LastTerminationState: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 2,
+						Reason:   "Error",
+					},
+				},
+			},
+			expectedCode: codes.Internal,
+			expectErr:    true,
+			expectedErr:  `the "gcsfusecsi-mount-test" container terminated due to Error, exit code: 2`,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			actual := prepareSharedNodeMountOptions(tc.options)
-			if diff := cmp.Diff(actual, tc.expected); diff != "" {
-				t.Errorf("test %q failed: got %v, want %v\nDiff (-want +got):\n%s", tc.name, actual, tc.expected, diff)
+			code, err := checkContainerStatusErr(tc.cs)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if code != tc.expectedCode {
+					t.Errorf("expected code %v, got %v", tc.expectedCode, code)
+				}
+				if tc.expectedErr != "" && err.Error() != tc.expectedErr {
+					t.Errorf("expected error %q, got %q", tc.expectedErr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				if code != tc.expectedCode {
+					t.Errorf("expected code %v, got %v", tc.expectedCode, code)
+				}
+			}
+		})
+	}
+}
+
+func TestGetMounterPodContainerStatus(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name         string
+		pod          *corev1.Pod
+		expectErr    bool
+		expectedName string
+	}{
+		{
+			name:      "nil pod - should return error",
+			pod:       nil,
+			expectErr: true,
+		},
+		{
+			name: "pod with no container statuses - should return error",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{},
+			},
+			expectErr: true,
+		},
+		{
+			name: "pod with sidecar container only - should return error",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{Name: "gke-gcsfuse-sidecar"},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "pod with exact mounter container name - should succeed",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{Name: util.MounterPodNamePrefix},
+					},
+				},
+			},
+			expectErr:    false,
+			expectedName: util.MounterPodNamePrefix,
+		},
+		{
+			name: "pod with prefixed mounter container name - should succeed",
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{Name: util.MounterPodNamePrefix + "-12345"},
+					},
+				},
+			},
+			expectErr:    false,
+			expectedName: util.MounterPodNamePrefix + "-12345",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cs, err := getMounterPodContainerStatus(tc.pod)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				if cs.Name != tc.expectedName {
+					t.Errorf("expected container name %q, got %q", tc.expectedName, cs.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestGetSidecarContainerStatus(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name            string
+		isInitContainer bool
+		pod             *corev1.Pod
+		expectErr       bool
+		expectedName    string
+	}{
+		{
+			name:            "nil pod - should return error",
+			isInitContainer: false,
+			pod:             nil,
+			expectErr:       true,
+		},
+		{
+			name:            "pod with no container statuses - should return error",
+			isInitContainer: false,
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{},
+			},
+			expectErr: true,
+		},
+		{
+			name:            "regular sidecar container found - should succeed",
+			isInitContainer: false,
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{Name: webhook.GcsFuseSidecarName},
+					},
+				},
+			},
+			expectErr:    false,
+			expectedName: webhook.GcsFuseSidecarName,
+		},
+		{
+			name:            "init sidecar container found - should succeed",
+			isInitContainer: true,
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					InitContainerStatuses: []corev1.ContainerStatus{
+						{Name: webhook.GcsFuseSidecarName},
+					},
+				},
+			},
+			expectErr:    false,
+			expectedName: webhook.GcsFuseSidecarName,
+		},
+		{
+			name:            "init sidecar requested but only regular exists - should return error",
+			isInitContainer: true,
+			pod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{Name: webhook.GcsFuseSidecarName},
+					},
+				},
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cs, err := getSidecarContainerStatus(tc.isInitContainer, tc.pod)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				if cs.Name != tc.expectedName {
+					t.Errorf("expected container name %q, got %q", tc.expectedName, cs.Name)
+				}
 			}
 		})
 	}

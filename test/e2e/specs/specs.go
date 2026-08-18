@@ -27,6 +27,7 @@ import (
 
 	"local/test/e2e/utils"
 
+	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/gomega"
@@ -41,6 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eevents "k8s.io/kubernetes/test/e2e/framework/events"
@@ -48,14 +50,18 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodooutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+	e2epv "k8s.io/kubernetes/test/e2e/framework/pv"
+	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	"k8s.io/utils/ptr"
 )
 
 const (
-	TesterContainerName   = "volume-tester"
-	K8sServiceAccountName = "gcsfuse-csi-sa"
+	SharedMountTag                = "shared-mount"
+	TesterContainerName           = "volume-tester"
+	K8sServiceAccountName         = "gcsfuse-csi-sa"
+	DefaultMounterPodTemplateName = "default-mounter-pod-template"
 	//nolint:gosec
 	K8sSecretName                                              = "gcsfuse-csi-test-secret"
 	FakeVolumePrefix                                           = "gcsfuse-csi-fake-volume"
@@ -130,6 +136,52 @@ var InvalidVolume = fmt.Sprintf("non-existent-test-bucket-%s", rand.String(8))
 // Note to developers adding new testing methods - Please check the code path of newly added methods and ensure that those requiring
 // konnectivity agents are wrapped with retry logic, see `runKubectlWithFullOutputWithRetry` as an example.
 // See here for the list of commands that require the agents - go/konnectivity-network-proxy#egress_traffic.
+
+type MounterPodTemplateOptions struct {
+	Name               string
+	ServiceAccountName string
+	FSGroup            *int64
+	Resources          *corev1.ResourceRequirements
+	Image              string
+}
+
+func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namespace string, opts MounterPodTemplateOptions) (*corev1.PodTemplate, error) {
+	image := opts.Image
+	if image == "" {
+		image = driver.MounterPodManagedImageKeyword
+	}
+	saName := opts.ServiceAccountName
+	if saName == "" {
+		saName = K8sServiceAccountName
+	}
+	podSpec := corev1.PodSpec{
+		ServiceAccountName: saName,
+		Containers: []corev1.Container{
+			{
+				Name:  util.MounterPodNamePrefix,
+				Image: image,
+			},
+		},
+	}
+	if opts.Resources != nil {
+		podSpec.Containers[0].Resources = *opts.Resources
+	}
+	if opts.FSGroup != nil {
+		podSpec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup: opts.FSGroup,
+		}
+	}
+	template := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      opts.Name,
+			Namespace: namespace,
+		},
+		Template: corev1.PodTemplateSpec{
+			Spec: podSpec,
+		},
+	}
+	return c.CoreV1().PodTemplates(namespace).Create(ctx, template, metav1.CreateOptions{})
+}
 
 type TestPod struct {
 	client    clientset.Interface
@@ -542,11 +594,166 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 	}
 }
 
+// CreateVolumeResource wraps storageframework.CreateVolumeResource for E2E tests.
+// For shared-mount PreprovisionedPV, it creates the PV with an explicit name instead of
+// GenerateName, because upstream's GenerateName leaves pv.Name empty during webhook CREATE
+// admission, preventing the webhook from populating csi.storage.k8s.io/pv/name.
+func CreateVolumeResource(ctx context.Context, driver storageframework.TestDriver, config *storageframework.PerTestConfig, pattern storageframework.TestPattern, testVolumeSizeRange e2evolume.SizeRange) *storageframework.VolumeResource {
+	gcsDriver, ok := driver.(*GCSFuseCSITestDriver)
+	if !ok || !gcsDriver.EnableSharedMount || pattern.VolType != storageframework.PreprovisionedPV {
+		return storageframework.CreateVolumeResource(ctx, driver, config, pattern, testVolumeSizeRange)
+	}
+
+	r := &storageframework.VolumeResource{
+		Config:  config,
+		Pattern: pattern,
+	}
+	f := config.Framework
+	cs := f.ClientSet
+
+	r.Volume = storageframework.CreateVolume(ctx, driver, config, pattern.VolType)
+	pDriver, ok := driver.(storageframework.PreprovisionedPVTestDriver)
+	if !ok {
+		framework.Failf("Driver %s does not implement PreprovisionedPVTestDriver", driver.GetDriverInfo().Name)
+	}
+
+	pvSource, volumeNodeAffinity := pDriver.GetPersistentVolumeSource(false /* readOnly */, pattern.FsType, r.Volume)
+	if pvSource == nil {
+		framework.Failf("Failed to get PersistentVolumeSource for volume")
+	}
+
+	pvName := fmt.Sprintf("gcsfuse-shared-pv-%s", rand.String(8))
+	pvcName := fmt.Sprintf("pvc-%s", rand.String(8))
+
+	accessModes := driver.GetDriverInfo().RequiredAccessModes
+	if len(accessModes) == 0 {
+		accessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	}
+
+	var success bool
+	defer func() {
+		if !success {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = r.CleanupResource(cleanupCtx)
+		}
+	}()
+
+	// 1. Create PVC
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: f.Namespace.Name,
+			Annotations: map[string]string{
+				webhook.MounterPodTemplateAnnotation: DefaultMounterPodTemplateName,
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: accessModes,
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("2Gi"),
+				},
+			},
+			StorageClassName: ptr.To(""),
+		},
+	}
+	if pattern.VolMode != "" {
+		pvc.Spec.VolumeMode = &pattern.VolMode
+	}
+
+	var err error
+	r.Pvc, err = cs.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Create(ctx, pvc, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "failed to create PVC %s", pvcName)
+
+	// 2. Create PV with explicit Name (not GenerateName)
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: pvName,
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceStorage: resource.MustParse("2Gi"),
+			},
+			PersistentVolumeSource: *pvSource,
+			AccessModes:            accessModes,
+			ClaimRef: &corev1.ObjectReference{
+				Kind:       "PersistentVolumeClaim",
+				APIVersion: "v1",
+				Name:       r.Pvc.Name,
+				Namespace:  r.Pvc.Namespace,
+				UID:        r.Pvc.UID,
+			},
+			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+			StorageClassName:              "",
+			NodeAffinity:                  volumeNodeAffinity,
+		},
+	}
+	if pattern.VolMode != "" {
+		pv.Spec.VolumeMode = &pattern.VolMode
+	}
+
+	r.Pv, err = cs.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "failed to create PV %s", pvName)
+
+	// 3. Wait for PV and PVC to be Bound
+	err = e2epv.WaitOnPVandPVC(ctx, cs, f.Timeouts, f.Namespace.Name, r.Pv, r.Pvc)
+	framework.ExpectNoError(err, "PVC, PV failed to bind")
+
+	r.VolSource = &corev1.VolumeSource{
+		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+			ClaimName: r.Pvc.Name,
+			ReadOnly:  false,
+		},
+	}
+
+	success = true
+	return r
+}
+
+// ensureMounterPodTemplateAnnotation ensures that when shared node mount is enabled,
+// the PVC references a mounter PodTemplate via the gke-gcsfuse/mounter-pod-template annotation.
+// If absent, it defaults to the default mounter PodTemplate provisioned during PrepareTest.
+func (t *TestPod) ensureMounterPodTemplateAnnotation(volumeResource *storageframework.VolumeResource) {
+	if volumeResource == nil || volumeResource.Pvc == nil || volumeResource.Pv == nil || volumeResource.Pv.Spec.CSI == nil {
+		return
+	}
+	if volumeResource.Pv.Spec.CSI.VolumeAttributes[driver.VolumeContextSharedNodeMount] != util.TrueStr {
+		return
+	}
+
+	pvc := volumeResource.Pvc
+	if pvc.Annotations != nil && pvc.Annotations[webhook.MounterPodTemplateAnnotation] != "" {
+		return
+	}
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest, err := t.client.CoreV1().PersistentVolumeClaims(pvc.Namespace).Get(context.Background(), pvc.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if latest.Annotations == nil {
+			latest.Annotations = make(map[string]string)
+		}
+		if latest.Annotations[webhook.MounterPodTemplateAnnotation] == "" {
+			latest.Annotations[webhook.MounterPodTemplateAnnotation] = DefaultMounterPodTemplateName
+			updated, err := t.client.CoreV1().PersistentVolumeClaims(pvc.Namespace).Update(context.Background(), latest, metav1.UpdateOptions{})
+			if err == nil {
+				volumeResource.Pvc = updated
+			}
+			return err
+		}
+		return nil
+	})
+	framework.ExpectNoError(err, "failed to update PVC with mounter pod template annotation")
+}
+
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
 	volume := corev1.Volume{
 		Name: name,
 	}
 	if volumeResource.Pvc != nil {
+		t.ensureMounterPodTemplateAnnotation(volumeResource)
 		volume.VolumeSource = corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeResource.Pvc.Name,
@@ -570,6 +777,7 @@ func (t *TestPod) SetupVolumeWithHostNetworkKSAOptIn(volumeResource *storagefram
 		Name: name,
 	}
 	if volumeResource.Pvc != nil {
+		t.ensureMounterPodTemplateAnnotation(volumeResource)
 		volume.VolumeSource = corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeResource.Pvc.Name,
@@ -838,6 +1046,24 @@ func (t *TestPVC) Create(ctx context.Context) {
 	var err error
 	t.PVC, err = t.client.CoreV1().PersistentVolumeClaims(t.namespace.Name).Create(ctx, t.PVC, metav1.CreateOptions{})
 	framework.ExpectNoError(err)
+}
+
+// SetMounterPodTemplate sets the gke-gcsfuse/mounter-pod-template annotation on the PVC.
+// By default, if this annotation is not set, setupVolume will automatically associate the PVC
+// with the default mounter PodTemplate (DefaultMounterPodTemplateName).
+// Calling this method allows tests to bind the PVC to a custom PodTemplate (e.g. for testing
+// custom fsGroup, custom ServiceAccountName). If the PVC has already been created on the
+// API server, it actively updates the PVC resource.
+func (t *TestPVC) SetMounterPodTemplate(ctx context.Context, templateName string) {
+	if t.PVC.Annotations == nil {
+		t.PVC.Annotations = make(map[string]string)
+	}
+	t.PVC.Annotations[webhook.MounterPodTemplateAnnotation] = templateName
+	if t.PVC.ResourceVersion != "" {
+		updatedPVC, err := t.client.CoreV1().PersistentVolumeClaims(t.namespace.Name).Update(ctx, t.PVC, metav1.UpdateOptions{})
+		framework.ExpectNoError(err)
+		t.PVC = updatedPVC
+	}
 }
 
 func (t *TestPVC) Cleanup(ctx context.Context) {
