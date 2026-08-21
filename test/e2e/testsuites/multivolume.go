@@ -25,7 +25,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -87,8 +91,16 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		}
 
 		l.volumeResourceList = []*storageframework.VolumeResource{}
-		for range volumeNumber {
-			l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
+		for i := range volumeNumber {
+			suffix := ""
+			if len(configPrefix) > 0 && configPrefix[0] == specs.SameBucketDiffVolPrefix {
+				if i == 0 {
+					suffix = ":rwx"
+				} else if i == 1 {
+					suffix = ":rox"
+				}
+			}
+			l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}, suffix))
 		}
 	}
 
@@ -395,5 +407,61 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		defer cleanup()
 
 		testOnePodMultipleBuckets()
+	})
+
+	// This tests mounting two volumes via a unique suffix using shared mount as seen in https://docs.cloud.google.com/kubernetes-engine/docs/how-to/cloud-storage-fuse-csi-driver-pv#mount-same-bucket-different-pv.
+	ginkgo.It("[shared-mount] should access the same bucket via different PV's with deduplicated volumeHandles from different Pods on the same node", func() {
+		if pattern.VolType != storageframework.PreprovisionedPV {
+			e2eskipper.Skipf("skip for volume type %v", pattern.VolType)
+		}
+
+		init(2, specs.SameBucketDiffVolWithSuffixPrefix)
+		l.volumeResourceList[1].VolSource.PersistentVolumeClaim.ReadOnly = true
+		defer cleanup()
+
+		// 1. Deploy Pod 1 (ReadWriteMany).
+		ginkgo.By("Configuring the first pod (ReadWriteMany)")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetupVolume(l.volumeResourceList[0], volumeName, mountPath, false /* readOnly */)
+
+		ginkgo.By("Deploying the first pod")
+		tPod1.Create(ctx)
+		defer tPod1.Cleanup(ctx)
+
+		ginkgo.By("Checking that the first pod is running")
+		tPod1.WaitForRunning(ctx)
+		nodeName := tPod1.GetNode()
+
+		// 2. Deploy Pod 2 (ReadOnlyMany) on the same node.
+		ginkgo.By("Configuring the second pod (ReadOnlyMany) on the same node")
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(l.volumeResourceList[1], volumeName, mountPath, true /* readOnly */)
+		tPod2.SetNodeAffinity(nodeName, true /* sameNode */)
+
+		ginkgo.By("Deploying the second pod")
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+
+		ginkgo.By("Checking that the second pod is running")
+		tPod2.WaitForRunning(ctx)
+
+		// 3. Verify distinct Mounter Pods exist for each volumeHandle in our ns.
+		ginkgo.By("Verifying distinct Mounter Pods exist for each volumeHandle")
+		mounterPods, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).List(ctx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr),
+		})
+		framework.ExpectNoError(err, "failed to list mounter pods")
+		gomega.Expect(len(mounterPods.Items)).To(gomega.Equal(2), "expected 2 distinct Mounter Pods for unique volumeHandles")
+
+		// 4. Verify Pod 1 (RWX) operations.
+		ginkgo.By("Verifying RWX pod read and write operations")
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
+		tPod1.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world rwx' > %v/data-rwx && grep 'hello world rwx' %v/data-rwx", mountPath, mountPath))
+
+		// 5. Verify Pod 2 (ROX) operations and access mode enforcement.
+		ginkgo.By("Verifying ROX pod read operation and write restriction enforcement")
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep ro,", mountPath))
+		tPod2.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello world rwx' %v/data-rwx", mountPath))
+		tPod2.VerifyExecInPodFail(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world rox' > %v/data-rox", mountPath), 1)
 	})
 }
