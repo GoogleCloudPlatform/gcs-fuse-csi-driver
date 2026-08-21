@@ -73,6 +73,7 @@ const (
 	ForceNewBucketPrefix                                       = "gcsfuse-csi-force-new-bucket"
 	SubfolderInBucketPrefix                                    = "gcsfuse-csi-subfolder-in-bucket"
 	MultipleBucketsPrefix                                      = "gcsfuse-csi-multiple-buckets"
+	BucketWithTwoUniqueVolSuffixPrefix                         = "gcsfuse-csi-bucket-with-two-unique-vol-suffix"
 	EnableFileCacheForceNewBucketPrefix                        = "gcsfuse-csi-enable-file-cache-force-new-bucket"
 	EnableFileCacheForceNewBucketAndMetricsPrefix              = "gcsfuse-csi-enable-file-cache-force-new-bucket-and-metrics"
 	EnableFileCachePrefix                                      = "gcsfuse-csi-enable-file-cache"
@@ -598,7 +599,7 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 // For shared-mount PreprovisionedPV, it creates the PV with an explicit name instead of
 // GenerateName, because upstream's GenerateName leaves pv.Name empty during webhook CREATE
 // admission, preventing the webhook from populating csi.storage.k8s.io/pv/name.
-func CreateVolumeResource(ctx context.Context, driver storageframework.TestDriver, config *storageframework.PerTestConfig, pattern storageframework.TestPattern, testVolumeSizeRange e2evolume.SizeRange) *storageframework.VolumeResource {
+func CreateVolumeResource(ctx context.Context, driver storageframework.TestDriver, config *storageframework.PerTestConfig, pattern storageframework.TestPattern, testVolumeSizeRange e2evolume.SizeRange, customVolumeHandleSuffix ...string) *storageframework.VolumeResource {
 	gcsDriver, ok := driver.(*GCSFuseCSITestDriver)
 	if !ok || !gcsDriver.EnableSharedMount || pattern.VolType != storageframework.PreprovisionedPV {
 		return storageframework.CreateVolumeResource(ctx, driver, config, pattern, testVolumeSizeRange)
@@ -620,6 +621,13 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 	pvSource, volumeNodeAffinity := pDriver.GetPersistentVolumeSource(false /* readOnly */, pattern.FsType, r.Volume)
 	if pvSource == nil {
 		framework.Failf("Failed to get PersistentVolumeSource for volume")
+	}
+
+	if len(customVolumeHandleSuffix) > 0 && customVolumeHandleSuffix[0] != "" {
+		if pvSource.CSI == nil || pvSource.CSI.VolumeHandle == "" {
+			framework.Failf("Failed to apply custom volume handle suffix")
+		}
+		pvSource.CSI.VolumeHandle += customVolumeHandleSuffix[0]
 	}
 
 	pvName := fmt.Sprintf("gcsfuse-shared-pv-%s", rand.String(8))
@@ -757,6 +765,7 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 		volume.VolumeSource = corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeResource.Pvc.Name,
+				ReadOnly:  readOnly,
 			},
 		}
 	} else if volumeResource.VolSource != nil {
