@@ -50,6 +50,8 @@ var (
 	enableSharedMount              = flag.Bool("enable-shared-mount", false, "enables shared mount overlay and features in e2e tests")
 	skipCSIDriverInstall           = flag.Bool("skip-csi-driver-install", false, "skips the install of the driver. You must have manually deployed the driver and webhook.")
 	gcsFusePrNumber                = flag.String("gcsfuse-pr-number", "", "PR number for gcsfuse to test against")
+	// Only works for zonal clusters by pinning nodes to a single advised zone, set to false if want to create regional cluster.
+	useCapacityAdvisor = flag.Bool("use-capacity-advisor", false, "whether to use GCE Capacity Advisor to select node locations")
 
 	// Test infrastructure flags.
 	inProw                 = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -164,6 +166,7 @@ func main() {
 		EnableSharedMount:              *enableSharedMount,
 		SkipCSIDriverInstall:           *skipCSIDriverInstall,
 		GCSFusePRNumber:                *gcsFusePrNumber,
+		UseCapacityAdvisor:             *useCapacityAdvisor,
 	}
 
 	if strings.Contains(testParams.GinkgoFocus, "performance") {

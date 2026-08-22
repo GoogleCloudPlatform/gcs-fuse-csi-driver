@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
@@ -72,6 +73,68 @@ func clusterDownGKE(testParams *TestParameters) error {
 	return nil
 }
 
+// queryRegionalStandardZones retrieves standard compute zones for a region from 'gcloud compute regions describe',
+// which naturally excludes AI-only zones, so they can be passed to Capacity Advisor via --zones.
+func queryRegionalStandardZones(testParams *TestParameters) string {
+	regionArgs := []string{
+		"compute", "regions", "describe", testParams.GkeClusterRegion,
+		"--format=value(zones.basename())",
+	}
+	if testParams.ProjectID != "" {
+		regionArgs = append(regionArgs, "--project="+testParams.ProjectID)
+	}
+
+	regionOut, err := gcloudCommand(testParams, regionArgs...).Output()
+	if err != nil {
+		klog.Warningf("Failed to query standard regional compute zones for %s: %v", testParams.GkeClusterRegion, err)
+		return ""
+	}
+
+	// gcloud formats list projections with semicolons, commas, or whitespace; normalize into a comma-separated list for --zones.
+	zones := strings.FieldsFunc(string(regionOut), func(r rune) bool {
+		return r == ';' || r == ',' || unicode.IsSpace(r)
+	})
+	return strings.Join(zones, ",")
+}
+
+// queryCapacityAdvisedZone calls queryRegionalStandardZones to get all standard GKE zones,
+// and queries Capacity Advisor to select the best zone with sufficient compute capacity.
+func queryCapacityAdvisedZone(testParams *TestParameters) (string, error) {
+	// Note: Capacity Advisor requires --provisioning-model (supports only SPOT or FLEX_START).
+	// We use SPOT as a proxy for regional resource availability.
+	// See: https://cloud.google.com/sdk/gcloud/reference/beta/compute/advice/capacity
+	cmdArgs := []string{
+		"beta", "compute", "advice", "capacity",
+		"--region=" + testParams.GkeClusterRegion,
+		"--provisioning-model=SPOT",
+		"--size=" + strconv.Itoa(testParams.NumNodes),
+		"--instance-selection-machine-types=" + testParams.NodeMachineType,
+		"--target-distribution-shape=any-single-zone",
+		"--format=value(recommendations[0].shards[0].zone.basename())",
+	}
+
+	// Restrict capacity search to standard regional compute zones to avoid non-GKE AI zones.
+	if zonesFilter := queryRegionalStandardZones(testParams); zonesFilter != "" {
+		cmdArgs = append(cmdArgs, "--zones="+zonesFilter)
+	}
+	if testParams.ProjectID != "" {
+		cmdArgs = append(cmdArgs, "--project="+testParams.ProjectID)
+	}
+
+	out, err := gcloudCommand(testParams, cmdArgs...).Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("failed to query capacity advice: %w, stderr: %s", err, string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("failed to query capacity advice: %w", err)
+	}
+	zone := strings.TrimSpace(string(out))
+	if zone == "" {
+		return "", fmt.Errorf("no zone returned in capacity advice")
+	}
+	return zone, nil
+}
+
 func clusterUpGKE(testParams *TestParameters) error {
 	//nolint:gosec
 	out, err := gcloudCommand(testParams, "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
@@ -102,6 +165,22 @@ func clusterUpGKE(testParams *TestParameters) error {
 		cmdParams = append(cmdParams, "--cluster-version", testParams.GkeClusterVersion)
 	}
 
+	// Query Capacity Advisor to select a stockout-free zone for Standard clusters.
+	// gcloud interprets --num-nodes as a per-zone count. When the advisor pins a
+	// single zone, NumNodes is the total; on failure we fall back to GKE's default
+	// 3-zone regional layout, so scale NumNodes down (minimum 1) to keep the total consistent.
+	var nodeLocations string
+	if !testParams.UseGKEAutopilot && testParams.UseCapacityAdvisor {
+		advisedZone, err := queryCapacityAdvisedZone(testParams)
+		if err != nil {
+			klog.Warningf("Capacity Advisor query failed, falling back to default regional node allocation: %v", err)
+			testParams.NumNodes = max(1, testParams.NumNodes/3)
+		} else {
+			klog.Infof("Using Capacity Advised zone %q for cluster node locations", advisedZone)
+			nodeLocations = advisedZone
+		}
+	}
+
 	standardClusterFlags := []string{
 		"--num-nodes", strconv.Itoa(testParams.NumNodes), "--image-type", testParams.NodeImageType,
 		"--machine-type", testParams.NodeMachineType,
@@ -116,20 +195,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 		standardClusterFlags = append(standardClusterFlags, "--node-version", testParams.GkeNodeVersion)
 	}
 
-	// For supported regions/zones for ARM nodes, see https://cloud.google.com/kubernetes-engine/docs/concepts/arm-on-gke#arm-requirements-limitations
-	if strings.HasPrefix(testParams.NodeMachineType, "t2a-standard") {
-		var nodeLocations string
-		switch testParams.GkeClusterRegion {
-		case "us-central1":
-			nodeLocations = "us-central1-a,us-central1-b,us-central1-f"
-		case "europe-west4":
-			nodeLocations = "europe-west4-a,europe-west4-b"
-		case "asia-southeast1":
-			nodeLocations = "asia-southeast1-b,asia-southeast1-c"
-		default:
-			return fmt.Errorf("got invalid region %q for ARM node type %q", testParams.GkeClusterRegion, testParams.NodeMachineType)
-		}
-
+	if nodeLocations != "" {
 		standardClusterFlags = append(standardClusterFlags, "--node-locations", nodeLocations)
 	}
 
