@@ -41,8 +41,8 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-[ -z ${install} ] && install=false
-[ -z ${uninstall} ] && uninstall=false
+[[ -z "${install}" ]] && install=false
+[[ -z "${uninstall}" ]] && uninstall=false
 
 versionStr=$(kubectl version | sed -n '3p' | cut -d " " -f 3)
 
@@ -57,12 +57,12 @@ if [[ $versionStr =~ $versionRegex ]]; then
         echo "Cluster version is greater than or equal to 1.30"
         script_path=$(dirname "$(realpath "$0")")
         
-        if ( $install == "true" ); then
+        if [[ "${install}" == "true" ]]; then
             echo "Installing ValidatingAdmissionPolicy and ValidatingAdmissionPolicyBinding"
             kubectl apply -f "${script_path}/validating_admission_policy.yaml"
         fi
 
-        if ( $uninstall == "true" ); then
+        if [[ "${uninstall}" == "true" ]]; then
             echo "Uninstalling ValidatingAdmissionPolicy and ValidatingAdmissionPolicyBinding"
             kubectl delete -f "${script_path}/validating_admission_policy.yaml"
         fi

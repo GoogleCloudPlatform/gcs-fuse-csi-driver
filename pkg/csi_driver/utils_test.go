@@ -973,6 +973,18 @@ func TestRemoveDisallowedMountOptions(t *testing.T) {
 			disallowedFlags: map[string]bool{"debug_fuse": true},
 			expected:        []string{"uid:1001", "gid=1002"},
 		},
+		{
+			name:            "delimiter-only mount options with disallowed flags, results in mountOptions stripped of disallowed flags",
+			mountOptions:    []string{"=", ":", ":=", ":::=", "debug_fuse"},
+			disallowedFlags: map[string]bool{"debug_fuse": true},
+			expected:        []string{"=", ":", ":=", ":::="},
+		},
+		{
+			name:            "mixed delimiter-only and normal mount options with disallowed flags, results in mountOptions stripped of disallowed flags",
+			mountOptions:    []string{"=", "uid:1001", ":", "debug_fuse", ":=", "implicit-dirs", ":::", "gid=1002"},
+			disallowedFlags: map[string]bool{"debug_fuse": true},
+			expected:        []string{"=", "uid:1001", ":", ":=", "implicit-dirs", ":::", "gid=1002"},
+		},
 	}
 
 	// Run test cases

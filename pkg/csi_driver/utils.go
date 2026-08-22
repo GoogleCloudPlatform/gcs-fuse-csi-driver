@@ -768,6 +768,11 @@ func removeDisallowedMountOptions(fuseMountOptions []string, disallowedFlags map
 		parts := strings.FieldsFunc(item, func(r rune) bool {
 			return r == ':' || r == '='
 		})
+		if len(parts) == 0 {
+			fuseMountOptions[n] = item
+			n++
+			continue
+		}
 		key := parts[0]
 
 		if !disallowedFlags[key] {
