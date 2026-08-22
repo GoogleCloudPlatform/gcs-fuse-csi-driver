@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -261,6 +262,131 @@ gcs_request_count{gcs_method="StatObject"} 6
 	}
 	if count != 2 {
 		t.Errorf("expected 2 metric families, got %d", count)
+	}
+}
+
+func TestEmitMetricFamily(t *testing.T) {
+	t.Parallel()
+
+	counterType := dto.MetricType_COUNTER
+	val := float64(42.0)
+	name := "test_metric"
+	help := "test help string"
+
+	strPtr := func(s string) *string { return &s }
+
+	defaultConstLabels := map[string]string{
+		"pod_name":       "test-pod",
+		"namespace_name": "default",
+		"volume_name":    "vol-1",
+		"bucket_name":    "bucket-1",
+		"pod_uid":        "",
+	}
+
+	testCases := []struct {
+		name           string
+		constLabels    map[string]string
+		metricFamily   *dto.MetricFamily
+		expectedEmits  int
+		expectedLabels map[string]string
+	}{
+		{
+			name:        "counter without label conflicts",
+			constLabels: defaultConstLabels,
+			metricFamily: &dto.MetricFamily{
+				Name: &name,
+				Help: &help,
+				Type: &counterType,
+				Metric: []*dto.Metric{
+					{
+						Label: []*dto.LabelPair{
+							{Name: strPtr("fs_op"), Value: strPtr("read")},
+						},
+						Counter: &dto.Counter{Value: &val},
+					},
+				},
+			},
+			expectedEmits: 1,
+			expectedLabels: map[string]string{
+				"fs_op":          "read",
+				"pod_name":       "test-pod",
+				"namespace_name": "default",
+				"volume_name":    "vol-1",
+				"bucket_name":    "bucket-1",
+				"pod_uid":        "",
+			},
+		},
+		{
+			name:        "counter with conflicting labels matching constLabels",
+			constLabels: defaultConstLabels,
+			metricFamily: &dto.MetricFamily{
+				Name: &name,
+				Help: &help,
+				Type: &counterType,
+				Metric: []*dto.Metric{
+					{
+						Label: []*dto.LabelPair{
+							{Name: strPtr("pod_name"), Value: strPtr("malicious_pod")},
+							{Name: strPtr("fs_op"), Value: strPtr("write")},
+							{Name: strPtr("pod_uid"), Value: strPtr("malicious_uid")},
+						},
+						Counter: &dto.Counter{Value: &val},
+					},
+				},
+			},
+			expectedEmits: 1,
+			expectedLabels: map[string]string{
+				"fs_op":          "write",
+				"pod_name":       "test-pod",
+				"namespace_name": "default",
+				"volume_name":    "vol-1",
+				"bucket_name":    "bucket-1",
+				"pod_uid":        "",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := &metricsCollector{
+				constLabels: tc.constLabels,
+			}
+
+			ch := make(chan prometheus.Metric, tc.expectedEmits+5)
+			c.emitMetricFamily(tc.metricFamily, ch)
+			close(ch)
+
+			var emittedMetrics []prometheus.Metric
+			for m := range ch {
+				if m == nil {
+					t.Errorf("received nil metric")
+					continue
+				}
+				emittedMetrics = append(emittedMetrics, m)
+			}
+
+			if len(emittedMetrics) != tc.expectedEmits {
+				t.Fatalf("emitted metrics count = %d, want %d", len(emittedMetrics), tc.expectedEmits)
+			}
+
+			if len(emittedMetrics) > 0 {
+				var pb dto.Metric
+				if err := emittedMetrics[0].Write(&pb); err != nil {
+					t.Fatalf("failed to write metric to dto.Metric: %v", err)
+				}
+
+				gotLabels := make(map[string]string)
+				for _, lp := range pb.GetLabel() {
+					gotLabels[lp.GetName()] = lp.GetValue()
+				}
+
+				if diff := cmp.Diff(tc.expectedLabels, gotLabels); diff != "" {
+					t.Errorf("labels mismatch (-want +got):\n%s", diff)
+				}
+			}
+		})
 	}
 }
 
