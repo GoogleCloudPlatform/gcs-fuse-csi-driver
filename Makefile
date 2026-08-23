@@ -385,6 +385,7 @@ endif
 verify:
 	hack/verify-all.sh
 
+# Omit packages without test files to avoid Go 1.25 covdata error (https://github.com/golang/go/issues/75031)
 unit-test:
 	@PKGS=$$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./pkg/...) || exit 1; \
 	if [ -n "$$PKGS" ]; then \
