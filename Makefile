@@ -386,7 +386,7 @@ verify:
 	hack/verify-all.sh
 
 unit-test:
-	@PKGS=$$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./pkg/...); \
+	@PKGS=$$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./pkg/...) || exit 1; \
 	if [ -n "$$PKGS" ]; then \
 		go test -v -mod=vendor -timeout 30s -cover $$PKGS; \
 	fi
