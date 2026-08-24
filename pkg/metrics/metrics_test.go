@@ -147,6 +147,30 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 	}
 }
 
+func TestMetricsCollectorGcsFuseVolumeLabels(t *testing.T) {
+	c := NewMetricsCollector("", "", "test-ns", "test-pod", "test-uid", "test-vol", map[string]string{
+		"pod_name":       "test-pod",
+		"namespace_name": "test-ns",
+		"volume_name":    "test-vol",
+		"bucket_name":    "test-bucket",
+		"pod_uid":        "",
+	}, nil, false).(*metricsCollector)
+
+	expectedLabels := map[string]string{
+		"pod_name":       "test-pod",
+		"namespace_name": "test-ns",
+		"volume_name":    "test-vol",
+		"bucket_name":    "test-bucket",
+		"pod_uid":        "",
+	}
+
+	for k, want := range expectedLabels {
+		if got := c.constLabels[k]; got != want {
+			t.Errorf("constLabel[%q] = %q, want %q for gke.googleapis.com/GcsFuseVolume resource target label propagation", k, got, want)
+		}
+	}
+}
+
 func TestPrometheusCounters(t *testing.T) {
 	pmm := NewPrometheusMetricManager(":8080", http.NewServeMux())
 
