@@ -86,6 +86,7 @@ type TestParameters struct {
 	EnableGcsFuseProfiles          bool
 	EnableGCSFuseKernelParams      bool
 	EnableSharedMount              bool
+	UseCapacityAdvisor             bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
