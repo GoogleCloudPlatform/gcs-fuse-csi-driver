@@ -97,6 +97,7 @@ const (
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
 	EnableKernelParamsPrefix                                   = "gcsfuse-csi-enable-kernel-params"
 	SidecarAndSharedMountCoexistencePrefix                     = "gcsfuse-csi-sidecar-and-shared-mount-coexistence"
+	SharedDynamicMountPrefix                                   = "gcsfuse-csi-shared-dynamic-mount"
 
 	expectedTrainingProfileFlag   = "--profile=aiml-training"
 	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
@@ -183,6 +184,21 @@ func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namesp
 		},
 	}
 	return c.CoreV1().PodTemplates(namespace).Create(ctx, template, metav1.CreateOptions{})
+}
+
+// VerifyMounterPods verifies the expected count of Mounter Pods scheduled on expectedNodeName in the namespace.
+func VerifyMounterPods(ctx context.Context, c clientset.Interface, namespace string, expectedCount int, expectedNodeName string) {
+	if expectedNodeName == "" {
+		framework.Failf("expectedNodeName must be provided to verify Mounter Pods")
+	}
+	listOpts := metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr),
+		FieldSelector: fmt.Sprintf("spec.nodeName=%s", expectedNodeName),
+	}
+
+	mounterPods, err := c.CoreV1().Pods(namespace).List(ctx, listOpts)
+	framework.ExpectNoError(err, "failed to list mounter pods")
+	gomega.Expect(mounterPods.Items).To(gomega.HaveLen(expectedCount), fmt.Sprintf("expected %d Mounter Pod(s) on node %s", expectedCount, expectedNodeName))
 }
 
 type TestPod struct {
@@ -327,6 +343,28 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 	gomega.Expect(err).Should(gomega.HaveOccurred(),
 		fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
+}
+
+// VerifyRWMount verifies that the mount point is mounted read-write in the target pod.
+func (t *TestPod) VerifyRWMount(f *framework.Framework, mountPath string) {
+	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("mount | grep %s | grep rw,", mountPath))
+}
+
+// VerifyROMount verifies that the mount point is mounted read-only in the target pod.
+func (t *TestPod) VerifyROMount(f *framework.Framework, mountPath string) {
+	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("mount | grep %s | grep ro,", mountPath))
+}
+
+// VerifyWriteAndReadFile writes content to filePath and verifies that reading it back returns the same content.
+func (t *TestPod) VerifyWriteAndReadFile(f *framework.Framework, filePath, content string) {
+	escapedContent := strings.ReplaceAll(content, "'", "'\\''")
+	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("echo '%s' > %s && grep '%s' %s", escapedContent, filePath, escapedContent, filePath))
+}
+
+// VerifyReadFile verifies that reading filePath returns the expected content.
+func (t *TestPod) VerifyReadFile(f *framework.Framework, filePath, expectedContent string) {
+	escapedContent := strings.ReplaceAll(expectedContent, "'", "'\\''")
+	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("grep '%s' %s", escapedContent, filePath))
 }
 
 // execCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
