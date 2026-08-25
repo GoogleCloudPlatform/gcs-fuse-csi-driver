@@ -22,14 +22,22 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
+	"k8s.io/utils/ptr"
 	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 )
 
 const (
@@ -121,7 +129,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		sidecarVR := l.volumeResourceList[0]
 		sharedVR := l.volumeResourceList[1]
 
-		// 2. Attempt to create a single Pod referencing both volumes, and verify that the mutating webhook rejects the Pod creation attempt.
+		// Attempt to create a single Pod referencing both volumes, and verify that the mutating webhook rejects the Pod creation attempt.
 		ginkgo.By("Attempting to create a single Pod referencing both sidecar and shared-mount volumes")
 		mixedPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		mixedPod.SetupVolume(sidecarVR, sidecarVolName, sidecarMountPath, false /* readOnly */)
@@ -130,7 +138,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Verifying that the mutating webhook rejects the mixed Pod creation attempt")
 		mixedPod.CreateExpectErrorContaining(ctx, "mixing shared node mount and non-shared node mount GCSFuse volumes in the same Pod is not allowed")
 
-		// 3. Create sidecarTestPod referencing the sidecar volume and sharedMountTestPod referencing the shared mount PVC on the same node.
+		// Create sidecarTestPod referencing the sidecar volume and sharedMountTestPod referencing the shared mount PVC on the same node.
 		ginkgo.By("Configuring and deploying sidecarTestPod referencing the sidecar volume")
 		sidecarTestPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		sidecarTestPod.SetupVolume(sidecarVR, sidecarVolName, sidecarMountPath, false /* readOnly */)
@@ -152,7 +160,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		sharedMountTestPod.WaitForRunning(ctx)
 		gomega.Expect(sharedMountTestPod.GetNode()).To(gomega.Equal(nodeName), "expected sharedMountTestPod to run on the same node as sidecarTestPod")
 
-		// 4. Verify sidecarTestPod has a sidecar container injected while sharedMountTestPod does not, and a single Mounter Pod is created for sharedMountTestPod.
+		// Verify sidecarTestPod has a sidecar container injected while sharedMountTestPod does not, and a single Mounter Pod is created for sharedMountTestPod.
 		ginkgo.By("Verifying sidecarTestPod has a sidecar container injected")
 		sidecarTestPod.VerifySidecarPresence(true /* expectPresent */)
 
@@ -162,7 +170,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Verifying a single Mounter Pod is created for sharedMountTestPod on the same node")
 		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
 
-		// 5. Verify that both pods can successfully read and write to their respective volumes without conflicts.
+		// Verify that both pods can successfully read and write to their respective volumes without conflicts.
 		ginkgo.By("Verifying sidecarTestPod can write and read from its sidecar-mounted volume")
 		sidecarTestPod.VerifyRWMount(f, sidecarMountPath)
 		sidecarTestPod.VerifyWriteAndReadFile(f, fmt.Sprintf("%s/data-sidecar", sidecarMountPath), "hello from sidecar pod")
@@ -193,7 +201,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		buckets := strings.Split(l.config.Prefix, ",")
 		gomega.Expect(buckets).To(gomega.HaveLen(2), "expected 2 buckets created for dynamic mounting")
 
-		// 1. Configure and deploy Pod 1 referencing the dynamic shared-mount PVC.
+		// Configure and deploy Pod 1 referencing the dynamic shared-mount PVC.
 		ginkgo.By("Configuring and deploying the first pod referencing the dynamic shared-mount PVC")
 		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod1.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
@@ -204,7 +212,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod1.WaitForRunning(ctx)
 		nodeName := tPod1.GetNode()
 
-		// 2. Configure and deploy Pod 2 on the same node referencing the same PVC.
+		// Configure and deploy Pod 2 on the same node referencing the same PVC.
 		ginkgo.By(fmt.Sprintf("Configuring and deploying the second pod on node %s referencing the same PVC", nodeName))
 		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod2.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
@@ -216,7 +224,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		tPod2.WaitForRunning(ctx)
 		gomega.Expect(tPod2.GetNode()).To(gomega.Equal(nodeName), "expected second pod to run on the same node as first pod")
 
-		// 3. Verify sidecar absence on client pods and exactly 1 Mounter Pod created on the node.
+		// Verify sidecar absence on client pods and exactly 1 Mounter Pod created on the node.
 		ginkgo.By("Verifying client pods do NOT have sidecar containers injected")
 		tPod1.VerifySidecarPresence(false /* expectPresent */)
 		tPod2.VerifySidecarPresence(false /* expectPresent */)
@@ -224,12 +232,12 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Verifying exactly 1 Mounter Pod is created for the dynamic shared-mount volume on the node")
 		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
 
-		// 4. Verify RW mount point in both pods.
+		// Verify RW mount point in both pods.
 		ginkgo.By("Verifying RW mount point in both pods")
 		tPod1.VerifyRWMount(f, sharedMountPath)
 		tPod2.VerifyRWMount(f, sharedMountPath)
 
-		// 5. Verify dynamic multi-bucket read and write operations across both pods.
+		// Verify dynamic multi-bucket read and write operations across both pods.
 		ginkgo.By("Verifying both pods can read and write across all authorized buckets")
 		for _, bucket := range buckets {
 			pod1File := fmt.Sprintf("%s/%s/pod1-data.txt", sharedMountPath, bucket)
@@ -247,5 +255,227 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 			tPod1.VerifyReadFile(f, pod2File, pod2Content)
 			tPod2.VerifyReadFile(f, pod1File, pod1Content)
 		}
+	})
+
+	// TC: PodTemplate Overrides and Webhook Enforcement Test
+	// Verify that custom PodTemplate settings (Container Image, CPU/Memory/EphemeralStorage Requests & Limits,
+	// custom Buffer EmptyDir volume, custom Cache EmptyDir volume and user-created cache label, DNSPolicy,
+	// fsGroup, ServiceAccountName) are correctly applied to the created Mounter Pod, that the valid client pod
+	// can perform read and write operations on the shared mount, and that the mutating webhook rejects client pods
+	// with a mismatched KSA (both before and after Mounter Pod creation) or a mismatched fsGroup.
+	ginkgo.It("[shared-mount] should verify PodTemplate overrides are applied to Mounter Pod and webhook rejects mismatched KSA and fsGroup", func() {
+		init(1)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		sharedVR := l.volumeResourceList[0]
+		gomega.Expect(sharedVR.Pvc).ToNot(gomega.BeNil())
+
+		templateName := "custom-mounter-template-" + rand.String(6)
+		customImage := specs.LastPublishedMounterPodSidecarContainerImage
+		customFSGroup := int64(3000)
+		mismatchedFSGroup := int64(4000)
+		customDNSPolicy := corev1.DNSClusterFirst
+		customCPUReq := resource.MustParse("250m")
+		customMemReq := resource.MustParse("256Mi")
+		customEphemeralStorageReq := resource.MustParse("10Gi")
+		customCPULim := resource.MustParse("500m")
+		customMemLim := resource.MustParse("512Mi")
+		customEphemeralStorageLim := resource.MustParse("20Gi")
+		customBufferSize := resource.MustParse("128Mi")
+		customCacheSize := resource.MustParse("256Mi")
+
+		customResources := &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:              customCPUReq,
+				corev1.ResourceMemory:           customMemReq,
+				corev1.ResourceEphemeralStorage: customEphemeralStorageReq,
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:              customCPULim,
+				corev1.ResourceMemory:           customMemLim,
+				corev1.ResourceEphemeralStorage: customEphemeralStorageLim,
+			},
+		}
+
+		customBufferVolume := corev1.Volume{
+			Name: webhook.SidecarContainerBufferVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium:    corev1.StorageMediumMemory,
+					SizeLimit: ptr.To(customBufferSize),
+				},
+			},
+		}
+
+		customCacheVolume := corev1.Volume{
+			Name: webhook.SidecarContainerCacheVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium:    corev1.StorageMediumMemory,
+					SizeLimit: ptr.To(customCacheSize),
+				},
+			},
+		}
+
+		// Create the custom PodTemplate.
+		ginkgo.By("Creating a custom PodTemplate with resource overrides, custom buffer/cache volumes, image, fsGroup, DNSPolicy, and KSA")
+		_, err := specs.CreateMounterPodTemplate(ctx, f.ClientSet, f.Namespace.Name, specs.MounterPodTemplateOptions{
+			Name:               templateName,
+			ServiceAccountName: specs.K8sServiceAccountName,
+			FSGroup:            ptr.To(customFSGroup),
+			Resources:          customResources,
+			Volumes:            []corev1.Volume{customBufferVolume, customCacheVolume},
+			DNSPolicy:          customDNSPolicy,
+			Image:              customImage,
+		})
+		framework.ExpectNoError(err, "failed to create custom mounter pod template")
+
+		// Annotate the PVC with the custom PodTemplate.
+		// Use RetryOnConflict to fetch the latest PVC resourceVersion (updated when transitioned to Bound
+		// by pv-controller or other background controllers) to prevent 409 Conflict errors.
+		ginkgo.By(fmt.Sprintf("Annotating the PVC %s with the custom PodTemplate %s", sharedVR.Pvc.Name, templateName))
+		var updatedPVC *corev1.PersistentVolumeClaim
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			currentPVC, getErr := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(ctx, sharedVR.Pvc.Name, metav1.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+			if currentPVC.Annotations == nil {
+				currentPVC.Annotations = make(map[string]string)
+			}
+			currentPVC.Annotations[webhook.MounterPodTemplateAnnotation] = templateName
+			var updateErr error
+			updatedPVC, updateErr = f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Update(ctx, currentPVC, metav1.UpdateOptions{})
+			return updateErr
+		})
+		framework.ExpectNoError(err, "failed to update PVC with custom pod template annotation")
+		sharedVR.Pvc = updatedPVC
+
+		// Create a valid mismatched KSA in the namespace to verify webhook enforcement.
+		mismatchedKSAName := "mismatched-ksa-" + rand.String(6)
+		mismatchedKSA := utils.NewTestKubernetesServiceAccount(f.ClientSet, f.Namespace, mismatchedKSAName, "")
+		mismatchedKSA.Create(ctx)
+		defer mismatchedKSA.Cleanup(ctx)
+
+		// Negative validation: Verify webhook rejects client pods with invalid configurations before Mounter Pod exists.
+		ginkgo.By("Verifying mutating webhook rejects a client pod with mismatched KSA before Mounter Pod exists")
+		mismatchedKSAPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		mismatchedKSAPod1.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		mismatchedKSAPod1.SetServiceAccount(mismatchedKSAName)
+		mismatchedKSAPod1.SetNonRootSecurityContext(0, 0, int(customFSGroup))
+		mismatchedKSAPod1.CreateExpectErrorContaining(ctx, "does not match the one specified in volume's PodTemplate")
+
+		ginkgo.By("Verifying mutating webhook rejects a client pod with mismatched fsGroup before Mounter Pod exists")
+		mismatchedFSGroupPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		mismatchedFSGroupPod1.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		mismatchedFSGroupPod1.SetServiceAccount(specs.K8sServiceAccountName)
+		mismatchedFSGroupPod1.SetNonRootSecurityContext(0, 0, int(mismatchedFSGroup))
+		mismatchedFSGroupPod1.CreateExpectErrorContaining(ctx, "does not match the one specified in volume's PodTemplate")
+
+		// Deploy valid client pod referencing the custom-annotated PVC.
+		ginkgo.By("Configuring and deploying a valid client pod referencing the custom-annotated PVC")
+		validPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		validPod.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		validPod.SetServiceAccount(specs.K8sServiceAccountName)
+		validPod.SetNonRootSecurityContext(0, 0, int(customFSGroup))
+		validPod.Create(ctx)
+		defer validPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the valid client pod to be running")
+		validPod.WaitForRunning(ctx)
+		nodeName := validPod.GetNode()
+
+		// Verify the created Mounter Pod spec accurately reflects the injected configurations.
+		ginkgo.By("Verifying the created Mounter Pod reflects the custom PodTemplate overrides")
+		mounterPods := specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
+		mounterPod := &mounterPods.Items[0]
+
+		// Assert Container Resources
+		gomega.Expect(mounterPod.Spec.Containers).ToNot(gomega.BeEmpty())
+		mounterContainer := mounterPod.Spec.Containers[0]
+
+		cpuReq := mounterContainer.Resources.Requests.Cpu()
+		gomega.Expect(cpuReq).ToNot(gomega.BeNil())
+		gomega.Expect(cpuReq.Cmp(customCPUReq)).To(gomega.BeZero())
+
+		memReq := mounterContainer.Resources.Requests.Memory()
+		gomega.Expect(memReq).ToNot(gomega.BeNil())
+		gomega.Expect(memReq.Cmp(customMemReq)).To(gomega.BeZero())
+
+		ephemeralStorageReq := mounterContainer.Resources.Requests.StorageEphemeral()
+		gomega.Expect(ephemeralStorageReq).ToNot(gomega.BeNil())
+		gomega.Expect(ephemeralStorageReq.Cmp(customEphemeralStorageReq)).To(gomega.BeZero())
+
+		cpuLim := mounterContainer.Resources.Limits.Cpu()
+		gomega.Expect(cpuLim).ToNot(gomega.BeNil())
+		gomega.Expect(cpuLim.Cmp(customCPULim)).To(gomega.BeZero())
+
+		memLim := mounterContainer.Resources.Limits.Memory()
+		gomega.Expect(memLim).ToNot(gomega.BeNil())
+		gomega.Expect(memLim.Cmp(customMemLim)).To(gomega.BeZero())
+
+		ephemeralStorageLim := mounterContainer.Resources.Limits.StorageEphemeral()
+		gomega.Expect(ephemeralStorageLim).ToNot(gomega.BeNil())
+		gomega.Expect(ephemeralStorageLim.Cmp(customEphemeralStorageLim)).To(gomega.BeZero())
+
+		// Assert Container Image
+		gomega.Expect(mounterContainer.Image).To(gomega.Equal(customImage))
+
+		// Assert fsGroup
+		gomega.Expect(mounterPod.Spec.SecurityContext).ToNot(gomega.BeNil())
+		gomega.Expect(mounterPod.Spec.SecurityContext.FSGroup).ToNot(gomega.BeNil())
+		gomega.Expect(ptr.Deref(mounterPod.Spec.SecurityContext.FSGroup, 0)).To(gomega.Equal(customFSGroup))
+
+		// Assert ServiceAccountName
+		gomega.Expect(mounterPod.Spec.ServiceAccountName).To(gomega.Equal(specs.K8sServiceAccountName))
+
+		// Assert DNSPolicy
+		gomega.Expect(mounterPod.Spec.DNSPolicy).To(gomega.Equal(customDNSPolicy))
+
+		// Assert User-Created Cache Label
+		gomega.Expect(mounterPod.Labels).To(gomega.HaveKeyWithValue(webhook.GcsfuseCacheCreatedByUserLabel, "true"))
+
+		// Assert Custom Buffer Volume
+		var foundBufferVolume *corev1.Volume
+		for i := range mounterPod.Spec.Volumes {
+			if mounterPod.Spec.Volumes[i].Name == webhook.SidecarContainerBufferVolumeName {
+				foundBufferVolume = &mounterPod.Spec.Volumes[i]
+				break
+			}
+		}
+		gomega.Expect(foundBufferVolume).ToNot(gomega.BeNil(), "expected custom gke-gcsfuse-buffer volume in Mounter Pod spec")
+		gomega.Expect(foundBufferVolume.EmptyDir).ToNot(gomega.BeNil(), "expected EmptyDir volume source for gke-gcsfuse-buffer")
+		gomega.Expect(foundBufferVolume.EmptyDir.Medium).To(gomega.Equal(corev1.StorageMediumMemory))
+		gomega.Expect(foundBufferVolume.EmptyDir.SizeLimit).ToNot(gomega.BeNil())
+		gomega.Expect(foundBufferVolume.EmptyDir.SizeLimit.Cmp(customBufferSize)).To(gomega.BeZero())
+
+		// Assert Custom Cache Volume
+		var foundCacheVolume *corev1.Volume
+		for i := range mounterPod.Spec.Volumes {
+			if mounterPod.Spec.Volumes[i].Name == webhook.SidecarContainerCacheVolumeName {
+				foundCacheVolume = &mounterPod.Spec.Volumes[i]
+				break
+			}
+		}
+		gomega.Expect(foundCacheVolume).ToNot(gomega.BeNil(), "expected custom gke-gcsfuse-cache volume in Mounter Pod spec")
+		gomega.Expect(foundCacheVolume.EmptyDir).ToNot(gomega.BeNil(), "expected EmptyDir volume source for gke-gcsfuse-cache")
+		gomega.Expect(foundCacheVolume.EmptyDir.Medium).To(gomega.Equal(corev1.StorageMediumMemory))
+		gomega.Expect(foundCacheVolume.EmptyDir.SizeLimit).ToNot(gomega.BeNil())
+		gomega.Expect(foundCacheVolume.EmptyDir.SizeLimit.Cmp(customCacheSize)).To(gomega.BeZero())
+
+		// Verify valid client pod read and write operations.
+		ginkgo.By("Verifying valid client pod can read and write to the shared mount")
+		validPod.VerifyRWMount(f, sharedMountPath)
+		validPod.VerifyWriteAndReadFile(f, fmt.Sprintf("%s/data-template-override.txt", sharedMountPath), "hello from template override test")
+
+		// Negative validation: Verify webhook rejects a client pod with mismatched KSA while Mounter Pod is running.
+		ginkgo.By("Verifying mutating webhook rejects a client pod with mismatched KSA while Mounter Pod is running")
+		mismatchedKSAPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		mismatchedKSAPod2.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		mismatchedKSAPod2.SetServiceAccount(mismatchedKSAName)
+		mismatchedKSAPod2.SetNonRootSecurityContext(0, 0, int(customFSGroup))
+		mismatchedKSAPod2.CreateExpectErrorContaining(ctx, "does not match the one specified in volume's PodTemplate")
 	})
 }
