@@ -2128,24 +2128,24 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			expectCollectorRegistered:    true,
 		},
 		{
-			name:                        "should not register collector for 11 gcsfuse ephemeral volumes",
+			name:                        "should register collector for 11 gcsfuse ephemeral volumes",
 			totalEphemeralVolumeCount:   11,
 			gcsFuseEphemeralVolumeCount: 11,
-			expectCollectorRegistered:   false,
+			expectCollectorRegistered:   true,
 		},
 		{
-			name:                         "should not register collector for 11 gcsfuse persistent volumes",
+			name:                         "should register collector for 11 gcsfuse persistent volumes",
 			totalPersistentVolumeCount:   11,
 			gcsFusePersistentVolumeCount: 11,
-			expectCollectorRegistered:    false,
+			expectCollectorRegistered:    true,
 		},
 		{
-			name:                         "should not register collector for a mix of 11 gcsfuse volumes",
+			name:                         "should register collector for a mix of 11 gcsfuse volumes",
 			totalEphemeralVolumeCount:    6,
 			totalPersistentVolumeCount:   5,
 			gcsFuseEphemeralVolumeCount:  6,
 			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    false,
+			expectCollectorRegistered:    true,
 		},
 		{
 			name:                         "should register collector with other non gcsfuse volumes",
@@ -2156,12 +2156,12 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 			expectCollectorRegistered:    true,
 		},
 		{
-			name:                         "should not register collector with other non gcsfuse volumes when gcsfuse volumes exceeds limit",
+			name:                         "should register collector with other non gcsfuse volumes even when total volume count is 11 or higher",
 			totalEphemeralVolumeCount:    15,
 			totalPersistentVolumeCount:   15,
 			gcsFuseEphemeralVolumeCount:  6,
 			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    false,
+			expectCollectorRegistered:    true,
 		},
 	}
 

@@ -18,6 +18,7 @@ package metrics
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,10 +26,13 @@ import (
 	"testing"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func TestNewMetricsManager(t *testing.T) {
@@ -153,7 +157,6 @@ func TestMetricsCollectorGcsFuseVolumeLabels(t *testing.T) {
 		"namespace_name": "test-ns",
 		"volume_name":    "test-vol",
 		"bucket_name":    "test-bucket",
-		"pod_uid":        "",
 	}, nil, false).(*metricsCollector)
 
 	expectedLabels := map[string]string{
@@ -161,13 +164,127 @@ func TestMetricsCollectorGcsFuseVolumeLabels(t *testing.T) {
 		"namespace_name": "test-ns",
 		"volume_name":    "test-vol",
 		"bucket_name":    "test-bucket",
-		"pod_uid":        "",
 	}
 
 	for k, want := range expectedLabels {
 		if got := c.constLabels[k]; got != want {
 			t.Errorf("constLabel[%q] = %q, want %q for gke.googleapis.com/GcsFuseVolume resource target label propagation", k, got, want)
 		}
+	}
+	if val, ok := c.constLabels["pod_uid"]; ok {
+		t.Errorf("pod_uid constant label should not be present for gke.googleapis.com/GcsFuseVolume MR target, but got %q", val)
+	}
+}
+
+func TestEndToEndGcsFuseVolumeMetricsScraping(t *testing.T) {
+	fuseSocketDir, err := os.MkdirTemp("/tmp", "s")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(fuseSocketDir)
+
+	emptyDirBasePath := filepath.Join(t.TempDir(), "emptyDir")
+	if err := os.MkdirAll(emptyDirBasePath, 0755); err != nil {
+		t.Fatalf("failed to create emptyDirBasePath: %v", err)
+	}
+
+	podUID := "test-pod-uid"
+	volumeName := "test-volume-name"
+	socketBasePath := util.GetSocketBasePath(podUID, volumeName, fuseSocketDir)
+	if err := os.MkdirAll(socketBasePath, 0755); err != nil {
+		t.Fatalf("failed to create socketBasePath: %v", err)
+	}
+
+	// 1. Create a Unix domain socket server simulating sidecar_mounter metrics.sock endpoint
+	socketPath := filepath.Join(socketBasePath, SocketName)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("failed to listen on socket %s: %v", socketPath, err)
+	}
+	defer listener.Close()
+
+	metricsData := `# HELP fs_ops_count The cumulative number of ops processed.
+# TYPE fs_ops_count counter
+fs_ops_count{fs_op="Read"} 42
+# HELP gcs_request_count The cumulative number of GCS requests.
+# TYPE gcs_request_count counter
+gcs_request_count{gcs_method="StatObject"} 12
+`
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(metricsData))
+		}),
+	}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	defer server.Close()
+
+	// 2. Initialize fake clientset with running pod
+	fakeClientset := clientset.NewFakeClientset()
+	podNamespace := "test-namespace"
+	podName := "test-pod-name"
+	fakeClientset.CreatePod(clientset.FakePodConfig{
+		Name:      podName,
+		Namespace: podNamespace,
+		UID:       types.UID(podUID),
+		PodStatus: &corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	})
+
+	// 3. Initialize metrics manager and register collector
+	mm := NewMetricsManager(":9920", fuseSocketDir, 5, fakeClientset, false).(*manager)
+	mountPath := "/mnt/test-volume"
+	bucketName := "test-bucket-name"
+	nodeName := "test-node-name"
+
+	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName)
+
+	// 4. Gather metrics from the registry
+	metricFamilies, err := mm.registry.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	if len(metricFamilies) == 0 {
+		t.Fatalf("expected gathered metric families, got 0")
+	}
+
+	// 5. Assert that every metric family includes the gke.googleapis.com/GcsFuseVolume resource target constant labels and NO pod_uid label
+	expectedConstLabels := map[string]string{
+		"pod_name":       podName,
+		"namespace_name": podNamespace,
+		"volume_name":    volumeName,
+		"bucket_name":    bucketName,
+	}
+
+	foundMetrics := 0
+	for _, mf := range metricFamilies {
+		for _, m := range mf.GetMetric() {
+			foundMetrics++
+			labelsMap := make(map[string]string)
+			for _, lp := range m.GetLabel() {
+				labelsMap[lp.GetName()] = lp.GetValue()
+			}
+			for wantKey, wantVal := range expectedConstLabels {
+				gotVal, ok := labelsMap[wantKey]
+				if !ok {
+					t.Errorf("metric %s missing expected label %q", mf.GetName(), wantKey)
+				} else if gotVal != wantVal {
+					t.Errorf("metric %s label %q = %q, want %q", mf.GetName(), wantKey, gotVal, wantVal)
+				}
+			}
+			if val, ok := labelsMap["pod_uid"]; ok {
+				t.Errorf("metric %s should not have label pod_uid, but got %q", mf.GetName(), val)
+			}
+		}
+	}
+
+	if foundMetrics == 0 {
+		t.Errorf("expected to find metrics with populated gke.googleapis.com/GcsFuseVolume labels, got 0")
 	}
 }
 
