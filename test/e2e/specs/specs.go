@@ -96,6 +96,7 @@ const (
 	SkipCSIBucketAccessCheckAndNonRootVolumePrefix             = "gcsfuse-csi-skip-bucket-access-check-non-root-volume"
 	SkipCSIBucketAccessCheckAndImplicitDirsVolumePrefix        = "gcsfuse-csi-skip-bucket-access-check-implicit-dirs-volume"
 	EnableKernelParamsPrefix                                   = "gcsfuse-csi-enable-kernel-params"
+	SidecarAndSharedMountCoexistencePrefix                     = "gcsfuse-csi-sidecar-and-shared-mount-coexistence"
 
 	expectedTrainingProfileFlag   = "--profile=aiml-training"
 	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
@@ -271,6 +272,13 @@ func (t *TestPod) CreateExpectError(ctx context.Context) {
 	var err error
 	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
 	gomega.Expect(err).Should(gomega.HaveOccurred())
+}
+
+// CreateExpectErrorContaining attempts to create the pod and asserts that creation fails with an error message containing expectedSubstring.
+func (t *TestPod) CreateExpectErrorContaining(ctx context.Context, expectedSubstring string) {
+	framework.Logf("Creating Pod %s and expecting error containing %q", t.pod.Name, expectedSubstring)
+	_, err := t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
+	gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(expectedSubstring)), "expected pod creation to fail with error containing %q", expectedSubstring)
 }
 
 func (t *TestPod) GetPodName() string {
@@ -990,6 +998,27 @@ func (t *TestPod) VerifyMetadataPrefetchPresence() {
 func (t *TestPod) VerifyMetadataPrefetchNotPresent() {
 	gomega.Expect(t.pod.Spec.InitContainers).ToNot(gomega.ContainElement(gomega.HaveField("Name", webhook.MetadataPrefetchSidecarName)))
 	gomega.Expect(t.pod.Spec.Containers).ToNot(gomega.ContainElement(gomega.HaveField("Name", webhook.MetadataPrefetchSidecarName)))
+}
+
+func (t *TestPod) VerifySidecarPresence(expectPresent bool) {
+	hasSidecar := false
+	for _, c := range t.pod.Spec.Containers {
+		if c.Name == webhook.GcsFuseSidecarName {
+			hasSidecar = true
+			break
+		}
+	}
+	for _, c := range t.pod.Spec.InitContainers {
+		if c.Name == webhook.GcsFuseSidecarName {
+			hasSidecar = true
+			break
+		}
+	}
+	if expectPresent {
+		gomega.Expect(hasSidecar).To(gomega.BeTrue(), fmt.Sprintf("expected Pod %s to have sidecar container injected", t.pod.Name))
+	} else {
+		gomega.Expect(hasSidecar).To(gomega.BeFalse(), fmt.Sprintf("expected Pod %s to NOT have sidecar container injected", t.pod.Name))
+	}
 }
 
 func (t *TestPod) SetInitContainerWithCommand(cmd string) {
