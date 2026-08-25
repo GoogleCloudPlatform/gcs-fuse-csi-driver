@@ -311,11 +311,6 @@ func (s *nodeServer) populateDriverFlagsForDefaulting(node *corev1.Node, mounter
 }
 
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	// Rate limit NodePublishVolume calls to avoid kube API throttling.
-	if err := s.limiter.Wait(ctx); err != nil {
-		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
-	}
-
 	// Validate the target path.
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -326,6 +321,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	vc := req.GetVolumeContext()
 	if s.driver.sharedMount(vc) {
 		return s.NodePublishVolumeForSharedMount(ctx, req)
+	}
+
+	// Rate limit NodePublishVolume calls to avoid kube API throttling for sidecar mode.
+	if err := s.limiter.Wait(ctx); err != nil {
+		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
 	}
 
 	// Get the Pod object.
