@@ -145,6 +145,8 @@ Refer to [Test](../test/README.md) documentation.
 
 Follow the following steps to update go modules:
 
+### Root Module (`go.mod`)
+
 1. Open the [go.mod](../go.mod) file in Visual Studio Code.
 2. Click "Check for upgrades" above the first `require` block.
 3. Hover over the module with available upgrade. Click "Quick Fix" to apply the upgrade.
@@ -152,6 +154,17 @@ Follow the following steps to update go modules:
 5. Run `go mod tidy` to ensure that the listed dependencies are really still needed.
 6. Run `go mod vendor` to update vendor directory.
 7. Resolve any issues that may be introduced by the new modules.
+
+### Test Module (`test/go.mod`)
+
+The `test/` directory maintains its own Go module. Tests run with `-mod=readonly`:
+
+1. Add or update dependencies in [`test/go.mod`](../test/go.mod).
+2. Tidy the test module dependencies:
+   ```bash
+   cd test && go mod tidy
+   ```
+3. Commit the updated `test/go.mod` and `test/go.sum`.
 
 ## Troubleshooting
 

@@ -80,7 +80,7 @@ cd "${PKGDIR}"
 
 # Build e2e-test CLI
 pushd test
-go build -o ${PKGDIR}/bin/e2e-test-ci ./e2e
+go build -mod=readonly -o ${PKGDIR}/bin/e2e-test-ci ./e2e
 popd
 chmod +x ${PKGDIR}/bin/e2e-test-ci
 

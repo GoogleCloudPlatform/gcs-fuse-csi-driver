@@ -389,11 +389,15 @@ unit-test:
 	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
 
 sanity-test:
-	cd test && go mod tidy && go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
+	# Note: Any go commands inside the test/ directory must explicitly specify -mod=readonly.
+	# This prevents Go from defaulting to -mod=vendor and compiling against stale snapshots.
+	cd test && go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
 
+# Note: Any go commands inside the test/ directory must explicitly specify -mod=readonly.
+# This prevents Go from defaulting to -mod=vendor and compiling against stale snapshots.
 build-e2e-test:
-	cd test && go build -o ../bin/e2e-test-ci ./e2e
-	cd test && go test -c -o ../bin/e2e-test ./e2e
+	cd test && go build -mod=readonly -o ../bin/e2e-test-ci ./e2e
+	cd test && go test -mod=readonly -c -o ../bin/e2e-test ./e2e
 
 e2e-test:
 	./test/e2e/run-e2e-local.sh
