@@ -262,7 +262,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 				n.RemoveIAMPolicy(ctx, serviceBucketobj, config.Framework.Namespace.Name, K8sServiceAccountName)
 			})
 
-		case MultipleBucketsPrefix:
+		case MultipleBucketsPrefix, SharedDynamicMountPrefix:
 			isMultipleBucketsPrefix = true
 			l := []string{}
 			for range 2 {

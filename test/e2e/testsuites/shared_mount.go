@@ -20,12 +20,10 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
@@ -162,24 +160,92 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		sharedMountTestPod.VerifySidecarPresence(false /* expectPresent */)
 
 		ginkgo.By("Verifying a single Mounter Pod is created for sharedMountTestPod on the same node")
-		mounterPods, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr),
-		})
-		framework.ExpectNoError(err, "failed to list mounter pods")
-		gomega.Expect(mounterPods.Items).To(gomega.HaveLen(1), "expected exactly 1 Mounter Pod for the shared mount volume")
-		gomega.Expect(mounterPods.Items[0].Spec.NodeName).To(gomega.Equal(nodeName), "expected Mounter Pod to be scheduled on the same node")
+		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
 
 		// 5. Verify that both pods can successfully read and write to their respective volumes without conflicts.
 		ginkgo.By("Verifying sidecarTestPod can write and read from its sidecar-mounted volume")
-		sidecarTestPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %s | grep rw,", sidecarMountPath))
-		sidecarTestPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello from sidecar pod' > %s/data-sidecar && grep 'hello from sidecar pod' %s/data-sidecar", sidecarMountPath, sidecarMountPath))
+		sidecarTestPod.VerifyRWMount(f, sidecarMountPath)
+		sidecarTestPod.VerifyWriteAndReadFile(f, fmt.Sprintf("%s/data-sidecar", sidecarMountPath), "hello from sidecar pod")
 
 		ginkgo.By("Verifying sharedMountTestPod can write and read from its shared-mounted volume")
-		sharedMountTestPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %s | grep rw,", sharedMountPath))
-		sharedMountTestPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello from shared mount pod' > %s/data-shared && grep 'hello from shared mount pod' %s/data-shared", sharedMountPath, sharedMountPath))
+		sharedMountTestPod.VerifyRWMount(f, sharedMountPath)
+		sharedMountTestPod.VerifyWriteAndReadFile(f, fmt.Sprintf("%s/data-shared", sharedMountPath), "hello from shared mount pod")
 
 		ginkgo.By("Verifying data persistence and isolation on both volumes")
-		sidecarTestPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello from sidecar pod' %s/data-sidecar", sidecarMountPath))
-		sharedMountTestPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("grep 'hello from shared mount pod' %s/data-shared", sharedMountPath))
+		sidecarTestPod.VerifyReadFile(f, fmt.Sprintf("%s/data-sidecar", sidecarMountPath), "hello from sidecar pod")
+		sharedMountTestPod.VerifyReadFile(f, fmt.Sprintf("%s/data-shared", sharedMountPath), "hello from shared mount pod")
+	})
+
+	// TC: Dynamic Mounting Test
+	// Verify that dynamic mounting works with the shared node mount architecture.
+	// Create a PV with volumeHandle: _ and sharedMount: true.
+	// Create multiple Pods referencing the PVC.
+	// Verify the Mounter Pod is created.
+	// Verify all pods can successfully read from and write to any buckets their KSA is authorized to access.
+	ginkgo.It("[shared-mount] should verify dynamic mounting across multiple pods with volumeHandle _", func() {
+		init(1, specs.SharedDynamicMountPrefix)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+
+		sharedVR := l.volumeResourceList[0]
+		buckets := strings.Split(l.config.Prefix, ",")
+		gomega.Expect(buckets).To(gomega.HaveLen(2), "expected 2 buckets created for dynamic mounting")
+
+		// 1. Configure and deploy Pod 1 referencing the dynamic shared-mount PVC.
+		ginkgo.By("Configuring and deploying the first pod referencing the dynamic shared-mount PVC")
+		tPod1 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod1.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		tPod1.Create(ctx)
+		defer tPod1.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the first pod to be running and getting its node")
+		tPod1.WaitForRunning(ctx)
+		nodeName := tPod1.GetNode()
+
+		// 2. Configure and deploy Pod 2 on the same node referencing the same PVC.
+		ginkgo.By(fmt.Sprintf("Configuring and deploying the second pod on node %s referencing the same PVC", nodeName))
+		tPod2 := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod2.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		tPod2.SetNodeAffinity(nodeName, true /* sameNode */)
+		tPod2.Create(ctx)
+		defer tPod2.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the second pod to be running")
+		tPod2.WaitForRunning(ctx)
+		gomega.Expect(tPod2.GetNode()).To(gomega.Equal(nodeName), "expected second pod to run on the same node as first pod")
+
+		// 3. Verify sidecar absence on client pods and exactly 1 Mounter Pod created on the node.
+		ginkgo.By("Verifying client pods do NOT have sidecar containers injected")
+		tPod1.VerifySidecarPresence(false /* expectPresent */)
+		tPod2.VerifySidecarPresence(false /* expectPresent */)
+
+		ginkgo.By("Verifying exactly 1 Mounter Pod is created for the dynamic shared-mount volume on the node")
+		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
+
+		// 4. Verify RW mount point in both pods.
+		ginkgo.By("Verifying RW mount point in both pods")
+		tPod1.VerifyRWMount(f, sharedMountPath)
+		tPod2.VerifyRWMount(f, sharedMountPath)
+
+		// 5. Verify dynamic multi-bucket read and write operations across both pods.
+		ginkgo.By("Verifying both pods can read and write across all authorized buckets")
+		for _, bucket := range buckets {
+			pod1File := fmt.Sprintf("%s/%s/pod1-data.txt", sharedMountPath, bucket)
+			pod2File := fmt.Sprintf("%s/%s/pod2-data.txt", sharedMountPath, bucket)
+			pod1Content := fmt.Sprintf("hello from pod1 in bucket %s", bucket)
+			pod2Content := fmt.Sprintf("hello from pod2 in bucket %s", bucket)
+
+			// Pod 1 writes and reads its own file in this bucket
+			tPod1.VerifyWriteAndReadFile(f, pod1File, pod1Content)
+
+			// Pod 2 writes and reads its own file in this bucket
+			tPod2.VerifyWriteAndReadFile(f, pod2File, pod2Content)
+
+			// Cross-pod read: Pod 1 reads Pod 2's file, Pod 2 reads Pod 1's file
+			tPod1.VerifyReadFile(f, pod2File, pod2Content)
+			tPod2.VerifyReadFile(f, pod1File, pod1Content)
+		}
 	})
 }

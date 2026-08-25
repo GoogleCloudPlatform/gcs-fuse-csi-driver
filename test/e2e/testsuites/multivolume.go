@@ -25,11 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -444,13 +441,9 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the second pod is running")
 		tPod2.WaitForRunning(ctx)
 
-		// 3. Verify distinct Mounter Pods exist for each volumeHandle in our ns.
+		// 3. Verify distinct Mounter Pods exist for each volumeHandle in our ns and on the node.
 		ginkgo.By("Verifying distinct Mounter Pods exist for each volumeHandle")
-		mounterPods, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("%s=%s", webhook.SharedMountLabel, util.TrueStr),
-		})
-		framework.ExpectNoError(err, "failed to list mounter pods")
-		gomega.Expect(mounterPods.Items).To(gomega.HaveLen(2), "expected 2 distinct Mounter Pods for unique volumeHandles")
+		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 2, nodeName)
 
 		// 4. Verify Pod 1 (RWX) operations.
 		ginkgo.By("Verifying RWX pod read and write operations")
