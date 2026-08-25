@@ -113,7 +113,8 @@ const (
 	GolangImage         = "golang:1.22.7"
 	UbuntuImage         = "ubuntu:20.04"
 
-	LastPublishedSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.7.1-gke.3@sha256:380bd2a716b936d9469d09e3a83baf22dddca1586a04a0060d7006ea78930cac"
+	LastPublishedSidecarContainerImage           = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.7.1-gke.3@sha256:380bd2a716b936d9469d09e3a83baf22dddca1586a04a0060d7006ea78930cac"
+	LastPublishedMounterPodSidecarContainerImage = "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.4-gke.2@sha256:3ac0c4db17c456192810771351a3cd39f5e861211ebcf1ee8a74fd8ae923bc42"
 
 	pollInterval     = 1 * time.Second
 	pollTimeout      = 1 * time.Minute
@@ -146,6 +147,8 @@ type MounterPodTemplateOptions struct {
 	FSGroup            *int64
 	Resources          *corev1.ResourceRequirements
 	Image              string
+	Volumes            []corev1.Volume
+	DNSPolicy          corev1.DNSPolicy
 }
 
 func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namespace string, opts MounterPodTemplateOptions) (*corev1.PodTemplate, error) {
@@ -166,6 +169,9 @@ func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namesp
 			},
 		},
 	}
+	if len(opts.Volumes) > 0 {
+		podSpec.Volumes = opts.Volumes
+	}
 	if opts.Resources != nil {
 		podSpec.Containers[0].Resources = *opts.Resources
 	}
@@ -173,6 +179,9 @@ func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namesp
 		podSpec.SecurityContext = &corev1.PodSecurityContext{
 			FSGroup: opts.FSGroup,
 		}
+	}
+	if opts.DNSPolicy != "" {
+		podSpec.DNSPolicy = opts.DNSPolicy
 	}
 	template := &corev1.PodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
@@ -187,7 +196,7 @@ func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namesp
 }
 
 // VerifyMounterPods verifies the expected count of Mounter Pods scheduled on expectedNodeName in the namespace.
-func VerifyMounterPods(ctx context.Context, c clientset.Interface, namespace string, expectedCount int, expectedNodeName string) {
+func VerifyMounterPods(ctx context.Context, c clientset.Interface, namespace string, expectedCount int, expectedNodeName string) *corev1.PodList {
 	if expectedNodeName == "" {
 		framework.Failf("expectedNodeName must be provided to verify Mounter Pods")
 	}
@@ -199,6 +208,7 @@ func VerifyMounterPods(ctx context.Context, c clientset.Interface, namespace str
 	mounterPods, err := c.CoreV1().Pods(namespace).List(ctx, listOpts)
 	framework.ExpectNoError(err, "failed to list mounter pods")
 	gomega.Expect(mounterPods.Items).To(gomega.HaveLen(expectedCount), fmt.Sprintf("expected %d Mounter Pod(s) on node %s", expectedCount, expectedNodeName))
+	return mounterPods
 }
 
 type TestPod struct {
@@ -358,13 +368,15 @@ func (t *TestPod) VerifyROMount(f *framework.Framework, mountPath string) {
 // VerifyWriteAndReadFile writes content to filePath and verifies that reading it back returns the same content.
 func (t *TestPod) VerifyWriteAndReadFile(f *framework.Framework, filePath, content string) {
 	escapedContent := strings.ReplaceAll(content, "'", "'\\''")
-	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("echo '%s' > %s && grep '%s' %s", escapedContent, filePath, escapedContent, filePath))
+	// Use `grep -F` for fixed string matching so that a pattern like "foo.bar" does not match "foo-bar" or "foo1bar", because `.` matches any single character in regex.
+	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("echo '%s' > %s && grep -F '%s' %s", escapedContent, filePath, escapedContent, filePath))
 }
 
 // VerifyReadFile verifies that reading filePath returns the expected content.
 func (t *TestPod) VerifyReadFile(f *framework.Framework, filePath, expectedContent string) {
 	escapedContent := strings.ReplaceAll(expectedContent, "'", "'\\''")
-	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("grep '%s' %s", escapedContent, filePath))
+	// Use `grep -F` for fixed string matching so that a pattern like "foo.bar" does not match "foo-bar" or "foo1bar", because `.` matches any single character in regex.
+	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("grep -F '%s' %s", escapedContent, filePath))
 }
 
 // execCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
