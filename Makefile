@@ -385,8 +385,12 @@ endif
 verify:
 	hack/verify-all.sh
 
+# Omit packages without test files to avoid Go 1.25 covdata error (https://github.com/golang/go/issues/75031)
 unit-test:
-	go test -v -mod=vendor -timeout 30s "./pkg/..." -cover
+	@PKGS=$$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./pkg/...) || exit 1; \
+	if [ -n "$$PKGS" ]; then \
+		go test -v -mod=vendor -timeout 30s -cover $$PKGS; \
+	fi
 
 sanity-test:
 	cd test && go mod tidy && go test -mod=readonly -v -timeout 30s "./sanity/" -run TestSanity
