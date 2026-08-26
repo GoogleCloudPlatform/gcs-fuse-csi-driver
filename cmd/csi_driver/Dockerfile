@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Build driver go binary
-FROM --platform=$BUILDPLATFORM golang:1.24.3 AS driver-builder
+FROM --platform=$BUILDPLATFORM google-go.pkg.dev/golang:1.25.8@sha256:f4d9d5a9e87635686467eeb068e7f416b25b649f30964216d14ff0abbb49b850 AS driver-builder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
@@ -24,7 +24,7 @@ ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.7-gke.2@sha256:1c204d6571a2add77c003188a8e72efd4e1c9e0d73dd1045eeef30b3a81adddc AS debian
 # Install necessary dependencies
 RUN clean-install mount bash
 
