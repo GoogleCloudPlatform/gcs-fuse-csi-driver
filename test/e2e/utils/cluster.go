@@ -136,6 +136,19 @@ func queryCapacityAdvisedZone(testParams *TestParameters) (string, error) {
 }
 
 func clusterUpGKE(testParams *TestParameters) error {
+	var cmd *exec.Cmd
+
+	// Update gcloud to latest version in Prow.
+	if testParams.InProw {
+		cmd = gcloudCommand(testParams, "components", "update", "--quiet")
+		if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
+			return fmt.Errorf("failed to update gcloud to latest version: %w", err)
+		}
+	} else {
+		// This is skipped only to ensure command doesn't fail for 'apt' package installed gcloud in local runs.
+		klog.Infof("Skipping gcloud components update for local run.")
+	}
+
 	//nolint:gosec
 	out, err := gcloudCommand(testParams, "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
 	if err != nil {
@@ -148,7 +161,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 		}
 	}
 
-	var cmd *exec.Cmd
 	createCmd := "create"
 	if testParams.UseGKEAutopilot {
 		createCmd = "create-auto"
@@ -202,17 +214,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 	// If using standard cluster, add required flags.
 	if !testParams.UseGKEAutopilot {
 		cmdParams = append(cmdParams, standardClusterFlags...)
-
-		// Update gcloud to latest version in Prow.
-		if testParams.InProw {
-			cmd = exec.Command("gcloud", "components", "update")
-			if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
-				return fmt.Errorf("failed to update gcloud to latest version: %w", err)
-			}
-		} else {
-			// This is skipped only to ensure command doesn't fail for 'apt' package installed gcloud in local runs.
-			klog.Infof("Skipping gcloud components update for local run.")
-		}
 	}
 
 	cmd = gcloudCommand(testParams, cmdParams...)
