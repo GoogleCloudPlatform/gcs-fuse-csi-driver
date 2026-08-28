@@ -36,7 +36,7 @@ readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
 readonly manage_cluster_lifecycle="${E2E_TEST_MANAGE_CLUSTER_LIFECYCLE:-false}"
 readonly use_boskos="${E2E_TEST_USE_BOSKOS:-false}"
 readonly project_id="${E2E_TEST_PROJECT_ID:-}"
-readonly num_nodes="${E2E_TEST_NUM_NODES:-3}"
+readonly num_nodes="${E2E_TEST_NUM_NODES:-${NUMBER_NODES:-9}}"
 readonly boskos_resource_type="${E2E_TEST_BOSKOS_RESOURCE_TYPE:-${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}}"
 
 ginkgo_focus="${E2E_TEST_FOCUS:-}"
@@ -51,6 +51,7 @@ readonly enable_sidecar_bucket_access_check=${ENABLE_SIDECAR_BUCKET_ACCESS_CHECK
 readonly enable_gcsfuse_profiles=${ENABLE_GCSFUSE_PROFILES:-true}
 readonly enable_gcsfuse_kernel_params=${ENABLE_GCSFUSE_KERNEL_PARAMS:-true}
 readonly enable_shared_mount=${ENABLE_SHARED_MOUNT:-false}
+readonly use_capacity_advisor=${USE_CAPACITY_ADVISOR:-false}
 # TODO(yaozile): Remove overlay default once shared-mount overlay is promoted to stable.
 if [ "${enable_shared_mount}" = true ]; then
   if [ -z "${E2E_TEST_FOCUS:-}" ]; then
@@ -120,5 +121,6 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --enable-gcsfuse-profiles=${enable_gcsfuse_profiles} \
             --enable-gcsfuse-kernel-params=${enable_gcsfuse_kernel_params} \
             --enable-shared-mount=${enable_shared_mount} \
+            --use-capacity-advisor=${use_capacity_advisor} \
             ${gcsfuse_pr_number:+--gcsfuse-pr-number=${gcsfuse_pr_number}}"
 eval "$base_cmd"

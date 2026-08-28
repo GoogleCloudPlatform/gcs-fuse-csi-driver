@@ -538,14 +538,25 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 		mo = append(mo, fmt.Sprintf("%s:%s", fileCacheSizeMiBMountOptionKey, "30"))
 
 		if sc == "gcsfusecsi-serving" {
-			// We are hardcoding the zones for ac to be us-central1-c because one of the available zones is an ai
-			// specific zone which has limited quota, we should not make caches in this zone.
+			// TODO(yaozile): Create the ANyC in the same zone as the compute (or skip the test
+			// if the zone is not supported for AnyC), rather than hardcoding to <cluster-region>-c.
+			// We are hardcoding the zones for ac to be <cluster-region>-c because some available zones are AI-specific
+			// zones which have limited quota, we should not make caches in those zones.
 			va[anywhereCacheTTLKey] = "2h"
 			va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
 			isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
 			if isZBEnabled == "false" {
 				// AC is not supported for zb, so we only use AC for non zb tests.
-				va[anywhereCacheZonesKey] = "us-central1-c"
+				clusterLocation := os.Getenv(utils.ClusterLocationEnvVar)
+				if clusterLocation == "" {
+					clusterLocation = "us-central1"
+				}
+				// If clusterLocation is a zone (e.g. "us-central1-a"), extract the region prefix ("us-central1").
+				parts := strings.Split(clusterLocation, "-")
+				if len(parts) > 2 && len(parts[len(parts)-1]) == 1 {
+					clusterLocation = strings.Join(parts[:len(parts)-1], "-")
+				}
+				va[anywhereCacheZonesKey] = clusterLocation + "-c"
 			}
 
 		}
