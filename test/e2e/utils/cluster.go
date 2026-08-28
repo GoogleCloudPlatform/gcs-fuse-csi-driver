@@ -75,9 +75,9 @@ func clusterDownGKE(testParams *TestParameters) error {
 
 // queryRegionalStandardZones retrieves standard compute zones for a region from 'gcloud compute regions describe',
 // which naturally excludes AI-only zones, so they can be passed to Capacity Advisor via --zones.
-func queryRegionalStandardZones(testParams *TestParameters) string {
+func queryRegionalStandardZones(testParams *TestParameters, region string) string {
 	regionArgs := []string{
-		"compute", "regions", "describe", testParams.GkeClusterRegion,
+		"compute", "regions", "describe", region,
 		"--format=value(zones.basename())",
 	}
 	if testParams.ProjectID != "" {
@@ -86,7 +86,7 @@ func queryRegionalStandardZones(testParams *TestParameters) string {
 
 	regionOut, err := gcloudCommand(testParams, regionArgs...).Output()
 	if err != nil {
-		klog.Warningf("Failed to query standard regional compute zones for %s: %v", testParams.GkeClusterRegion, err)
+		klog.Warningf("Failed to query standard regional compute zones for %s: %v", region, err)
 		return ""
 	}
 
@@ -97,24 +97,24 @@ func queryRegionalStandardZones(testParams *TestParameters) string {
 	return strings.Join(zones, ",")
 }
 
-// queryCapacityAdvisedZone calls queryRegionalStandardZones to get all standard GKE zones,
-// and queries Capacity Advisor to select the best zone with sufficient compute capacity.
-func queryCapacityAdvisedZone(testParams *TestParameters) (string, error) {
+// queryCapacityAdvice calls queryRegionalStandardZones to get standard GKE zones in the given region,
+// and queries Capacity Advisor to return the recommended zone and obtainability score.
+func queryCapacityAdvice(testParams *TestParameters, region string) (string, float64, error) {
 	// Note: Capacity Advisor requires --provisioning-model (supports only SPOT or FLEX_START).
 	// We use SPOT as a proxy for regional resource availability.
 	// See: https://cloud.google.com/sdk/gcloud/reference/beta/compute/advice/capacity
 	cmdArgs := []string{
 		"beta", "compute", "advice", "capacity",
-		"--region=" + testParams.GkeClusterRegion,
+		"--region=" + region,
 		"--provisioning-model=SPOT",
 		"--size=" + strconv.Itoa(testParams.NumNodes),
 		"--instance-selection-machine-types=" + testParams.NodeMachineType,
 		"--target-distribution-shape=any-single-zone",
-		"--format=value(recommendations[0].shards[0].zone.basename())",
+		"--format=value(recommendations[0].scores.obtainability,recommendations[0].shards[0].zone.basename())",
 	}
 
 	// Restrict capacity search to standard regional compute zones to avoid non-GKE AI zones.
-	if zonesFilter := queryRegionalStandardZones(testParams); zonesFilter != "" {
+	if zonesFilter := queryRegionalStandardZones(testParams, region); zonesFilter != "" {
 		cmdArgs = append(cmdArgs, "--zones="+zonesFilter)
 	}
 	if testParams.ProjectID != "" {
@@ -124,15 +124,21 @@ func queryCapacityAdvisedZone(testParams *TestParameters) (string, error) {
 	out, err := gcloudCommand(testParams, cmdArgs...).Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("failed to query capacity advice: %w, stderr: %s", err, string(exitErr.Stderr))
+			return "", 0, fmt.Errorf("failed to query capacity advice: %w, stderr: %s", err, string(exitErr.Stderr))
 		}
-		return "", fmt.Errorf("failed to query capacity advice: %w", err)
+		return "", 0, fmt.Errorf("failed to query capacity advice: %w", err)
 	}
-	zone := strings.TrimSpace(string(out))
-	if zone == "" {
-		return "", fmt.Errorf("no zone returned in capacity advice")
+	klog.Infof("Capacity Advisor output for region %s: %s", region, string(out))
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return "", 0, fmt.Errorf("no zone or score returned in capacity advice: %q", string(out))
 	}
-	return zone, nil
+	score, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to parse obtainability score %q: %w", fields[0], err)
+	}
+	zone := fields[1]
+	return zone, score, nil
 }
 
 func clusterUpGKE(testParams *TestParameters) error {
@@ -149,10 +155,53 @@ func clusterUpGKE(testParams *TestParameters) error {
 		klog.Infof("Skipping gcloud components update for local run.")
 	}
 
+	// Fall back across candidate regions to mitigate stockouts; Zonal Buckets
+	// are pinned to testParams.GkeClusterRegion (which defaults to us-central1).
+	// For standard clusters, testParams.GkeClusterRegion is prioritized first,
+	// followed by candidate fallback regions with typically lower contention.
+	candidateRegions := []string{testParams.GkeClusterRegion}
+	if !testParams.EnableZB {
+		for _, r := range []string{"us-east4", "us-east1", "us-west1", "us-west4"} {
+			if r != testParams.GkeClusterRegion {
+				candidateRegions = append(candidateRegions, r)
+			}
+		}
+	}
+
+	var nodeLocations string
+
+	// Skip Capacity Advisor for Autopilot because Autopilot automatically manages where nodes are created.
+	if !testParams.UseGKEAutopilot && testParams.UseCapacityAdvisor {
+		const minObtainabilityThreshold = 0.8
+		for _, region := range candidateRegions {
+			zone, score, err := queryCapacityAdvice(testParams, region)
+			if err != nil {
+				klog.Warningf("Capacity Advisor query failed for region %q: %v", region, err)
+				continue
+			}
+			klog.Infof("Capacity Advisor for region %q: zone=%q, obtainability=%.2f", region, zone, score)
+
+			// If score meets threshold, pick this region immediately.
+			if score >= minObtainabilityThreshold {
+				testParams.GkeClusterRegion = region
+				nodeLocations = zone
+				break
+			}
+			klog.Warningf("Region %q score %.2f below threshold %.2f, checking next candidate region...", region, score, minObtainabilityThreshold)
+		}
+
+		if nodeLocations == "" {
+			klog.Warningf("Capacity Advisor queries failed to find a region meeting threshold %.2f, falling back to default regional node allocation in %s", minObtainabilityThreshold, testParams.GkeClusterRegion)
+			testParams.NumNodes = max(1, testParams.NumNodes/3)
+		}
+	}
+
+	klog.Infof("Attempting to create cluster %q in region %q (zone: %q)...", testParams.GkeClusterName, testParams.GkeClusterRegion, nodeLocations)
+
 	//nolint:gosec
-	out, err := gcloudCommand(testParams, "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to check for previous test cluster: output: %v, err: %w", out, err)
+	out, listErr := gcloudCommand(testParams, "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
+	if listErr != nil {
+		return fmt.Errorf("failed to check for previous test cluster: output: %v, err: %w", out, listErr)
 	}
 	if len(out) > 0 {
 		klog.Infof("Detected previous cluster %s. Deleting it so a new one can be created...", testParams.GkeClusterName)
@@ -175,22 +224,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 
 	if isVariableSet(testParams.GkeClusterVersion) {
 		cmdParams = append(cmdParams, "--cluster-version", testParams.GkeClusterVersion)
-	}
-
-	// Query Capacity Advisor to select a stockout-free zone for Standard clusters.
-	// gcloud interprets --num-nodes as a per-zone count. When the advisor pins a
-	// single zone, NumNodes is the total; on failure we fall back to GKE's default
-	// 3-zone regional layout, so scale NumNodes down (minimum 1) to keep the total consistent.
-	var nodeLocations string
-	if !testParams.UseGKEAutopilot && testParams.UseCapacityAdvisor {
-		advisedZone, err := queryCapacityAdvisedZone(testParams)
-		if err != nil {
-			klog.Warningf("Capacity Advisor query failed, falling back to default regional node allocation: %v", err)
-			testParams.NumNodes = max(1, testParams.NumNodes/3)
-		} else {
-			klog.Infof("Using Capacity Advised zone %q for cluster node locations", advisedZone)
-			nodeLocations = advisedZone
-		}
 	}
 
 	standardClusterFlags := []string{
@@ -224,9 +257,9 @@ func clusterUpGKE(testParams *TestParameters) error {
 	// Call update because --add-maintenance-exclusion is not an available flag during cluster creation.
 	startExclusionTime := time.Now().UTC()
 
-	exclusionDuration, err := time.ParseDuration(testParams.GinkgoTimeout)
-	if err != nil {
-		klog.Warningf("failed to parse ginkgo timeout %q, using default 4h for maintenance exclusion: %v", testParams.GinkgoTimeout, err)
+	exclusionDuration, parseErr := time.ParseDuration(testParams.GinkgoTimeout)
+	if parseErr != nil {
+		klog.Warningf("failed to parse ginkgo timeout %q, using default 4h for maintenance exclusion: %v", testParams.GinkgoTimeout, parseErr)
 		exclusionDuration = 4 * time.Hour
 	}
 
