@@ -369,9 +369,8 @@ func mounterPodResources(config *mounterPodConfig) *corev1.ResourceRequirements 
 	// Instantiate maps to avoid nil map assignment panics
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			// TODO: Change the defaults once we profile the feature.
-			corev1.ResourceMemory:           resource.MustParse("768Mi"),
-			corev1.ResourceCPU:              resource.MustParse("750m"),
+			corev1.ResourceMemory:           resource.MustParse("356Mi"),
+			corev1.ResourceCPU:              resource.MustParse("350m"),
 			corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
 		},
 		Limits: corev1.ResourceList{},
