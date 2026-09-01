@@ -20,13 +20,17 @@ package testsuites
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
+
+	"local/test/e2e/specs"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	cloudprofiler "google.golang.org/api/cloudprofiler/v2"
+	"google.golang.org/api/option"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,12 +39,11 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
 	"k8s.io/utils/ptr"
-	"local/test/e2e/specs"
-	"local/test/e2e/utils"
 )
 
 const (
@@ -134,6 +137,53 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 			err := utilerrors.NewAggregate(cleanUpErrs)
 			framework.ExpectNoError(err, "while cleaning up")
 		}
+	}
+
+	verifyCloudProfileExists := func(client *cloudprofiler.Service, serviceName, version string) {
+		framework.Logf("Checking if %s cloud profile exists for version %s", serviceName, version)
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			profileOk, err := checkIfProfileExistForServiceAndVersion(ctx, client, serviceName, version)
+			if err != nil && strings.Contains(err.Error(), "profile not found") {
+				g.Expect(profileOk).To(gomega.BeTrue(), fmt.Sprintf("%s cloud profile does not exist yet for version %s", serviceName, version))
+				return
+			}
+			g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to check %s cloud profile for version %s", serviceName, version))
+			g.Expect(profileOk).To(gomega.BeTrue(), fmt.Sprintf("%s cloud profile does not exist yet for version %s", serviceName, version))
+		}, "10m", "10s").Should(gomega.Succeed())
+	}
+
+	setupSharedMountCloudProfiler := func(configPrefix string) (*specs.TestPod, *corev1.Pod, *cloudprofiler.Service, string) {
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip cloud_profiler tests when Zonal Buckets is enabled")
+		}
+
+		init(1, configPrefix)
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		vr := l.volumeResourceList[0]
+
+		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount PVC")
+		workloadPod, mounterPod := setupAndDeploySharedMountPod(ctx, f, vr)
+
+		ginkgo.By("Fetching Mounter Pod metadata to build expected Mounter Pod cloud profiler version string")
+		expectedVersion := util.GetCloudProfilerServiceVersion(mounterPod.Name, string(mounterPod.UID))
+
+		ginkgo.By("Checking that the Mounter Pod logs the correct cloud profiler version string")
+		expectedLogLine := fmt.Sprintf("Running cloud profiler on %v with version %s", util.MounterPodNamePrefix, expectedVersion)
+		specs.WaitForMounterPodLog(ctx, f.ClientSet, f.Namespace.Name, mounterPod.Name, expectedLogLine)
+
+		ginkgo.By("Generating load from the workload pod")
+		workloadPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("head -c 10485760 </dev/urandom > %s/test.bin", sharedMountPath))
+
+		ginkgo.By("Initializing Cloud Profiler client")
+		profilerClient, err := cloudprofiler.NewService(ctx, option.WithScopes(cloudprofiler.CloudPlatformScope))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize cloudprofiler service client")
+
+		ginkgo.By("Checking that Mounter Pod container cloud profile is generated")
+		verifyCloudProfileExists(profilerClient, util.MounterPodNamePrefix, expectedVersion)
+
+		return workloadPod, mounterPod, profilerClient, expectedVersion
 	}
 
 	// TC: Sidecar and Shared Mount Coexistence Test
@@ -474,8 +524,8 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 	// not the customer Pod's.
 	// Create a PodTemplate and a PV/PVC with sharedMount: true and a custom read_ahead_kb mount option.
 	// Create a workload pod referencing the PVC.
-	// Verify that kernel-params.json is created inside the Mounter Pod's gke-gcsfuse-tmp emptyDir volume
-	// instead of the workload pod's volume.
+	// Verify that kernel-params-file is configured in the Mounter Pod
+	// and kernel-params.json is not created inside the workload pod.
 	// Verify that the CSI Node driver detects kernel-params.json and updates the host node kernel parameters.
 	// Verify that the workload pod can successfully read and write data to the volume.
 	ginkgo.It("[shared-mount] should verify kernel parameters are applied via mounter pod and host node settings are updated", func() {
@@ -490,28 +540,13 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		// Configure and deploy the workload pod referencing the PVC.
 		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount PVC")
 		workloadPod, mounterPod := setupAndDeploySharedMountPod(ctx, f, sharedVR)
-		defer workloadPod.Cleanup(ctx)
 
-		// Verify kernel-params.json is created inside the Mounter Pod's gke-gcsfuse-tmp emptyDir volume.
-		ginkgo.By("Verifying kernel-params.json is created inside the Mounter Pod's gke-gcsfuse-tmp volume")
+		// Verify kernel-params-file is configured in the Mounter Pod.
+		ginkgo.By("Verifying kernel-params-file is configured in the Mounter Pod")
 		gomega.Expect(sharedVR.Pv).ToNot(gomega.BeNil())
-		mounterKernelParamsPath := fmt.Sprintf("/gcsfuse-tmp/.volumes/%s/kernel-params.json", sharedVR.Pv.Name)
-		var configData string
-		gomega.Eventually(func() error {
-			out, _, execErr := e2epod.ExecCommandInContainerWithFullOutput(f, mounterPod.Name, util.MounterPodNamePrefix, "/bin/sh", "-c", fmt.Sprintf("cat %s", mounterKernelParamsPath))
-			if execErr != nil {
-				return execErr
-			}
-			configData = out
-			return nil
-		}, retryTimeout, retryPolling).Should(gomega.Succeed(), "failed to read kernel-params.json in Mounter Pod")
-
-		// Verify kernel-params.json contains max-read-ahead-kb matching specs.ReadAheadCustomReadAheadKb.
-		pattern := fmt.Sprintf(kernelParamExtractRegex, regexp.QuoteMeta(string(MaxReadAheadKb)))
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(configData)
-		gomega.Expect(matches).To(gomega.HaveLen(2), "expected to extract max-read-ahead-kb from kernel-params.json")
-		gomega.Expect(matches[1]).To(gomega.Equal(specs.ReadAheadCustomReadAheadKb), "expected max-read-ahead-kb in kernel-params.json to match custom value")
+		expectedConfigPath := "/gcsfuse-tmp/kernel-params.json"
+		expectedLogLine := fmt.Sprintf("kernel-params-file:%s", expectedConfigPath)
+		specs.WaitForMounterPodLog(ctx, f.ClientSet, f.Namespace.Name, mounterPod.Name, expectedLogLine)
 		// Verify kernel-params.json is NOT in the workload pod's volume or filesystem.
 		ginkgo.By("Verifying kernel-params.json is NOT created inside the workload pod")
 		workloadPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("[ ! -f %s/kernel-params.json ]", sharedMountPath))
@@ -536,6 +571,82 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		workloadPod.VerifyRWMount(f, sharedMountPath)
 		testFilePath := fmt.Sprintf("%s/kernel-params-test-data.txt", sharedMountPath)
 		testContent := "hello from shared mount kernel params test"
+		workloadPod.VerifyWriteAndReadFile(f, testFilePath, testContent)
+	})
+
+	// TC: Cloud Profiler with Shared Mount Test (Both cloud profiles exist)
+	// 1. Create a PV/PVC with sharedMount: true and enable Cloud Profiler.
+	// 2. Create a workload pod referencing the PVC.
+	// 3. Verify that exactly one Mounter Pod is created for the volume.
+	// 4. Exec into the workload pod and write a file to the mount path to generate activity.
+	// 5. Verify via the Cloud Profiler API that cloud profiles exist for both the Mounter Pod container and the gcsfuse process.
+	ginkgo.It("[shared-mount] cloud_profiler should create cloud profiles for mounter pod and gcsfuse with shared mount", ginkgo.SpecPriority(10), func() {
+		_, mounterPod, profilerClient, expectedVersion := setupSharedMountCloudProfiler(specs.SharedMountCloudProfilerPrefix)
+		defer cleanup()
+
+		ginkgo.By("Checking that gcsfuse cloud profiler is configured via logs")
+		expectedGCSFuseLogLine := fmt.Sprintf("Setting label in GCSFuse mount options: %q", expectedVersion)
+		specs.WaitForMounterPodLog(ctx, f.ClientSet, f.Namespace.Name, mounterPod.Name, expectedGCSFuseLogLine)
+
+		ginkgo.By("Checking that gcsfuse cloud profile is generated")
+		verifyCloudProfileExists(profilerClient, gcsfuseServiceName, expectedVersion)
+	})
+
+	// TC: Cloud Profiler with Shared Mount Test - Disable GCSFuse CP (enable-cloud-profiler=false)
+	// 1. Create a PV/PVC with sharedMount: true, enable Cloud Profiler, but explicitly pass the mount option
+	//    to disable the gcsfuse profiler .
+	// 2. Create a workload pod referencing this PVC.
+	// 3. Verify that the Mounter Pod's logs indicate that the Cloud Profiler for GCSFuse is disabled.
+	// 4. Generate load by writing a file from the workload pod.
+	// 5. Verify via the Cloud Profiler API that a cloud profile exists only for the Mounter Pod container, and not for the gcsfuse process.
+	ginkgo.It("[shared-mount] cloud_profiler should only create cloud profiles for mounter pod when gcsfuse profiler is disabled with shared mount", ginkgo.SpecPriority(10), func() {
+		_, mounterPod, profilerClient, expectedVersion := setupSharedMountCloudProfiler(specs.SharedMountCloudProfilerDisabledGCSFusePrefix)
+		defer cleanup()
+
+		ginkgo.By("Checking that GCSFuse cloud profiler is disabled via logs")
+		disabledLogLine := "Cloud Profiler for GCSFuse is disabled via mount options: enable-cloud-profiler=false"
+		specs.WaitForMounterPodLog(ctx, f.ClientSet, f.Namespace.Name, mounterPod.Name, disabledLogLine)
+
+		ginkgo.By("Checking that gcsfuse cloud profile does not exist when disabled")
+		gcsfuseOk, err := checkIfProfileExistForServiceAndVersion(ctx, profilerClient, gcsfuseServiceName, expectedVersion)
+		gomega.Expect(gcsfuseOk).To(gomega.BeFalse(), "expected gcsfuse cloud profile to not exist when disabled via mount options")
+		gomega.Expect(err).To(gomega.HaveOccurred(), "expected an error indicating the profile was not found")
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("profile not found"), "expected error to be a 'profile not found' error rather than an API failure")
+	})
+
+	// TC: Cloud Profiler with Shared Mount Test - CP Disabled (Expect No Cloud Profiler Logs)
+	// 1. Create a PV/PVC with sharedMount: true and without enabling Cloud Profiler.
+	// 2. Create a workload pod referencing this PVC.
+	// 3. Verify that exactly one Mounter Pod is created for the volume.
+	// 4. Verify that the Mounter Pod's logs do not contain any Cloud Profiler logs or flags.
+	// 5. Verify that the workload pod can successfully read and write data to the volume.
+	ginkgo.It("[shared-mount] cloud_profiler should not initialize or log when profiler is disabled with shared mount", func() {
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip cloud_profiler tests when Zonal Buckets is enabled")
+		}
+
+		init(1)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		sharedVR := l.volumeResourceList[0]
+
+		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount PVC")
+		workloadPod, mounterPod := setupAndDeploySharedMountPod(ctx, f, sharedVR)
+
+		ginkgo.By("Verifying no Cloud Profiler logs appear in the Mounter Pod")
+		logs, err := specs.GetMounterPodLogs(f.Namespace.Name, mounterPod.Name)
+		framework.ExpectNoError(err, "failed to get Mounter Pod logs")
+		gomega.Expect(logs).NotTo(gomega.ContainSubstring("Running cloud profiler on"), "unexpected cloud profiler startup log in Mounter Pod")
+		gomega.Expect(logs).NotTo(gomega.ContainSubstring("Cloud Profiler for GCSFuse"), "unexpected gcsfuse cloud profiler log in Mounter Pod")
+		gomega.Expect(logs).NotTo(gomega.ContainSubstring("Setting label in GCSFuse mount options"), "unexpected cloud-profiler-label in GCSFuse mount options")
+		gomega.Expect(logs).NotTo(gomega.ContainSubstring("--enable-cloud-profiler"), "unexpected --enable-cloud-profiler flag in GCSFuse args")
+
+		ginkgo.By("Verifying workload pod can write and read from its shared-mounted volume")
+		workloadPod.VerifyRWMount(f, sharedMountPath)
+		testFilePath := fmt.Sprintf("%s/test-profiler-disabled.txt", sharedMountPath)
+		testContent := "hello from shared mount cloud profiler disabled test"
 		workloadPod.VerifyWriteAndReadFile(f, testFilePath, testContent)
 	})
 }

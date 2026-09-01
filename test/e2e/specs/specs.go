@@ -98,6 +98,8 @@ const (
 	EnableKernelParamsPrefix                                   = "gcsfuse-csi-enable-kernel-params"
 	SidecarAndSharedMountCoexistencePrefix                     = "gcsfuse-csi-sidecar-and-shared-mount-coexistence"
 	SharedDynamicMountPrefix                                   = "gcsfuse-csi-shared-dynamic-mount"
+	SharedMountCloudProfilerPrefix                             = "gcsfuse-csi-shared-mount-cloud-profiler"
+	SharedMountCloudProfilerDisabledGCSFusePrefix              = "gcsfuse-csi-shared-mount-cloud-profiler-disabled-gcsfuse"
 
 	expectedTrainingProfileFlag   = "--profile=aiml-training"
 	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
@@ -562,6 +564,21 @@ func lookForStringInLogWithoutKubectlWithRetry(ctx context.Context, client clien
 	return RetryWithBackoffOneReturnValue(func() (string, error) {
 		return e2epodooutput.LookForStringInLogWithoutKubectl(ctx, client, namespace, podName, container, expectedString, timeout)
 	})
+}
+
+// WaitForMounterPodLog waits for the expected string to appear in the Mounter Pod's container logs.
+func WaitForMounterPodLog(ctx context.Context, client clientset.Interface, namespace, podName, expectedString string) {
+	_, err := lookForStringInLogWithoutKubectlWithRetry(ctx, client, namespace, podName, util.MounterPodNamePrefix, expectedString, pollTimeout)
+	framework.ExpectNoError(err)
+}
+
+// GetMounterPodLogs retrieves the full logs from the Mounter Pod's container.
+func GetMounterPodLogs(namespace, podName string) (string, error) {
+	stdout, stderr, err := runKubectlWithFullOutputWithRetry(namespace, "logs", podName, "-c", util.MounterPodNamePrefix)
+	if err != nil {
+		return stdout, fmt.Errorf("failed to get mounter pod logs: %w; stderr: %s", err, stderr)
+	}
+	return stdout, nil
 }
 
 func (t *TestPod) CheckSidecarNeverTerminatedAfterAWhile(ctx context.Context, isNativeSidecar bool) {
