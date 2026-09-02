@@ -514,8 +514,7 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		gomega.Expect(matches[1]).To(gomega.Equal(specs.ReadAheadCustomReadAheadKb), "expected max-read-ahead-kb in kernel-params.json to match custom value")
 		// Verify kernel-params.json is NOT in the workload pod's volume or filesystem.
 		ginkgo.By("Verifying kernel-params.json is NOT created inside the workload pod")
-		_, _, err := e2epod.ExecCommandInContainerWithFullOutput(f, workloadPod.GetPodName(), specs.TesterContainerName, "/bin/sh", "-c", fmt.Sprintf("[ ! -f %s/kernel-params.json ]", sharedMountPath))
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "expected kernel-params.json to not exist inside the shared mount path")
+		workloadPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("[ ! -f %s/kernel-params.json ]", sharedMountPath))
 
 		// Verify CSI Node driver detects kernel-params.json and updates the host node kernel parameters.
 		ginkgo.By("Verifying host node read_ahead_kb kernel parameter is updated to the custom value")
