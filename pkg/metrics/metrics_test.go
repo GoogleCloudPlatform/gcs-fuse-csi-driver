@@ -62,7 +62,7 @@ func TestNewMetricsManager(t *testing.T) {
 			t.Logf("test case: %s", tc.name)
 
 			clientset := clientset.NewFakeClientset()
-			manager := NewMetricsManager(tc.endpoint, tc.socketDir, tc.maxCollectors, clientset, false).(*manager)
+			manager := NewMetricsManager(tc.endpoint, tc.socketDir, tc.maxCollectors, clientset, false, true).(*manager)
 
 			if manager.metricsEndpoint != tc.endpoint {
 				t.Errorf("NewMetricsManager did not set metricsEndpoint correctly. Got %q, want %q", manager.metricsEndpoint, tc.endpoint)
@@ -97,7 +97,7 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 	}
 
 	clientset := clientset.NewFakeClientset()
-	mm := NewMetricsManager(":9920", fuseSocketDir, 5, clientset, false).(*manager)
+	mm := NewMetricsManager(":9920", fuseSocketDir, 5, clientset, false, true).(*manager)
 
 	mountPath := "/mnt/test-volume"
 	podNamespace := "default"
@@ -222,10 +222,11 @@ gcs_request_count{gcs_method="StatObject"} 12
 	}()
 	defer server.Close()
 
-	// 2. Initialize fake clientset with running pod
+	// 2. Initialize fake clientset with running pod and JobSet label
 	fakeClientset := clientset.NewFakeClientset()
 	podNamespace := "test-namespace"
 	podName := "test-pod-name"
+	jobsetName := "test-jobset-name"
 	fakeClientset.CreatePod(clientset.FakePodConfig{
 		Name:      podName,
 		Namespace: podNamespace,
@@ -233,10 +234,13 @@ gcs_request_count{gcs_method="StatObject"} 12
 		PodStatus: &corev1.PodStatus{
 			Phase: corev1.PodRunning,
 		},
+		Labels: map[string]string{
+			"jobset.sigs.k8s.io/jobset-name": jobsetName,
+		},
 	})
 
 	// 3. Initialize metrics manager and register collector
-	mm := NewMetricsManager(":9920", fuseSocketDir, 5, fakeClientset, false).(*manager)
+	mm := NewMetricsManager(":9920", fuseSocketDir, 5, fakeClientset, false, true).(*manager)
 	mountPath := "/mnt/test-volume"
 	bucketName := "test-bucket-name"
 	nodeName := "test-node-name"
@@ -259,6 +263,7 @@ gcs_request_count{gcs_method="StatObject"} 12
 		"namespace_name": podNamespace,
 		"volume_name":    volumeName,
 		"bucket_name":    bucketName,
+		"jobset_name":    jobsetName,
 	}
 
 	foundMetrics := 0

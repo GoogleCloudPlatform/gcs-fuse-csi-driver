@@ -61,10 +61,11 @@ type SharedMountOptions struct {
 }
 
 type GCSDriverFeatureOptions struct {
-	EnableGCSFuseKernelParams bool
-	FeatureGCSFuseProfiles    *FeatureGCSFuseProfiles
-	GoMemLimitOptions         *GoMemLimitOptions
-	SharedMountOptions        *SharedMountOptions
+	EnableGCSFuseKernelParams        bool
+	FeatureGCSFuseProfiles           *FeatureGCSFuseProfiles
+	GoMemLimitOptions                *GoMemLimitOptions
+	SharedMountOptions               *SharedMountOptions
+	EnableGcsFuseVolumeMetricsSchema bool
 }
 
 type GCSDriverConfig struct {

@@ -47,7 +47,8 @@ import (
 )
 
 const (
-	UmountTimeout = time.Second * 5
+	maxGCSFuseVolumesForMetrics         = 10
+	UmountTimeout                       = time.Second * 5
 	// GCSFuseKernelParamsFilePollInterval is the interval at which the GCSFuse kernel
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
@@ -444,8 +445,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
 		if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
-			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, emptyDirBasePath, podUID, volumeName)
+			if s.driver.config.FeatureOptions != nil && !s.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema && countGCSFuseVolumes(pod) > maxGCSFuseVolumesForMetrics {
+				klog.V(4).Infof("NodePublishVolume metrics collection disabled for target path %q because pod %q has > %d volumes", targetPath, pod.Name, maxGCSFuseVolumesForMetrics)
+			} else {
+				klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+				s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, emptyDirBasePath, podUID, volumeName)
+			}
 		}
 	}
 
@@ -1350,3 +1355,17 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 
 	return nil
 }
+
+func countGCSFuseVolumes(pod *corev1.Pod) int {
+	if pod == nil {
+		return 0
+	}
+	count := 0
+	for _, v := range pod.Spec.Volumes {
+		if v.CSI != nil && v.CSI.Driver == DefaultName {
+			count++
+		}
+	}
+	return count
+}
+

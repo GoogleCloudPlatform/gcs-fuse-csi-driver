@@ -51,6 +51,7 @@ type FakePodConfig struct {
 	IsMounterPod       bool
 	SecurityContext    *corev1.PodSecurityContext
 	ServiceAccountName string
+	Labels             map[string]string
 }
 
 type FakePVConfig struct {
@@ -156,6 +157,7 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 			Name:      podConfig.Name,
 			Namespace: podConfig.Namespace,
 			UID:       podConfig.UID,
+			Labels:    podConfig.Labels,
 		},
 		Spec: corev1.PodSpec{
 			Containers: func() []corev1.Container {

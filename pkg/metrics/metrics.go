@@ -58,27 +58,29 @@ type Manager interface {
 }
 
 type manager struct {
-	registry        *prometheus.Registry
-	metricsEndpoint string
-	fuseSocketDir   string
-	clientset       clientset.Interface
-	streamMetrics   bool
+	registry                         *prometheus.Registry
+	metricsEndpoint                  string
+	fuseSocketDir                    string
+	clientset                        clientset.Interface
+	streamMetrics                    bool
+	enableGcsFuseVolumeMetricsSchema bool
 
 	maximumNumberOfCollectors int
 	volumeMountPathRegistered sets.Set[string]
 	mutex                     sync.Mutex
 }
 
-func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics bool) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) Manager {
 	mm := &manager{
-		registry:                  prometheus.NewRegistry(),
-		metricsEndpoint:           metricsEndpoint,
-		fuseSocketDir:             fuseSocketDir,
-		clientset:                 clientset,
-		streamMetrics:             streamMetrics,
-		volumeMountPathRegistered: sets.Set[string]{},
-		maximumNumberOfCollectors: maximumNumberOfCollectors,
-		mutex:                     sync.Mutex{},
+		registry:                         prometheus.NewRegistry(),
+		metricsEndpoint:                  metricsEndpoint,
+		fuseSocketDir:                    fuseSocketDir,
+		clientset:                        clientset,
+		streamMetrics:                    streamMetrics,
+		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
+		volumeMountPathRegistered:        sets.Set[string]{},
+		maximumNumberOfCollectors:        maximumNumberOfCollectors,
+		mutex:                            sync.Mutex{},
 	}
 
 	return mm
@@ -114,12 +116,36 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 		return
 	}
 
-	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, map[string]string{
-		"pod_name":       podName,
-		"namespace_name": podNamespace,
-		"volume_name":    volumeName,
-		"bucket_name":    bucketName,
-	}, mm.clientset, mm.streamMetrics)
+	var constLabels map[string]string
+	if mm.enableGcsFuseVolumeMetricsSchema {
+		jobsetName := ""
+		if mm.clientset != nil {
+			if pod, err := mm.clientset.GetPod(podNamespace, podName); err == nil && pod != nil && pod.Labels != nil {
+				if js, ok := pod.Labels["jobset.sigs.k8s.io/jobset-name"]; ok {
+					jobsetName = js
+				} else if js, ok := pod.Labels["jobset_name"]; ok {
+					jobsetName = js
+				} else if js, ok := pod.Labels["jobset-name"]; ok {
+					jobsetName = js
+				}
+			}
+		}
+
+		constLabels = map[string]string{
+			"pod_name":       podName,
+			"namespace_name": podNamespace,
+			"volume_name":    volumeName,
+			"bucket_name":    bucketName,
+			"jobset_name":    jobsetName,
+		}
+	} else {
+		constLabels = map[string]string{
+			"pod_uid":     podUID,
+			"volume_name": volumeName,
+		}
+	}
+
+	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
 	mm.mutex.Lock()
