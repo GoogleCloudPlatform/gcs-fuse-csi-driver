@@ -403,8 +403,8 @@ func TestCreateMounterPodSpec(t *testing.T) {
 	// Default resources expected when no overrides are provided
 	defaultResources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceMemory:           resource.MustParse("768Mi"),
-			corev1.ResourceCPU:              resource.MustParse("750m"),
+			corev1.ResourceMemory:           resource.MustParse("356Mi"),
+			corev1.ResourceCPU:              resource.MustParse("350m"),
 			corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
 		},
 		Limits: corev1.ResourceList{},
@@ -1525,8 +1525,8 @@ func TestSetResource(t *testing.T) {
 
 func TestMounterPodResources(t *testing.T) {
 	defaultRequests := corev1.ResourceList{
-		corev1.ResourceMemory:           resource.MustParse("768Mi"),
-		corev1.ResourceCPU:              resource.MustParse("750m"),
+		corev1.ResourceMemory:           resource.MustParse("356Mi"),
+		corev1.ResourceCPU:              resource.MustParse("350m"),
 		corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
 	}
 
@@ -1591,7 +1591,7 @@ func TestMounterPodResources(t *testing.T) {
 			},
 			want: &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
-					corev1.ResourceMemory:           resource.MustParse("768Mi"),
+					corev1.ResourceMemory:           resource.MustParse("356Mi"),
 					corev1.ResourceEphemeralStorage: resource.MustParse("15Gi"),
 				},
 				Limits: corev1.ResourceList{},
