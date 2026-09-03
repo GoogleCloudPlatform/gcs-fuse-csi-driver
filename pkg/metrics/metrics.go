@@ -133,7 +133,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 		}
 	}
 
-	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics)
+	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
 	mm.mutex.Lock()
@@ -175,7 +175,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 // UnregisterMetricsCollector unregisters the metrics collector. It is idempotent to unregister the same collector.
 func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName string) {
 	// metricsCollector uses a hash of pod UID and volume name as an identifier.
-	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, mm.streamMetrics)
+	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
 
 	// Lock the number of registered collectors while we attempt to unregister a collector.
 	mm.mutex.Lock()
@@ -190,28 +190,30 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volum
 }
 
 type metricsCollector struct {
-	emptyDirBasePath string
-	constLabels      map[string]string
-	namespace        string
-	podName          string
-	podUID           string
-	volumeName       string
-	httpClient       *http.Client
-	clientset        clientset.Interface
-	streamMetrics    bool
+	emptyDirBasePath                 string
+	constLabels                      map[string]string
+	namespace                        string
+	podName                          string
+	podUID                           string
+	volumeName                       string
+	httpClient                       *http.Client
+	clientset                        clientset.Interface
+	streamMetrics                    bool
+	enableGcsFuseVolumeMetricsSchema bool
 }
 
 // NewMetricsCollector returns a new Collector exposing metrics read from the give path.
-func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool) prometheus.Collector {
+func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) prometheus.Collector {
 	c := &metricsCollector{
-		emptyDirBasePath: emptyDirBasePath,
-		constLabels:      labels,
-		namespace:        namespace,
-		podName:          podName,
-		podUID:           podUID,
-		volumeName:       volumeName,
-		clientset:        clientset,
-		streamMetrics:    streamMetrics,
+		emptyDirBasePath:                 emptyDirBasePath,
+		constLabels:                      labels,
+		namespace:                        namespace,
+		podName:                          podName,
+		podUID:                           podUID,
+		volumeName:                       volumeName,
+		clientset:                        clientset,
+		streamMetrics:                    streamMetrics,
+		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
 	}
 
 	// Creating a new HTTP client that is configured to make HTTP requests over a unix domain socket.
@@ -328,6 +330,32 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 	name := metricFamily.GetName()
 	help := metricFamily.GetHelp()
 	metricType := metricFamily.GetType()
+
+	if !c.enableGcsFuseVolumeMetricsSchema {
+		// Map OTEL compliant names back to legacy metric names when feature flag is disabled
+		switch name {
+		case "fs_ops_duration_seconds", "fs/ops_duration_seconds":
+			name = "fs_ops_latency"
+		case "gcs_request_duration_seconds", "gcs/request_duration_seconds":
+			name = "gcs_request_latencies"
+		case "file_cache_read_duration_seconds", "file_cache/read_duration_seconds":
+			name = "file_cache_read_latencies"
+		case "buffered_read_read_duration_seconds", "buffered_read/read_duration_seconds":
+			name = "buffered_read_read_latency"
+		}
+	} else {
+		// Map legacy metric names to OTEL compliant names when feature flag is enabled
+		switch name {
+		case "fs_ops_latency", "fs/ops_latency":
+			name = "fs_ops_duration_seconds"
+		case "gcs_request_latencies", "gcs/request_latencies":
+			name = "gcs_request_duration_seconds"
+		case "file_cache_read_latencies", "file_cache/read_latencies":
+			name = "file_cache_read_duration_seconds"
+		case "buffered_read_read_latency", "buffered_read/read_latency":
+			name = "buffered_read_read_duration_seconds"
+		}
+	}
 
 	var cachedDesc *prometheus.Desc
 

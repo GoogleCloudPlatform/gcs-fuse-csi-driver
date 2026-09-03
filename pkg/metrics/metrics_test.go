@@ -122,7 +122,7 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 	}
 
 	// Verify collector is actually in the Prometheus registry by trying to register a dummy with same descriptors
-	cDummy := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, false)
+	cDummy := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, false, false)
 	err := mm.registry.Register(cDummy)
 	if err == nil {
 		t.Errorf("expected duplicate registration to fail, but it succeeded")
@@ -187,9 +187,11 @@ func TestEndToEndGcsFuseVolumeMetricsScraping(t *testing.T) {
 	metricsData := `# HELP fs_ops_count The cumulative number of ops processed.
 # TYPE fs_ops_count counter
 fs_ops_count{fs_op="Read"} 42
-# HELP gcs_request_count The cumulative number of GCS requests.
-# TYPE gcs_request_count counter
-gcs_request_count{gcs_method="StatObject"} 12
+# HELP fs_ops_duration_seconds The cumulative distribution of file system operation latencies.
+# TYPE fs_ops_duration_seconds histogram
+fs_ops_duration_seconds_bucket{fs_op="Read",le="100"} 5
+fs_ops_duration_seconds_sum{fs_op="Read"} 250
+fs_ops_duration_seconds_count{fs_op="Read"} 5
 `
 
 	server := &http.Server{
@@ -359,6 +361,31 @@ gcs_request_count{gcs_method="StatObject"} 12
 			}
 			if foundMetrics == 0 {
 				t.Errorf("expected to find metrics, got 0")
+			}
+
+			hasMetric := func(metricName string) bool {
+				for _, mf := range metricFamilies {
+					if mf.GetName() == metricName {
+						return true
+					}
+				}
+				return false
+			}
+
+			if tc.enableSchema {
+				if !hasMetric("fs_ops_duration_seconds") {
+					t.Errorf("expected metric fs_ops_duration_seconds when schema is enabled, but it was missing")
+				}
+				if hasMetric("fs_ops_latency") {
+					t.Errorf("unexpected legacy metric fs_ops_latency when schema is enabled")
+				}
+			} else {
+				if !hasMetric("fs_ops_latency") {
+					t.Errorf("expected legacy metric fs_ops_latency when schema is disabled, but it was missing")
+				}
+				if hasMetric("fs_ops_duration_seconds") {
+					t.Errorf("unexpected OTEL metric fs_ops_duration_seconds when schema is disabled")
+				}
 			}
 		})
 	}
