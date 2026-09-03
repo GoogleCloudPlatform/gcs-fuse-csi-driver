@@ -73,6 +73,7 @@ type gcsVolume struct {
 	skipBucketAccessCheck   bool
 	metadataPrefetch        bool
 	enableMetrics           bool
+	enableCloudProfiler     bool
 }
 
 // InitGCSFuseCSITestDriver returns GCSFuseCSITestDriver that implements TestDriver interface.
@@ -367,6 +368,11 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			dirPath := uuid.NewString()
 			n.CreateImplicitDirInBucket(ctx, dirPath, bucketName)
 			mountOptions += ",only-dir=" + dirPath
+		case SharedMountCloudProfilerPrefix:
+			v.enableCloudProfiler = true
+		case SharedMountCloudProfilerDisabledGCSFusePrefix:
+			v.enableCloudProfiler = true
+			mountOptions += ",enable-cloud-profiler=false"
 		}
 
 		v.mountOptions = mountOptions
@@ -420,6 +426,10 @@ func (n *GCSFuseCSITestDriver) GetPersistentVolumeSource(readOnly bool, _ string
 		va[driver.VolumeContextKeyDisableMetrics] = util.FalseStr
 	}
 
+	if gv.enableCloudProfiler {
+		va[driver.VolumeContextEnableCloudProfilerForSidecar] = util.TrueStr
+	}
+
 	if n.EnableSharedMount {
 		va[driver.VolumeContextSharedNodeMount] = util.TrueStr
 	}
@@ -460,6 +470,10 @@ func (n *GCSFuseCSITestDriver) GetVolume(config *storageframework.PerTestConfig,
 
 	if gv.enableMetrics {
 		va[driver.VolumeContextKeyDisableMetrics] = util.FalseStr
+	}
+
+	if gv.enableCloudProfiler {
+		va[driver.VolumeContextEnableCloudProfilerForSidecar] = util.TrueStr
 	}
 
 	return va, gv.shared, gv.readOnly
