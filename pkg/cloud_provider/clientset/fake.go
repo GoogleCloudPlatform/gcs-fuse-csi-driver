@@ -52,6 +52,7 @@ type FakePodConfig struct {
 	SecurityContext    *corev1.PodSecurityContext
 	ServiceAccountName string
 	Labels             map[string]string
+	OwnerReferences    []metav1.OwnerReference
 }
 
 type FakePVConfig struct {
@@ -154,10 +155,11 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	c.fakePod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podConfig.Name,
-			Namespace: podConfig.Namespace,
-			UID:       podConfig.UID,
-			Labels:    podConfig.Labels,
+			Name:            podConfig.Name,
+			Namespace:       podConfig.Namespace,
+			UID:             podConfig.UID,
+			Labels:          podConfig.Labels,
+			OwnerReferences: podConfig.OwnerReferences,
 		},
 		Spec: corev1.PodSpec{
 			Containers: func() []corev1.Container {

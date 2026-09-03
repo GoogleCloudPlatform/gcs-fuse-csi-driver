@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -259,11 +260,12 @@ gcs_request_count{gcs_method="StatObject"} 12
 
 	// 5. Assert that every metric family includes the gke.googleapis.com/GcsFuseVolume resource target constant labels and NO pod_uid label
 	expectedConstLabels := map[string]string{
-		"pod_name":       podName,
-		"namespace_name": podNamespace,
-		"volume_name":    volumeName,
-		"bucket_name":    bucketName,
-		"jobset_name":    jobsetName,
+		"pod_name":            podName,
+		"namespace_name":       podNamespace,
+		"volume_name":          volumeName,
+		"bucket_name":          bucketName,
+		"k8s_controller_type": "jobset",
+		"k8s_controller_name": jobsetName,
 	}
 
 	foundMetrics := 0
@@ -290,6 +292,117 @@ gcs_request_count{gcs_method="StatObject"} 12
 
 	if foundMetrics == 0 {
 		t.Errorf("expected to find metrics with populated gke.googleapis.com/GcsFuseVolume labels, got 0")
+	}
+}
+
+func TestExtractK8sController(t *testing.T) {
+	isController := true
+	testCases := []struct {
+		name                 string
+		pod                  *corev1.Pod
+		expectedType         string
+		expectedName         string
+	}{
+		{
+			name:         "nil pod",
+			pod:          nil,
+			expectedType: "",
+			expectedName: "",
+		},
+		{
+			name: "jobset label jobset.sigs.k8s.io/jobset-name",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"jobset.sigs.k8s.io/jobset-name": "my-jobset",
+					},
+				},
+			},
+			expectedType: "jobset",
+			expectedName: "my-jobset",
+		},
+		{
+			name: "jobset label jobset_name",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"jobset_name": "jobset-custom",
+					},
+				},
+			},
+			expectedType: "jobset",
+			expectedName: "jobset-custom",
+		},
+		{
+			name: "owner reference controller",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "StatefulSet",
+							Name:       "my-statefulset",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: "statefulset",
+			expectedName: "my-statefulset",
+		},
+		{
+			name: "owner reference fallback without explicit controller bool",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind: "ReplicaSet",
+							Name: "my-replicaset-123",
+						},
+					},
+				},
+			},
+			expectedType: "replicaset",
+			expectedName: "my-replicaset-123",
+		},
+		{
+			name: "pod without controller info",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "standalone-pod",
+				},
+			},
+			expectedType: "",
+			expectedName: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotType, gotName := extractK8sController(tc.pod)
+			if gotType != tc.expectedType || gotName != tc.expectedName {
+				t.Errorf("extractK8sController() = (%q, %q), want (%q, %q)", gotType, gotName, tc.expectedType, tc.expectedName)
+			}
+		})
+	}
+}
+
+func TestRegisterMetricsCollector_FlagDisabled(t *testing.T) {
+	fakeClientset := clientset.NewFakeClientset()
+	mm := NewMetricsManager(":9920", t.TempDir(), 5, fakeClientset, false, false).(*manager)
+
+	mountPath := "/mnt/test-volume"
+	podNamespace := "test-ns"
+	podName := "test-pod"
+	bucketName := "test-bucket"
+	nodeName := "test-node"
+	podUID := "test-uid-123"
+	volumeName := "test-vol-abc"
+	emptyDir := t.TempDir()
+
+	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDir, podUID, volumeName)
+
+	if !mm.volumeMountPathRegistered.Has(mountPath) {
+		t.Fatalf("expected mountPath %q to be registered when feature flag is disabled", mountPath)
 	}
 }
 

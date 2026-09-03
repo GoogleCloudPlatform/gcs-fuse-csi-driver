@@ -118,25 +118,20 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 
 	var constLabels map[string]string
 	if mm.enableGcsFuseVolumeMetricsSchema {
-		jobsetName := ""
+		controllerType, controllerName := "", ""
 		if mm.clientset != nil {
-			if pod, err := mm.clientset.GetPod(podNamespace, podName); err == nil && pod != nil && pod.Labels != nil {
-				if js, ok := pod.Labels["jobset.sigs.k8s.io/jobset-name"]; ok {
-					jobsetName = js
-				} else if js, ok := pod.Labels["jobset_name"]; ok {
-					jobsetName = js
-				} else if js, ok := pod.Labels["jobset-name"]; ok {
-					jobsetName = js
-				}
+			if pod, err := mm.clientset.GetPod(podNamespace, podName); err == nil && pod != nil {
+				controllerType, controllerName = extractK8sController(pod)
 			}
 		}
 
 		constLabels = map[string]string{
-			"pod_name":       podName,
-			"namespace_name": podNamespace,
-			"volume_name":    volumeName,
-			"bucket_name":    bucketName,
-			"jobset_name":    jobsetName,
+			"pod_name":            podName,
+			"namespace_name":       podNamespace,
+			"volume_name":          volumeName,
+			"bucket_name":          bucketName,
+			"k8s_controller_type": controllerType,
+			"k8s_controller_name": controllerName,
 		}
 	} else {
 		constLabels = map[string]string{
@@ -508,4 +503,30 @@ func GetErrorCode(err error) string {
 	internalErr, _ := status.FromError(err)
 	code := internalErr.Code().String()
 	return code
+}
+
+func extractK8sController(pod *corev1.Pod) (string, string) {
+	if pod == nil {
+		return "", ""
+	}
+	if pod.Labels != nil {
+		if js, ok := pod.Labels["jobset.sigs.k8s.io/jobset-name"]; ok && js != "" {
+			return "jobset", js
+		}
+		if js, ok := pod.Labels["jobset_name"]; ok && js != "" {
+			return "jobset", js
+		}
+		if js, ok := pod.Labels["jobset-name"]; ok && js != "" {
+			return "jobset", js
+		}
+	}
+	for _, ref := range pod.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller {
+			return strings.ToLower(ref.Kind), ref.Name
+		}
+	}
+	if len(pod.OwnerReferences) > 0 {
+		return strings.ToLower(pod.OwnerReferences[0].Kind), pod.OwnerReferences[0].Name
+	}
+	return "", ""
 }
