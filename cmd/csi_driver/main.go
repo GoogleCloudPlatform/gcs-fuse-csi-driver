@@ -97,7 +97,7 @@ var (
 	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Stream metrics export instead of downloading the entire content")
 
 	// GCSFuse volume metrics schema flag
-	enableGcsFuseVolumeMetricsSchema = flag.Bool("enable-gcsfuse-volume-metrics-schema", true, "Enable gke.googleapis.com/GcsFuseVolume Monitored Resource metrics schema for GCSFuse metrics.")
+	enableGcsFuseVolumeMetricsSchema = flag.Bool("enable-gcsfuse-volume-metrics-schema", false, "Enable gke.googleapis.com/GcsFuseVolume Monitored Resource metrics schema for GCSFuse metrics.")
 
 	// Leader election flags.
 	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
