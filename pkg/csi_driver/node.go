@@ -28,6 +28,7 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -248,8 +249,9 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirPath, mounterPodUID, volumeName, mounterPodImage, args.bucketName, vs)
 
 		if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
+			mounterControllerType, mounterControllerName := metrics.ExtractK8sController(mounterPod)
 			klog.V(4).Infof("NodePublishVolume enabling metrics collector for staging path %q", stagingPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(stagingPath, mounterPodNamespace, mounterPodName, args.bucketName, s.driver.config.NodeID, emptyDirPath, mounterPodUID, volumeName)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(stagingPath, mounterPodNamespace, mounterPodName, args.bucketName, s.driver.config.NodeID, emptyDirPath, mounterPodUID, volumeName, mounterControllerType, mounterControllerName)
 		}
 		return
 	}
@@ -444,13 +446,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.Warningf("Failed to prepare empty dir from target path %q: %v.", targetPath, err)
 	}
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
-			if s.driver.config.FeatureOptions != nil && !s.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema && countGCSFuseVolumes(pod) > maxGCSFuseVolumesForMetrics {
-				klog.V(4).Infof("NodePublishVolume metrics collection disabled for target path %q because pod %q has > %d volumes", targetPath, pod.Name, maxGCSFuseVolumesForMetrics)
-			} else {
-				klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-				s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, emptyDirBasePath, podUID, volumeName)
-			}
+		schemaEnabled := s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema
+		volumeCount, _ := s.countGcsFuseVolumes(pod)
+
+		if !schemaEnabled && volumeCount > maxGCSFuseVolumesForMetrics {
+			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, volumeCount, maxGCSFuseVolumesForMetrics)
+		} else if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
+			controllerType, controllerName := metrics.ExtractK8sController(pod)
+			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, emptyDirBasePath, podUID, volumeName, controllerType, controllerName)
 		}
 	}
 
@@ -1354,18 +1358,5 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	}
 
 	return nil
-}
-
-func countGCSFuseVolumes(pod *corev1.Pod) int {
-	if pod == nil {
-		return 0
-	}
-	count := 0
-	for _, v := range pod.Spec.Volumes {
-		if v.CSI != nil && v.CSI.Driver == DefaultName {
-			count++
-		}
-	}
-	return count
 }
 

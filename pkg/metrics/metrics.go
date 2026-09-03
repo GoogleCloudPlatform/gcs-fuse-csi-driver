@@ -53,7 +53,7 @@ const (
 
 type Manager interface {
 	InitializeHTTPHandler()
-	RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName string)
+	RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, k8sControllerType, k8sControllerName string)
 	UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName string)
 }
 
@@ -109,7 +109,7 @@ func (mm *manager) InitializeHTTPHandler() {
 }
 
 // RegisterMetricsCollector registers the metrics collector. It is idempotent to register the same collector.
-func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName string) {
+func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, k8sControllerType, k8sControllerName string) {
 	socketBasePath := util.GetSocketBasePath(podUID, volumeName, mm.fuseSocketDir)
 	if err := os.Symlink(emptyDirBasePath, socketBasePath); err != nil && !os.IsExist(err) {
 		klog.Errorf("failed to create symbolic link to path %q: %v", socketBasePath, err)
@@ -118,20 +118,13 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 
 	var constLabels map[string]string
 	if mm.enableGcsFuseVolumeMetricsSchema {
-		controllerType, controllerName := "", ""
-		if mm.clientset != nil {
-			if pod, err := mm.clientset.GetPod(podNamespace, podName); err == nil && pod != nil {
-				controllerType, controllerName = extractK8sController(pod)
-			}
-		}
-
 		constLabels = map[string]string{
 			"pod_name":            podName,
 			"namespace_name":       podNamespace,
 			"volume_name":          volumeName,
 			"bucket_name":          bucketName,
-			"k8s_controller_type": controllerType,
-			"k8s_controller_name": controllerName,
+			"k8s_controller_type": k8sControllerType,
+			"k8s_controller_name": k8sControllerName,
 		}
 	} else {
 		constLabels = map[string]string{
@@ -505,7 +498,7 @@ func GetErrorCode(err error) string {
 	return code
 }
 
-func extractK8sController(pod *corev1.Pod) (string, string) {
+func ExtractK8sController(pod *corev1.Pod) (string, string) {
 	if pod == nil {
 		return "", ""
 	}

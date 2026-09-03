@@ -44,18 +44,21 @@ func TestNewMetricsManager(t *testing.T) {
 			endpoint      string
 			socketDir     string
 			maxCollectors int
+			enableSchema  bool
 		}{
 			{
-				name:          "basic options test",
+				name:          "basic options test with schema enabled",
 				endpoint:      "/test/metrics",
 				socketDir:     "/tmp/test-sockets",
 				maxCollectors: 5,
+				enableSchema:  true,
 			},
 			{
-				name:          "no collectors test",
+				name:          "no collectors test with schema disabled",
 				endpoint:      ":9920",
 				socketDir:     "/gcsfuse-tmp/socket",
 				maxCollectors: 0,
+				enableSchema:  false,
 			},
 		}
 
@@ -63,7 +66,7 @@ func TestNewMetricsManager(t *testing.T) {
 			t.Logf("test case: %s", tc.name)
 
 			clientset := clientset.NewFakeClientset()
-			manager := NewMetricsManager(tc.endpoint, tc.socketDir, tc.maxCollectors, clientset, false, true).(*manager)
+			manager := NewMetricsManager(tc.endpoint, tc.socketDir, tc.maxCollectors, clientset, false, tc.enableSchema).(*manager)
 
 			if manager.metricsEndpoint != tc.endpoint {
 				t.Errorf("NewMetricsManager did not set metricsEndpoint correctly. Got %q, want %q", manager.metricsEndpoint, tc.endpoint)
@@ -73,6 +76,9 @@ func TestNewMetricsManager(t *testing.T) {
 			}
 			if manager.maximumNumberOfCollectors != tc.maxCollectors {
 				t.Errorf("NewMetricsManager did not set maximumNumberOfCollectors correctly. Got %d, want %d", manager.maximumNumberOfCollectors, tc.maxCollectors)
+			}
+			if manager.enableGcsFuseVolumeMetricsSchema != tc.enableSchema {
+				t.Errorf("NewMetricsManager did not set enableGcsFuseVolumeMetricsSchema correctly. Got %v, want %v", manager.enableGcsFuseVolumeMetricsSchema, tc.enableSchema)
 			}
 			if manager.registry == nil {
 				t.Errorf("NewMetricsManager did not initialize registry")
@@ -109,7 +115,7 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 	volumeName := "test-volume-abc"
 
 	// 1. Test Registration
-	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName)
+	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, "", "")
 
 	if !mm.volumeMountPathRegistered.Has(mountPath) {
 		t.Errorf("expected mountPath %q to be registered in volumeMountPathRegistered", mountPath)
@@ -152,31 +158,6 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 	}
 }
 
-func TestMetricsCollectorGcsFuseVolumeLabels(t *testing.T) {
-	c := NewMetricsCollector("", "", "test-ns", "test-pod", "test-uid", "test-vol", map[string]string{
-		"pod_name":       "test-pod",
-		"namespace_name": "test-ns",
-		"volume_name":    "test-vol",
-		"bucket_name":    "test-bucket",
-	}, nil, false).(*metricsCollector)
-
-	expectedLabels := map[string]string{
-		"pod_name":       "test-pod",
-		"namespace_name": "test-ns",
-		"volume_name":    "test-vol",
-		"bucket_name":    "test-bucket",
-	}
-
-	for k, want := range expectedLabels {
-		if got := c.constLabels[k]; got != want {
-			t.Errorf("constLabel[%q] = %q, want %q for gke.googleapis.com/GcsFuseVolume resource target label propagation", k, got, want)
-		}
-	}
-	if val, ok := c.constLabels["pod_uid"]; ok {
-		t.Errorf("pod_uid constant label should not be present for gke.googleapis.com/GcsFuseVolume MR target, but got %q", val)
-	}
-}
-
 func TestEndToEndGcsFuseVolumeMetricsScraping(t *testing.T) {
 	fuseSocketDir, err := os.MkdirTemp("/tmp", "s")
 	if err != nil {
@@ -196,7 +177,6 @@ func TestEndToEndGcsFuseVolumeMetricsScraping(t *testing.T) {
 		t.Fatalf("failed to create socketBasePath: %v", err)
 	}
 
-	// 1. Create a Unix domain socket server simulating sidecar_mounter metrics.sock endpoint
 	socketPath := filepath.Join(socketBasePath, SocketName)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -223,75 +203,164 @@ gcs_request_count{gcs_method="StatObject"} 12
 	}()
 	defer server.Close()
 
-	// 2. Initialize fake clientset with running pod and JobSet label
-	fakeClientset := clientset.NewFakeClientset()
-	podNamespace := "test-namespace"
-	podName := "test-pod-name"
-	jobsetName := "test-jobset-name"
-	fakeClientset.CreatePod(clientset.FakePodConfig{
-		Name:      podName,
-		Namespace: podNamespace,
-		UID:       types.UID(podUID),
-		PodStatus: &corev1.PodStatus{
-			Phase: corev1.PodRunning,
+	isController := true
+
+	testCases := []struct {
+		name                 string
+		enableSchema         bool
+		pod                  *corev1.Pod
+		expectedLabels       map[string]string
+		forbiddenLabelKeys   []string
+	}{
+		{
+			name:         "schema enabled with JobSet pod",
+			enableSchema: true,
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod-name",
+					Namespace: "test-namespace",
+					UID:       types.UID(podUID),
+					Labels: map[string]string{
+						"jobset.sigs.k8s.io/jobset-name": "test-jobset-name",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			},
+			expectedLabels: map[string]string{
+				"pod_name":            "test-pod-name",
+				"namespace_name":       "test-namespace",
+				"volume_name":          volumeName,
+				"bucket_name":          "test-bucket-name",
+				"k8s_controller_type": "jobset",
+				"k8s_controller_name": "test-jobset-name",
+			},
+			forbiddenLabelKeys: []string{"pod_uid"},
 		},
-		Labels: map[string]string{
-			"jobset.sigs.k8s.io/jobset-name": jobsetName,
+		{
+			name:         "schema enabled with StatefulSet owner reference pod",
+			enableSchema: true,
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ss-0",
+					Namespace: "test-namespace",
+					UID:       types.UID(podUID),
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "StatefulSet",
+							Name:       "test-ss-name",
+							Controller: &isController,
+						},
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			},
+			expectedLabels: map[string]string{
+				"pod_name":            "test-pod-name",
+				"namespace_name":       "test-namespace",
+				"volume_name":          volumeName,
+				"bucket_name":          "test-bucket-name",
+				"k8s_controller_type": "statefulset",
+				"k8s_controller_name": "test-ss-name",
+			},
+			forbiddenLabelKeys: []string{"pod_uid"},
 		},
-	})
-
-	// 3. Initialize metrics manager and register collector
-	mm := NewMetricsManager(":9920", fuseSocketDir, 5, fakeClientset, false, true).(*manager)
-	mountPath := "/mnt/test-volume"
-	bucketName := "test-bucket-name"
-	nodeName := "test-node-name"
-
-	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName)
-
-	// 4. Gather metrics from the registry
-	metricFamilies, err := mm.registry.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
+		{
+			name:         "schema enabled with standalone pod (no controller info)",
+			enableSchema: true,
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "standalone-pod",
+					Namespace: "test-namespace",
+					UID:       types.UID(podUID),
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			},
+			expectedLabels: map[string]string{
+				"pod_name":            "test-pod-name",
+				"namespace_name":       "test-namespace",
+				"volume_name":          volumeName,
+				"bucket_name":          "test-bucket-name",
+				"k8s_controller_type": "",
+				"k8s_controller_name": "",
+			},
+			forbiddenLabelKeys: []string{"pod_uid"},
+		},
+		{
+			name:         "schema disabled (legacy schema)",
+			enableSchema: false,
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod-name",
+					Namespace: "test-namespace",
+					UID:       types.UID(podUID),
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			},
+			expectedLabels: map[string]string{
+				"pod_uid":     podUID,
+				"volume_name": volumeName,
+			},
+			forbiddenLabelKeys: []string{"pod_name", "namespace_name", "bucket_name", "k8s_controller_type", "k8s_controller_name"},
+		},
 	}
 
-	if len(metricFamilies) == 0 {
-		t.Fatalf("expected gathered metric families, got 0")
-	}
-
-	// 5. Assert that every metric family includes the gke.googleapis.com/GcsFuseVolume resource target constant labels and NO pod_uid label
-	expectedConstLabels := map[string]string{
-		"pod_name":            podName,
-		"namespace_name":       podNamespace,
-		"volume_name":          volumeName,
-		"bucket_name":          bucketName,
-		"k8s_controller_type": "jobset",
-		"k8s_controller_name": jobsetName,
-	}
-
-	foundMetrics := 0
-	for _, mf := range metricFamilies {
-		for _, m := range mf.GetMetric() {
-			foundMetrics++
-			labelsMap := make(map[string]string)
-			for _, lp := range m.GetLabel() {
-				labelsMap[lp.GetName()] = lp.GetValue()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClientset := clientset.NewFakeClientset()
+			if tc.pod != nil {
+				fakeClientset.CreatePod(clientset.FakePodConfig{
+					Name:            tc.pod.Name,
+					Namespace:       tc.pod.Namespace,
+					UID:             tc.pod.UID,
+					Labels:          tc.pod.Labels,
+					OwnerReferences: tc.pod.OwnerReferences,
+					PodStatus:       &tc.pod.Status,
+				})
 			}
-			for wantKey, wantVal := range expectedConstLabels {
-				gotVal, ok := labelsMap[wantKey]
-				if !ok {
-					t.Errorf("metric %s missing expected label %q", mf.GetName(), wantKey)
-				} else if gotVal != wantVal {
-					t.Errorf("metric %s label %q = %q, want %q", mf.GetName(), wantKey, gotVal, wantVal)
+
+			mm := NewMetricsManager(":9920", fuseSocketDir, 5, fakeClientset, false, tc.enableSchema).(*manager)
+			mountPath := "/mnt/test-volume"
+			bucketName := "test-bucket-name"
+			nodeName := "test-node-name"
+
+			controllerType, controllerName := ExtractK8sController(tc.pod)
+			mm.RegisterMetricsCollector(mountPath, "test-namespace", "test-pod-name", bucketName, nodeName, emptyDirBasePath, podUID, volumeName, controllerType, controllerName)
+
+			metricFamilies, err := mm.registry.Gather()
+			if err != nil {
+				t.Fatalf("failed to gather metrics: %v", err)
+			}
+			if len(metricFamilies) == 0 {
+				t.Fatalf("expected gathered metric families, got 0")
+			}
+
+			foundMetrics := 0
+			for _, mf := range metricFamilies {
+				for _, m := range mf.GetMetric() {
+					foundMetrics++
+					labelsMap := make(map[string]string)
+					for _, lp := range m.GetLabel() {
+						labelsMap[lp.GetName()] = lp.GetValue()
+					}
+					for wantKey, wantVal := range tc.expectedLabels {
+						gotVal, ok := labelsMap[wantKey]
+						if !ok {
+							t.Errorf("metric %s missing expected label %q", mf.GetName(), wantKey)
+						} else if gotVal != wantVal {
+							t.Errorf("metric %s label %q = %q, want %q", mf.GetName(), wantKey, gotVal, wantVal)
+						}
+					}
+					for _, forbiddenKey := range tc.forbiddenLabelKeys {
+						if val, ok := labelsMap[forbiddenKey]; ok {
+							t.Errorf("metric %s should not have label %q, but got %q", mf.GetName(), forbiddenKey, val)
+						}
+					}
 				}
 			}
-			if val, ok := labelsMap["pod_uid"]; ok {
-				t.Errorf("metric %s should not have label pod_uid, but got %q", mf.GetName(), val)
+			if foundMetrics == 0 {
+				t.Errorf("expected to find metrics, got 0")
 			}
-		}
-	}
-
-	if foundMetrics == 0 {
-		t.Errorf("expected to find metrics with populated gke.googleapis.com/GcsFuseVolume labels, got 0")
+		})
 	}
 }
 
@@ -378,9 +447,9 @@ func TestExtractK8sController(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotType, gotName := extractK8sController(tc.pod)
+			gotType, gotName := ExtractK8sController(tc.pod)
 			if gotType != tc.expectedType || gotName != tc.expectedName {
-				t.Errorf("extractK8sController() = (%q, %q), want (%q, %q)", gotType, gotName, tc.expectedType, tc.expectedName)
+				t.Errorf("ExtractK8sController() = (%q, %q), want (%q, %q)", gotType, gotName, tc.expectedType, tc.expectedName)
 			}
 		})
 	}
@@ -399,7 +468,7 @@ func TestRegisterMetricsCollector_FlagDisabled(t *testing.T) {
 	volumeName := "test-vol-abc"
 	emptyDir := t.TempDir()
 
-	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDir, podUID, volumeName)
+	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDir, podUID, volumeName, "", "")
 
 	if !mm.volumeMountPathRegistered.Has(mountPath) {
 		t.Fatalf("expected mountPath %q to be registered when feature flag is disabled", mountPath)

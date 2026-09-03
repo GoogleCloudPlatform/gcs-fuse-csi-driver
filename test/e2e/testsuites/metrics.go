@@ -288,7 +288,18 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 		for _, metricName := range metricsToVerify {
-			metricsList := getMetrics(families[metricName])
+			metricFamily := families[metricName]
+			if metricFamily == nil {
+				switch metricName {
+				case "fs_ops_duration_seconds":
+					metricFamily = families["fs_ops_latency"]
+				case "gcs_request_duration_seconds":
+					metricFamily = families["gcs_request_latencies"]
+				case "file_cache_read_duration_seconds":
+					metricFamily = families["file_cache_read_latencies"]
+				}
+			}
+			metricsList := getMetrics(metricFamily)
 			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 
 			// Skip the gcs_reader_count validation if Zonal Bucket is enabled.
