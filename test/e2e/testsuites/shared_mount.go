@@ -20,6 +20,7 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"local/test/e2e/specs"
@@ -648,5 +649,118 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		testFilePath := fmt.Sprintf("%s/test-profiler-disabled.txt", sharedMountPath)
 		testContent := "hello from shared mount cloud profiler disabled test"
 		workloadPod.VerifyWriteAndReadFile(f, testFilePath, testContent)
+	})
+
+	// TC: In-Place Pod Restart with Shared Mount Test
+	// Create a PV with sharedMount: true, a PodTemplate, and a PVC referencing the template.
+	// Deploy a workload pod referencing the PVC, configured with container restartPolicyRules:
+	//   restartPolicyRules:
+	//     - action: RestartAllContainers
+	//       exitCodes:
+	//         operator: In
+	//         values:
+	//           - 88
+	// Workload container performs constant I/O (appending heartbeats to the shared mount every 2s).
+	// Confirm that both the workload pod and the external Mounter Pod are created and running (0 restarts).
+	// Trigger an in-place container restart by having the container exit with code 88.
+	// Verify that Kubelet restarts the workload container in-place (restart count increments to 1) while the Mounter Pod remains untouched with 0 restarts.
+	// Verify that the restarted container automatically resumes constant I/O to the shared mount without errors.
+	ginkgo.It("[shared-mount] should verify in-place container restart within workload pod preserves shared mount", func() {
+		init(1)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		sharedVR := l.volumeResourceList[0]
+
+		mountPath := "/data/gcs"
+		heartbeatFile := fmt.Sprintf("%s/heartbeat.txt", mountPath)
+
+		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount PVC with container restartPolicyRules and constant I/O")
+		// Deploy the workload pod directly instead of using setupAndDeploySharedMountPod because NewTestPod
+		// defaults to 'tail -f /dev/null' as PID 1, which ignores SIGTERM. We run a constant I/O heartbeat loop
+		// with a trap on signal 15 (SIGTERM) to exit with code 88 and trigger RestartAllContainers.
+		workloadPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		workloadPod.InplacePodRestart()
+		workloadPod.SetupVolume(sharedVR, sharedVolName, mountPath, false /* readOnly */)
+		workloadPod.SetCommand(fmt.Sprintf("trap 'exit 88' 15; while true; do echo \"$(date) - heartbeat\" >> %s; sleep 2; done", heartbeatFile))
+		workloadPod.Create(ctx)
+		defer workloadPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the workload pod to be running")
+		workloadPod.WaitForRunning(ctx)
+		workloadPod.VerifySidecarPresence(false /* expectPresent */)
+
+		nodeName := workloadPod.GetNode()
+
+		ginkgo.By("Confirming both the workload pod and the external Mounter Pod are created and running with 0 restarts")
+		verifyMounterPodNoRestarts := func(pod *corev1.Pod) {
+			gomega.Expect(pod.Status.ContainerStatuses).ToNot(gomega.BeEmpty(), "expected mounter pod to have container statuses")
+			for _, cs := range pod.Status.ContainerStatuses {
+				gomega.Expect(cs.RestartCount).To(gomega.Equal(int32(0)), fmt.Sprintf("expected mounter pod container %q to have 0 restarts, got %d", cs.Name, cs.RestartCount))
+				gomega.Expect(cs.State.Running).ToNot(gomega.BeNil(), fmt.Sprintf("expected mounter pod container %q to be running", cs.Name))
+			}
+		}
+
+		initialMounterPod := specs.GetMounterPod(ctx, f.ClientSet, f.Namespace.Name, nodeName)
+		verifyMounterPodNoRestarts(initialMounterPod)
+		initialWorkloadUID := workloadPod.GetUID()
+		workloadPod.WaitForContainerRestart(ctx, specs.TesterContainerName, 0)
+
+		ginkgo.By("Verifying initial constant I/O: recording pre-restart heartbeat state")
+		workloadPod.VerifyRWMount(f, mountPath)
+		var preRestartCount int
+		var preRestartLastLine string
+		// Commands return 0 if file is missing to let Eventually retry instead of failing immediately.
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			output := workloadPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("[ -f %s ] && wc -l < %s || echo 0", heartbeatFile, heartbeatFile))
+			count, err := strconv.Atoi(strings.TrimSpace(output))
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(count).To(gomega.BeNumerically(">", 0), "expected at least one heartbeat written before restart")
+			preRestartCount = count
+
+			lastLine := workloadPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("[ -f %s ] && tail -n 1 %s || true", heartbeatFile, heartbeatFile))
+			preRestartLastLine = strings.TrimSpace(lastLine)
+			g.Expect(preRestartLastLine).ToNot(gomega.BeEmpty(), "expected non-empty last heartbeat line")
+		}, "30s", "2s").Should(gomega.Succeed())
+
+		ginkgo.By("Triggering container exit with code 88 to activate RestartAllContainers restartPolicyRule")
+		workloadPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, "(sleep 1 && kill -15 1) &")
+
+		ginkgo.By("Verifying Kubelet restarts the workload container in-place (restart count increments to 1)")
+		workloadPod.WaitForContainerRestart(ctx, specs.TesterContainerName, 1)
+
+		ginkgo.By("Verifying workload pod identity is preserved (in-place restart, not pod recreation)")
+		gomega.Expect(workloadPod.GetUID()).To(gomega.Equal(initialWorkloadUID), "expected workload pod UID to be preserved across container restart")
+		gomega.Expect(workloadPod.GetNode()).To(gomega.Equal(nodeName), "expected workload pod to remain on the same node")
+
+		ginkgo.By("Verifying the external Mounter Pod remains untouched with 0 restarts")
+		updatedMounterPod := specs.GetMounterPod(ctx, f.ClientSet, f.Namespace.Name, nodeName)
+		gomega.Expect(updatedMounterPod.UID).To(gomega.Equal(initialMounterPod.UID), "expected mounter pod UID to be unchanged")
+		verifyMounterPodNoRestarts(updatedMounterPod)
+
+		ginkgo.By("Verifying the restarted container preserved pre-restart data and kept writing new heartbeats without error")
+		workloadPod.VerifyRWMount(f, mountPath)
+		// Verify pre-restart data persists on the shared mount.
+		workloadPod.VerifyReadFile(f, heartbeatFile, preRestartLastLine)
+
+		// Verify the restarted container kept writing new heartbeats (count increased beyond pre-restart count).
+		// Command returns 0 if file is missing to let Eventually retry instead of failing immediately.
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			output := workloadPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("[ -f %s ] && wc -l < %s || echo 0", heartbeatFile, heartbeatFile))
+			count, err := strconv.Atoi(strings.TrimSpace(output))
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(count).To(gomega.BeNumerically(">", preRestartCount),
+				fmt.Sprintf("expected heartbeat count (%d) to increase beyond pre-restart count (%d)", count, preRestartCount))
+		}, "30s", "2s").Should(gomega.Succeed())
+
+		ginkgo.By("Verifying that no errors occurred during container I/O operations")
+		logs, err := e2epod.GetPodLogs(ctx, f.ClientSet, f.Namespace.Name, workloadPod.GetPodName(), specs.TesterContainerName)
+		framework.ExpectNoError(err, "failed to get workload container logs")
+		gomega.Expect(strings.ToLower(logs)).NotTo(gomega.ContainSubstring("error"), "expected no errors in workload container logs")
+
+		postRestartFile := fmt.Sprintf("%s/post-restart-verify.txt", mountPath)
+		postRestartContent := "verified write and read after in-place restart without error"
+		workloadPod.VerifyWriteAndReadFile(f, postRestartFile, postRestartContent)
 	})
 }

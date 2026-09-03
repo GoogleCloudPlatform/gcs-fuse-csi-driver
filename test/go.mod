@@ -6,6 +6,9 @@ replace github.com/googlecloudplatform/gcs-fuse-csi-driver => ../
 
 replace (
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0
+	// TODO(k8s-1.35): When upgrading k8s.io/api and k8s.io/client-go to >= v0.35.0 (Kubernetes 1.35+):
+	// Update TestPod.Create in test/e2e/specs/specs.go to use typed Container.RestartPolicyRules
+	// instead of raw JSON injection.
 	k8s.io/api => k8s.io/api v0.33.3
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.33.3
 	k8s.io/apimachinery => k8s.io/apimachinery v0.33.3
