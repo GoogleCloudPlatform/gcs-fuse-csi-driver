@@ -187,11 +187,11 @@ func TestEndToEndGcsFuseVolumeMetricsScraping(t *testing.T) {
 	metricsData := `# HELP fs_ops_count The cumulative number of ops processed.
 # TYPE fs_ops_count counter
 fs_ops_count{fs_op="Read"} 42
-# HELP fs_ops_duration_seconds The cumulative distribution of file system operation latencies.
-# TYPE fs_ops_duration_seconds histogram
-fs_ops_duration_seconds_bucket{fs_op="Read",le="100"} 5
-fs_ops_duration_seconds_sum{fs_op="Read"} 250
-fs_ops_duration_seconds_count{fs_op="Read"} 5
+# HELP fs_ops_duration_microseconds The cumulative distribution of file system operation latencies.
+# TYPE fs_ops_duration_microseconds histogram
+fs_ops_duration_microseconds_bucket{fs_op="Read",le="100"} 5
+fs_ops_duration_microseconds_sum{fs_op="Read"} 250
+fs_ops_duration_microseconds_count{fs_op="Read"} 5
 `
 
 	server := &http.Server{
@@ -373,8 +373,8 @@ fs_ops_duration_seconds_count{fs_op="Read"} 5
 			}
 
 			if tc.enableSchema {
-				if !hasMetric("fs_ops_duration_seconds") {
-					t.Errorf("expected metric fs_ops_duration_seconds when schema is enabled, but it was missing")
+				if !hasMetric("fs_ops_duration_microseconds") {
+					t.Errorf("expected metric fs_ops_duration_microseconds when schema is enabled, but it was missing")
 				}
 				if hasMetric("fs_ops_latency") {
 					t.Errorf("unexpected legacy metric fs_ops_latency when schema is enabled")
@@ -383,8 +383,8 @@ fs_ops_duration_seconds_count{fs_op="Read"} 5
 				if !hasMetric("fs_ops_latency") {
 					t.Errorf("expected legacy metric fs_ops_latency when schema is disabled, but it was missing")
 				}
-				if hasMetric("fs_ops_duration_seconds") {
-					t.Errorf("unexpected OTEL metric fs_ops_duration_seconds when schema is disabled")
+				if hasMetric("fs_ops_duration_microseconds") {
+					t.Errorf("unexpected OTEL metric fs_ops_duration_microseconds when schema is disabled")
 				}
 			}
 		})

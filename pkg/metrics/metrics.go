@@ -334,26 +334,26 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 	if !c.enableGcsFuseVolumeMetricsSchema {
 		// Map OTEL compliant names back to legacy metric names when feature flag is disabled
 		switch name {
-		case "fs_ops_duration_seconds", "fs/ops_duration_seconds":
+		case "fs_ops_duration_microseconds", "fs/ops_duration_microseconds", "fs_ops_duration_seconds", "fs/ops_duration_seconds":
 			name = "fs_ops_latency"
-		case "gcs_request_duration_seconds", "gcs/request_duration_seconds":
+		case "gcs_request_duration_milliseconds", "gcs/request_duration_milliseconds", "gcs_request_duration_seconds", "gcs/request_duration_seconds":
 			name = "gcs_request_latencies"
-		case "file_cache_read_duration_seconds", "file_cache/read_duration_seconds":
+		case "file_cache_read_duration_microseconds", "file_cache/read_duration_microseconds", "file_cache_read_duration_seconds", "file_cache/read_duration_seconds":
 			name = "file_cache_read_latencies"
-		case "buffered_read_read_duration_seconds", "buffered_read/read_duration_seconds":
+		case "buffered_read_read_duration_microseconds", "buffered_read/read_duration_microseconds", "buffered_read_read_duration_seconds", "buffered_read/read_duration_seconds":
 			name = "buffered_read_read_latency"
 		}
 	} else {
-		// Map legacy metric names to OTEL compliant names when feature flag is enabled
+		// Map legacy metric names to OTEL compliant names matching actual units when feature flag is enabled
 		switch name {
 		case "fs_ops_latency", "fs/ops_latency":
-			name = "fs_ops_duration_seconds"
+			name = "fs_ops_duration_microseconds"
 		case "gcs_request_latencies", "gcs/request_latencies":
-			name = "gcs_request_duration_seconds"
+			name = "gcs_request_duration_milliseconds"
 		case "file_cache_read_latencies", "file_cache/read_latencies":
-			name = "file_cache_read_duration_seconds"
+			name = "file_cache_read_duration_microseconds"
 		case "buffered_read_read_latency", "buffered_read/read_latency":
-			name = "buffered_read_read_duration_seconds"
+			name = "buffered_read_read_duration_microseconds"
 		}
 	}
 

@@ -44,15 +44,15 @@ import (
 var expectedMetricNames = []string{
 	"fs_ops_count",
 	"fs_ops_error_count",
-	"fs_ops_duration_seconds",
+	"fs_ops_duration_microseconds",
 	"gcs_download_bytes_count",
 	"gcs_read_count",
 	"gcs_read_bytes_count",
 	"gcs_reader_count",
-	"gcs_request_duration_seconds",
+	"gcs_request_duration_milliseconds",
 	"file_cache_read_count",
 	"file_cache_read_bytes_count",
-	"file_cache_read_duration_seconds",
+	"file_cache_read_duration_microseconds",
 }
 
 const (
@@ -291,11 +291,11 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			metricFamily := families[metricName]
 			if metricFamily == nil {
 				switch metricName {
-				case "fs_ops_duration_seconds":
+				case "fs_ops_duration_microseconds", "fs_ops_duration_seconds":
 					metricFamily = families["fs_ops_latency"]
-				case "gcs_request_duration_seconds":
+				case "gcs_request_duration_milliseconds", "gcs_request_duration_seconds":
 					metricFamily = families["gcs_request_latencies"]
-				case "file_cache_read_duration_seconds":
+				case "file_cache_read_duration_microseconds", "file_cache_read_duration_seconds":
 					metricFamily = families["file_cache_read_latencies"]
 				}
 			}
