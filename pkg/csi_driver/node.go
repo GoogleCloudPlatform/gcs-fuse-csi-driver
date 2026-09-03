@@ -28,6 +28,7 @@ import (
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -47,12 +48,12 @@ import (
 )
 
 const (
-	UmountTimeout = time.Second * 5
+	maxGCSFuseVolumesForMetrics         = 10
+	UmountTimeout                       = time.Second * 5
 	// GCSFuseKernelParamsFilePollInterval is the interval at which the GCSFuse kernel
 	// parameters file is polled and any changes to kernel parameter files are applied.
 	GCSFuseKernelParamsFilePollInterval = time.Second * 5
 	FuseMountType                       = "fuse"
-	maxGCSFuseVolumesForMetrics         = 10
 	unmountRetryInterval                = 100 * time.Millisecond
 	unmountRetryBackoffFactor           = 2.0
 	unmountRetryJitter                  = 0.1
@@ -248,8 +249,9 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirPath, mounterPodUID, volumeName, mounterPodImage, args.bucketName, vs)
 
 		if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
+			mounterControllerType, mounterControllerName := metrics.ExtractK8sController(mounterPod)
 			klog.V(4).Infof("NodePublishVolume enabling metrics collector for staging path %q", stagingPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(stagingPath, mounterPodNamespace, mounterPodName, args.bucketName, s.driver.config.NodeID, emptyDirPath, mounterPodUID, volumeName)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(stagingPath, mounterPodNamespace, mounterPodName, args.bucketName, s.driver.config.NodeID, emptyDirPath, mounterPodUID, volumeName, mounterControllerType, mounterControllerName)
 		}
 		return
 	}
@@ -444,15 +446,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		klog.Warningf("Failed to prepare empty dir from target path %q: %v.", targetPath, err)
 	}
 	if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
-		gcsFuseVolumeCount, err := s.countGcsFuseVolumes(pod)
+		schemaEnabled := s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema
+		volumeCount, _ := s.countGcsFuseVolumes(pod)
 
-		if err != nil {
-			klog.Errorf("Metrics collection is disabled for Pod %s/%s as counting the number of GCS FUSE volumes failed with error: %v", pod.Namespace, pod.Name, err)
-		} else if gcsFuseVolumeCount > maxGCSFuseVolumesForMetrics {
-			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, gcsFuseVolumeCount, maxGCSFuseVolumesForMetrics)
+		if !schemaEnabled && volumeCount > maxGCSFuseVolumesForMetrics {
+			klog.Warningf("Metrics collection is disabled for Pod %s/%s as the number of GCS FUSE volumes is %d, which is greater than the limit of %d.", pod.Namespace, pod.Name, volumeCount, maxGCSFuseVolumesForMetrics)
 		} else if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
+			controllerType, controllerName := metrics.ExtractK8sController(pod)
 			klog.V(4).Infof("NodePublishVolume enabling metrics collector for target path %q", targetPath)
-			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, emptyDirBasePath, podUID, volumeName)
+			s.driver.config.MetricsManager.RegisterMetricsCollector(targetPath, pod.Namespace, pod.Name, args.bucketName, s.driver.config.NodeID, emptyDirBasePath, podUID, volumeName, controllerType, controllerName)
 		}
 	}
 
@@ -1357,3 +1359,4 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 
 	return nil
 }
+

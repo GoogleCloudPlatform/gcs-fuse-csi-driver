@@ -44,15 +44,15 @@ import (
 var expectedMetricNames = []string{
 	"fs_ops_count",
 	"fs_ops_error_count",
-	"fs_ops_latency",
+	"fs_ops_duration_microseconds",
 	"gcs_download_bytes_count",
 	"gcs_read_count",
 	"gcs_read_bytes_count",
 	"gcs_reader_count",
-	"gcs_request_latencies",
+	"gcs_request_duration_milliseconds",
 	"file_cache_read_count",
 	"file_cache_read_bytes_count",
-	"file_cache_read_latencies",
+	"file_cache_read_duration_microseconds",
 }
 
 const (
@@ -288,7 +288,18 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 		for _, metricName := range metricsToVerify {
-			metricsList := getMetrics(families[metricName])
+			metricFamily := families[metricName]
+			if metricFamily == nil {
+				switch metricName {
+				case "fs_ops_duration_microseconds", "fs_ops_duration_seconds":
+					metricFamily = families["fs_ops_latency"]
+				case "gcs_request_duration_milliseconds", "gcs_request_duration_seconds":
+					metricFamily = families["gcs_request_latencies"]
+				case "file_cache_read_duration_microseconds", "file_cache_read_duration_seconds":
+					metricFamily = families["file_cache_read_latencies"]
+				}
+			}
+			metricsList := getMetrics(metricFamily)
 			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 
 			// Skip the gcs_reader_count validation if Zonal Bucket is enabled.
