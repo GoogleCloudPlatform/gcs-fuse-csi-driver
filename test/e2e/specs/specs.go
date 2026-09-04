@@ -20,6 +20,7 @@ package specs
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -37,11 +38,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -230,9 +233,10 @@ func GetMounterPod(ctx context.Context, c clientset.Interface, namespace string,
 }
 
 type TestPod struct {
-	client    clientset.Interface
-	pod       *corev1.Pod
-	namespace *corev1.Namespace
+	client                   clientset.Interface
+	pod                      *corev1.Pod
+	namespace                *corev1.Namespace
+	inplacePodRestartEnabled bool
 }
 
 func NewTestPodModifiedSpec(c clientset.Interface, ns *corev1.Namespace, setAutomountServiceAccountToken bool) *TestPod {
@@ -304,11 +308,75 @@ func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 	}
 }
 
+// InplacePodRestart enables the Kubernetes 1.35+ in-place pod restart feature (RestartAllContainers on exit code 88).
+func (t *TestPod) InplacePodRestart() {
+	framework.Logf("Enabling in-place pod restart (RestartAllContainers)")
+	t.inplacePodRestartEnabled = true
+}
+
 func (t *TestPod) Create(ctx context.Context) {
 	framework.Logf("Creating Pod %s", t.pod.Name)
-	var err error
-	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
-	framework.ExpectNoError(err)
+	if !t.inplacePodRestartEnabled {
+		var err error
+		t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		return
+	}
+
+	// TODO(k8s-1.35): When k8s.io/api and client-go in test/go.mod are upgraded to >= v0.35.0,
+	// replace this raw JSON injection with typed corev1.Container.RestartPolicyRules fields.
+	// In-place pod restart was introduced in Kubernetes 1.35+.
+	// Because this repository's vendored k8s.io/api and client-go dependencies are pinned to v0.33.3 (K8s 1.33),
+	// the typed Go structs lack Container.RestartPolicyRules and container-level RestartPolicy fields.
+	// To enable the feature without requiring a repo-wide Kubernetes dependency upgrade, we serialize the
+	// pod to a JSON map, inject restartPolicy: "Always" and restartPolicyRules directly into the containers,
+	// and submit the raw JSON payload to the API server via the RESTClient.
+	podBytes, err := json.Marshal(t.pod)
+	framework.ExpectNoError(err, "failed to marshal pod to json")
+
+	var podMap map[string]any
+	err = json.Unmarshal(podBytes, &podMap)
+	framework.ExpectNoError(err, "failed to unmarshal pod json to map")
+
+	// When creating a Pod via raw JSON using RESTClient, the API server and admission
+	// webhooks strictly require apiVersion and kind. Since NewTestPod does not populate
+	// TypeMeta, explicitly inject them here.
+	podMap["apiVersion"] = "v1"
+	podMap["kind"] = "Pod"
+
+	if spec, ok := podMap["spec"].(map[string]any); ok {
+		if containers, ok := spec["containers"].([]any); ok {
+			for _, c := range containers {
+				if containerMap, ok := c.(map[string]any); ok {
+					containerMap["restartPolicy"] = "Always"
+					containerMap["restartPolicyRules"] = []any{
+						map[string]any{
+							"action": "RestartAllContainers",
+							"exitCodes": map[string]any{
+								"operator": "In",
+								"values":   []int{88},
+							},
+						},
+					}
+				}
+			}
+		}
+	}
+
+	updatedBytes, err := json.Marshal(podMap)
+	framework.ExpectNoError(err, "failed to marshal updated pod map")
+
+	result := &corev1.Pod{}
+	err = t.client.CoreV1().RESTClient().Post().
+		Namespace(t.namespace.Name).
+		Resource("pods").
+		VersionedParams(&metav1.CreateOptions{}, scheme.ParameterCodec).
+		SetHeader("Content-Type", "application/json").
+		Body(updatedBytes).
+		Do(ctx).
+		Into(result)
+	framework.ExpectNoError(err, "failed to create pod with in-place restart rules")
+	t.pod = result
 }
 
 func (t *TestPod) CreateExpectError(ctx context.Context) {
@@ -339,6 +407,51 @@ func (t *TestPod) GetPodVols() []corev1.Volume {
 
 func (t *TestPod) GetAutoMountServiceAccountToken() bool {
 	return *t.pod.Spec.AutomountServiceAccountToken
+}
+
+func (t *TestPod) GetUID() types.UID {
+	return t.pod.UID
+}
+
+// RefreshPod fetches the latest Pod from the API server and updates t.pod.
+func (t *TestPod) RefreshPod(ctx context.Context) (*corev1.Pod, error) {
+	pod, err := t.client.CoreV1().Pods(t.namespace.Name).Get(ctx, t.pod.Name, metav1.GetOptions{})
+	if err == nil {
+		t.pod = pod
+	}
+	return pod, err
+}
+
+// GetContainerStatus returns the ContainerStatus for the specified container name from the latest pod status.
+func (t *TestPod) GetContainerStatus(ctx context.Context, containerName string) (*corev1.ContainerStatus, error) {
+	pod, err := t.RefreshPod(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name == containerName {
+			return &pod.Status.ContainerStatuses[i], nil
+		}
+	}
+	for i := range pod.Status.InitContainerStatuses {
+		if pod.Status.InitContainerStatuses[i].Name == containerName {
+			return &pod.Status.InitContainerStatuses[i], nil
+		}
+	}
+	return nil, fmt.Errorf("container %q not found in pod %s", containerName, t.pod.Name)
+}
+
+// WaitForContainerRestart waits for the container in the pod to reach expectedRestartCount and be running.
+func (t *TestPod) WaitForContainerRestart(ctx context.Context, containerName string, expectedRestartCount int32) {
+	gomega.Eventually(ctx, func(g gomega.Gomega) {
+		cs, err := t.GetContainerStatus(ctx, containerName)
+		g.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("failed to get container %q status in pod %s", containerName, t.pod.Name))
+		if err != nil || cs == nil {
+			return
+		}
+		g.Expect(cs.RestartCount).To(gomega.Equal(expectedRestartCount), fmt.Sprintf("expected container %q to have restartCount %d, got %d", containerName, expectedRestartCount, cs.RestartCount))
+		g.Expect(cs.State.Running).ToNot(gomega.BeNil(), fmt.Sprintf("expected container %q to be running", containerName))
+	}, "2m", "2s").Should(gomega.Succeed())
 }
 
 // VerifyExecInPodSucceed verifies shell cmd in target pod succeed.
