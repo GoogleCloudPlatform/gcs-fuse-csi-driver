@@ -20,15 +20,20 @@ package testsuites
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
 
+	"github.com/google/uuid"
+	metricspkg "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	dto "github.com/prometheus/client_model/go"
 	cloudprofiler "google.golang.org/api/cloudprofiler/v2"
 	"google.golang.org/api/option"
 	corev1 "k8s.io/api/core/v1"
@@ -96,6 +101,11 @@ func setupAndDeploySharedMountPod(ctx context.Context, f *framework.Framework, v
 }
 
 func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
+	gcsfuseDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	if !ok {
+		framework.Failf("This test requires a GCSFuseCSITestDriver but received a %T", driver)
+	}
+
 	type local struct {
 		config             *storageframework.PerTestConfig
 		volumeResourceList []*storageframework.VolumeResource
@@ -184,6 +194,140 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		verifyCloudProfileExists(profilerClient, util.MounterPodNamePrefix, expectedVersion)
 
 		return workloadPod, mounterPod, profilerClient, expectedVersion
+	}
+
+	performSharedMountFileOperations := func(tPod *specs.TestPod, mountPath string) {
+		testFileName := fmt.Sprintf("test-file-%s.txt", uuid.NewString())
+		filePath := fmt.Sprintf("%s/%s", mountPath, testFileName)
+		content := "data written for shared mount metrics test"
+
+		// Write and read file to generate filesystem and GCS I/O activity.
+		tPod.VerifyWriteAndReadFile(f, filePath, content)
+
+		// Touch a file.
+		touchFile := fmt.Sprintf("%s/touch-%s.txt", mountPath, uuid.NewString())
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("touch %s", touchFile))
+
+		// List the mount directory.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls -la %s", mountPath))
+
+		// Remove the touched file.
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("rm %s", touchFile))
+	}
+
+	scrapePrometheusMetrics := func(tPod *specs.TestPod, vr *storageframework.VolumeResource, mountPath string) map[string]*dto.MetricFamily {
+		csiPodIP := tPod.GetCSIDriverNodePodIP(ctx)
+		promFileName := fmt.Sprintf("metrics-%s.prom", uuid.NewString())
+		targetPath := fmt.Sprintf("%s/%s", mountPath, promFileName)
+
+		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("wget -O %s http://%s:9920/metrics", targetPath, csiPodIP))
+
+		bucketName := vr.Pv.Spec.CSI.VolumeHandle
+		reportDir := framework.TestContext.ReportDir
+		if reportDir == "" {
+			reportDir = os.TempDir()
+		}
+		promLocalDir := filepath.Join(reportDir, f.Namespace.Name)
+		err := os.MkdirAll(promLocalDir, 0o755)
+		framework.ExpectNoError(err, "failed to create temp dir for metrics")
+		promLocalPath := filepath.Join(promLocalDir, promFileName)
+
+		err = gcsfuseDriver.DownloadGCSObject(ctx, bucketName, promFileName, promLocalPath)
+		framework.ExpectNoError(err, fmt.Sprintf("failed to download %s from GCS bucket %q", promFileName, bucketName))
+		defer os.Remove(promLocalPath)
+
+		metricsFile, err := os.Open(promLocalPath)
+		framework.ExpectNoError(err, fmt.Sprintf("failed to open downloaded metrics file %q", promLocalPath))
+		defer metricsFile.Close()
+
+		families := map[string]*dto.MetricFamily{}
+		for mf, err := range metricspkg.ProcessMetricsDataAsStream(metricsFile) {
+			framework.ExpectNoError(err, "failed to process metrics data stream")
+			families[*mf.Name] = mf
+		}
+		return families
+	}
+
+	getMetricsForVolume := func(metricFamily *dto.MetricFamily, bucketName, expectedPodName, volumeName, namespace string) []*dto.Metric {
+		var metricsList []*dto.Metric
+		if metricFamily != nil {
+			for _, m := range metricFamily.GetMetric() {
+				labels := make(map[string]string, len(m.GetLabel()))
+				for _, pair := range m.GetLabel() {
+					labels[pair.GetName()] = pair.GetValue()
+				}
+
+				if labels["bucket_name"] == bucketName &&
+					labels["pod_name"] == expectedPodName &&
+					labels["volume_name"] == volumeName &&
+					labels["namespace_name"] == namespace &&
+					labels["pod_uid"] == "" {
+					metricsList = append(metricsList, m)
+				}
+			}
+		}
+		return metricsList
+	}
+
+	getMounterPodNameForVolume := func(families map[string]*dto.MetricFamily, bucketName, volumeName, namespace string) string {
+		for _, mf := range families {
+			if mf == nil {
+				continue
+			}
+			for _, m := range mf.GetMetric() {
+				labels := make(map[string]string, len(m.GetLabel()))
+				for _, pair := range m.GetLabel() {
+					labels[pair.GetName()] = pair.GetValue()
+				}
+				if labels["bucket_name"] == bucketName &&
+					labels["volume_name"] == volumeName &&
+					labels["namespace_name"] == namespace &&
+					labels["pod_name"] != "" {
+					return labels["pod_name"]
+				}
+			}
+		}
+		return ""
+	}
+
+	verifyNoMetricsForPod := func(g gomega.Gomega, families map[string]*dto.MetricFamily, forbiddenPodName string) {
+		for metricName, mf := range families {
+			if mf == nil {
+				continue
+			}
+			for _, m := range mf.GetMetric() {
+				for _, pair := range m.GetLabel() {
+					if pair.GetName() == "pod_name" {
+						g.Expect(pair.GetValue()).ToNot(gomega.Equal(forbiddenPodName), fmt.Sprintf("Found metric %q with forbidden pod_name %q: %+v", metricName, forbiddenPodName, m))
+					}
+				}
+			}
+		}
+	}
+
+	verifyVolumeMetrics := func(g gomega.Gomega, families map[string]*dto.MetricFamily, bucketName, volumeName, expectedMounterPodName, workloadPodName, namespace string) {
+		metricsFound := 0
+		for _, metricName := range expectedMetricNames {
+			if gcsfuseDriver.EnableZB && metricName == "gcs_reader_count" {
+				continue
+			}
+			mf := families[metricName]
+			if mf == nil {
+				continue
+			}
+			metricsList := getMetricsForVolume(mf, bucketName, expectedMounterPodName, volumeName, namespace)
+			if len(metricsList) > 0 {
+				metricsFound++
+			}
+		}
+		g.Expect(metricsFound).To(gomega.BeNumerically(">", 0), fmt.Sprintf("expected metrics to be found for volume %s under Mounter Pod %s", volumeName, expectedMounterPodName))
+
+		fsOpsFamily := families["fs_ops_count"]
+		g.Expect(fsOpsFamily).ToNot(gomega.BeNil(), "expected fs_ops_count metric family to be present")
+		fsOpsMetrics := getMetricsForVolume(fsOpsFamily, bucketName, expectedMounterPodName, volumeName, namespace)
+		g.Expect(fsOpsMetrics).ToNot(gomega.BeEmpty(), fmt.Sprintf("expected fs_ops_count metrics for volume %s with pod_name %s", volumeName, expectedMounterPodName))
+
+		verifyNoMetricsForPod(g, families, workloadPodName)
 	}
 
 	// TC: Sidecar and Shared Mount Coexistence Test
@@ -648,5 +792,174 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		testFilePath := fmt.Sprintf("%s/test-profiler-disabled.txt", sharedMountPath)
 		testContent := "hello from shared mount cloud profiler disabled test"
 		workloadPod.VerifyWriteAndReadFile(f, testFilePath, testContent)
+	})
+
+	// TC: Shared Mount Metrics Test - Scenario 1: Single Volume Metrics Emission
+	// 1. Create a PV/PVC with sharedMount: true.
+	// 2. Create a workload pod referencing the PVC.
+	// 3. Verify that exactly one Mounter Pod is created for the volume.
+	// 4. Exec into the workload pod and perform file operations (read, write, touch, ls, rm) on the mount path to generate activity.
+	// 5. Scrape Prometheus metrics from the CSI driver node endpoint.
+	// 6. Verify that metrics exist for the volume and that the pod_name label matches the Mounter Pod name (rather than the workload pod name).
+	ginkgo.It("[shared-mount] metrics should emit metrics for a single volume with mounter pod name label", func() {
+		init(1)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		sharedVR := l.volumeResourceList[0]
+
+		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount PVC")
+		workloadPod, mounterPod := setupAndDeploySharedMountPod(ctx, f, sharedVR)
+		defer workloadPod.Cleanup(ctx)
+
+		ginkgo.By("Performing file operations inside the workload pod to generate file activity")
+		performSharedMountFileOperations(workloadPod, sharedMountPath)
+
+		ginkgo.By("Scraping Prometheus metrics and verifying volume metrics")
+		bucketName := sharedVR.Pv.Spec.CSI.VolumeHandle
+		volumeName := sharedVR.Pv.Name
+
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			families := scrapePrometheusMetrics(workloadPod, sharedVR, sharedMountPath)
+			verifyVolumeMetrics(g, families, bucketName, volumeName, mounterPod.Name, workloadPod.GetPodName(), f.Namespace.Name)
+		}, "1m", "5s").Should(gomega.Succeed())
+	})
+
+	// TC: Shared Mount Metrics Test - Scenario 2: Multiple Volumes on Single Workload Pod
+	// 1. Create two distinct PV/PVCs with sharedMount: true.
+	// 2. Create a single workload pod referencing both PVCs.
+	// 3. Verify that exactly two separate Mounter Pods are created (one per volume).
+	// 4. Exec into the workload pod and generate file activity on both mount paths.
+	// 5. Scrape Prometheus metrics from the CSI driver node endpoint.
+	// 6. Verify that metrics are exported separately for each volume, with each set of metrics correctly labeled with its corresponding Mounter Pod name.
+	ginkgo.It("[shared-mount] metrics should emit separate metrics for multiple volumes on a single workload pod", func() {
+		init(2, specs.ForceNewBucketPrefix)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(2))
+		vr1 := l.volumeResourceList[0]
+		vr2 := l.volumeResourceList[1]
+		gomega.Expect(vr1).ToNot(gomega.BeNil())
+		gomega.Expect(vr2).ToNot(gomega.BeNil())
+
+		mountPath1 := "/mnt/shared-1"
+		mountPath2 := "/mnt/shared-2"
+
+		ginkgo.By("Configuring and deploying a single workload pod referencing both shared-mount PVCs")
+		workloadPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		workloadPod.SetupVolume(vr1, "shared-vol-1", mountPath1, false /* readOnly */)
+		workloadPod.SetupVolume(vr2, "shared-vol-2", mountPath2, false /* readOnly */)
+		workloadPod.Create(ctx)
+		defer workloadPod.Cleanup(ctx)
+
+		ginkgo.By("Waiting for the workload pod to be running")
+		workloadPod.WaitForRunning(ctx)
+		workloadPod.VerifySidecarPresence(false /* expectPresent */)
+
+		nodeName := workloadPod.GetNode()
+
+		ginkgo.By("Verifying exactly two separate Mounter Pods are created on the node")
+		mounterPods := specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 2, nodeName)
+		gomega.Expect(mounterPods.Items).To(gomega.HaveLen(2))
+
+		ginkgo.By("Generating file activity on both mount paths")
+		performSharedMountFileOperations(workloadPod, mountPath1)
+		performSharedMountFileOperations(workloadPod, mountPath2)
+
+		ginkgo.By("Scraping Prometheus metrics and verifying separate metrics for each volume")
+		bucket1 := vr1.Pv.Spec.CSI.VolumeHandle
+		bucket2 := vr2.Pv.Spec.CSI.VolumeHandle
+		volName1 := vr1.Pv.Name
+		volName2 := vr2.Pv.Name
+		createdMounterNames := []string{mounterPods.Items[0].Name, mounterPods.Items[1].Name}
+
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			families := scrapePrometheusMetrics(workloadPod, vr1, mountPath1)
+
+			mounterPodName1 := getMounterPodNameForVolume(families, bucket1, volName1, f.Namespace.Name)
+			mounterPodName2 := getMounterPodNameForVolume(families, bucket2, volName2, f.Namespace.Name)
+
+			g.Expect(mounterPodName1).ToNot(gomega.BeEmpty(), fmt.Sprintf("expected to find Mounter Pod name for volume %s", volName1))
+			g.Expect(mounterPodName2).ToNot(gomega.BeEmpty(), fmt.Sprintf("expected to find Mounter Pod name for volume %s", volName2))
+			g.Expect(mounterPodName1).ToNot(gomega.Equal(mounterPodName2), "expected distinct Mounter Pods for distinct volumes")
+
+			g.Expect(createdMounterNames).To(gomega.ContainElement(mounterPodName1))
+			g.Expect(createdMounterNames).To(gomega.ContainElement(mounterPodName2))
+
+			verifyVolumeMetrics(g, families, bucket1, volName1, mounterPodName1, workloadPod.GetPodName(), f.Namespace.Name)
+			verifyVolumeMetrics(g, families, bucket2, volName2, mounterPodName2, workloadPod.GetPodName(), f.Namespace.Name)
+		}, "1m", "5s").Should(gomega.Succeed())
+	})
+
+	// TC: Shared Mount Metrics Test - Scenario 3: Multiple Workload Pods Sharing the Same Volume
+	// 1. Create a PV/PVC with sharedMount: true.
+	// 2. Create two workload pods (Pod A and Pod B) on the same node referencing the same PVC.
+	// 3. Verify that exactly one shared Mounter Pod is created for the volume.
+	// 4. Exec into both Pod A and Pod B to write data and perform file operations on their respective mount paths.
+	// 5. Scrape Prometheus metrics from the CSI driver node endpoint.
+	// 6. Verify that metrics for the volume are collected under the shared Mounter Pod name and reflect the aggregated operations performed by both workload pods.
+	ginkgo.It("[shared-mount] metrics should collect aggregated metrics under shared mounter pod for multiple workload pods", func() {
+		init(1)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		sharedVR := l.volumeResourceList[0]
+
+		ginkgo.By("Configuring and deploying workload Pod A referencing the shared-mount PVC")
+		podA, mounterPod := setupAndDeploySharedMountPod(ctx, f, sharedVR)
+		defer podA.Cleanup(ctx)
+		nodeName := podA.GetNode()
+
+		ginkgo.By("Configuring and deploying workload Pod B on the same node referencing the same PVC")
+		podB := specs.NewTestPod(f.ClientSet, f.Namespace)
+		podB.SetupVolume(sharedVR, sharedVolName, sharedMountPath, false /* readOnly */)
+		podB.SetNodeAffinity(nodeName, true /* sameNode */)
+		podB.Create(ctx)
+		defer podB.Cleanup(ctx)
+
+		ginkgo.By("Waiting for workload Pod B to be running on the same node")
+		podB.WaitForRunning(ctx)
+		podB.VerifySidecarPresence(false /* expectPresent */)
+		gomega.Expect(podB.GetNode()).To(gomega.Equal(nodeName), "expected Pod B to be scheduled on the same node as Pod A")
+
+		ginkgo.By("Verifying exactly one shared Mounter Pod is created for the volume")
+		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
+
+		ginkgo.By("Performing file operations from Pod A")
+		podAFile := fmt.Sprintf("%s/file-from-pod-a.txt", sharedMountPath)
+		podA.VerifyWriteAndReadFile(f, podAFile, "data from workload pod A")
+		performSharedMountFileOperations(podA, sharedMountPath)
+
+		ginkgo.By("Performing file operations from Pod B")
+		podBFile := fmt.Sprintf("%s/file-from-pod-b.txt", sharedMountPath)
+		podB.VerifyWriteAndReadFile(f, podBFile, "data from workload pod B")
+		podB.VerifyReadFile(f, podAFile, "data from workload pod A")
+		performSharedMountFileOperations(podB, sharedMountPath)
+
+		ginkgo.By("Scraping Prometheus metrics and verifying aggregated operations under shared mounter pod")
+		bucketName := sharedVR.Pv.Spec.CSI.VolumeHandle
+		volumeName := sharedVR.Pv.Name
+
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			families := scrapePrometheusMetrics(podA, sharedVR, sharedMountPath)
+
+			verifyVolumeMetrics(g, families, bucketName, volumeName, mounterPod.Name, podA.GetPodName(), f.Namespace.Name)
+			verifyNoMetricsForPod(g, families, podB.GetPodName())
+
+			fsOpsFamily := families["fs_ops_count"]
+			g.Expect(fsOpsFamily).ToNot(gomega.BeNil(), "expected fs_ops_count metric family")
+			metricsList := getMetricsForVolume(fsOpsFamily, bucketName, mounterPod.Name, volumeName, f.Namespace.Name)
+			g.Expect(metricsList).ToNot(gomega.BeEmpty(), "expected fs_ops_count metrics for shared mounter pod")
+
+			var totalFsOps uint64
+			for _, m := range metricsList {
+				if m.Counter != nil {
+					totalFsOps += uint64(m.Counter.GetValue())
+				}
+			}
+			g.Expect(totalFsOps).To(gomega.BeNumerically(">", 10), "expected aggregated fs_ops_count to reflect operations from both pods")
+		}, "1m", "5s").Should(gomega.Succeed())
 	})
 }
