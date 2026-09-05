@@ -118,15 +118,34 @@ make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=false E2E_TEST_BUILD_DRIVER=true \
 # Run the test with customized Ginkgo flags.
 make e2e-test E2E_TEST_FOCUS=gcsfuseIntegration E2E_TEST_SKIP=failedMount E2E_TEST_GINKGO_PROCS=3 E2E_TEST_GINKGO_TIMEOUT=20m E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
 
-# Boskos Debugging: Test Boskos leasing and cluster lifecycle management locally.
-# This requires a Boskos server running in your current cluster context (e.g. port-forwarded to localhost:8080).
+# You can optionally create and tear down a GKE cluster through E2E_TEST_MANAGE_CLUSTER_LIFECYCLE; whether the GCS Fuse CSI driver is enabled in the cluster is controlled by E2E_TEST_USE_GKE_MANAGED_DRIVER. Refer to Managed Cluster Configuration for more details.
+
+# Fixed Project Automation (Non-Managed Driver): Automatically provision and tear down a GKE cluster in a specific GCP project, and install the driver from source.
+make e2e-test \
+  E2E_TEST_USE_GKE_MANAGED_DRIVER=false \
+  REGISTRY=us-central1-docker.pkg.dev/$PROJECT_ID/gcs-fuse-csi-driver \
+  STAGINGVERSION=prow-gob-internal-boskos-1 \
+  E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true \
+  E2E_TEST_PROJECT_ID=$PROJECT_ID
+
+# Fixed Project Automation (Managed Driver): Automatically provision and tear down a GKE cluster in a specific GCP project, using the GKE-managed driver.
+# You can optionally specify a cluster version using E2E_TEST_GKE_CLUSTER_VERSION (defaults to 'latest').
+make e2e-test \
+  E2E_TEST_USE_GKE_MANAGED_DRIVER=true \
+  E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true \
+  E2E_TEST_PROJECT_ID=$PROJECT_ID \
+  E2E_TEST_GKE_CLUSTER_VERSION=1.36
+
+# To debug boskos infrastructure locally, you can use E2E_TEST_USE_BOSKOS=true which would try to lease a project from boskos pool. But this is to be used only for debugging boskos infrastructure. It needs a running boskos server and is currently access restricted to the repo owners. Refer internal test-infra repo for more details on boskos debugging.
 export BOSKOS_URL=http://localhost:8080
 make e2e-test E2E_TEST_USE_BOSKOS=true E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true E2E_TEST_GKE_CLUSTER_VERSION=latest GKE_CLUSTER_REGION=us-central1
 ```
 
 #### Managed Cluster Configuration
 
-When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provisions a GKE cluster with the same configurations as used by the prow job. THese can be updated as needed through the below parameters:
+You can optionally create and tear down a GKE cluster through `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` (defaulted to `false`). Whether the GCS Fuse CSI driver is enabled in the cluster is controlled by `E2E_TEST_USE_GKE_MANAGED_DRIVER`.
+
+When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provisions a GKE cluster with the same configurations as used by the prow job. These can be updated as needed through the below parameters:
 - **Cluster Type**: Standard GKE Cluster (default) or Autopilot (if `E2E_TEST_USE_GKE_AUTOPILOT=true`).
 - **Release Channel**: `rapid` (can be overridden by `GKE_RELEASE_CHANNEL` environment variable).
 - **Version**: Determined by `E2E_TEST_GKE_CLUSTER_VERSION` (local) or `GKE_CLUSTER_VERSION` (CI).
