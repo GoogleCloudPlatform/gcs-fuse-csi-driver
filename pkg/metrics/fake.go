@@ -19,16 +19,31 @@ package metrics
 
 import "sync"
 
+// FakeCollectorInfo stores the metadata passed to RegisterMetricsCollector in tests.
+type FakeCollectorInfo struct {
+	PodNamespace   string
+	PodName        string
+	BucketName     string
+	NodeName       string
+	EmptyDirPath   string
+	PodUID         string
+	VolumeName     string
+	ControllerType string
+	ControllerName string
+}
+
 // FakeMetricsManager is a fake implementation of the MetricsManager interface for testing.
 type FakeMetricsManager struct {
-	collectors map[string]string
-	mu         sync.Mutex
+	collectors       map[string]string
+	collectorDetails map[string]FakeCollectorInfo
+	mu               sync.Mutex
 }
 
 // NewFakeMetricsManager returns a new FakeMetricsManager.
 func NewFakeMetricsManager() *FakeMetricsManager {
 	return &FakeMetricsManager{
-		collectors: make(map[string]string),
+		collectors:       make(map[string]string),
+		collectorDetails: make(map[string]FakeCollectorInfo),
 	}
 }
 
@@ -36,10 +51,21 @@ func NewFakeMetricsManager() *FakeMetricsManager {
 func (*FakeMetricsManager) InitializeHTTPHandler() {}
 
 // RegisterMetricsCollector records the registration of a metrics collector.
-func (f *FakeMetricsManager) RegisterMetricsCollector(mountPath, _, _, bucketName, nodeName, _, _, _ string) {
+func (f *FakeMetricsManager) RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, k8sControllerType, k8sControllerName string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.collectors[mountPath] = bucketName
+	f.collectorDetails[mountPath] = FakeCollectorInfo{
+		PodNamespace:   podNamespace,
+		PodName:        podName,
+		BucketName:     bucketName,
+		NodeName:       nodeName,
+		EmptyDirPath:   emptyDirBasePath,
+		PodUID:         podUID,
+		VolumeName:     volumeName,
+		ControllerType: k8sControllerType,
+		ControllerName: k8sControllerName,
+	}
 }
 
 // UnregisterMetricsCollector records the unregistration of a metrics collector.
@@ -47,6 +73,7 @@ func (f *FakeMetricsManager) UnregisterMetricsCollector(mountPath, nodeName, _, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.collectors, mountPath)
+	delete(f.collectorDetails, mountPath)
 }
 
 // GetCollectors returns the map of registered collectors.
@@ -61,6 +88,17 @@ func (f *FakeMetricsManager) GetCollectors() map[string]string {
 		cp[k] = v
 	}
 
+	return cp
+}
+
+// GetCollectorDetails returns the map of registered collector details.
+func (f *FakeMetricsManager) GetCollectorDetails() map[string]FakeCollectorInfo {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make(map[string]FakeCollectorInfo, len(f.collectorDetails))
+	for k, v := range f.collectorDetails {
+		cp[k] = v
+	}
 	return cp
 }
 

@@ -712,6 +712,31 @@ func (t *TestPod) GetCSIDriverNodePodIP(ctx context.Context) string {
 	return pod.Status.PodIP
 }
 
+func (t *TestPod) IsCSIDriverVolumeMetricsSchemaEnabled(ctx context.Context) bool {
+	node := t.GetNode()
+	daemonSetLabelSelector := "k8s-app=gcs-fuse-csi-driver"
+
+	pods, err := t.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + node,
+		LabelSelector: daemonSetLabelSelector,
+	})
+	framework.ExpectNoError(err)
+	gomega.Expect(pods.Items).To(gomega.HaveLen(1))
+
+	for _, container := range pods.Items[0].Spec.Containers {
+		for _, arg := range container.Args {
+			if arg == "--enable-gcsfuse-volume-metrics-schema" || arg == "--enable-gcsfuse-volume-metrics-schema=true" {
+				return true
+			}
+			if arg == "--enable-gcsfuse-volume-metrics-schema=false" {
+				return false
+			}
+		}
+	}
+
+	return os.Getenv(IsOSSEnvVar) == "true"
+}
+
 func (t *TestPod) SetNodeAffinity(nodeName string, sameNode bool) {
 	gomega.Expect(nodeName).ToNot(gomega.Equal(""))
 
