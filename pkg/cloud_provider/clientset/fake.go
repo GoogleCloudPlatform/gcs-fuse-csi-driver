@@ -20,6 +20,7 @@ package clientset
 import (
 	"context"
 	"strconv"
+	"sync"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -51,6 +52,8 @@ type FakePodConfig struct {
 	IsMounterPod       bool
 	SecurityContext    *corev1.PodSecurityContext
 	ServiceAccountName string
+	Labels             map[string]string
+	OwnerReferences    []metav1.OwnerReference
 }
 
 type FakePVConfig struct {
@@ -89,6 +92,7 @@ type FakeConfigMapConfig struct {
 }
 
 type FakeClientset struct {
+	mu                sync.Mutex
 	Client            kubernetes.Interface
 	fakePod           *corev1.Pod
 	fakeNode          *corev1.Node
@@ -144,6 +148,8 @@ func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
 func (c *FakeClientset) ConfigurePodTemplateLister(_ context.Context) {}
 
 func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	config := webhook.FakeConfig()
 
 	if podConfig.SidecarLimits != nil {
@@ -153,9 +159,11 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	c.fakePod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podConfig.Name,
-			Namespace: podConfig.Namespace,
-			UID:       podConfig.UID,
+			Name:            podConfig.Name,
+			Namespace:       podConfig.Namespace,
+			UID:             podConfig.UID,
+			Labels:          podConfig.Labels,
+			OwnerReferences: podConfig.OwnerReferences,
 		},
 		Spec: corev1.PodSpec{
 			Containers: func() []corev1.Container {
@@ -310,13 +318,19 @@ func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
 }
 
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.GetPodErr != nil {
 		return nil, c.GetPodErr
 	}
-	c.fakePod.ObjectMeta.Name = name
-	c.fakePod.ObjectMeta.Namespace = namespace
+	if c.fakePod == nil {
+		return nil, nil
+	}
+	podCopy := c.fakePod.DeepCopy()
+	podCopy.ObjectMeta.Name = name
+	podCopy.ObjectMeta.Namespace = namespace
 
-	return c.fakePod, nil
+	return podCopy, nil
 }
 
 func (c *FakeClientset) GetMounterPod(namespace, name string) (*corev1.Pod, error) {
