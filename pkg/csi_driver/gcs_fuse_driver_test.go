@@ -50,6 +50,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 				FuseSocketDir:   "/tmp/fuse-sockets",
 				DriverNamespace: "gcs-fuse-csi-driver",
 			},
+			EnableGcsFuseVolumeMetricsSchema: true,
 		},
 	}
 	driver, err := NewGCSDriver(config, nil)
@@ -86,6 +87,7 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 				FuseSocketDir:   "/tmp/fuse-sockets",
 				DriverNamespace: "gcs-fuse-csi-driver",
 			},
+			EnableGcsFuseVolumeMetricsSchema: true,
 		},
 		AssumeGoodSidecarVersion: true,
 	}
