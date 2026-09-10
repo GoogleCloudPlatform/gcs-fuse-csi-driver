@@ -31,12 +31,12 @@ var (
 	pkgDir = flag.String("pkg-dir", "", "the package directory")
 
 	// Kubernetes cluster flags.
-	gkeClusterRegion               = flag.String("gke-cluster-region", "", "region that gke regional cluster should be created in")
+	gkeClusterRegion               = flag.String("gke-cluster-region", "", "region that gke regional cluster should be created in, which also sets --test-bucket-location for Ginkgo")
 	gkeClusterVersion              = flag.String("gke-cluster-version", "", "GKE cluster worker master and node version")
 	gkeReleaseChannel              = flag.String("gke-release-channel", "rapid", "GKE cluster release channel")
 	gkeNodeVersion                 = flag.String("gke-node-version", "", "GKE cluster worker node version")
 	nodeMachineType                = flag.String("node-machine-type", "n2-standard-8", "GKE cluster worker node machine type")
-	numNodes                       = flag.Int("number-nodes", 3, "number of nodes in the test cluster")
+	numNodes                       = flag.Int("number-nodes", 9, "number of nodes in the test cluster")
 	useGKEAutopilot                = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
 	apiEndpointOverride            = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
 	nodeImageType                  = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
@@ -51,7 +51,7 @@ var (
 	skipCSIDriverInstall           = flag.Bool("skip-csi-driver-install", false, "skips the install of the driver. You must have manually deployed the driver and webhook.")
 	gcsFusePrNumber                = flag.String("gcsfuse-pr-number", "", "PR number for gcsfuse to test against")
 	// Only works for zonal clusters by pinning nodes to a single advised zone, set to false if want to create regional cluster.
-	useCapacityAdvisor = flag.Bool("use-capacity-advisor", false, "whether to use GCE Capacity Advisor to select node locations")
+	useCapacityAdvisor = flag.Bool("use-capacity-advisor", false, "whether to use GCE Capacity Advisor to select node locations. Only used when --manage-cluster-lifecycle=true; ignored for existing clusters.")
 
 	// Test infrastructure flags.
 	inProw                 = flag.Bool("run-in-prow", false, "whether or not to run the test in PROW")
@@ -106,6 +106,11 @@ func main() {
 			*gkeClusterVersion = "latest"
 		}
 		utils.EnsureVariable(gkeReleaseChannel, true, "'gke-release-channel' must be set when managing cluster lifecycle")
+	}
+
+	if !*manageClusterLifecycle && *useCapacityAdvisor {
+		klog.Infof("Ignoring --use-capacity-advisor because --manage-cluster-lifecycle is false (tests are running on an existing cluster)")
+		*useCapacityAdvisor = false
 	}
 
 	if *useBoskos {

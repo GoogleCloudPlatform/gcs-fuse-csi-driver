@@ -39,13 +39,8 @@ readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_release_channel=${GKE_RELEASE_CHANNEL:-rapid}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly node_machine_type=${MACHINE_TYPE:-n2-standard-8}
+readonly number_nodes=${NUMBER_NODES:-9}
 readonly use_capacity_advisor=${USE_CAPACITY_ADVISOR:-true}
-if [ "${use_capacity_advisor}" = true ]; then
-  default_number_nodes=9
-else
-  default_number_nodes=3
-fi
-readonly number_nodes=${NUMBER_NODES:-$default_number_nodes}
 readonly gcsfuse_client_protocol=${GCSFUSE_CLIENT_PROTOCOL:-http1}
 readonly build_gcsfuse_from_source=${BUILD_GCSFUSE_FROM_SOURCE:-false}
 readonly enable_zb=${ENABLE_ZB:-false}

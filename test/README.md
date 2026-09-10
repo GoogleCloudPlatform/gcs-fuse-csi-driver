@@ -101,6 +101,7 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket created in the zone -> "$(location provided)" + "-c".
 - `GCSFUSE_CLIENT_PROTOCOL`: default value is 'http1'. Change to 'grpc' to alter the type of protocol gcsfuse uses to communicate with gcs
 - `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
+- `USE_CAPACITY_ADVISOR`: default value is `false` (defaults to `true` in Prow CI). Whether to use GCE Capacity Advisor to select node locations and fallback regions. Only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`; ignored when running on an existing cluster.
 - `E2E_TEST_GKE_CLUSTER_VERSION`: It denotes the GKE cluster master and node version. If `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is `true`, it specifies the version of the cluster to be created (defaults to `latest` if not provided). If `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is `false`, it auto-detects the version of the existing cluster (can be overridden by setting this parameter). The version is used by the test framework to check for feature compatibility.
 - `E2E_TEST_USE_BOSKOS`: default value is `false`. Change it to `true` if you want to use Boskos to acquire a project. Useful for debugging Boskos infrastructure locally.
 - `E2E_TEST_PROJECT_ID`: default value is empty. GCP project ID to run E2E tests. Required when managing cluster lifecycle without Boskos.
@@ -130,9 +131,11 @@ When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provi
 - **Cluster Type**: Standard GKE Cluster (default) or Autopilot (if `E2E_TEST_USE_GKE_AUTOPILOT=true`).
 - **Release Channel**: `rapid` (can be overridden by `GKE_RELEASE_CHANNEL` environment variable).
 - **Version**: Determined by `E2E_TEST_GKE_CLUSTER_VERSION` (local) or `GKE_CLUSTER_VERSION` (CI).
-- **Region**: Determined by `GKE_CLUSTER_REGION` (default: `us-central1`).
+- **Region & Capacity Selection**: Determined by `GKE_CLUSTER_REGION` (default: `us-central1`).
+  - **Dynamic Fallback & Capacity Checks**: When `USE_CAPACITY_ADVISOR=true`, as enabled by default in Prow, the test runner pre-flights compute availability across candidate fallback regions using the Compute Engine Capacity Advisor API. It evaluates obtainability scores, stack-ranks candidate regions from highest to lowest score, and attempts cluster creation in the top-ranked region to mitigate regional stockouts. Note that `USE_CAPACITY_ADVISOR` is only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`, and is ignored when running tests against an existing cluster.
+  - **Bucket Co-location**: Selecting a fallback region also implicitly updates the `--test-bucket-location` passed to Ginkgo, ensuring test GCS buckets are co-located in the same region as the cluster to prevent cross-region data transfer.
 - **Node Pool Configuration** (Standard cluster only):
-  - **Node Count**: 3 nodes (can be overridden by `E2E_TEST_NUM_NODES` or `NUMBER_NODES` env var).
+  - **Node Count**: 9 nodes (can be overridden by `E2E_TEST_NUM_NODES` or `NUMBER_NODES` env var).
   - **Machine Type**: `n2-standard-8` (can be overridden by `MACHINE_TYPE` env var).
   - **Image Type**: `cos_containerd` (Container-Optimized OS with containerd).
 - **Workload Identity**: Enabled by default using the GCP project's workload pool (`<project-id>.svc.id.goog`).

@@ -44,6 +44,8 @@ var envAPIMap = map[string]string{
 type TestParameters struct {
 	PkgDir string
 
+	// GkeClusterRegion specifies the target GKE cluster region and implicitly sets
+	// Ginkgo's --test-bucket-location to co-locate test GCS buckets with the cluster.
 	GkeClusterRegion    string
 	GkeClusterVersion   string
 	GkeReleaseChannel   string
@@ -86,7 +88,10 @@ type TestParameters struct {
 	EnableGcsFuseProfiles          bool
 	EnableGCSFuseKernelParams      bool
 	EnableSharedMount              bool
-	UseCapacityAdvisor             bool
+	// UseCapacityAdvisor indicates whether to use GCE Capacity Advisor to select
+	// node locations and fallback regions. Only used when ManageClusterLifecycle is true;
+	// ignored on existing clusters.
+	UseCapacityAdvisor bool
 
 	GkeGcloudCommand string
 	GkeGcloudArgs    string
