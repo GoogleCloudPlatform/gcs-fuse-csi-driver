@@ -18,6 +18,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -27,12 +28,14 @@ import (
 
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -40,19 +43,20 @@ import (
 )
 
 var (
-	err                error
-	c                  clientset.Interface
-	m                  metadata.Service
-	clientProtocol     = flag.String("client-protocol", "http", "the test bucket location")
-	bucketLocation     = flag.String("test-bucket-location", "us-central1", "the test bucket location")
-	skipGcpSaTest      = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
-	apiEnv             = flag.String("api-env", "prod", "cluster API env")
-	zbFlag             = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
-	profilesFlag       = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
-	kernelParamsFlag   = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
-	sharedMountFlag    = flag.Bool("enable-shared-mount-test", false, "enable shared mount for the tests")
-	pdStorageClass     = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
-	lustreStorageClass = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass for Lustre-backed PVC in lustre gcsfuse data pipeline tests")
+	err                            error
+	c                              clientset.Interface
+	m                              metadata.Service
+	webhookWIFEnforcementBeforeRun bool
+	clientProtocol                 = flag.String("client-protocol", "http", "the test bucket location")
+	bucketLocation                 = flag.String("test-bucket-location", "us-central1", "the test bucket location")
+	skipGcpSaTest                  = flag.Bool("skip-gcp-sa-test", true, "skip GCP SA test")
+	apiEnv                         = flag.String("api-env", "prod", "cluster API env")
+	zbFlag                         = flag.Bool("enable-zb", false, "use GCS Zonal Buckets for the tests")
+	profilesFlag                   = flag.Bool("enable-gcsfuse-profiles-test", false, "enable gcsfuse profiles for the tests")
+	kernelParamsFlag               = flag.Bool("enable-gcsfuse-kernel-params-test", false, "enable kernel params for the tests")
+  sharedMountFlag                = flag.Bool("enable-shared-mount-test", false, "enable shared mount for the tests")
+	pdStorageClass                 = flag.String("pd-storage-class", "standard-rwo", "StorageClass used for PD-backed PVCs in dual CSI volume tests")
+	lustreStorageClass             = flag.String("lustre-storage-class", "lustre-rwx", "StorageClass for Lustre-backed PVC in lustre gcsfuse data pipeline tests")
 )
 
 var _ = func() bool {
@@ -94,6 +98,61 @@ var _ = func() bool {
 	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
 	return true
 }()
+
+// WIF enforcement on the shared webhook Deployment is cluster-global, but with
+// --ginkgo-procs > 1 this test binary runs as multiple parallel OS processes.
+// Plain BeforeSuite/AfterSuite run once per process, which races all of them
+// against the same deployment. SynchronizedBeforeSuite/SynchronizedAfterSuite
+// ensure only parallel process #1 ever reads or restores the original value.
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
+	if os.Getenv(utils.IsOSSEnvVar) != "true" {
+		return nil
+	}
+	k8sClient := buildK8sClient()
+	ctx := context.Background()
+	before := utils.GetWebhookWIFEnforcement(ctx, k8sClient)
+	if err := utils.SetWebhookWIFEnforcement(ctx, k8sClient, false); err != nil {
+		klog.Fatalf("BeforeSuite: failed to disable WIF enforcement: %v", err)
+	}
+	if before {
+		return []byte("true")
+	}
+	return []byte("false")
+}, func(data []byte) {
+	webhookWIFEnforcementBeforeRun = string(data) == "true"
+})
+
+var _ = ginkgo.SynchronizedAfterSuite(func() {
+	// Runs on every parallel process; the actual restore only happens once,
+	// in the process-#1-only function below.
+}, func() {
+	if os.Getenv(utils.IsOSSEnvVar) != "true" {
+		return
+	}
+	k8sClient := buildK8sClient()
+	ctx := context.Background()
+
+	var restoreErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if restoreErr = utils.SetWebhookWIFEnforcement(ctx, k8sClient, webhookWIFEnforcementBeforeRun); restoreErr == nil {
+			return
+		}
+		klog.Errorf("AfterSuite: attempt %d to restore WIF enforcement to %v failed: %v", attempt, webhookWIFEnforcementBeforeRun, restoreErr)
+	}
+	klog.Fatalf("AfterSuite: giving up restoring WIF enforcement to %v after 3 attempts: %v", webhookWIFEnforcementBeforeRun, restoreErr)
+})
+
+func buildK8sClient() k8sclient.Interface {
+	cfg, err := clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
+	if err != nil {
+		klog.Fatalf("failed to build kube config: %v", err)
+	}
+	client, err := k8sclient.NewForConfig(cfg)
+	if err != nil {
+		klog.Fatalf("failed to create k8s client: %v", err)
+	}
+	return client
+}
 
 func TestE2E(t *testing.T) {
 	t.Parallel()
