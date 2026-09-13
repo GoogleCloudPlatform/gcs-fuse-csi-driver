@@ -19,6 +19,7 @@ package testsuites
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,8 @@ import (
 	"local/test/e2e/utils"
 
 	"github.com/google/uuid"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
+	putil "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
@@ -56,7 +59,23 @@ const (
 	sidecarMountPath = "/mnt/sidecar"
 	sharedVolName    = "shared-gcs-vol"
 	sharedMountPath  = "/mnt/shared"
+
+	// This test is to ensure profiles feature is applied to the mounter pod, we override the scan so the recommendation
+	// is deterministic rather than dependent on what the test bucket happens to hold.
+	sharedMountProfilesNumObjects     = "1000"
+	sharedMountProfilesTotalSizeBytes = "104857600" // 100MiB
+
+	// The whole bucket fits the FUSE memory budget, so the recommended file cache holds it all.
+	sharedMountProfilesRecommendedFileCacheMiB = 100
+	sharedMountProfilesOverrideStatCacheMiB    = 10
+
+	mib = 1024 * 1024
 )
+
+// GCSFuseProfilesEnabled reports whether the GCSFuse profiles feature is enabled for this test
+// run. The shared mount suite is registered unconditionally, so it uses this to skip its
+// profiles spec. It is set from e2e_test.go.
+var GCSFuseProfilesEnabled bool
 
 type gcsFuseCSISharedMountTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
@@ -128,6 +147,22 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 			if len(configPrefix) > 0 && configPrefix[0] == specs.SidecarAndSharedMountCoexistencePrefix && i == 0 {
 				// Volume 0: Sidecar-mode volume (CSI ephemeral inline)
 				l.volumeResourceList = append(l.volumeResourceList, storageframework.CreateVolumeResource(ctx, driver, l.config, storageframework.DefaultFsCSIEphemeralVolume, e2evolume.SizeRange{}))
+				continue
+			}
+			if len(configPrefix) > 0 && configPrefix[0] == specs.SharedMountProfilesPrefix {
+				// Bind the volume to a GCSFuse profile StorageClass, override the bucket scan so
+				// the recommendation is deterministic, and override the metadata stat cache size
+				// so the merge with the recommendation can be observed.
+				l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}, specs.VolumeResourceOptions{
+					StorageClassName: trainingProfile,
+					PVAnnotations: map[string]string{
+						putil.AnnotationStatus:     putil.ScanOverride,
+						putil.AnnotationNumObjects: sharedMountProfilesNumObjects,
+						putil.AnnotationTotalSize:  sharedMountProfilesTotalSizeBytes,
+					},
+					PVMountOptions: []string{fmt.Sprintf("%s:%d", metadataStatCacheMaxSizeMiBMountOptionKey, sharedMountProfilesOverrideStatCacheMiB)},
+				}))
+
 				continue
 			}
 			l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}))
@@ -1027,5 +1062,126 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 			}
 			g.Expect(totalFsOps).To(gomega.BeNumerically(">", 10), "expected aggregated fs_ops_count to reflect operations from both pods")
 		}, "1m", "5s").Should(gomega.Succeed())
+	})
+
+	// TC: GCSFuse Profiles with Shared Mount Test
+	// 1. Create a PV/PVC with sharedMount: true bound to a GCSFuse profile StorageClass, with the
+	//    PV overriding the recommended metadata stat cache size.
+	// 2. Create a workload pod referencing the PVC.
+	// 3. Verify the placeholder file cache volumes and volume mounts are injected into the Mounter
+	//    Pod instead of the workload pod, which has no gcsfuse sidecar to host them.
+	// 4. Verify the Mounter Pod receives the recommendation, merged with the mount options from
+	//    the StorageClass and the PV.
+	// 5. Verify the workload pod can read from and write to the shared mount.
+	ginkgo.It("[shared-mount] profiles should inject placeholder cache volumes into the Mounter Pod and merge the recommendation with StorageClass and PV mount options", func() {
+		if !GCSFuseProfilesEnabled {
+			e2eskipper.Skipf("GCSFuse profiles are not enabled for this test run")
+		}
+
+		init(1, specs.SharedMountProfilesPrefix)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		sharedVR := l.volumeResourceList[0]
+
+		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount profile PVC")
+		workloadPod, mounterPod := setupAndDeploySharedMountPod(ctx, f, sharedVR)
+
+		// placeholderCacheVolumes returns the placeholder file cache volumes in the pod spec,
+		// keyed by volume name.
+		placeholderCacheVolumes := func(pod *corev1.Pod) map[string]corev1.Volume {
+			found := map[string]corev1.Volume{}
+			for _, volume := range pod.Spec.Volumes {
+				switch volume.Name {
+				case webhook.SidecarContainerFileCacheEphemeralDiskVolumeName, webhook.SidecarContainerFileCacheRamDiskVolumeName:
+					found[volume.Name] = volume
+				}
+			}
+
+			return found
+		}
+
+		// placeholderCacheMountPaths returns the mount paths of the placeholder file cache volume
+		// mounts in the given containers, keyed by volume name.
+		placeholderCacheMountPaths := func(containers []corev1.Container) map[string]string {
+			found := map[string]string{}
+			for _, container := range containers {
+				for _, volumeMount := range container.VolumeMounts {
+					switch volumeMount.Name {
+					case webhook.SidecarContainerFileCacheEphemeralDiskVolumeName, webhook.SidecarContainerFileCacheRamDiskVolumeName:
+						found[volumeMount.Name] = volumeMount.MountPath
+					}
+				}
+			}
+
+			return found
+		}
+
+		ginkgo.By("Verifying the placeholder file cache volumes are NOT injected into the workload pod")
+		workloadPodSpec, err := workloadPod.RefreshPod(ctx)
+		framework.ExpectNoError(err, "failed to get the workload pod")
+		gomega.Expect(placeholderCacheVolumes(workloadPodSpec)).To(gomega.BeEmpty())
+		gomega.Expect(placeholderCacheMountPaths(workloadPodSpec.Spec.Containers)).To(gomega.BeEmpty())
+
+		ginkgo.By("Verifying the placeholder file cache volumes are injected into the Mounter Pod")
+		mounterVolumes := placeholderCacheVolumes(mounterPod)
+		gomega.Expect(mounterVolumes).To(gomega.HaveLen(2))
+		gomega.Expect(mounterVolumes).To(gomega.HaveKey(webhook.SidecarContainerFileCacheEphemeralDiskVolumeName))
+		gomega.Expect(mounterVolumes).To(gomega.HaveKey(webhook.SidecarContainerFileCacheRamDiskVolumeName))
+		gomega.Expect(mounterVolumes[webhook.SidecarContainerFileCacheEphemeralDiskVolumeName].EmptyDir).ToNot(gomega.BeNil())
+		gomega.Expect(mounterVolumes[webhook.SidecarContainerFileCacheRamDiskVolumeName].EmptyDir).ToNot(gomega.BeNil())
+
+		gomega.Expect(mounterPod.Spec.Containers).To(gomega.HaveLen(1))
+		gomega.Expect(mounterPod.Spec.Containers[0].Name).To(gomega.Equal(util.MounterPodNamePrefix))
+		gomega.Expect(placeholderCacheMountPaths(mounterPod.Spec.Containers)).To(gomega.Equal(map[string]string{
+			webhook.SidecarContainerFileCacheEphemeralDiskVolumeName: webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath,
+			webhook.SidecarContainerFileCacheRamDiskVolumeName:       webhook.SidecarContainerFileCacheRamDiskVolumeMountPath,
+		}))
+
+		ginkgo.By("Verifying the recommendation targets the Mounter Pod and honors the PV cache override")
+		// Under shared mount the recommendation is made against the Mounter Pod rather than the
+		// workload pod, so the log line is keyed to the Mounter Pod's name.
+		var recommendation profiles.GCSFuseCSIRecommendationLog
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			line, err := workloadPod.FindDriverLogLineContaining(gcsFuseCsiRecommendationLog, mounterPod.Name)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(line).NotTo(gomega.BeEmpty(), "no matching log line found")
+			g.Expect(json.Unmarshal([]byte(line), &recommendation)).To(gomega.Succeed(), fmt.Sprintf("failed to parse the recommendation log line %q", line))
+		}, retryTimeout, retryPolling).Should(gomega.Succeed())
+
+		gomega.Expect(recommendation.Target.ContainerName).To(gomega.Equal(util.MounterPodNamePrefix))
+		gomega.Expect(recommendation.Target.PVName).To(gomega.Equal(sharedVR.Pv.Name))
+		gomega.Expect(recommendation.Decision.MetadataStatCacheBytes).To(gomega.Equal(int64(sharedMountProfilesOverrideStatCacheMiB*mib)),
+			"expected the PV metadata stat cache override to win over the recommendation")
+		gomega.Expect(recommendation.Decision.FileCacheBytes).To(gomega.Equal(int64(sharedMountProfilesRecommendedFileCacheMiB * mib)))
+		gomega.Expect(recommendation.Decision.FileCacheMedium).To(gomega.BeElementOf(util.MediumRAM, util.MediumLSSD))
+
+		ginkgo.By("Verifying the Mounter Pod merged the StorageClass and PV mount options with the recommendation")
+		expectedCacheDir := webhook.SidecarContainerFileCacheRamDiskVolumeMountPath
+		if recommendation.Decision.FileCacheMedium == util.MediumLSSD {
+			expectedCacheDir = webhook.SidecarContainerFileCacheEphemeralDiskVolumeMountPath
+		}
+		mounterPodLogs, err := specs.GetMounterPodLogs(f.Namespace.Name, mounterPod.Name)
+		framework.ExpectNoError(err, "failed to get the Mounter Pod logs")
+		for _, expected := range []string{
+			// Contributed by the profile StorageClass.
+			fmt.Sprintf("%s:%s", profileMountOptionKey, "aiml-training"),
+			// Contributed by the PV, overriding the recommended size.
+			fmt.Sprintf("%s:%d", metadataStatCacheMaxSizeMiBMountOptionKey, sharedMountProfilesOverrideStatCacheMiB),
+			// Contributed by the recommendation.
+			fmt.Sprintf("%s:%d", fileCacheSizeMiBMountOptionKey, sharedMountProfilesRecommendedFileCacheMiB),
+			fmt.Sprintf("%s:%s", cacheDirKey, expectedCacheDir),
+		} {
+			gomega.Expect(mounterPodLogs).To(gomega.ContainSubstring(expected))
+		}
+		// Unlike the sidecar architecture, the Mounter Pod serves a single volume, so gcsfuse is
+		// pointed at the cache volume root instead of a per-volume subdirectory.
+		gomega.Expect(mounterPodLogs).ToNot(gomega.ContainSubstring(expectedCacheDir + "/.volumes"))
+
+		ginkgo.By("Verifying the workload pod can write and read from its shared-mounted volume")
+		workloadPod.VerifyRWMount(f, sharedMountPath)
+		testFilePath := fmt.Sprintf("%s/test-profiles.txt", sharedMountPath)
+		testContent := "hello from the shared mount profiles test"
+		workloadPod.VerifyWriteAndReadFile(f, testFilePath, testContent)
 	})
 }

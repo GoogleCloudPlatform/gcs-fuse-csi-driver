@@ -93,7 +93,7 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 			if len(configPrefix) > 0 && configPrefix[0] == specs.BucketWithTwoUniqueVolSuffixPrefix {
 				suffix = fmt.Sprintf(":%d", i)
 			}
-			l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}, suffix))
+			l.volumeResourceList = append(l.volumeResourceList, specs.CreateVolumeResource(ctx, driver, l.config, pattern, e2evolume.SizeRange{}, specs.VolumeResourceOptions{VolumeHandleSuffix: suffix}))
 		}
 	}
 
