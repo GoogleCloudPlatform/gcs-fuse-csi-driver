@@ -459,6 +459,17 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 		return "", fmt.Errorf("expected data for key `sidecar-image` in the config map `gcsfusecsi-image-config`")
 	}
 
+	// GKE-managed-driver runs need PullAlways to catch a freshly-rolled driver
+	// version that may share an image tag with what's already cached on the
+	// node. OSS clusters build locally-tagged, uniquely-versioned images with
+	// no real registry behind them, so PullAlways would always fail trying to
+	// resolve the fake registry host; PullIfNotPresent is both correct and
+	// necessary there.
+	sidecarImagePullPolicy := corev1.PullAlways
+	if os.Getenv(IsOSSEnvVar) == "true" {
+		sidecarImagePullPolicy = corev1.PullIfNotPresent
+	}
+
 	// Deploy a temporary Pod to run the gcsfuse binary and fetch its version.
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -471,7 +482,7 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 				{
 					Name:            webhook.GcsFuseSidecarName,
 					Image:           image,
-					ImagePullPolicy: corev1.PullAlways,
+					ImagePullPolicy: sidecarImagePullPolicy,
 					Command:         []string{"/gcsfuse", "--version"},
 				},
 				{
