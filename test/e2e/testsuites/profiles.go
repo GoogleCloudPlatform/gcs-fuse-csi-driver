@@ -338,7 +338,7 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 
 		ginkgo.By("Verifying recommendation was made with overrides")
 		for _, tpod := range podsArray {
-			stdout, err := tpod.FindLogsByNewLine(gcsFuseCsiRecommendationLog)
+			stdout, err := tpod.FindDriverLogLineContaining(gcsFuseCsiRecommendationLog, tpod.GetPodName())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "error while getting logs from pod")
 			expectedSubstrings := []string{
 				fmt.Sprintf(`"podName":"%s/%s"`, f.Namespace.Name, tpod.GetPodName()),

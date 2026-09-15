@@ -137,6 +137,10 @@ var _ = ginkgo.Describe("E2E Test Suite", func() {
 			testsuites.InitGcsFuseCSISharedMountTestSuite,
 		}
 
+		// The shared mount suite is registered unconditionally, so it needs the flag to skip
+		// its GCSFuse profiles spec.
+		testsuites.GCSFuseProfilesEnabled = *profilesFlag
+
 		if *profilesFlag {
 			suites = append(suites, testsuites.InitGcsFuseCSIProfilesTestSuite)
 		}

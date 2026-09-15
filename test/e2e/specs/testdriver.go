@@ -242,7 +242,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 		case EnableKernelParamsPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
-		case ProfilesOverrideAllOverridablePrefix:
+		case ProfilesOverrideAllOverridablePrefix, SharedMountProfilesPrefix:
 			bucketName = n.createBucket(ctx, config.Framework.Namespace.Name)
 			n.giveDriverAccessToBucketForProfiles(ctx, bucketName)
 		case ProfilesControllerCrashTestPrefix:

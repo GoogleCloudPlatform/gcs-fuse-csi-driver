@@ -103,6 +103,7 @@ const (
 	SharedDynamicMountPrefix                                   = "gcsfuse-csi-shared-dynamic-mount"
 	SharedMountCloudProfilerPrefix                             = "gcsfuse-csi-shared-mount-cloud-profiler"
 	SharedMountCloudProfilerDisabledGCSFusePrefix              = "gcsfuse-csi-shared-mount-cloud-profiler-disabled-gcsfuse"
+	SharedMountProfilesPrefix                                  = "gcsfuse-csi-shared-mount-profiles"
 
 	expectedTrainingProfileFlag   = "--profile=aiml-training"
 	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
@@ -154,6 +155,20 @@ type MounterPodTemplateOptions struct {
 	Image              string
 	Volumes            []corev1.Volume
 	DNSPolicy          corev1.DNSPolicy
+}
+
+// VolumeResourceOptions customizes the PV and PVC that CreateVolumeResource creates for
+// shared-mount PreprovisionedPV volumes.
+type VolumeResourceOptions struct {
+	// VolumeHandleSuffix is appended to the PV's CSI volume handle, if non-empty.
+	VolumeHandleSuffix string
+	// StorageClassName is set on both the PV and the PVC, if non-empty. This is how a GCSFuse
+	// profile (e.g. gcsfusecsi-training) is attached to a shared-mount volume.
+	StorageClassName string
+	// PVAnnotations are set on the PV.
+	PVAnnotations map[string]string
+	// PVMountOptions are set on the PV's spec.mountOptions.
+	PVMountOptions []string
 }
 
 func CreateMounterPodTemplate(ctx context.Context, c clientset.Interface, namespace string, opts MounterPodTemplateOptions) (*corev1.PodTemplate, error) {
@@ -574,18 +589,25 @@ func (t *TestPod) WaitForRunning(ctx context.Context) {
 	framework.ExpectNoError(err)
 }
 
-// FindLogsByNewLine scans the log string and returns the line
-// containing the given logToFind.
-func (t *TestPod) FindLogsByNewLine(logToFind string) (string, error) {
-	stdout, stderr, err := t.getDriverLogs()
-	framework.ExpectNoError(err,
-		"Error accessing logs from pod %v, but failed with error message %q\nstdout: %s\nstderr: %s",
-		t.pod.Name, err, stdout, stderr)
+// FindDriverLogLineContaining scans the CSI node driver logs and returns the first line
+// containing all of the given substrings, or an empty string when no line matches.
+func (t *TestPod) FindDriverLogLineContaining(substrings ...string) (string, error) {
+	stdout, _, err := t.getDriverLogs()
+	if err != nil {
+		return "", err
+	}
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Identify the line based on the unique message part
-		if strings.Contains(line, logToFind) && strings.Contains(line, t.pod.Name) {
+		matchesAll := true
+		for _, substring := range substrings {
+			if !strings.Contains(line, substring) {
+				matchesAll = false
+
+				break
+			}
+		}
+		if matchesAll {
 			return strings.TrimSpace(line), nil
 		}
 	}
@@ -804,13 +826,19 @@ func (t *TestPod) setupVolumeMount(name, mountPath string, readOnly bool, subPat
 }
 
 // CreateVolumeResource wraps storageframework.CreateVolumeResource for E2E tests.
-// For shared-mount PreprovisionedPV, it creates the PV with an explicit name instead of
-// GenerateName, because upstream's GenerateName leaves pv.Name empty during webhook CREATE
-// admission, preventing the webhook from populating csi.storage.k8s.io/pv/name.
-func CreateVolumeResource(ctx context.Context, driver storageframework.TestDriver, config *storageframework.PerTestConfig, pattern storageframework.TestPattern, testVolumeSizeRange e2evolume.SizeRange, customVolumeHandleSuffix ...string) *storageframework.VolumeResource {
+// For shared-mount PreprovisionedPV, it creates the PV and PVC itself, customized by opts, and
+// gives the PV an explicit name instead of a GenerateName, because upstream's GenerateName
+// leaves pv.Name empty during webhook CREATE admission, preventing the webhook from populating
+// csi.storage.k8s.io/pv/name.
+func CreateVolumeResource(ctx context.Context, driver storageframework.TestDriver, config *storageframework.PerTestConfig, pattern storageframework.TestPattern, testVolumeSizeRange e2evolume.SizeRange, opts ...VolumeResourceOptions) *storageframework.VolumeResource {
 	gcsDriver, ok := driver.(*GCSFuseCSITestDriver)
 	if !ok || !gcsDriver.EnableSharedMount || pattern.VolType != storageframework.PreprovisionedPV {
 		return storageframework.CreateVolumeResource(ctx, driver, config, pattern, testVolumeSizeRange)
+	}
+
+	var opt VolumeResourceOptions
+	if len(opts) > 0 {
+		opt = opts[0]
 	}
 
 	r := &storageframework.VolumeResource{
@@ -831,11 +859,11 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 		framework.Failf("Failed to get PersistentVolumeSource for volume")
 	}
 
-	if len(customVolumeHandleSuffix) > 0 && customVolumeHandleSuffix[0] != "" {
+	if opt.VolumeHandleSuffix != "" {
 		if pvSource.CSI == nil || pvSource.CSI.VolumeHandle == "" {
 			framework.Failf("Failed to apply custom volume handle suffix")
 		}
-		pvSource.CSI.VolumeHandle += customVolumeHandleSuffix[0]
+		pvSource.CSI.VolumeHandle += opt.VolumeHandleSuffix
 	}
 
 	pvName := fmt.Sprintf("gcsfuse-shared-pv-%s", rand.String(8))
@@ -855,7 +883,6 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 		}
 	}()
 
-	// 1. Create PVC
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName,
@@ -871,21 +898,18 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 					corev1.ResourceStorage: resource.MustParse("2Gi"),
 				},
 			},
-			StorageClassName: ptr.To(""),
+			StorageClassName: ptr.To(opt.StorageClassName),
+			VolumeName:       pvName,
 		},
 	}
 	if pattern.VolMode != "" {
 		pvc.Spec.VolumeMode = &pattern.VolMode
 	}
 
-	var err error
-	r.Pvc, err = cs.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Create(ctx, pvc, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "failed to create PVC %s", pvcName)
-
-	// 2. Create PV with explicit Name (not GenerateName)
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: pvName,
+			Name:        pvName,
+			Annotations: opt.PVAnnotations,
 		},
 		Spec: corev1.PersistentVolumeSpec{
 			Capacity: corev1.ResourceList{
@@ -896,12 +920,12 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 			ClaimRef: &corev1.ObjectReference{
 				Kind:       "PersistentVolumeClaim",
 				APIVersion: "v1",
-				Name:       r.Pvc.Name,
-				Namespace:  r.Pvc.Namespace,
-				UID:        r.Pvc.UID,
+				Name:       pvcName,
+				Namespace:  f.Namespace.Name,
 			},
 			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
-			StorageClassName:              "",
+			StorageClassName:              opt.StorageClassName,
+			MountOptions:                  opt.PVMountOptions,
 			NodeAffinity:                  volumeNodeAffinity,
 		},
 	}
@@ -909,8 +933,14 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 		pv.Spec.VolumeMode = &pattern.VolMode
 	}
 
+	// 1. Create the PV, before the PVC that names it, so the PVC binds immediately.
+	var err error
 	r.Pv, err = cs.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{})
 	framework.ExpectNoError(err, "failed to create PV %s", pvName)
+
+	// 2. Create PVC
+	r.Pvc, err = cs.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Create(ctx, pvc, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "failed to create PVC %s", pvcName)
 
 	// 3. Wait for PV and PVC to be Bound
 	err = e2epv.WaitOnPVandPVC(ctx, cs, f.Timeouts, f.Namespace.Name, r.Pv, r.Pvc)
