@@ -313,7 +313,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		switch config.Prefix {
 		case NonRootVolumePrefix:
 			mountOptions += ",uid=1001"
-		case InvalidMountOptionsVolumePrefix:
+		case InvalidMountOptionsVolumePrefix, SharedMountInvalidMountOptionsVolumePrefix:
 			mountOptions += ",invalid-option"
 		case InvalidBoolMountOptionsVolumePrefix:
 			mountOptions += ",implicit-dirs=trve"

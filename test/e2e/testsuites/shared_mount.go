@@ -39,6 +39,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	cloudprofiler "google.golang.org/api/cloudprofiler/v2"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1183,5 +1184,31 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		testFilePath := fmt.Sprintf("%s/test-profiles.txt", sharedMountPath)
 		testContent := "hello from the shared mount profiles test"
 		workloadPod.VerifyWriteAndReadFile(f, testFilePath, testContent)
+	})
+
+	// TC: Error Propagation Test
+	// Verify that a GCSFuse failure inside the Mounter Pod is surfaced to the workload pod. An
+	// invalid mount option makes the Mounter Pod's GCSFuse process fail to start, so the Mounter
+	// Pod writes the failure to the error file in its gke-gcsfuse-tmp emptyDir. The CSI driver
+	// reads that error file while serving the workload pod's volume request and returns the
+	// failure, which Kubelet records on the workload pod as a FailedMount event.
+	ginkgo.It("[shared-mount] should propagate Mounter Pod GCSFuse errors to the workload pod", func() {
+		init(1, specs.SharedMountInvalidMountOptionsVolumePrefix)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+
+		ginkgo.By("Configuring and deploying the workload pod referencing the shared-mount PVC")
+		// The mount is expected to fail, so the pod never becomes running and
+		// setupAndDeploySharedMountPod cannot be reused here.
+		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		tPod.SetupVolume(l.volumeResourceList[0], sharedVolName, sharedMountPath, false /* readOnly */)
+		tPod.Create(ctx)
+		defer tPod.Cleanup(ctx)
+
+		ginkgo.By("Checking that the Mounter Pod GCSFuse error is surfaced to the workload pod")
+		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
+		tPod.WaitForFailedMountError(ctx, "-invalid-option")
 	})
 }
