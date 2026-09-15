@@ -226,29 +226,9 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls -l %v/my-symlink", mountPath))
 
 		// Scrape the metrics from the sidecar's Prometheus endpoint and save them in a file.
-		ginkgo.By("Collecting Prometheus metrics from the CSI driver node server")
-		csiPodIP := tPod.GetCSIDriverNodePodIP(ctx)
-		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("wget -O %v/metrics.prom http://%v:9920/metrics", mountPath, csiPodIP))
 		promFile := fmt.Sprintf("%v/%v/metrics.prom", l.artifactsDir, f.Namespace.Name)
-
-		//nolint:gosec
-		if err := gcsfuseDriver.DownloadGCSObject(ctx, bucketName, "metrics.prom", promFile); err != nil {
-			framework.Failf("Failed to download the Prometheus metrics data from GCS bucket %q: %v", bucketName, err)
-		}
-
-		// Parse the downloaded Prometheus metrics file into a structured format.
-		ginkgo.By("Parsing Prometheus metrics")
-		metricsFile, err := os.Open(promFile)
-		if err != nil {
-			framework.Failf("Failed to open the metrics file %q: %v", promFile, err)
-		}
-		defer metricsFile.Close()
-
-		families := map[string]*dto.MetricFamily{}
-		for mf, err := range metricspkg.ProcessMetricsDataAsStream(metricsFile) {
-			framework.ExpectNoError(err)
-			families[*mf.Name] = mf
-		}
+		families, err := scrapeGCSFuseMetrics(ctx, f, gcsfuseDriver, tPod, bucketName, mountPath, "metrics.prom", promFile)
+		framework.ExpectNoError(err)
 
 		volume := volumeName
 		if volumeResource.Pv != nil {
@@ -258,24 +238,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
 		getMetrics := func(metricFamily *dto.MetricFamily) []*dto.Metric {
-			metricsList := []*dto.Metric{}
-			if metricFamily != nil {
-				for _, m := range metricFamily.GetMetric() {
-					labels := make(map[string]string, len(m.GetLabel()))
-					for _, pair := range m.GetLabel() {
-						labels[pair.GetName()] = pair.GetValue()
-					}
-
-					if labels["bucket_name"] == bucketName &&
-						labels["pod_name"] == podName &&
-						labels["volume_name"] == volume &&
-						labels["namespace_name"] == f.Namespace.Name &&
-						(hasMetricsCardFixes == (labels["pod_uid"] == "")) { // cardinality fixes and pod_uid being empty should go hand in hand
-						metricsList = append(metricsList, m)
-					}
-				}
-			}
-			return metricsList
+			return metricsForVolume(metricFamily, bucketName, podName, volume, f.Namespace.Name, hasMetricsCardFixes)
 		}
 
 		metricsToVerify := append([]string{}, expectedMetricNames...)
@@ -395,4 +358,65 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		gcsFuseCSIMetricsTest(testNamePodExceedsThresholdVolumesShouldNotEmitMetrics, false)
 	})
+}
+
+// scrapeGCSFuseMetrics scrapes the CSI driver node server's Prometheus endpoint from inside
+// tPod and returns the parsed metric families. The endpoint is only reachable from within
+// the cluster, so the dump is written to promFileName through the gcsfuse mount and then
+// downloaded from the bucket to promLocalPath.
+func scrapeGCSFuseMetrics(ctx context.Context, f *framework.Framework, d *specs.GCSFuseCSITestDriver, tPod *specs.TestPod, bucketName, mountPath, promFileName, promLocalPath string) (map[string]*dto.MetricFamily, error) {
+	ginkgo.By("Collecting Prometheus metrics from the CSI driver node server")
+	csiPodIP := tPod.GetCSIDriverNodePodIP(ctx)
+	cmd := fmt.Sprintf("wget -O %v/%v http://%v:9920/metrics", mountPath, promFileName, csiPodIP)
+	_, _, err := specs.ExecCommandInContainerWithFullOutputWithRetry(f, tPod.GetPodName(), specs.TesterContainerName, "/bin/sh", "-c", cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wget metrics: %w", err)
+	}
+
+	//nolint:gosec
+	if err := d.DownloadGCSObject(ctx, bucketName, promFileName, promLocalPath); err != nil {
+		return nil, fmt.Errorf("failed to download Prometheus metrics data from GCS bucket %q: %w", bucketName, err)
+	}
+
+	ginkgo.By("Parsing Prometheus metrics")
+	metricsFile, err := os.Open(promLocalPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open metrics file %q: %w", promLocalPath, err)
+	}
+	defer metricsFile.Close()
+
+	families := map[string]*dto.MetricFamily{}
+	for mf, err := range metricspkg.ProcessMetricsDataAsStream(metricsFile) {
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse metrics stream: %w", err)
+		}
+		families[mf.GetName()] = mf
+	}
+
+	return families, nil
+}
+
+// metricsForVolume returns the metrics in the family that belong to a single gcsfuse volume.
+// podName is the value expected in the pod_name label: the workload pod for sidecar-mode
+// volumes, the Mounter Pod for shared-mount volumes. expectEmptyPodUID tracks whether the
+// gcsfuse version under test has the metrics cardinality fixes, which stop emitting pod_uid.
+func metricsForVolume(metricFamily *dto.MetricFamily, bucketName, podName, volumeName, namespace string, expectEmptyPodUID bool) []*dto.Metric {
+	metricsList := []*dto.Metric{}
+	for _, m := range metricFamily.GetMetric() {
+		labels := make(map[string]string, len(m.GetLabel()))
+		for _, pair := range m.GetLabel() {
+			labels[pair.GetName()] = pair.GetValue()
+		}
+
+		if labels["bucket_name"] == bucketName &&
+			labels["pod_name"] == podName &&
+			labels["volume_name"] == volumeName &&
+			labels["namespace_name"] == namespace &&
+			// Cardinality fixes and pod_uid being empty should go hand in hand.
+			(expectEmptyPodUID == (labels["pod_uid"] == "")) {
+			metricsList = append(metricsList, m)
+		}
+	}
+
+	return metricsList
 }

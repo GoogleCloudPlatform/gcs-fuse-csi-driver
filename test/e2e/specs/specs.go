@@ -510,11 +510,15 @@ func (t *TestPod) VerifyReadFile(f *framework.Framework, filePath, expectedConte
 	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("grep -F '%s' %s", escapedContent, filePath))
 }
 
-// execCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
-func execCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podName, containerName string, cmd ...string) (string, string, error) {
+// ExecCommandInContainerWithFullOutputWithRetry executes a command in a target pod and retries with gradual back until timeout(10 min) or success.
+func ExecCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podName, containerName string, cmd ...string) (string, string, error) {
 	return RetryWithBackoffTwoReturnValues(func() (string, string, error) {
 		return e2epod.ExecCommandInContainerWithFullOutput(f, podName, containerName, cmd...)
 	})
+}
+
+func execCommandInContainerWithFullOutputWithRetry(f *framework.Framework, podName, containerName string, cmd ...string) (string, string, error) {
+	return ExecCommandInContainerWithFullOutputWithRetry(f, podName, containerName, cmd...)
 }
 
 // Retry executes a generic operation (op) with exponential backoff.
