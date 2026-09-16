@@ -113,7 +113,9 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 			specs.DeployIstioServiceEntry(f.Namespace.Name)
 		}
 
-		if zbEnabled(driver) {
+		// When using gRPC or Zonal Buckets, Istio blocks outbound connections to GCS and causes gcsfuse to hang on mount.
+		// Excluding port 443 lets gRPC traffic bypass the Istio sidecar proxy.
+		if zbEnabled(driver) || getClientProtocol(driver) == "grpc" {
 			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundPorts": "443"})
 		}
 
