@@ -20,7 +20,6 @@ package specs
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -44,7 +43,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -249,10 +247,9 @@ func GetMounterPod(ctx context.Context, c clientset.Interface, namespace string,
 }
 
 type TestPod struct {
-	client                   clientset.Interface
-	pod                      *corev1.Pod
-	namespace                *corev1.Namespace
-	inplacePodRestartEnabled bool
+	client    clientset.Interface
+	pod       *corev1.Pod
+	namespace *corev1.Namespace
 }
 
 func NewTestPodModifiedSpec(c clientset.Interface, ns *corev1.Namespace, setAutomountServiceAccountToken bool) *TestPod {
@@ -327,72 +324,25 @@ func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 // InplacePodRestart enables the Kubernetes 1.35+ in-place pod restart feature (RestartAllContainers on exit code 88).
 func (t *TestPod) InplacePodRestart() {
 	framework.Logf("Enabling in-place pod restart (RestartAllContainers)")
-	t.inplacePodRestartEnabled = true
+	for i := range t.pod.Spec.Containers {
+		t.pod.Spec.Containers[i].RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+		t.pod.Spec.Containers[i].RestartPolicyRules = []corev1.ContainerRestartRule{
+			{
+				Action: corev1.ContainerRestartRuleActionRestartAllContainers,
+				ExitCodes: &corev1.ContainerRestartRuleOnExitCodes{
+					Operator: corev1.ContainerRestartRuleOnExitCodesOpIn,
+					Values:   []int32{88},
+				},
+			},
+		}
+	}
 }
 
 func (t *TestPod) Create(ctx context.Context) {
 	framework.Logf("Creating Pod %s", t.pod.Name)
-	if !t.inplacePodRestartEnabled {
-		var err error
-		t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
-		framework.ExpectNoError(err)
-		return
-	}
-
-	// TODO(b/558744868): When k8s.io/api and client-go in test/go.mod are upgraded to >= v0.35.0,
-	// replace this raw JSON injection with typed corev1.Container.RestartPolicyRules fields.
-	// In-place pod restart was introduced in Kubernetes 1.35+.
-	// Because this repository's vendored k8s.io/api and client-go dependencies are pinned to v0.33.3 (K8s 1.33),
-	// the typed Go structs lack Container.RestartPolicyRules and container-level RestartPolicy fields.
-	// To enable the feature without requiring a repo-wide Kubernetes dependency upgrade, we serialize the
-	// pod to a JSON map, inject restartPolicy: "Always" and restartPolicyRules directly into the containers,
-	// and submit the raw JSON payload to the API server via the RESTClient.
-	podBytes, err := json.Marshal(t.pod)
-	framework.ExpectNoError(err, "failed to marshal pod to json")
-
-	var podMap map[string]any
-	err = json.Unmarshal(podBytes, &podMap)
-	framework.ExpectNoError(err, "failed to unmarshal pod json to map")
-
-	// When creating a Pod via raw JSON using RESTClient, the API server and admission
-	// webhooks strictly require apiVersion and kind. Since NewTestPod does not populate
-	// TypeMeta, explicitly inject them here.
-	podMap["apiVersion"] = "v1"
-	podMap["kind"] = "Pod"
-
-	if spec, ok := podMap["spec"].(map[string]any); ok {
-		if containers, ok := spec["containers"].([]any); ok {
-			for _, c := range containers {
-				if containerMap, ok := c.(map[string]any); ok {
-					containerMap["restartPolicy"] = "Always"
-					containerMap["restartPolicyRules"] = []any{
-						map[string]any{
-							"action": "RestartAllContainers",
-							"exitCodes": map[string]any{
-								"operator": "In",
-								"values":   []int{88},
-							},
-						},
-					}
-				}
-			}
-		}
-	}
-
-	updatedBytes, err := json.Marshal(podMap)
-	framework.ExpectNoError(err, "failed to marshal updated pod map")
-
-	result := &corev1.Pod{}
-	err = t.client.CoreV1().RESTClient().Post().
-		Namespace(t.namespace.Name).
-		Resource("pods").
-		VersionedParams(&metav1.CreateOptions{}, scheme.ParameterCodec).
-		SetHeader("Content-Type", "application/json").
-		Body(updatedBytes).
-		Do(ctx).
-		Into(result)
-	framework.ExpectNoError(err, "failed to create pod with in-place restart rules")
-	t.pod = result
+	var err error
+	t.pod, err = t.client.CoreV1().Pods(t.namespace.Name).Create(ctx, t.pod, metav1.CreateOptions{})
+	framework.ExpectNoError(err)
 }
 
 func (t *TestPod) CreateExpectError(ctx context.Context) {
