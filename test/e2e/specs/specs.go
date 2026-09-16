@@ -104,6 +104,7 @@ const (
 	SharedMountCloudProfilerPrefix                             = "gcsfuse-csi-shared-mount-cloud-profiler"
 	SharedMountCloudProfilerDisabledGCSFusePrefix              = "gcsfuse-csi-shared-mount-cloud-profiler-disabled-gcsfuse"
 	SharedMountProfilesPrefix                                  = "gcsfuse-csi-shared-mount-profiles"
+	SharedMountInvalidMountOptionsVolumePrefix                 = "gcsfuse-csi-shared-mount-invalid-mount-options-volume"
 
 	expectedTrainingProfileFlag   = "--profile=aiml-training"
 	expectedTrainingProfileConfig = `map\[.*profile:aiml-training.*\]`
