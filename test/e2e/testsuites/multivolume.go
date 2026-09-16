@@ -27,6 +27,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -68,6 +69,16 @@ func (t *gcsFuseCSIMultiVolumeTestSuite) DefineTests(driver storageframework.Tes
 	if err != nil {
 		klog.Fatalf(`env variable "%s" could not be converted to boolean`, envVar)
 	}
+
+	// Create an isolated copy of the driver for the multivolume test suite.
+	// This prevents the ReadWriteMany enforcing mutation from modifying the global testDriver pointer.
+	gcsDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
+	if ok {
+		driverCopy := *gcsDriver
+		driverCopy.GetDriverInfo().RequiredAccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+		driver = &driverCopy
+	}
+
 	type local struct {
 		config             *storageframework.PerTestConfig
 		volumeResourceList []*storageframework.VolumeResource
