@@ -89,11 +89,13 @@ const (
 	MultiNICMinVersion                     = "v1.22.2-gke.0"
 	SidecarAutoGoMemLimitMinVersion        = "v1.23.11-gke.0"
 	StorageEndpointInternalMinVersion      = "v1.23.14-gke.0"
-	FlagFileForDefaultingPath              = "flags-for-defaulting"
-	GCSFuseProfileFlag                     = "profile"
-	LocalSocketAddressArg                  = "experimental-local-socket-address"
-	PublishContextKeyMounterPodName        = "mounter-pod-name"
-	PublishContextKeyMounterPodNamespace   = "mounter-pod-namespace"
+	// TODO(amacaskill): update with actual version once the sidecar is released.
+	SidecarGrpcByDefaultMinVersion       = "v999.999.999"
+	FlagFileForDefaultingPath            = "flags-for-defaulting"
+	GCSFuseProfileFlag                   = "profile"
+	LocalSocketAddressArg                = "experimental-local-socket-address"
+	PublishContextKeyMounterPodName      = "mounter-pod-name"
+	PublishContextKeyMounterPodNamespace = "mounter-pod-namespace"
 )
 
 var (
