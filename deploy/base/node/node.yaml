@@ -64,6 +64,7 @@ spec:
             - --enable-cloud-profiler-for-driver=true
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
+            - --enable-grpc-by-default=false
             - --universe-domain=$(UNIVERSE_DOMAIN)
           ports:
             - containerPort: 9920

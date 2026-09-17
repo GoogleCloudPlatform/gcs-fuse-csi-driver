@@ -75,6 +75,7 @@ var (
 	assumeGoodSidecarVersion       = flag.Bool("assume-good-sidecar-version", false, "Assume the sidecar version is compatible with all features in the running version of the driver.")
 	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
+	enableGrpcByDefault            = flag.Bool("enable-grpc-by-default", false, "Enable gRPC by default for new driver enablement.")
 	universeDomain                 = flag.String("universe-domain", "googleapis.com", "The universe domain. The default value is googleapis.com.")
 
 	// GCSFuse kernel params feature.
@@ -256,6 +257,7 @@ func main() {
 				return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			},
 		},
+		EnableGrpcByDefault: *enableGrpcByDefault,
 	}
 
 	var mounter mount.Interface

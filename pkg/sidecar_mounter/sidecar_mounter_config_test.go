@@ -961,6 +961,60 @@ func TestPrepareMountArgs_AutoGoMemLimit(t *testing.T) {
 	}
 }
 
+func TestPrepareMountArgs_EnableGrpcByDefault(t *testing.T) {
+	// Do not parallelize because prepareMountArgs modifies shared prometheusPort.
+
+	testCases := []struct {
+		name                   string
+		options                []string
+		expectedFlagVal        string
+		expectedClientProtocol string
+	}{
+		{
+			name:                   "enable-grpc-by-default true passes flag through, does not set client-protocol",
+			options:                []string{"enable-grpc-by-default=true"},
+			expectedFlagVal:        "true",
+			expectedClientProtocol: "",
+		},
+		{
+			name:                   "enable-grpc-by-default false passes flag through",
+			options:                []string{"enable-grpc-by-default=false"},
+			expectedFlagVal:        "false",
+			expectedClientProtocol: "",
+		},
+		{
+			name:                   "no enable-grpc-by-default provided",
+			options:                []string{"some-other-flag=true"},
+			expectedFlagVal:        "",
+			expectedClientProtocol: "",
+		},
+		{
+			name:                   "enable-grpc-by-default true with user-specified client-protocol=http1 passes both through",
+			options:                []string{"enable-grpc-by-default=true", "client-protocol=http1"},
+			expectedFlagVal:        "true",
+			expectedClientProtocol: "http1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mc := &MountConfig{
+				Options: tc.options,
+			}
+
+			mc.prepareMountArgs()
+
+			if got := mc.FlagMap[util.EnableGrpcByDefaultConst]; got != tc.expectedFlagVal {
+				t.Errorf("Got FlagMap[%q] %q, expected %q", util.EnableGrpcByDefaultConst, got, tc.expectedFlagVal)
+			}
+
+			if got := mc.FlagMap["client-protocol"]; got != tc.expectedClientProtocol {
+				t.Errorf("Got FlagMap[%q] %q, expected %q", "client-protocol", got, tc.expectedClientProtocol)
+			}
+		})
+	}
+}
+
 func TestReadDriverFlagsForDefaulting(t *testing.T) {
 	t.Parallel()
 
