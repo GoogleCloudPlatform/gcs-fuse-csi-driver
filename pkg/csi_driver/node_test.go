@@ -865,6 +865,112 @@ func TestNodePublishVolumeEnableAutoGoMemLimit(t *testing.T) {
 	}
 }
 
+func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                     string
+		enableGrpcByDefault      bool
+		assumeGoodSidecarVersion bool
+		userMountOptions         string
+		expectedOptions          []string
+		unexpectedOptions        []string
+	}{
+		{
+			name:                     "feature flag enabled, sidecar version supported, no user overrides, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag disabled, sidecar version supported, no user overrides, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      false,
+			assumeGoodSidecarVersion: true,
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version not supported, no user overrides, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: false,
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user specifies client-protocol=http1, expect both flags passed",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "client-protocol=http1",
+			expectedOptions:          []string{"client-protocol=http1", "enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user specifies client-protocol=grpc, expect both flags passed",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "client-protocol=grpc",
+			expectedOptions:          []string{"client-protocol=grpc", "enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user specifies gcs-connection:client-protocol:http1, expect both flags passed",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "gcs-connection:client-protocol:http1",
+			expectedOptions:          []string{"gcs-connection:client-protocol:http1", "enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user specifies enable-grpc-by-default=true, expect flag present without duplicate",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-grpc-by-default=true",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testTargetPath, cleanup := setupTestTargetPath(t)
+			defer cleanup()
+
+			volumeContext := map[string]string{
+				VolumeContextKeyPodName:      "test-pod",
+				VolumeContextKeyPodNamespace: "test-ns",
+			}
+			if tc.userMountOptions != "" {
+				volumeContext[VolumeContextKeyMountOptions] = tc.userMountOptions
+			}
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    volumeContext,
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+
+			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns := newNodeServer(driver, fakeMounter)
+
+			_, err := ns.NodePublishVolume(context.Background(), req)
+			if err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{
+				Device: testVolumeID,
+				Path:   testTargetPath,
+				Type:   "fuse",
+				Opts:   tc.expectedOptions,
+			}, tc.unexpectedOptions)
+		})
+	}
+}
+
 func TestNodeUnpublishVolume(t *testing.T) {
 	t.Parallel()
 	testTargetPath, cleanup := setupTestTargetPath(t)
@@ -3215,6 +3321,124 @@ func TestNodeStageVolumeEnableAutoGoMemLimit(t *testing.T) {
 				EnableAutoGoMemLimit: tc.enableAutoGoMemLimit,
 				AutoGoMemLimitRatio:  tc.autoGoMemLimitRatio,
 			}
+			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+			var extraVC map[string]string
+			if tc.userMountOptions != "" {
+				extraVC = map[string]string{VolumeContextKeyMountOptions: tc.userMountOptions}
+			}
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, extraVC)
+
+			_, err := ns.NodeStageVolume(context.Background(), stageReq)
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if mounterServer.req == nil {
+				t.Fatalf("expected mounterServer.req to be non-nil, but got nil")
+			}
+			validateMountOptions(t, mounterServer.req.MountOptions, tc.expectedOptions, tc.unexpectedOptions)
+		})
+	}
+}
+
+func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	cases := []struct {
+		name                     string
+		enableGrpcByDefault      bool
+		assumeGoodSidecarVersion bool
+		userMountOptions         string
+		expectedOptions          []string
+		unexpectedOptions        []string
+	}{
+		{
+			name:                     "feature flag enabled, mounter pod image supported, no user overrides, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag disabled, mounter pod image supported, no user overrides, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      false,
+			assumeGoodSidecarVersion: true,
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image not supported, no user overrides, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: false,
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user specifies client-protocol=http1, expect both flags passed",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "client-protocol=http1",
+			expectedOptions:          []string{"client-protocol=http1", "enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user specifies client-protocol=grpc, expect both flags passed",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "client-protocol=grpc",
+			expectedOptions:          []string{"client-protocol=grpc", "enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user specifies gcs-connection:client-protocol:http1, expect both flags passed",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "gcs-connection:client-protocol:http1",
+			expectedOptions:          []string{"gcs-connection:client-protocol:http1", "enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user specifies enable-grpc-by-default=true, expect flag present without duplicate",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-grpc-by-default=true",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+
+			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
