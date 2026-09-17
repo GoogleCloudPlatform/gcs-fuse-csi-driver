@@ -94,6 +94,9 @@ func InitGCSFuseCSITestDriver(c clientset.Interface, m metadata.Service, bl stri
 				storageframework.CapPersistence: true,
 				storageframework.CapExec:        true,
 			},
+			RequiredAccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteMany,
+			},
 		},
 		clientset:                   c,
 		meta:                        m,
