@@ -96,6 +96,10 @@ var (
 	// Stream metrics export
 	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Stream metrics export instead of downloading the entire content")
 
+	// GCSFuse volume metrics schema flag
+	// TODO(alleaditya): Deprecate --enable-gcsfuse-volume-metrics-schema and remove legacy k8s_pod fallback once k8s_gcs_fuse_volume rollout reaches 100%.
+	enableGcsFuseVolumeMetricsSchema = flag.Bool("enable-gcsfuse-volume-metrics-schema", false, "Enable k8s_gcs_fuse_volume Monitored Resource metrics schema for GCSFuse metrics.")
+
 	// Leader election flags.
 	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")
 	driverNamespace                  = flag.String("driver-namespace", "gcs-fuse-csi-driver", "The namespace where the driver resources are deployed.")
@@ -256,6 +260,7 @@ func main() {
 				return filepath.Join(util.KubeletDir, "pods", podUID, "volumes", "kubernetes.io~empty-dir", util.SidecarContainerTmpVolumeName)
 			},
 		},
+		EnableGcsFuseVolumeMetricsSchema: *enableGcsFuseVolumeMetricsSchema,
 	}
 
 	var mounter mount.Interface
@@ -283,7 +288,7 @@ func main() {
 		}
 
 		if addr != "" {
-			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport)
+			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport, *enableGcsFuseVolumeMetricsSchema)
 			mm.InitializeHTTPHandler()
 		}
 	} else if *runController {

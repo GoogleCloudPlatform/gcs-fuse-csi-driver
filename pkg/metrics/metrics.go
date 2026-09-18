@@ -53,32 +53,34 @@ const (
 
 type Manager interface {
 	InitializeHTTPHandler()
-	RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName string)
+	RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, k8sControllerType, k8sControllerName string)
 	UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName string)
 }
 
 type manager struct {
-	registry        *prometheus.Registry
-	metricsEndpoint string
-	fuseSocketDir   string
-	clientset       clientset.Interface
-	streamMetrics   bool
+	registry                         *prometheus.Registry
+	metricsEndpoint                  string
+	fuseSocketDir                    string
+	clientset                        clientset.Interface
+	streamMetrics                    bool
+	enableGcsFuseVolumeMetricsSchema bool
 
 	maximumNumberOfCollectors int
 	volumeMountPathRegistered sets.Set[string]
 	mutex                     sync.Mutex
 }
 
-func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics bool) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) Manager {
 	mm := &manager{
-		registry:                  prometheus.NewRegistry(),
-		metricsEndpoint:           metricsEndpoint,
-		fuseSocketDir:             fuseSocketDir,
-		clientset:                 clientset,
-		streamMetrics:             streamMetrics,
-		volumeMountPathRegistered: sets.Set[string]{},
-		maximumNumberOfCollectors: maximumNumberOfCollectors,
-		mutex:                     sync.Mutex{},
+		registry:                         prometheus.NewRegistry(),
+		metricsEndpoint:                  metricsEndpoint,
+		fuseSocketDir:                    fuseSocketDir,
+		clientset:                        clientset,
+		streamMetrics:                    streamMetrics,
+		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
+		volumeMountPathRegistered:        sets.Set[string]{},
+		maximumNumberOfCollectors:        maximumNumberOfCollectors,
+		mutex:                            sync.Mutex{},
 	}
 
 	return mm
@@ -106,21 +108,70 @@ func (mm *manager) InitializeHTTPHandler() {
 	}()
 }
 
+// MetricSchemaPolicy encapsulates schema-specific metric name normalization and constant label construction.
+// This allows seamless, instantaneous rollback between the k8s_gcs_fuse_volume Monitored Resource schema
+// and legacy k8s_pod schema without workload restarts across all 4 {CSI Driver Flag x Sidecar Binary} combinations.
+type MetricSchemaPolicy struct {
+	NormalizeMetricName func(name string) string
+	BuildConstLabels    func(podName, podNamespace, volumeName, bucketName, controllerType, controllerName string) map[string]string
+}
+
+func newMetricSchemaPolicy(enableGcsFuseVolumeMetricsSchema bool) MetricSchemaPolicy {
+	if enableGcsFuseVolumeMetricsSchema {
+		return MetricSchemaPolicy{
+			NormalizeMetricName: func(name string) string {
+				if name == "fs_ops_latency" {
+					return "fs_ops_latencies"
+				}
+				return name
+			},
+			BuildConstLabels: func(podName, podNamespace, volumeName, bucketName, controllerType, controllerName string) map[string]string {
+				return map[string]string{
+					"pod_name":            podName,
+					"namespace_name":      podNamespace,
+					"volume_name":         volumeName,
+					"bucket_name":         bucketName,
+					"k8s_controller_type": controllerType,
+					"k8s_controller_name": controllerName,
+				}
+			},
+		}
+	}
+	return MetricSchemaPolicy{
+		NormalizeMetricName: func(name string) string {
+			if name == "fs_ops_latencies" {
+				return "fs_ops_latency"
+			}
+			return name
+		},
+		BuildConstLabels: func(podName, podNamespace, volumeName, bucketName, _, _ string) map[string]string {
+			return map[string]string{
+				"pod_name":       podName,
+				"namespace_name": podNamespace,
+				"volume_name":    volumeName,
+				"bucket_name":    bucketName,
+				// Why: In the legacy k8s_pod Monitored Resource schema, emitting a non-empty runtime pod_uid
+				// causes high-cardinality Monarch label explosions across Pod churn. However, omitting pod_uid
+				// or any of {pod_name, namespace_name, volume_name, bucket_name} breaks override_labels in the
+				// GKE Metrics Collector (SCHEMA_K8S_POD), resulting in 100% silent telemetry drops.
+				"pod_uid": "",
+			}
+		},
+	}
+}
+
 // RegisterMetricsCollector registers the metrics collector. It is idempotent to register the same collector.
-func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName string) {
+func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, k8sControllerType, k8sControllerName string) {
 	socketBasePath := util.GetSocketBasePath(podUID, volumeName, mm.fuseSocketDir)
 	if err := os.Symlink(emptyDirBasePath, socketBasePath); err != nil && !os.IsExist(err) {
 		klog.Errorf("failed to create symbolic link to path %q: %v", socketBasePath, err)
 		return
 	}
 
-	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, map[string]string{
-		"pod_name":       podName,
-		"namespace_name": podNamespace,
-		"volume_name":    volumeName,
-		"bucket_name":    bucketName,
-		"pod_uid":        "", // podUID is emptied to avoid infinite cardinality in the metric labels
-	}, mm.clientset, mm.streamMetrics)
+	policy := newMetricSchemaPolicy(mm.enableGcsFuseVolumeMetricsSchema)
+	constLabels := policy.BuildConstLabels(podName, podNamespace, volumeName, bucketName, k8sControllerType, k8sControllerName)
+
+	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
 	mm.mutex.Lock()
@@ -161,8 +212,10 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 
 // UnregisterMetricsCollector unregisters the metrics collector. It is idempotent to unregister the same collector.
 func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName string) {
-	// metricsCollector uses a hash of pod UID and volume name as an identifier.
-	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, mm.streamMetrics)
+	// Why: UnregisterMetricsCollector constructs a dummy collector with constLabels = nil.
+	// Prometheus Registry.Unregister matches collectors solely by hashing the descriptor emitted by Describe().
+	// Therefore, Describe() MUST remain pinned to {pod_uid, volume_name} independent of c.constLabels.
+	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
 
 	// Lock the number of registered collectors while we attempt to unregister a collector.
 	mm.mutex.Lock()
@@ -177,28 +230,37 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volum
 }
 
 type metricsCollector struct {
-	emptyDirBasePath string
-	constLabels      map[string]string
-	namespace        string
-	podName          string
-	podUID           string
-	volumeName       string
-	httpClient       *http.Client
-	clientset        clientset.Interface
-	streamMetrics    bool
+	emptyDirBasePath                 string
+	constLabels                      map[string]string
+	namespace                        string
+	podName                          string
+	podUID                           string
+	volumeName                       string
+	httpClient                       *http.Client
+	clientset                        clientset.Interface
+	streamMetrics                    bool
+	enableGcsFuseVolumeMetricsSchema bool
 }
 
 // NewMetricsCollector returns a new Collector exposing metrics read from the give path.
-func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool) prometheus.Collector {
+func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) prometheus.Collector {
+	var clonedLabels map[string]string
+	if labels != nil {
+		clonedLabels = make(map[string]string, len(labels))
+		for k, v := range labels {
+			clonedLabels[k] = v
+		}
+	}
 	c := &metricsCollector{
-		emptyDirBasePath: emptyDirBasePath,
-		constLabels:      labels,
-		namespace:        namespace,
-		podName:          podName,
-		podUID:           podUID,
-		volumeName:       volumeName,
-		clientset:        clientset,
-		streamMetrics:    streamMetrics,
+		emptyDirBasePath:                 emptyDirBasePath,
+		constLabels:                      clonedLabels,
+		namespace:                        namespace,
+		podName:                          podName,
+		podUID:                           podUID,
+		volumeName:                       volumeName,
+		clientset:                        clientset,
+		streamMetrics:                    streamMetrics,
+		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
 	}
 
 	// Creating a new HTTP client that is configured to make HTTP requests over a unix domain socket.
@@ -217,7 +279,10 @@ func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, p
 // Describe emits the description of metrics.
 // Prometheus Registry relies on this func to identify collectors.
 func (c *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
-	// Collector id is a hash of the values of the ConstLabels and fqName.
+	// Why: Collector identity in prometheus.Registry.Register/Unregister is computed by hashing
+	// the fqName and ConstLabels emitted by Describe(). This MUST remain pinned to {pod_uid: c.podUID, volume_name: c.volumeName}
+	// and MUST NOT use c.constLabels (which omits pod_uid in k8s_gcs_fuse_volume mode), otherwise UnregisterMetricsCollector
+	// (which passes nil constLabels) will fail to match the descriptor hash and leak collectors on volume unmount.
 	ch <- prometheus.NewDesc("gke_gcsfuse_csi_metric", "GKE GCSFuse CSI metric.", nil, map[string]string{"pod_uid": c.podUID, "volume_name": c.volumeName})
 }
 
@@ -315,6 +380,14 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 	name := metricFamily.GetName()
 	help := metricFamily.GetHelp()
 	metricType := metricFamily.GetType()
+
+	// Normalize slashes to underscores in metric names
+	name = strings.ReplaceAll(name, "/", "_")
+
+	// Normalize metric names bidirectionally based on enableGcsFuseVolumeMetricsSchema to support
+	// live DaemonSet rollbacks (requiresRepublish) without restarting workload mounter sidecar containers.
+	policy := newMetricSchemaPolicy(c.enableGcsFuseVolumeMetricsSchema)
+	name = policy.NormalizeMetricName(name)
 
 	var cachedDesc *prometheus.Desc
 
@@ -489,4 +562,42 @@ func GetErrorCode(err error) string {
 	internalErr, _ := status.FromError(err)
 	code := internalErr.Code().String()
 	return code
+}
+
+func resolveControllerKindAndName(kind, name string, labels map[string]string) (string, string) {
+	if strings.EqualFold(kind, "ReplicaSet") && labels != nil {
+		if hash, ok := labels["pod-template-hash"]; ok && hash != "" && strings.HasSuffix(name, "-"+hash) {
+			deploymentName := strings.TrimSuffix(name, "-"+hash)
+			if deploymentName != "" {
+				return "deployment", deploymentName
+			}
+		}
+	}
+	return strings.ToLower(kind), name
+}
+
+func ExtractK8sController(pod *corev1.Pod) (string, string) {
+	if pod == nil {
+		return "", ""
+	}
+	if pod.Labels != nil {
+		if js, ok := pod.Labels["jobset.sigs.k8s.io/jobset-name"]; ok && js != "" {
+			return "jobset", js
+		}
+		if js, ok := pod.Labels["jobset_name"]; ok && js != "" {
+			return "jobset", js
+		}
+		if js, ok := pod.Labels["jobset-name"]; ok && js != "" {
+			return "jobset", js
+		}
+	}
+	for _, ref := range pod.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller {
+			return resolveControllerKindAndName(ref.Kind, ref.Name, pod.Labels)
+		}
+	}
+	if len(pod.OwnerReferences) > 0 {
+		return resolveControllerKindAndName(pod.OwnerReferences[0].Kind, pod.OwnerReferences[0].Name, pod.Labels)
+	}
+	return "", ""
 }
