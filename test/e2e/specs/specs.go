@@ -1502,10 +1502,14 @@ func WaitForWorkloadReady(ctx context.Context, c clientset.Interface, namespace 
 	err := wait.PollUntilContextTimeout(ctx, pollIntervalSlow, timeout, true,
 		func(ctx context.Context) (bool, error) {
 			replicaSetSelector, err := metav1.LabelSelectorAsSelector(selector)
-			framework.ExpectNoError(err)
+			if err != nil {
+				return false, err
+			}
 
 			podList, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: replicaSetSelector.String()})
-			framework.ExpectNoError(err)
+			if err != nil {
+				return false, err
+			}
 
 			if int32(len(podList.Items)) != replica {
 				framework.Logf("Found %d workload pods, waiting for %d", len(podList.Items), replica)
