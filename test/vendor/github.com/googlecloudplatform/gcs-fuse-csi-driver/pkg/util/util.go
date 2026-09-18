@@ -79,6 +79,7 @@ const (
 	AutoGoMemLimitRatioConst            = "auto-gomemlimit-ratio"
 	GoMemLimitCgroupPercentage          = 0.95
 	StorageEndpointInternal             = "storage-endpoint-internal"
+	EnableGrpcByDefaultConst            = "enable-grpc-by-default"
 	KubeletDir                          = "/var/lib/kubelet"
 	KubeletPluginsGCSFuseDir            = "/var/lib/kubelet/plugins/kubernetes.io/csi/gcsfuse.csi.storage.gke.io"
 	VolumeContextKeyPVName              = "csi.storage.k8s.io/pv/name"
