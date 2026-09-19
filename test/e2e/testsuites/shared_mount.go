@@ -71,6 +71,22 @@ const (
 	sharedMountProfilesOverrideStatCacheMiB    = 10
 
 	mib = 1024 * 1024
+
+	// sharedMountFSGroup is carried by the Mounter Pod's PodTemplate and by every workload pod on
+	// the volume. Both the mutating webhook and the CSI node server reject any pod on a shared
+	// mount whose fsGroup differs from the Mounter Pod's, so this value cannot vary per pod.
+	sharedMountFSGroup = int64(3003)
+
+	// Modes the CSI driver asks gcsfuse for when kubelet delegates fsGroup: it passes
+	// gid=<fsGroup>, file-mode=664 and dir-mode=775. See parseRequestArguments in
+	// pkg/csi_driver/utils.go.
+	sharedMountExpectedFileMode = "-rw-rw-r--"
+	sharedMountExpectedDirMode  = "drwxrwxr-x"
+
+	// An identity that is deliberately not a member of sharedMountFSGroup. Under shared mount no
+	// admitted pod can be a non-member, so this is reached by dropping privileges inside a pod.
+	sharedMountNonMemberUser = "nonmember"
+	sharedMountNonMemberID   = "9999"
 )
 
 // GCSFuseProfilesEnabled reports whether the GCSFuse profiles feature is enabled for this test
@@ -118,6 +134,29 @@ func setupAndDeploySharedMountPod(ctx context.Context, f *framework.Framework, v
 	mounterPod := specs.GetMounterPod(ctx, f.ClientSet, f.Namespace.Name, nodeName)
 
 	return tPod, mounterPod
+}
+
+// annotateMounterPodTemplate points the volume's PVC at the given mounter PodTemplate.
+// RetryOnConflict refetches the latest PVC resourceVersion, which pv-controller and other
+// background controllers bump when the claim transitions to Bound, to avoid 409 Conflict errors.
+func annotateMounterPodTemplate(ctx context.Context, f *framework.Framework, vr *storageframework.VolumeResource, templateName string) {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		currentPVC, getErr := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Get(ctx, vr.Pvc.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		if currentPVC.Annotations == nil {
+			currentPVC.Annotations = make(map[string]string)
+		}
+		currentPVC.Annotations[webhook.MounterPodTemplateAnnotation] = templateName
+		updatedPVC, updateErr := f.ClientSet.CoreV1().PersistentVolumeClaims(f.Namespace.Name).Update(ctx, currentPVC, metav1.UpdateOptions{})
+		if updateErr == nil {
+			vr.Pvc = updatedPVC
+		}
+
+		return updateErr
+	})
+	framework.ExpectNoError(err, "failed to update PVC with mounter pod template annotation")
 }
 
 func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
@@ -1210,5 +1249,165 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		ginkgo.By("Checking that the Mounter Pod GCSFuse error is surfaced to the workload pod")
 		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
 		tPod.WaitForFailedMountError(ctx, "-invalid-option")
+	})
+
+	// TC: fsGroup with Shared Mount Test
+	// Verify Linux fsGroup permission delegation, file ownership, and cross-pod collaboration over a
+	// single shared mount. Four pods test the different fsGroup configurations, all carrying fsGroup 3003:
+	//   Pod A (1001/2002) rw       - Default Read/Write and Metadata
+	//   Pod B (4004/5005) rw       - cross-UID collaboration on the same mount
+	//   Pod C (1001/2002) readOnly - kernel read-only enforcement over fsGroup write bits
+	//   Pod D (root)      rw       - a subprocess outside the fsGroup, reachable only by dropping
+	//                                privileges, since admission guarantees every pod is a member
+	//
+	// The webhook's rejection of a mismatched fsGroup is deliberately NOT retested here; it is
+	// already asserted by the PodTemplate overrides spec above.
+	ginkgo.It("[shared-mount] should delegate fsGroup ownership and enforce read-only, non-member, and cross-pod access on a shared mount", func() {
+		init(1)
+		defer cleanup()
+
+		gomega.Expect(l.volumeResourceList).To(gomega.HaveLen(1))
+		gomega.Expect(l.volumeResourceList[0]).ToNot(gomega.BeNil())
+		sharedVR := l.volumeResourceList[0]
+		gomega.Expect(sharedVR.Pvc).ToNot(gomega.BeNil())
+
+		fsGroupStr := strconv.FormatInt(sharedMountFSGroup, 10)
+		file1 := fmt.Sprintf("%s/file1.txt", sharedMountPath)
+		file2 := fmt.Sprintf("%s/file2.txt", sharedMountPath)
+		dir1 := fmt.Sprintf("%s/dir1", sharedMountPath)
+		podAContent := "hello from pod A"
+		podBAppend := "appended by pod B"
+		podBContent := "hello from pod B"
+		podAAppend := "appended by pod A"
+
+		// The default mounter PodTemplate provisioned by PrepareTest carries no fsGroup, and a pod
+		// with an fsGroup is rejected against such a template, so this spec needs its own.
+		templateName := "fsgroup-mounter-template-" + rand.String(6)
+		ginkgo.By(fmt.Sprintf("Creating the mounter PodTemplate %s with fsGroup %s", templateName, fsGroupStr))
+		_, err := specs.CreateMounterPodTemplate(ctx, f.ClientSet, f.Namespace.Name, specs.MounterPodTemplateOptions{
+			Name:               templateName,
+			ServiceAccountName: specs.K8sServiceAccountName,
+			FSGroup:            ptr.To(sharedMountFSGroup),
+		})
+		framework.ExpectNoError(err, "failed to create the fsGroup mounter pod template")
+
+		// Must happen before the first SetupVolume call, which otherwise defaults the PVC to the
+		// fsGroup-less template.
+		ginkgo.By(fmt.Sprintf("Annotating the PVC %s with the PodTemplate", sharedVR.Pvc.Name))
+		annotateMounterPodTemplate(ctx, f, sharedVR, templateName)
+
+		// newFSGroupPod builds a workload pod on the shared volume. fsGroup is not a parameter: every
+		// pod on this volume must match the PodTemplate's. The pod's default ServiceAccountName is
+		// already K8sServiceAccountName, which the template also pins, so admission accepts it.
+		newFSGroupPod := func(uid, gid int, readOnly bool, nodeName string) *specs.TestPod {
+			tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+			tPod.SetNonRootSecurityContext(uid, gid, int(sharedMountFSGroup))
+			tPod.SetupVolume(sharedVR, sharedVolName, sharedMountPath, readOnly)
+			if nodeName != "" {
+				tPod.SetNodeAffinity(nodeName, true /* sameNode */)
+			}
+
+			return tPod
+		}
+
+		// verifyOwnershipAndMode asserts the mode and GID gcsfuse reports for path. `ls -ln` columns
+		// are: mode links uid gid size date name, and -d makes a directory report itself rather than
+		// its contents. The UID column is intentionally not asserted: the driver passes only
+		// gid=/file-mode=/dir-mode= to gcsfuse, so the reported owner is the Mounter Pod's gcsfuse
+		// process rather than the workload that created the file.
+		verifyOwnershipAndMode := func(tPod *specs.TestPod, path, expectedMode string) {
+			out := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, fmt.Sprintf("ls -lnd %s | awk '{print $1, $4}'", path))
+			gomega.Expect(strings.TrimSpace(out)).To(gomega.Equal(fmt.Sprintf("%s %s", expectedMode, fsGroupStr)),
+				fmt.Sprintf("expected %s to report mode %s and GID %s", path, expectedMode, fsGroupStr))
+		}
+
+		// Scenario A: single non-root pod with fsGroup.
+		ginkgo.By("Deploying Pod A (UID 1001, GID 2002) referencing the shared-mount PVC")
+		podA := newFSGroupPod(1001, 2002, false /* readOnly */, "")
+		podA.Create(ctx)
+		defer podA.Cleanup(ctx)
+		podA.WaitForRunning(ctx)
+		podA.VerifySidecarPresence(false /* expectPresent */)
+		nodeName := podA.GetNode()
+
+		ginkgo.By("Verifying exactly one Mounter Pod backs the volume")
+		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
+
+		ginkgo.By("Verifying Pod A can write a file and create a directory on the shared mount")
+		podA.VerifyRWMount(f, sharedMountPath)
+		podA.VerifyWriteAndReadFile(f, file1, podAContent)
+		podA.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mkdir -p %s", dir1))
+
+		ginkgo.By("Verifying the new file and directory carry the gcsfuse GID and modes")
+		verifyOwnershipAndMode(podA, file1, sharedMountExpectedFileMode)
+		verifyOwnershipAndMode(podA, dir1, sharedMountExpectedDirMode)
+
+		// Scenario B: cross-pod collaboration between two different UIDs on one mount.
+		ginkgo.By("Deploying Pod B (UID 4004, GID 5005) on the same node, sharing the volume")
+		podB := newFSGroupPod(4004, 5005, false /* readOnly */, nodeName)
+		podB.Create(ctx)
+		defer podB.Cleanup(ctx)
+		podB.WaitForRunning(ctx)
+		gomega.Expect(podB.GetNode()).To(gomega.Equal(nodeName), "expected Pod B to be scheduled on the same node as Pod A")
+
+		ginkgo.By("Verifying the second pod reuses the same Mounter Pod rather than spawning another")
+		specs.VerifyMounterPods(ctx, f.ClientSet, f.Namespace.Name, 1, nodeName)
+
+		ginkgo.By("Verifying Pod B reads Pod A's file and appends to it")
+		podB.VerifyRWMount(f, sharedMountPath)
+		podB.VerifyReadFile(f, file1, podAContent)
+		podB.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo '%s' >> %s", podBAppend, file1))
+
+		ginkgo.By("Verifying Pod A sees Pod B's appended content alongside its own")
+		podA.VerifyReadFile(f, file1, podBAppend)
+		podA.VerifyReadFile(f, file1, podAContent)
+
+		ginkgo.By("Verifying Pod B can create a file that Pod A reads and appends to")
+		podB.VerifyWriteAndReadFile(f, file2, podBContent)
+		podA.VerifyReadFile(f, file2, podBContent)
+		podA.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo '%s' >> %s", podAAppend, file2))
+		podB.VerifyReadFile(f, file2, podAAppend)
+
+		ginkgo.By("Verifying both shared files still report the gcsfuse GID and mode after cross-pod writes")
+		verifyOwnershipAndMode(podA, file1, sharedMountExpectedFileMode)
+		verifyOwnershipAndMode(podB, file2, sharedMountExpectedFileMode)
+
+		// Scenario C: read-only volume, mounted from the same shared mount as the rw pods above.
+		ginkgo.By("Deploying Pod C with the volume mounted read-only on the same node")
+		podC := newFSGroupPod(1001, 2002, true /* readOnly */, nodeName)
+		podC.Create(ctx)
+		defer podC.Cleanup(ctx)
+		podC.WaitForRunning(ctx)
+
+		ginkgo.By("Verifying Pod C can read and list the shared mount")
+		podC.VerifyROMount(f, sharedMountPath)
+		podC.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("ls -l %s", sharedMountPath))
+		podC.VerifyReadFile(f, file1, podAContent)
+
+		ginkgo.By("Verifying the kernel read-only mount takes precedence over the fsGroup write permission")
+		podC.VerifyExecInPodFailWithMessage(f, specs.TesterContainerName, fmt.Sprintf("echo blocked > %s/ro-new.txt", sharedMountPath), "Read-only file system")
+		podC.VerifyExecInPodFailWithMessage(f, specs.TesterContainerName, fmt.Sprintf("echo blocked >> %s", file1), "Read-only file system")
+		podC.VerifyExecInPodFailWithMessage(f, specs.TesterContainerName, fmt.Sprintf("mkdir %s/ro-dir", sharedMountPath), "Read-only file system")
+
+		// Scenario D: a process with no fsGroup membership. Pod D runs as root purely so it can drop
+		// privileges; the pods above cannot, lacking CAP_SETUID.
+		ginkgo.By("Deploying Pod D (root, fsGroup 3003) to exercise a process outside the fsGroup")
+		podD := newFSGroupPod(0 /* root */, 0, false /* readOnly */, nodeName)
+		podD.Create(ctx)
+		defer podD.Cleanup(ctx)
+		podD.WaitForRunning(ctx)
+
+		ginkgo.By("Registering a non-member identity inside Pod D")
+		// BusyBox su resolves users through /etc/passwd and rejects bare numeric UIDs.
+		podD.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf(
+			"echo '%s:x:%s:%s:::/bin/sh' >> /etc/passwd && echo '%s:x:%s:' >> /etc/group",
+			sharedMountNonMemberUser, sharedMountNonMemberID, sharedMountNonMemberID, sharedMountNonMemberUser, sharedMountNonMemberID))
+
+		ginkgo.By("Verifying the non-member process can read the baseline file but cannot modify it")
+		podD.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("su %s -c 'cat %s'", sharedMountNonMemberUser, file1))
+		podD.VerifyExecInPodFailWithMessage(f, specs.TesterContainerName, fmt.Sprintf("su %s -c 'echo blocked > %s'", sharedMountNonMemberUser, file1), "Permission denied")
+		podD.VerifyExecInPodFailWithMessage(f, specs.TesterContainerName, fmt.Sprintf("su %s -c 'echo blocked >> %s'", sharedMountNonMemberUser, file1), "Permission denied")
+		podD.VerifyExecInPodFailWithMessage(f, specs.TesterContainerName, fmt.Sprintf("su %s -c 'mkdir %s/nonmember-dir'", sharedMountNonMemberUser, sharedMountPath), "Permission denied")
+
 	})
 }

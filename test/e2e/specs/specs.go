@@ -502,6 +502,24 @@ func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shE
 		fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
 }
 
+// VerifyExecInPodFailWithMessage verifies that shExec fails in the target pod AND that the failure
+// carries expectedMsg. Unlike VerifyExecInPodFail, which only checks that some error occurred, this
+// rejects a failure for an unrelated reason (a missing binary, an unresolvable user, a konnectivity
+// blip) masquerading as the denial under test.
+//
+// The retrying exec helper is deliberately not used here: it retries until success, so every
+// expected-failure command would burn its full backoff (~8.5m) before returning. A short Eventually
+// still absorbs transient exec errors, which are distinguishable because they lack expectedMsg.
+func (t *TestPod) VerifyExecInPodFailWithMessage(f *framework.Framework, containerName, shExec, expectedMsg string) {
+	gomega.Eventually(func(g gomega.Gomega) {
+		stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+		g.Expect(err).To(gomega.HaveOccurred(),
+			fmt.Sprintf("%q should have failed with %q, but it succeeded\nstdout: %s\nstderr: %s", shExec, expectedMsg, stdout, stderr))
+		g.Expect(stdout+stderr).To(gomega.ContainSubstring(expectedMsg),
+			fmt.Sprintf("%q failed, but not with the expected message %q\nstdout: %s\nstderr: %s", shExec, expectedMsg, stdout, stderr))
+	}, "1m", "5s").Should(gomega.Succeed())
+}
+
 // VerifyRWMount verifies that the mount point is mounted read-write in the target pod.
 func (t *TestPod) VerifyRWMount(f *framework.Framework, mountPath string) {
 	t.VerifyExecInPodSucceed(f, TesterContainerName, fmt.Sprintf("mount | grep %s | grep rw,", mountPath))
