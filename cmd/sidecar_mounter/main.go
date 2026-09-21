@@ -113,12 +113,14 @@ func main() {
 	if err != nil {
 		klog.Fatalf("failed to read defaulting-flag file: %v", err)
 	}
-	for _, sp := range socketPaths {
+	for i, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
-		time.Sleep(1500 * time.Millisecond)
+		if i > 0 {
+			time.Sleep(1500 * time.Millisecond)
+		}
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
 			mc.EnsureErrWriter()
