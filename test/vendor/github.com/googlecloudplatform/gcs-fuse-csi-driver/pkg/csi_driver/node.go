@@ -412,6 +412,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
 	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
 	if err != nil {
@@ -902,6 +903,19 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 	return mountOptions
 }
 
+// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
+// mount option if enabled in driver options and supported by the sidecar container image.
+// If the feature is disabled or unsupported, mount options are returned unmodified.
+func (s *nodeServer) appendGrpcByDefaultOptions(mounterImage string, mountOptions []string) []string {
+	if s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
+		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
+		return mountOptions
+	}
+
+	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+}
+
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
@@ -1099,6 +1113,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
 	args.fuseMountOptions = s.appendCloudProfilerOptions(podImage, args.enableCloudProfilerForSidecar, podName, string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(podImage, args.fuseMountOptions)
 
 	podUID := string(pod.UID)
 	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
