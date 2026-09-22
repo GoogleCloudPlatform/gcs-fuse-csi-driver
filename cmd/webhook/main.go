@@ -67,6 +67,8 @@ var (
 	metadataPrefetchCPULimit                = flag.String("metadata-sidecar-cpu-limit", "50m", "Flag to use default value for gcsfuse memory prefetch sidecar container cpu limit.")
 	metadataPrefetchEphemeralStorageRequest = flag.String("metadata-sidecar-ephemeral-storage-request", "10Mi", "The default value for gcsfuse memory prefetch sidecar ephemeral storage request.")
 	metadataPrefetchEphemeralStorageLimit   = flag.String("metadata-sidecar-ephemeral-storage-limit", "0", "The default value for gcsfuse memory prefetch sidecar ephemeral storage limit.")
+	requireWIFCredentialConfigMap           = flag.Bool("require-wif-credential-configmap", false, "When true, the webhook denies the creation of pods with GCS FUSE volumes if the WIF credential ConfigMap annotation is absent, preventing fallback to the node's identity.")
+	requireApplicationCredentials           = flag.Bool("require-application-credentials", false, "When true, the sidecar container is started with --require-application-credentials=true, causing it to refuse to start if GOOGLE_APPLICATION_CREDENTIALS is unset.")
 	// These are set at compile time.
 	webhookVersion = "unknown"
 )
@@ -109,6 +111,10 @@ func main() {
 
 	fuseSideCarConfig.EnableSharedNodeMount = *enableSharedNodeMount
 	klog.Infof("Webhook should enable shared node mount: %t", fuseSideCarConfig.EnableSharedNodeMount)
+
+	fuseSideCarConfig.RequireApplicationCredentials = *requireApplicationCredentials
+	klog.Infof("Webhook should require application credentials: %t", fuseSideCarConfig.RequireApplicationCredentials)
+	klog.Infof("Webhook should require WIF credential ConfigMap: %t", *requireWIFCredentialConfigMap)
 
 	metadataPrefetchSideCarConfig := wh.LoadConfig(*metadataSidecarImage, *imagePullPolicy, *metadataPrefetchCPURequest, *metadataPrefetchCPULimit, *metadataMemoryRequest, *metadataMemoryLimit, *metadataPrefetchEphemeralStorageRequest, *metadataPrefetchEphemeralStorageLimit)
 	metadataPrefetchSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
@@ -179,17 +185,18 @@ func main() {
 	klog.Info("Registering webhooks to the webhook server.")
 	hookServer.Register("/inject", &webhook.Admission{
 		Handler: &wh.SidecarInjector{
-			Client:                 mgr.GetClient(),
-			Config:                 fuseSideCarConfig,
-			MetadataPrefetchConfig: metadataPrefetchSideCarConfig,
-			Decoder:                admission.NewDecoder(runtime.NewScheme()),
-			NodeLister:             nodeLister,
-			PvLister:               pvLister,
-			PvcLister:              pvcLister,
-			ScLister:               scLister,
-			PodTemplateLister:      podTemplateLister,
-			ServerVersion:          serverVersion,
-			K8SClient:              client,
+			Client:                        mgr.GetClient(),
+			Config:                        fuseSideCarConfig,
+			MetadataPrefetchConfig:        metadataPrefetchSideCarConfig,
+			Decoder:                       admission.NewDecoder(runtime.NewScheme()),
+			NodeLister:                    nodeLister,
+			PvLister:                      pvLister,
+			PvcLister:                     pvcLister,
+			ScLister:                      scLister,
+			PodTemplateLister:             podTemplateLister,
+			ServerVersion:                 serverVersion,
+			K8SClient:                     client,
+			RequireWIFCredentialConfigMap: *requireWIFCredentialConfigMap,
 		},
 	})
 
