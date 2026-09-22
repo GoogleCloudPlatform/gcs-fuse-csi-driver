@@ -427,6 +427,24 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				expectedSupported:          false,
 				minFeatureVersionSupported: StorageEndpointInternalMinVersion,
 			},
+			{
+				name:                       "enable-grpc-by-default - should return true for supported sidecar version in staging gcr",
+				imageName:                  "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: SidecarGrpcByDefaultMinVersion,
+			},
+			{
+				name:                       "enable-grpc-by-default - should return false for unsupported sidecar version",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.0-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: SidecarGrpcByDefaultMinVersion,
+			},
+			{
+				name:                       "enable-grpc-by-default - should return false for private sidecar",
+				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: SidecarGrpcByDefaultMinVersion,
+			},
 		}
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
