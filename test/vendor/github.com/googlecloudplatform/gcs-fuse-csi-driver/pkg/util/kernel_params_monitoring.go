@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,15 +29,37 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/safchain/ethtool"
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 )
+
+const defaultNIC = "eth0"
+
+// ethtoolClient abstracts github.com/safchain/ethtool for deterministic unit testing.
+type ethtoolClient interface {
+	Features(intf string) (map[string]bool, error)
+	Change(intf string, config map[string]bool) error
+	Close()
+}
 
 var (
 	// fuseMaxMaxPagesMu serializes concurrent updates to the host's FUSE max_pages_limit.
 	fuseMaxMaxPagesMu sync.Mutex
 	// ProcSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
 	ProcSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs-fuse/max_pages_limit"
+
+	// lroMu serializes default NIC LRO checks and updates across concurrent volume monitors.
+	lroMu sync.Mutex
+
+	// newEthtoolClient creates a new ethtool ioctl client (overridable for unit testing).
+	newEthtoolClient = func() (ethtoolClient, error) {
+		return ethtool.NewEthtool()
+	}
+	// runEthtoolCommandFunc executes the CLI fallback `ethtool -K <nic> lro on` (overridable for unit testing).
+	runEthtoolCommandFunc = runEthtoolCommand
+	// enableLROFunc enables LRO on the specified NIC (overridable for unit testing).
+	enableLROFunc = enableLROOnNIC
 )
 
 // FuseMaxMaxPagesUpdateSupported returns true if the host supports FUSE max_pages_limit tuning.
@@ -81,9 +104,107 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
-// validateParamValue converts the string value to an integer and checks it against safe bounds.
+// isLROEnabledValue returns true when the validated parameter value signals enabling LRO.
+func isLROEnabledValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "on", "1":
+		return true
+	default:
+		return false
+	}
+}
+
+func runEthtoolCommand(nic string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ethtool", "-K", nic, "lro", "on").CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if sudoOut, sudoErr := exec.CommandContext(ctx, "sudo", "-n", "ethtool", "-K", nic, "lro", "on").CombinedOutput(); sudoErr == nil {
+		return nil
+	} else {
+		return fmt.Errorf("ethtool -K %s lro on failed: %w (output: %s, sudo output: %s)", nic, sudoErr, strings.TrimSpace(string(out)), strings.TrimSpace(string(sudoOut)))
+	}
+}
+
+// enableLROOnNIC idempotently enables Large Receive Offload (rx-lro / large-receive-offload)
+// on the specified NIC using ethtool ioctls (Features read-before-write Change),
+// falling back to `ethtool -K <nic> lro on` if ioctl creation or execution fails.
+func enableLROOnNIC(nic string) error {
+	lroMu.Lock()
+	defer lroMu.Unlock()
+
+	nic = strings.TrimSpace(nic)
+	if nic == "" {
+		return fmt.Errorf("NIC name cannot be empty")
+	}
+
+	eth, err := newEthtoolClient()
+	if err != nil {
+		cmdErr := runEthtoolCommandFunc(nic)
+		if cmdErr == nil {
+			return nil
+		}
+		return fmt.Errorf("failed to create ethtool client for NIC %q: %w (fallback error: %v)", nic, err, cmdErr)
+	}
+	defer eth.Close()
+
+	features, err := eth.Features(nic)
+	if err != nil {
+		cmdErr := runEthtoolCommandFunc(nic)
+		if cmdErr == nil {
+			return nil
+		}
+		return fmt.Errorf("failed to get ethtool features for NIC %q: %w (fallback error: %v)", nic, err, cmdErr)
+	}
+
+	featureKey := "rx-lro"
+	var alreadyEnabled bool
+	if val, ok := features["rx-lro"]; ok {
+		featureKey = "rx-lro"
+		alreadyEnabled = val
+	} else if val, ok := features["large-receive-offload"]; ok {
+		featureKey = "large-receive-offload"
+		alreadyEnabled = val
+	}
+
+	// Idempotent no-op when LRO is already active on the NIC.
+	if alreadyEnabled {
+		return nil
+	}
+
+	if err := eth.Change(nic, map[string]bool{featureKey: true}); err != nil {
+		cmdErr := runEthtoolCommandFunc(nic)
+		if cmdErr == nil {
+			return nil
+		}
+		return fmt.Errorf("failed to enable %s on NIC %q: %w (fallback error: %v)", featureKey, nic, err, cmdErr)
+	}
+	return nil
+}
+
+func enableLROOnDefaultNIC() error {
+	if err := enableLROFunc(defaultNIC); err != nil {
+		return fmt.Errorf("failed to enable large-receive-offload on NIC %q: %w", defaultNIC, err)
+	}
+	return nil
+}
+
+// validateParamValue converts the string value to an integer and checks it against safe bounds,
+// or validates boolean/toggle values for LargeReceiveOffload.
 func validateParamValue(name ParamName, value string) error {
-	valInt, err := strconv.ParseInt(value, 10, 64)
+	trimmed := strings.TrimSpace(value)
+	if name == LargeReceiveOffload {
+		switch strings.ToLower(trimmed) {
+		case "true", "false", "on", "off", "1", "0":
+			return nil
+		default:
+			return fmt.Errorf("value %q is not a valid boolean/toggle for %s", value, name)
+		}
+	}
+
+	valInt, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil {
 		return fmt.Errorf("value %q is not a valid integer", value)
 	}
@@ -126,13 +247,28 @@ func checkAndApplyKernelParams(kernelParamsFilePath string, pathForParam map[Par
 	}
 
 	for _, param := range config.Parameters {
+		param.Value = strings.TrimSpace(param.Value)
+		if param.Name == LargeReceiveOffload {
+			if err := validateParamValue(param.Name, param.Value); err != nil {
+				klog.Warningf("%v Invalid value for parameter %q (requestID %q): %v. Skipping...", logPrefix, param.Name, config.RequestID, err)
+				continue
+			}
+			if isLROEnabledValue(param.Value) {
+				if err := enableLROOnDefaultNIC(); err != nil {
+					klog.Warningf("%v Failed to apply parameter %q (requestID %q): %v. Skipping...", logPrefix, param.Name, config.RequestID, err)
+					continue
+				}
+				klog.Infof("%v Successfully ensured kernel param %q is enabled on default NIC for requestID %q", logPrefix, param.Name, config.RequestID)
+			}
+			continue
+		}
+
 		path, ok := pathForParam[param.Name]
 		if !ok {
 			klog.Warningf("%v Unknown parameter name %q found in kernel parameters config for requestID %q. Skipping...", logPrefix, param.Name, config.RequestID)
 			continue
 		}
 
-		param.Value = strings.TrimSpace(param.Value)
 		if err := validateParamValue(param.Name, param.Value); err != nil {
 			klog.Warningf("%v Invalid value for parameter %q (requestID %q): %v. Skipping...", logPrefix, param.Name, config.RequestID, err)
 			continue
