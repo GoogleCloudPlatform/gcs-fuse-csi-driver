@@ -174,6 +174,62 @@ func TestParseKernelParamsConfig(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name: "Success_LargeReceiveOffload",
+			setupFile: func(t *testing.T) string {
+				content := `{
+					"request_id": "test-req-lro",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "large-receive-offload", "value": "true"}
+					]
+				}`
+				path := filepath.Join(t.TempDir(), "lro_params.json")
+				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+					t.Fatalf("failed to write temp file: %v", err)
+				}
+				return path
+			},
+			expectedConfig: &KernelParamsConfig{
+				RequestID: "test-req-lro",
+				Timestamp: "2026-02-02T12:00:00Z",
+				Parameters: []KernelParam{
+					{Name: LargeReceiveOffload, Value: "true"},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "Success_LargeReceiveOffloadWithSysfsParameters",
+			setupFile: func(t *testing.T) string {
+				content := `{
+					"request_id": "test-req-mixed",
+					"timestamp": "2026-02-02T12:00:00Z",
+					"parameters": [
+						{"name": "large-receive-offload", "value": "true"},
+						{"name": "max-read-ahead-kb", "value": "2048"},
+						{"name": "fuse-max-background-requests", "value": "16"},
+						{"name": "fuse-congestion-window-threshold", "value": "12"}
+					]
+				}`
+				path := filepath.Join(t.TempDir(), "mixed_params.json")
+				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+					t.Fatalf("failed to write temp file: %v", err)
+				}
+				return path
+			},
+			expectedConfig: &KernelParamsConfig{
+				RequestID: "test-req-mixed",
+				Timestamp: "2026-02-02T12:00:00Z",
+				Parameters: []KernelParam{
+					{Name: LargeReceiveOffload, Value: "true"},
+					{Name: MaxReadAheadKb, Value: "2048"},
+					{Name: MaxBackgroundRequests, Value: "16"},
+					{Name: CongestionWindowThreshold, Value: "12"},
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tc := range testCases {
