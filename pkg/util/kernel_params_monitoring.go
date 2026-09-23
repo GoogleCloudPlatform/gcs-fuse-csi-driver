@@ -115,14 +115,16 @@ func isLROEnabledValue(value string) bool {
 }
 
 func runEthtoolCommand(nic string) error {
-	out, err := exec.Command("ethtool", "-K", nic, "lro", "on").CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ethtool", "-K", nic, "lro", "on").CombinedOutput()
 	if err == nil {
 		return nil
 	}
-	if sudoOut, sudoErr := exec.Command("sudo", "-n", "ethtool", "-K", nic, "lro", "on").CombinedOutput(); sudoErr == nil {
+	if sudoOut, sudoErr := exec.CommandContext(ctx, "sudo", "-n", "ethtool", "-K", nic, "lro", "on").CombinedOutput(); sudoErr == nil {
 		return nil
 	} else {
-		return fmt.Errorf("ethtool -K %s lro on failed: %w (output: %s, sudo output: %s)", nic, err, strings.TrimSpace(string(out)), strings.TrimSpace(string(sudoOut)))
+		return fmt.Errorf("ethtool -K %s lro on failed: %w (output: %s, sudo output: %s)", nic, sudoErr, strings.TrimSpace(string(out)), strings.TrimSpace(string(sudoOut)))
 	}
 }
 
@@ -140,19 +142,21 @@ func enableLROOnNIC(nic string) error {
 
 	eth, err := newEthtoolClient()
 	if err != nil {
-		if cmdErr := runEthtoolCommandFunc(nic); cmdErr == nil {
+		cmdErr := runEthtoolCommandFunc(nic)
+		if cmdErr == nil {
 			return nil
 		}
-		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", nic, err)
+		return fmt.Errorf("failed to create ethtool client for NIC %q: %w (fallback error: %v)", nic, err, cmdErr)
 	}
 	defer eth.Close()
 
 	features, err := eth.Features(nic)
 	if err != nil {
-		if cmdErr := runEthtoolCommandFunc(nic); cmdErr == nil {
+		cmdErr := runEthtoolCommandFunc(nic)
+		if cmdErr == nil {
 			return nil
 		}
-		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
+		return fmt.Errorf("failed to get ethtool features for NIC %q: %w (fallback error: %v)", nic, err, cmdErr)
 	}
 
 	featureKey := "rx-lro"
@@ -171,10 +175,11 @@ func enableLROOnNIC(nic string) error {
 	}
 
 	if err := eth.Change(nic, map[string]bool{featureKey: true}); err != nil {
-		if cmdErr := runEthtoolCommandFunc(nic); cmdErr == nil {
+		cmdErr := runEthtoolCommandFunc(nic)
+		if cmdErr == nil {
 			return nil
 		}
-		return fmt.Errorf("failed to enable %s on NIC %q: %w", featureKey, nic, err)
+		return fmt.Errorf("failed to enable %s on NIC %q: %w (fallback error: %v)", featureKey, nic, err, cmdErr)
 	}
 	return nil
 }
