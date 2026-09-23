@@ -116,7 +116,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 		}
 
 		// Patch the label to PV if it uses shared node mount.
-		if si.Config.EnableSharedNodeMount && pv.Spec.CSI.VolumeAttributes != nil && pv.Spec.CSI.VolumeAttributes[SharedMountVolumeAttribute] == util.TrueStr {
+		if pv.Spec.CSI.VolumeAttributes != nil && pv.Spec.CSI.VolumeAttributes[SharedMountVolumeAttribute] == util.TrueStr {
+			if !si.Config.EnableSharedNodeMount {
+				err := fmt.Errorf("shared node mount is not supported or enabled on this cluster")
+				klog.Errorf("PersistentVolume %q admission failed: %v", pv.Name, err)
+				return admission.Errored(http.StatusBadRequest, err)
+			}
 			if pv.Labels[SharedMountLabel] != util.TrueStr || pv.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] != pv.Name {
 				if pv.Labels == nil {
 					pv.Labels = make(map[string]string)
@@ -165,7 +170,15 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 			continue
 		}
 
-		isSharedNodeMount := si.Config.EnableSharedNodeMount && pv != nil && volumeAttributes != nil && volumeAttributes[SharedMountVolumeAttribute] == util.TrueStr
+		var isSharedNodeMount bool
+		if pv != nil && volumeAttributes != nil && volumeAttributes[SharedMountVolumeAttribute] == util.TrueStr {
+			if !si.Config.EnableSharedNodeMount {
+				err := fmt.Errorf("volume %q uses shared node mount, which is not supported or enabled on this cluster", volume.Name)
+				klog.Errorf("Pod admission failed: %v", err)
+				return admission.Errored(http.StatusBadRequest, err)
+			}
+			isSharedNodeMount = true
+		}
 
 		if isSharedNodeMount {
 			hasSharedNodeMount = true
