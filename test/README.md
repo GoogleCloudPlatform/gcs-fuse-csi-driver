@@ -103,8 +103,9 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
 - `USE_CAPACITY_ADVISOR`: default value is `false` (defaults to `true` in Prow CI). Whether to use GCE Capacity Advisor to select node locations and fallback regions. Only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`; ignored when running on an existing cluster.
 - `E2E_TEST_GKE_CLUSTER_VERSION`: It denotes the GKE cluster master and node version. If `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is `true`, it specifies the version of the cluster to be created (defaults to `latest` if not provided). If `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is `false`, it auto-detects the version of the existing cluster (can be overridden by setting this parameter). The version is used by the test framework to check for feature compatibility.
-- `E2E_TEST_USE_BOSKOS`: default value is `false`. Change it to `true` if you want to use Boskos to acquire a project. Useful for debugging Boskos infrastructure locally.
+- `E2E_TEST_USE_BOSKOS`: default value is `false`. Change it to `true` if you want to use Boskos to acquire a project. Useful for debugging Boskos infrastructure locally.  More details around boskos debugging are available [here](https://gke-internal.googlesource.com/test-infra/+/refs/heads/master/deployments/gke-managed-storage-team/boskos/README.md) (for internal use only).
 - `E2E_TEST_PROJECT_ID`: default value is empty. GCP project ID to run E2E tests. Required when managing cluster lifecycle without Boskos.
+- `E2E_TEST_GKE_GCLOUD_ARGS` (or `GKE_GCLOUD_ARGS`): default value is empty. Additional arguments passed to underlying `gcloud` commands executed during cluster lifecycle management (e.g. `--impersonate-service-account=<sa-email>`). This is especially required during local Boskos debugging to impersonate a service account with IAM permissions on the leased project.
 ```bash
 # Run the test on an Autopilot cluster with the GcsFuseCsiDriver add-on enabled.
 make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=true E2E_TEST_USE_GKE_AUTOPILOT=true
@@ -119,15 +120,39 @@ make e2e-test E2E_TEST_USE_GKE_MANAGED_DRIVER=false E2E_TEST_BUILD_DRIVER=true \
 # Run the test with customized Ginkgo flags.
 make e2e-test E2E_TEST_FOCUS=gcsfuseIntegration E2E_TEST_SKIP=failedMount E2E_TEST_GINKGO_PROCS=3 E2E_TEST_GINKGO_TIMEOUT=20m E2E_TEST_GINKGO_FLAKE_ATTEMPTS=1
 
-# Boskos Debugging: Test Boskos leasing and cluster lifecycle management locally.
-# This requires a Boskos server running in your current cluster context (e.g. port-forwarded to localhost:8080).
+# You can optionally create and tear down a GKE cluster through E2E_TEST_MANAGE_CLUSTER_LIFECYCLE; whether the GCS Fuse CSI driver is enabled in the cluster is controlled by E2E_TEST_USE_GKE_MANAGED_DRIVER. Refer to Managed Cluster Configuration for more details.
+
+# Fixed Project Automation (Non-Managed Driver): Automatically provision and tear down a GKE cluster in a specific GCP project, and install the driver from source.
+make e2e-test \
+  E2E_TEST_USE_GKE_MANAGED_DRIVER=false \
+  REGISTRY=us-central1-docker.pkg.dev/$PROJECT_ID/gcs-fuse-csi-driver \
+  STAGINGVERSION=prow-gob-internal-boskos-1 \
+  E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true \
+  E2E_TEST_PROJECT_ID=$PROJECT_ID
+
+# Fixed Project Automation (Managed Driver): Automatically provision and tear down a GKE cluster in a specific GCP project, using the GKE-managed driver.
+# You can optionally specify a cluster version using E2E_TEST_GKE_CLUSTER_VERSION (defaults to 'latest').
+make e2e-test \
+  E2E_TEST_USE_GKE_MANAGED_DRIVER=true \
+  E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true \
+  E2E_TEST_PROJECT_ID=$PROJECT_ID \
+  E2E_TEST_GKE_CLUSTER_VERSION=1.36
+
+# To debug boskos infrastructure locally, you can use E2E_TEST_USE_BOSKOS=true which would try to lease a project from boskos pool. But this is to be used only for debugging boskos infrastructure. It needs a running boskos server and is currently access restricted to the repo owners. Refer internal test-infra repo for more details on boskos debugging.
 export BOSKOS_URL=http://localhost:8080
-make e2e-test E2E_TEST_USE_BOSKOS=true E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true E2E_TEST_GKE_CLUSTER_VERSION=latest GKE_CLUSTER_REGION=us-central1
+make e2e-test \
+  E2E_TEST_USE_BOSKOS=true \
+  E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true \
+  E2E_TEST_GKE_CLUSTER_VERSION=latest \
+  GKE_CLUSTER_REGION=us-central1 \
+  E2E_TEST_GKE_GCLOUD_ARGS="--impersonate-service-account=<sa-email>"
 ```
 
 #### Managed Cluster Configuration
 
-When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provisions a GKE cluster with the same configurations as used by the prow job. THese can be updated as needed through the below parameters:
+You can optionally create and tear down a GKE cluster through `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` (defaulted to `false`). Whether the GCS Fuse CSI driver is enabled in the cluster is controlled by `E2E_TEST_USE_GKE_MANAGED_DRIVER`.
+
+When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provisions a GKE cluster with the same configurations as used by the prow job. These can be updated as needed through the below parameters:
 - **Cluster Type**: Standard GKE Cluster (default) or Autopilot (if `E2E_TEST_USE_GKE_AUTOPILOT=true`).
 - **Release Channel**: `rapid` (can be overridden by `GKE_RELEASE_CHANNEL` environment variable).
 - **Version**: Determined by `E2E_TEST_GKE_CLUSTER_VERSION` (local) or `GKE_CLUSTER_VERSION` (CI).
@@ -140,6 +165,7 @@ When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provi
   - **Image Type**: `cos_containerd` (Container-Optimized OS with containerd).
 - **Workload Identity**: Enabled by default using the GCP project's workload pool (`<project-id>.svc.id.goog`).
 - **CSI Driver**: Installs the GKE-managed GCS FUSE CSI Driver addon by default (can be disabled by setting `E2E_TEST_USE_GKE_MANAGED_DRIVER=false`).
+- **Custom gcloud Arguments**: Extra arguments passed to underlying `gcloud` commands via `E2E_TEST_GKE_GCLOUD_ARGS` or `GKE_GCLOUD_ARGS` (e.g. `--impersonate-service-account=<sa-email>`).
 
 ## Performance test
 
