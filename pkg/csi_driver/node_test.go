@@ -4314,3 +4314,206 @@ func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
 		t.Fatalf("Expected error code ResourceExhausted, got %v (err: %v)", st.Code(), err)
 	}
 }
+
+func TestNodePublishVolumeEnableLRO(t *testing.T) {
+	testCases := []struct {
+		name                string
+		enableGrpcByDefault bool
+		machineType         string
+		enableLROErr        error
+		expectLROCalled     bool
+	}{
+		{
+			name:                "enableGrpcByDefault=true on ct6e-standard-4t enables LRO",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     true,
+		},
+		{
+			name:                "enableGrpcByDefault=true on ct6e-standard-8t enables LRO",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-8t",
+			expectLROCalled:     true,
+		},
+		{
+			name:                "enableGrpcByDefault=false on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: false,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "enableGrpcByDefault=true on non-v6e machine type does not enable LRO",
+			enableGrpcByDefault: true,
+			machineType:         "n2-standard-8",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "LRO error is logged and does not fail NodePublishVolume",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-4t",
+			enableLROErr:        fmt.Errorf("mock ethtool error"),
+			expectLROCalled:     true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			origEnableLRO := util.EnableLROFunc
+			t.Cleanup(func() {
+				util.EnableLROFunc = origEnableLRO
+			})
+
+			lroCalled := false
+			util.EnableLROFunc = func(_ string) error {
+				lroCalled = true
+				return tc.enableLROErr
+			}
+
+			testTargetPath, cleanup := setupTestTargetPath(t)
+			defer cleanup()
+
+			fc := clientset.NewFakeClientset()
+			fc.CreateNode(clientset.FakeNodeConfig{
+				IsWorkloadIdentityEnabled: true,
+				MachineType:               tc.machineType,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+			driver := initTestDriver(t, fakeMounter, fc)
+			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+
+			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			driver.config.AssumeGoodSidecarVersion = true
+			ns := newNodeServer(driver, fakeMounter)
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
+			}
+
+			if _, err := ns.NodePublishVolume(context.Background(), req); err != nil {
+				t.Fatalf("NodePublishVolume failed: %v", err)
+			}
+
+			if lroCalled != tc.expectLROCalled {
+				t.Errorf("lroCalled = %v, want %v", lroCalled, tc.expectLROCalled)
+			}
+		})
+	}
+}
+
+func TestNodeStageVolumeEnableLRO(t *testing.T) {
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	testCases := []struct {
+		name                string
+		enableGrpcByDefault bool
+		machineType         string
+		enableLROErr        error
+		expectLROCalled     bool
+	}{
+		{
+			name:                "enableGrpcByDefault=true on ct6e-standard-4t enables LRO",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     true,
+		},
+		{
+			name:                "enableGrpcByDefault=true on ct6e-standard-8t enables LRO",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-8t",
+			expectLROCalled:     true,
+		},
+		{
+			name:                "enableGrpcByDefault=false on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: false,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "enableGrpcByDefault=true on non-v6e machine type does not enable LRO",
+			enableGrpcByDefault: true,
+			machineType:         "n2-standard-8",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "LRO error is logged and does not fail NodeStageVolume",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-4t",
+			enableLROErr:        fmt.Errorf("mock ethtool error"),
+			expectLROCalled:     true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			origEnableLRO := util.EnableLROFunc
+			t.Cleanup(func() {
+				util.EnableLROFunc = origEnableLRO
+			})
+
+			lroCalled := false
+			util.EnableLROFunc = func(_ string) error {
+				lroCalled = true
+				return tc.enableLROErr
+			}
+
+			testStagingPath, cleanupStaging := setupTestStagingPath(t)
+			defer cleanupStaging()
+
+			sharedMountOptions, _ := setupSharedMountOptions(t, podUID)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreateNode(clientset.FakeNodeConfig{
+				IsWorkloadIdentityEnabled: true,
+				MachineType:               tc.machineType,
+			})
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.mounter = fakeMounter
+			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			ns.driver.config.AssumeGoodSidecarVersion = true
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
+			if _, err := ns.NodeStageVolume(context.Background(), stageReq); err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
+			}
+			defer func() {
+				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
+					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
+						vs.GCSFuseKernelMonitorState.CancelFunc()
+					}
+				}
+			}()
+
+			if lroCalled != tc.expectLROCalled {
+				t.Errorf("lroCalled = %v, want %v", lroCalled, tc.expectLROCalled)
+			}
+		})
+	}
+}
