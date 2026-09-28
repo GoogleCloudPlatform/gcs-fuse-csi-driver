@@ -65,7 +65,6 @@ const (
 	// Thus the full timeout is 7 seconds.
 	forceUnmountRetryTimeout = 7 * time.Second
 	forceUnmountRetrySteps   = 6
-	tpuV6eMachineTypePrefix  = "ct6e-"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -423,7 +422,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
 		return nil, err
 	}
-	s.enableLROIfApplicable(node)
 
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
@@ -1064,7 +1062,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
 		return nil, err
 	}
-	s.enableLROIfApplicable(node)
 
 	volumeID := req.GetVolumeId()
 	vc := req.GetVolumeContext()
@@ -1374,24 +1371,4 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	}
 
 	return nil
-}
-
-// enableLROIfApplicable enables Large Receive Offload (LRO) on the node's default NIC
-// when --enable-grpc-by-default is enabled and the node is a TPU v6e (ct6e-*) machine.
-func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
-	if s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
-		return
-	}
-	if node == nil {
-		return
-	}
-	machineType := node.Labels[clientset.MachineTypeKey]
-	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
-		return
-	}
-	if err := util.EnableLROOnDefaultNIC(); err != nil {
-		klog.Errorf("Failed to enable large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
-		return
-	}
-	klog.Infof("Successfully ensured large-receive-offload is enabled on default NIC for node %q (machine type %q)", node.Name, machineType)
 }
