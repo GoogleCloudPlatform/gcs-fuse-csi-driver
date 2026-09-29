@@ -23,13 +23,13 @@ WORKDIR /gcs-fuse-csi-driver
 ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make sidecar-mounter BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.12 AS debian
+FROM gke.gcr.io/debian-base:trixie-v1.0.0-gke.2 AS debian
 # Install necessary dependencies
 RUN clean-install bash numactl coreutils
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
-FROM gcr.io/distroless/base-debian12 AS distroless-base
+FROM gcr.io/distroless/base-debian13 AS distroless-base
 ARG TARGETPLATFORM
 
 # The distroless amd64 image has a target triplet of x86_64
