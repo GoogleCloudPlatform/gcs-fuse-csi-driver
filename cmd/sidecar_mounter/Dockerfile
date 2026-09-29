@@ -25,7 +25,7 @@ RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make sidecar-mounter BINDIR=
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
-FROM gcr.io/distroless/base-debian12
+FROM gcr.io/distroless/base-debian13
 ARG TARGETPLATFORM
 
 # Copy the binaries
