@@ -575,11 +575,11 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		hostFuseVol := &storageframework.VolumeResource{
 			VolSource: &corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
-					Path: "/proc/sys/fs/fuse",
+					Path: "/proc/sys/fs",
 				},
 			},
 		}
-		helperPod.SetupVolume(hostFuseVol, "host-fuse", "/host-proc-sys-fs-fuse", false)
+		helperPod.SetupVolume(hostFuseVol, "host-fuse", "/host-proc-sys-fs", false)
 		helperPod.SetNodeAffinity(nodeName, true)
 
 		ginkgo.By("Deploying the host-reader helper pod")
@@ -588,7 +588,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		helperPod.WaitForRunning(ctx)
 
 		ginkgo.By("Reading the initial FUSE max_pages_limit on the host via the helper pod")
-		limitStr := helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs-fuse/max_pages_limit")
+		limitStr := helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs/fuse/max_pages_limit")
 		initialLimit, err := strconv.ParseInt(strings.TrimSpace(limitStr), 10, 64)
 		framework.ExpectNoError(err)
 
@@ -607,7 +607,7 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mountpoint %q", mountPath))
 
 		ginkgo.By("Reading the FUSE max_pages_limit on the host again via the helper pod")
-		limitStr = helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs-fuse/max_pages_limit")
+		limitStr = helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs/fuse/max_pages_limit")
 		currentLimit, err := strconv.ParseInt(strings.TrimSpace(limitStr), 10, 64)
 		framework.ExpectNoError(err)
 
