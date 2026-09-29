@@ -260,13 +260,13 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "failed to check if path %q is already mounted: %v", targetPath, err)
 	}
 	if targetPathMounted {
-		klog.Infof("NodePublishVolume succeeded on staging path %q to target path %q, mount already exists.", stagingPath, targetPath)
+		klog.V(4).Infof("NodePublishVolume succeeded on staging path %q to target path %q, mount already exists.", stagingPath, targetPath)
 		startSharedMountProcesses()
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
 	// Create target path dir.
-	klog.Infof("NodePublishVolume attempting mkdir for target path %q", targetPath)
+	klog.V(4).Infof("NodePublishVolume attempting mkdir for target path %q", targetPath)
 	if err := os.MkdirAll(targetPath, 0o750); err != nil {
 		return nil, status.Errorf(codes.Internal, "mkdir failed for path %q: %v", targetPath, err)
 	}
@@ -278,7 +278,7 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 	}
 
 	// Bind mount staging path to target path.
-	klog.Infof("NodePublishVolume attempting to bind mount staging path %q to target path %q", stagingPath, targetPath)
+	klog.V(4).Infof("NodePublishVolume attempting to bind mount staging path %q to target path %q", stagingPath, targetPath)
 	if err = s.mounter.MountSensitiveWithoutSystemd(stagingPath, targetPath, "", bindMountOptions, nil); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to bind mount staging path %q to target path %q: %v", stagingPath, targetPath, err)
 	}
@@ -1125,7 +1125,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	if mounted {
-		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
+		klog.V(4).Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
