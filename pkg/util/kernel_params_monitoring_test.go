@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"syscall"
 	"testing"
 
@@ -71,7 +72,6 @@ func TestGetDeviceMajorMinor_NonExistentPath(t *testing.T) {
 }
 
 func TestCheckAndApplyKernelParams(t *testing.T) {
-	t.Parallel()
 
 	// Helper to create a temp file with content
 	createTempFile := func(dir, name, content string) string {
@@ -672,4 +672,158 @@ func TestMountUsingElevatedFuseMaxPagesLimitPanic(t *testing.T) {
 	if finalLimit != 256 {
 		t.Errorf("Expected final limit to be restored to 256, got %d", finalLimit)
 	}
+}
+
+type fakeEthtoolClient struct {
+	features    map[string]bool
+	featuresErr error
+	changeErr   error
+	changeCalls []map[string]bool
+	closed      bool
+}
+
+func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
+	if f.featuresErr != nil {
+		return nil, f.featuresErr
+	}
+	out := make(map[string]bool, len(f.features))
+	for k, v := range f.features {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
+	reqCopy := make(map[string]bool, len(config))
+	for k, v := range config {
+		reqCopy[k] = v
+	}
+	f.changeCalls = append(f.changeCalls, reqCopy)
+	if f.changeErr != nil {
+		return f.changeErr
+	}
+	for k, v := range config {
+		f.features[k] = v
+	}
+	return nil
+}
+
+func (f *fakeEthtoolClient) Close() {
+	f.closed = true
+}
+
+func TestEnableLRO(t *testing.T) {
+	origNewEthtool := newEthtoolClient
+	origRunCmd := runEthtoolCommandFunc
+	origEnableLRO := EnableLROFunc
+	t.Cleanup(func() {
+		newEthtoolClient = origNewEthtool
+		runEthtoolCommandFunc = origRunCmd
+		EnableLROFunc = origEnableLRO
+	})
+
+	t.Run("EnableWhenRxLROIsFalse", func(t *testing.T) {
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{"rx-lro": false},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		runEthtoolCommandFunc = func(nic string) error {
+			return errors.New("CLI fallback should not be called")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		if err := EnableLROOnDefaultNIC(); err != nil {
+			t.Fatalf("EnableLROOnDefaultNIC failed: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 1 {
+			t.Fatalf("expected 1 Change call, got %d", len(fakeEth.changeCalls))
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"rx-lro": true}) {
+			t.Errorf("Change called with %+v, want rx-lro: true", fakeEth.changeCalls[0])
+		}
+		if !fakeEth.features["rx-lro"] {
+			t.Errorf("expected fakeEth.features[\"rx-lro\"] to be true")
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected ethtool client to be closed")
+		}
+	})
+
+	t.Run("IdempotentWhenRxLROAlreadyTrue", func(t *testing.T) {
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{"rx-lro": true},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		runEthtoolCommandFunc = func(nic string) error {
+			return errors.New("CLI fallback should not be called")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		if err := EnableLROOnDefaultNIC(); err != nil {
+			t.Fatalf("EnableLROOnDefaultNIC failed: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 0 {
+			t.Errorf("expected 0 Change calls when rx-lro is already true, got %d", len(fakeEth.changeCalls))
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected ethtool client to be closed")
+		}
+	})
+
+	t.Run("IdempotentAcrossConsecutiveCalls", func(t *testing.T) {
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{"rx-lro": false},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		runEthtoolCommandFunc = func(nic string) error {
+			return errors.New("CLI fallback should not be called")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		if err := EnableLROOnDefaultNIC(); err != nil {
+			t.Fatalf("first EnableLROOnDefaultNIC call failed: %v", err)
+		}
+		if err := EnableLROOnDefaultNIC(); err != nil {
+			t.Fatalf("second EnableLROOnDefaultNIC call failed: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 1 {
+			t.Errorf("expected Change to be called exactly once across 2 consecutive calls, got %d", len(fakeEth.changeCalls))
+		}
+	})
+
+	t.Run("FallbackToCLIWhenEthtoolIoctlFails", func(t *testing.T) {
+		newEthtoolClient = func() (ethtoolClient, error) {
+			return nil, errors.New("socket ioctl error")
+		}
+		cliCalls := 0
+		runEthtoolCommandFunc = func(nic string) error {
+			if nic != "eth0" {
+				t.Errorf("unexpected NIC %q passed to CLI fallback", nic)
+			}
+			cliCalls++
+			return nil
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		if err := EnableLROOnDefaultNIC(); err != nil {
+			t.Fatalf("expected CLI fallback to succeed, got error: %v", err)
+		}
+		if cliCalls != 1 {
+			t.Errorf("expected 1 CLI fallback call, got %d", cliCalls)
+		}
+	})
+
+	t.Run("ReturnsErrorWhenBothEthtoolIoctlAndCLIFail", func(t *testing.T) {
+		newEthtoolClient = func() (ethtoolClient, error) {
+			return nil, errors.New("socket ioctl error")
+		}
+		runEthtoolCommandFunc = func(nic string) error {
+			return errors.New("ethtool CLI failed")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		if err := EnableLROOnDefaultNIC(); err == nil {
+			t.Errorf("expected error when both ioctl and CLI fail, got nil")
+		}
+	})
 }
