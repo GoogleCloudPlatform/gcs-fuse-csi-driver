@@ -113,8 +113,8 @@ spec:
               mountPath: /sys
             - name: host-iproute
               mountPath: /etc/iproute2
-            - name: host-proc-sys-fs-fuse
-              mountPath: /host-proc-sys-fs-fuse
+            - name: host-proc-sys-fs
+              mountPath: /host-proc-sys-fs
 
             - name: tmp
               mountPath: /tmp
@@ -173,9 +173,9 @@ spec:
           hostPath:
             path: /etc/iproute2
             type: Directory
-        - name: host-proc-sys-fs-fuse
+        - name: host-proc-sys-fs
           hostPath:
-            path: /proc/sys/fs/fuse
+            path: /proc/sys/fs
             type: Directory
         - name: tmp
           emptyDir:
