@@ -24,13 +24,13 @@ ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
+FROM gke.gcr.io/debian-base:trixie-v1.0.0-gke.2 AS debian
 # Install necessary dependencies
 RUN clean-install mount bash
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
-FROM gcr.io/distroless/base-debian12 AS distroless-base
+FROM gcr.io/distroless/base-debian13 AS distroless-base
 
 # The distroless amd64 image has a target triplet of x86_64
 FROM distroless-base AS distroless-amd64

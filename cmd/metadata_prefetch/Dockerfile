@@ -23,13 +23,13 @@ ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make metadata-prefetch BINDIR=/bin
 
 # Start from Kubernetes Debian base.
-FROM gke.gcr.io/debian-base:bookworm-v1.0.2-gke.2 AS debian
+FROM gke.gcr.io/debian-base:trixie-v1.0.0-gke.2 AS debian
 # Install necessary dependencies
 RUN clean-install bash
 
 # go/gke-releasing-policies#base-images
 # We use `gcr.io/distroless/base` because it includes glibc.
-FROM gcr.io/distroless/base-debian12 AS distroless-base
+FROM gcr.io/distroless/base-debian13 AS distroless-base
 
 # The distroless amd64 image has a target triplet of x86_64
 FROM distroless-base AS distroless-amd64
@@ -52,10 +52,12 @@ COPY --from=debian ${LD_LINUX_FILE} ${LIB_DIR}
 
 COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libselinux.so.1 \
                    /lib/${LIB_DIR_PREFIX}-linux-gnu/libc.so.6 \
+                   /lib/${LIB_DIR_PREFIX}-linux-gnu/libcap.so.2 \
                    /lib/${LIB_DIR_PREFIX}-linux-gnu/libpcre2-8.so.0 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 
 # Validate dependencies
 FROM output-image AS validator-image
+COPY --from=debian /lib/${LIB_DIR_PREFIX}-linux-gnu/libtinfo.so.6 /lib/${LIB_DIR_PREFIX}-linux-gnu/
 COPY --from=debian /bin/bash /bin/bash
 COPY --from=debian /bin/grep /bin/grep
 COPY --from=debian /usr/bin/ldd /usr/bin/ldd
