@@ -44,6 +44,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
@@ -4358,6 +4359,7 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
 			origEnableLRO := util.EnableLROFunc
 			t.Cleanup(func() {
 				util.EnableLROFunc = origEnableLRO
@@ -4380,8 +4382,8 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 			driver := initTestDriver(t, fakeMounter, fc)
-			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
-			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+			if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 				t.Fatalf("failed to create the fake bucket: %v", err)
 			}
 
@@ -4399,10 +4401,13 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 				},
 			}
 
-			if _, err := ns.NodePublishVolume(context.Background(), req); err != nil {
+			// Act
+			_, err := ns.NodePublishVolume(t.Context(), req)
+
+			// Assert
+			if err != nil {
 				t.Fatalf("NodePublishVolume failed: %v", err)
 			}
-
 			if lroCalled != tc.expectLROCalled {
 				t.Errorf("lroCalled = %v, want %v", lroCalled, tc.expectLROCalled)
 			}
@@ -4459,6 +4464,7 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
 			origEnableLRO := util.EnableLROFunc
 			t.Cleanup(func() {
 				util.EnableLROFunc = origEnableLRO
@@ -4500,20 +4506,90 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
 			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
-			if _, err := ns.NodeStageVolume(context.Background(), stageReq); err != nil {
+
+			// Act
+			_, err := ns.NodeStageVolume(t.Context(), stageReq)
+
+			// Assert
+			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
-			defer func() {
-				if vs, ok := ns.volumeStateStore.Load(testStagingPath); ok && vs != nil {
-					if vs.GCSFuseKernelMonitorState.CancelFunc != nil {
-						vs.GCSFuseKernelMonitorState.CancelFunc()
-					}
-				}
-			}()
-
 			if lroCalled != tc.expectLROCalled {
 				t.Errorf("lroCalled = %v, want %v", lroCalled, tc.expectLROCalled)
 			}
 		})
 	}
+}
+
+func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
+	// Arrange
+	origEnableLRO := util.EnableLROFunc
+	t.Cleanup(func() {
+		util.EnableLROFunc = origEnableLRO
+	})
+
+	lroCalled := false
+	util.EnableLROFunc = func(_ string) error {
+		lroCalled = true
+		return nil
+	}
+
+	ns := &nodeServer{
+		driver: &GCSDriver{
+			config: &GCSDriverConfig{
+				FeatureOptions: &GCSDriverFeatureOptions{
+					EnableGrpcByDefault: true,
+				},
+			},
+		},
+	}
+
+	t.Run("node is nil", func(t *testing.T) {
+		// Act
+		lroCalled = false
+		ns.enableLROIfApplicable(nil)
+		// Assert
+		if lroCalled {
+			t.Errorf("Expected lroCalled to be false when node is nil")
+		}
+	})
+
+	t.Run("node labels are nil", func(t *testing.T) {
+		// Act
+		lroCalled = false
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: nil,
+			},
+		}
+		ns.enableLROIfApplicable(node)
+		// Assert
+		if lroCalled {
+			t.Errorf("Expected lroCalled to be false when node.Labels is nil")
+		}
+	})
+
+	t.Run("feature options is nil", func(t *testing.T) {
+		// Act
+		lroCalled = false
+		nsNoFeatures := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: nil,
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					"cloud.google.com/machine-family": "c6e",
+				},
+			},
+		}
+		nsNoFeatures.enableLROIfApplicable(node)
+		// Assert
+		if lroCalled {
+			t.Errorf("Expected lroCalled to be false when FeatureOptions is nil")
+		}
+	})
 }

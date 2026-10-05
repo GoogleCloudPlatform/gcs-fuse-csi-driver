@@ -423,7 +423,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
 		return nil, err
 	}
-	s.enableLROIfApplicable(node)
 
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
@@ -512,6 +511,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
+
+	s.enableLROIfApplicable(node)
 
 	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
 	if emptyDirBasePath != "" {
@@ -1064,7 +1065,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
 		return nil, err
 	}
-	s.enableLROIfApplicable(node)
 
 	volumeID := req.GetVolumeId()
 	vc := req.GetVolumeContext()
@@ -1131,6 +1131,8 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
+
+	s.enableLROIfApplicable(node)
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
 	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
