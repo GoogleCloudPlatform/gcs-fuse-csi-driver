@@ -121,7 +121,7 @@ func runEthtoolCommand(nic string) error {
 	if sudoErr == nil {
 		return nil
 	}
-	return fmt.Errorf("ethtool -K %s lro on failed: %v (output: %s), sudo fallback failed: %w (sudo output: %s)", nic, err, strings.TrimSpace(string(out)), sudoErr, strings.TrimSpace(string(sudoOut)))
+	return fmt.Errorf("ethtool -K %s lro on failed: %w (output: %s), sudo fallback failed: %w (sudo output: %s)", nic, err, strings.TrimSpace(string(out)), sudoErr, strings.TrimSpace(string(sudoOut)))
 }
 
 func enableLROViaIoctl(nic string) error {
@@ -179,7 +179,7 @@ func enableLROOnNIC(nic string) error {
 		if cmdErr == nil {
 			return nil
 		}
-		return fmt.Errorf("%w (fallback error: %v)", err, cmdErr)
+		return fmt.Errorf("%w (fallback error: %w)", err, cmdErr)
 	}
 	return nil
 }

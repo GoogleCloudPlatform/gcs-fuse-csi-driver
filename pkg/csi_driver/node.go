@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -79,6 +80,7 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
+	enableLROOnce         sync.Once
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -1381,7 +1383,7 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 // enableLROIfApplicable enables Large Receive Offload (LRO) on the node's default NIC
 // when --enable-grpc-by-default is enabled and the node is a TPU v6e (ct6e-*) machine.
 func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
-	if s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
 		return
 	}
 	if node == nil {
@@ -1391,9 +1393,11 @@ func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return
 	}
-	if err := util.EnableLROOnDefaultNIC(); err != nil {
-		klog.Errorf("Failed to enable large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
-		return
-	}
-	klog.Infof("Successfully ensured large-receive-offload is enabled on default NIC for node %q (machine type %q)", node.Name, machineType)
+	s.enableLROOnce.Do(func() {
+		if err := util.EnableLROOnDefaultNIC(); err != nil {
+			klog.Errorf("Failed to enable large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
+			return
+		}
+		klog.Infof("Successfully ensured large-receive-offload is enabled on default NIC for node %q (machine type %q)", node.Name, machineType)
+	})
 }

@@ -4322,6 +4322,7 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 		enableGrpcByDefault bool
 		machineType         string
 		enableLROErr        error
+		alreadyMounted      bool
 		expectLROCalled     bool
 	}{
 		{
@@ -4355,6 +4356,13 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 			enableLROErr:        fmt.Errorf("mock ethtool error"),
 			expectLROCalled:     true,
 		},
+		{
+			name:                "already mounted targetPath skips LRO on republish",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-4t",
+			alreadyMounted:      true,
+			expectLROCalled:     false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -4379,8 +4387,20 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 				IsWorkloadIdentityEnabled: true,
 				MachineType:               tc.machineType,
 			})
+			if tc.alreadyMounted {
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         "test-pod",
+					Namespace:    "test-ns",
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: false,
+				})
+			}
 
-			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+			mountPoints := []mount.MountPoint{}
+			if tc.alreadyMounted {
+				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: testTargetPath, Type: FuseMountType}}
+			}
+			fakeMounter := mount.NewFakeMounter(mountPoints)
 			driver := initTestDriver(t, fakeMounter, fc)
 			s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
 			if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
@@ -4427,6 +4447,7 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 		enableGrpcByDefault bool
 		machineType         string
 		enableLROErr        error
+		alreadyMounted      bool
 		expectLROCalled     bool
 	}{
 		{
@@ -4459,6 +4480,13 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 			machineType:         "ct6e-standard-4t",
 			enableLROErr:        fmt.Errorf("mock ethtool error"),
 			expectLROCalled:     true,
+		},
+		{
+			name:                "already mounted stagingPath skips LRO on restage",
+			enableGrpcByDefault: true,
+			machineType:         "ct6e-standard-4t",
+			alreadyMounted:      true,
+			expectLROCalled:     false,
 		},
 	}
 
@@ -4494,7 +4522,11 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 				IsMounterPod: true,
 			})
 
-			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+			mountPoints := []mount.MountPoint{}
+			if tc.alreadyMounted {
+				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: testStagingPath, Type: FuseMountType}}
+			}
+			fakeMounter := mount.NewFakeMounter(mountPoints)
 			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
 			ns, ok := testEnv.ns.(*nodeServer)
 			if !ok {
@@ -4528,50 +4560,64 @@ func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
 		util.EnableLROFunc = origEnableLRO
 	})
 
-	lroCalled := false
+	lroCalls := 0
 	util.EnableLROFunc = func(_ string) error {
-		lroCalled = true
+		lroCalls++
 		return nil
 	}
 
-	ns := &nodeServer{
-		driver: &GCSDriver{
-			config: &GCSDriverConfig{
-				FeatureOptions: &GCSDriverFeatureOptions{
-					EnableGrpcByDefault: true,
+	t.Run("node is nil", func(t *testing.T) {
+		// Arrange
+		lroCalls = 0
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{
+						EnableGrpcByDefault: true,
+					},
 				},
 			},
-		},
-	}
+		}
 
-	t.Run("node is nil", func(t *testing.T) {
 		// Act
-		lroCalled = false
 		ns.enableLROIfApplicable(nil)
+
 		// Assert
-		if lroCalled {
-			t.Errorf("Expected lroCalled to be false when node is nil")
+		if lroCalls != 0 {
+			t.Errorf("lroCalls = %d, want 0 when node is nil", lroCalls)
 		}
 	})
 
 	t.Run("node labels are nil", func(t *testing.T) {
-		// Act
-		lroCalled = false
+		// Arrange
+		lroCalls = 0
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{
+						EnableGrpcByDefault: true,
+					},
+				},
+			},
+		}
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels: nil,
 			},
 		}
+
+		// Act
 		ns.enableLROIfApplicable(node)
+
 		// Assert
-		if lroCalled {
-			t.Errorf("Expected lroCalled to be false when node.Labels is nil")
+		if lroCalls != 0 {
+			t.Errorf("lroCalls = %d, want 0 when node labels are nil", lroCalls)
 		}
 	})
 
 	t.Run("feature options is nil", func(t *testing.T) {
-		// Act
-		lroCalled = false
+		// Arrange
+		lroCalls = 0
 		nsNoFeatures := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
@@ -4582,14 +4628,47 @@ func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels: map[string]string{
-					"cloud.google.com/machine-family": "c6e",
+					clientset.MachineTypeKey: "ct6e-standard-4t",
 				},
 			},
 		}
+
+		// Act
 		nsNoFeatures.enableLROIfApplicable(node)
+
 		// Assert
-		if lroCalled {
-			t.Errorf("Expected lroCalled to be false when FeatureOptions is nil")
+		if lroCalls != 0 {
+			t.Errorf("lroCalls = %d, want 0 when FeatureOptions is nil", lroCalls)
+		}
+	})
+
+	t.Run("called only once per nodeServer across multiple invocations", func(t *testing.T) {
+		// Arrange
+		lroCalls = 0
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{
+						EnableGrpcByDefault: true,
+					},
+				},
+			},
+		}
+		validNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					clientset.MachineTypeKey: "ct6e-standard-4t",
+				},
+			},
+		}
+
+		// Act
+		ns.enableLROIfApplicable(validNode)
+		ns.enableLROIfApplicable(validNode)
+
+		// Assert
+		if lroCalls != 1 {
+			t.Errorf("lroCalls = %d, want 1 across multiple invocations on the same nodeServer", lroCalls)
 		}
 	})
 }
