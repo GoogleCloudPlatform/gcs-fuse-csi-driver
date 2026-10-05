@@ -18,8 +18,15 @@ limitations under the License.
 package utils
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os/exec"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +52,27 @@ var (
 	cloudProfilerMinimumVersion                 = version.MustParseGeneric("1.36.1")
 	errorFileCleanUpMinimumVersion              = version.MustParseGeneric("1.36.0")
 )
+
+// Capacity Advisor settings for queryCapacityAdvice.
+// TODO(b/570275744): Clean up these settings and capacityAdvisorEndpoint when queryCapacityAdvice uses gcloud.
+const (
+	// prowCapacityAdvisorProject is allowlisted for STANDARD queries, which are not GA yet.
+	prowCapacityAdvisorProject = "prow-gob-internal-boskos-01"
+	// capacityAdvisorURLFormat takes the endpoint, project and region.
+	capacityAdvisorURLFormat         = "%s/projects/%s/regions/%s/advice/capacity"
+	capacityAdvisorProvisioningModel = "STANDARD"
+	capacityAdvisorTargetShape       = "ANY_SINGLE_ZONE"
+	capacityAdvisorInstanceSelection = "instance-selection-1"
+	capacityAdvisorZonePrefix        = "zones/"
+	capacityAdvisorTimeout           = 30 * time.Second
+	// capacityAdvisorMaxErrorBytes caps how much of an error response is logged.
+	capacityAdvisorMaxErrorBytes = 4096
+	// capacityAdvisorStockoutScore is returned, with a random zone, when no zone in the region has capacity.
+	capacityAdvisorStockoutScore = 0.1
+)
+
+// capacityAdvisorEndpoint is a variable so that unit tests can override it.
+var capacityAdvisorEndpoint = "https://compute.googleapis.com/compute/beta"
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
 // incorporating custom command paths and default arguments from TestParameters.
@@ -75,8 +103,8 @@ func clusterDownGKE(testParams *TestParameters) error {
 }
 
 // queryRegionalStandardZones retrieves standard compute zones for a region from 'gcloud compute regions describe',
-// which naturally excludes AI-only zones, so they can be passed to Capacity Advisor via --zones.
-func queryRegionalStandardZones(testParams *TestParameters, region string) string {
+// which naturally excludes AI-only zones, so they can be passed to Capacity Advisor as distributionPolicy.zones.
+func queryRegionalStandardZones(testParams *TestParameters, region string) []string {
 	regionArgs := []string{
 		"compute", "regions", "describe", region,
 		"--format=value(zones.basename())",
@@ -88,58 +116,134 @@ func queryRegionalStandardZones(testParams *TestParameters, region string) strin
 	regionOut, err := gcloudCommand(testParams, regionArgs...).Output()
 	if err != nil {
 		klog.Warningf("Failed to query standard regional compute zones for %s: %v", region, err)
-		return ""
+		return nil
 	}
 
-	// gcloud formats list projections with semicolons, commas, or whitespace; normalize into a comma-separated list for --zones.
-	zones := strings.FieldsFunc(string(regionOut), func(r rune) bool {
+	// gcloud formats list projections with semicolons, commas, or whitespace, so split on all of them.
+	return strings.FieldsFunc(string(regionOut), func(r rune) bool {
 		return r == ';' || r == ',' || unicode.IsSpace(r)
 	})
-	return strings.Join(zones, ",")
+}
+
+// gcloudAccessToken returns an access token for the active gcloud account.
+// TODO(b/570275744): Remove when queryCapacityAdvice uses gcloud.
+func gcloudAccessToken(testParams *TestParameters) (string, error) {
+	out, err := gcloudCommand(testParams, "auth", "print-access-token").Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("failed to get access token: %w, stderr: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+
+		return "", fmt.Errorf("failed to get access token: %w", err)
+	}
+
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", errors.New("failed to get access token: gcloud returned an empty token")
+	}
+
+	return token, nil
+}
+
+// apiErrorMessage returns the message of a Google API error response body, or else the body on one line.
+// TODO(b/570275744): Remove when queryCapacityAdvice uses gcloud.
+func apiErrorMessage(body []byte) string {
+	var apiErr struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
+		return apiErr.Error.Message
+	}
+
+	return strings.Join(strings.Fields(string(body)), " ")
 }
 
 // queryCapacityAdvice calls queryRegionalStandardZones to get standard GKE zones in the given region,
-// and queries Capacity Advisor to return the recommended zone and obtainability score.
-func queryCapacityAdvice(testParams *TestParameters, region string) (string, float64, error) {
-	// Note: Capacity Advisor requires --provisioning-model (supports only SPOT or FLEX_START).
-	// We use SPOT as a proxy for regional resource availability.
-	// See: https://cloud.google.com/sdk/gcloud/reference/beta/compute/advice/capacity
-	cmdArgs := []string{
-		"beta", "compute", "advice", "capacity",
-		"--region=" + region,
-		"--provisioning-model=SPOT",
-		"--size=" + strconv.Itoa(testParams.NumNodes),
-		"--instance-selection-machine-types=" + testParams.NodeMachineType,
-		"--target-distribution-shape=any-single-zone",
-		"--format=value(recommendations[0].scores.obtainability,recommendations[0].shards[0].zone.basename())",
-	}
-
+// and queries Capacity Advisor with the given access token to return the recommended zone and obtainability score.
+// Note: gcloud does not support the STANDARD provisioning model yet, so call the API directly.
+// See: https://cloud.google.com/compute/docs/reference/rest/beta/advice/capacity
+// TODO(b/570275744): Replace the POST with gcloud command when gcloud supports STANDARD provisioning model.
+func queryCapacityAdvice(testParams *TestParameters, region, token string) (string, float64, error) {
 	// Restrict capacity search to standard regional compute zones to avoid non-GKE AI zones.
-	if zonesFilter := queryRegionalStandardZones(testParams, region); zonesFilter != "" {
-		cmdArgs = append(cmdArgs, "--zones="+zonesFilter)
-	}
-	if testParams.ProjectID != "" {
-		cmdArgs = append(cmdArgs, "--project="+testParams.ProjectID)
+	distributionPolicy := map[string]any{"targetShape": capacityAdvisorTargetShape}
+	if zones := queryRegionalStandardZones(testParams, region); len(zones) > 0 {
+		zoneConfigs := make([]map[string]string, 0, len(zones))
+		for _, zone := range zones {
+			zoneConfigs = append(zoneConfigs, map[string]string{"zone": capacityAdvisorZonePrefix + zone})
+		}
+		distributionPolicy["zones"] = zoneConfigs
 	}
 
-	out, err := gcloudCommand(testParams, cmdArgs...).Output()
+	// Construct request using the body that 'gcloud beta compute advice capacity' sends (verified via --log-http), but with STANDARD.
+	reqBody, err := json.Marshal(map[string]any{
+		"instanceProperties": map[string]any{
+			"scheduling": map[string]any{"provisioningModel": capacityAdvisorProvisioningModel},
+		},
+		"instanceFlexibilityPolicy": map[string]any{
+			"instanceSelections": map[string]any{
+				capacityAdvisorInstanceSelection: map[string]any{"machineTypes": []string{testParams.NodeMachineType}},
+			},
+		},
+		"distributionPolicy": distributionPolicy,
+		"size":               testParams.NumNodes,
+	})
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", 0, fmt.Errorf("failed to query capacity advice: %w, stderr: %s", err, string(exitErr.Stderr))
-		}
+		return "", 0, fmt.Errorf("failed to marshal capacity advice request: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), capacityAdvisorTimeout)
+	defer cancel()
+
+	reqURL := fmt.Sprintf(capacityAdvisorURLFormat, capacityAdvisorEndpoint, prowCapacityAdvisorProject, region)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create capacity advice request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
 		return "", 0, fmt.Errorf("failed to query capacity advice: %w", err)
 	}
-	klog.Infof("Capacity Advisor output for region %s: %s", region, string(out))
-	fields := strings.Fields(string(out))
-	if len(fields) < 2 {
-		return "", 0, fmt.Errorf("no zone or score returned in capacity advice: %q", string(out))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, capacityAdvisorMaxErrorBytes))
+		return "", 0, fmt.Errorf("failed to query capacity advice: HTTP %d: %s", resp.StatusCode, apiErrorMessage(errBody))
 	}
-	score, err := strconv.ParseFloat(fields[0], 64)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to parse obtainability score %q: %w", fields[0], err)
+		return "", 0, fmt.Errorf("failed to read capacity advice response: %w", err)
 	}
-	zone := fields[1]
-	return zone, score, nil
+
+	var advice struct {
+		Recommendations []struct {
+			Scores struct {
+				Obtainability float64 `json:"obtainability"`
+			} `json:"scores"`
+			Shards []struct {
+				Zone string `json:"zone"`
+			} `json:"shards"`
+		} `json:"recommendations"`
+	}
+	if err := json.Unmarshal(respBody, &advice); err != nil {
+		return "", 0, fmt.Errorf("failed to parse capacity advice response %q: %w", respBody, err)
+	}
+
+	// Check for a zone and a score above the stockout threshold.
+	recs := advice.Recommendations
+	if len(recs) == 0 || len(recs[0].Shards) == 0 || recs[0].Shards[0].Zone == "" {
+		return "", 0, fmt.Errorf("no zone or score returned in capacity advice: %q", respBody)
+	}
+	if recs[0].Scores.Obtainability <= capacityAdvisorStockoutScore {
+		return "", 0, fmt.Errorf("no zone has capacity (obtainability %.2f)", recs[0].Scores.Obtainability)
+	}
+	// The zone is a URL, so keep only its name.
+	return path.Base(recs[0].Shards[0].Zone), recs[0].Scores.Obtainability, nil
 }
 
 func clusterUpGKE(testParams *TestParameters) error {
@@ -188,14 +292,20 @@ func clusterUpGKE(testParams *TestParameters) error {
 		}
 		var results []capacityResult
 
-		for _, region := range candidateRegions {
-			zone, score, err := queryCapacityAdvice(testParams, region)
-			if err != nil {
-				klog.Warningf("Capacity Advisor query failed for region %q: %v", region, err)
-				continue
+		// The access token is valid for every region, so fetch it once.
+		// TODO(b/570275744): Remove the token fetch when queryCapacityAdvice uses gcloud.
+		if token, err := gcloudAccessToken(testParams); err != nil {
+			klog.Warningf("Skipping Capacity Advisor queries: %v", err)
+		} else {
+			for _, region := range candidateRegions {
+				zone, score, err := queryCapacityAdvice(testParams, region, token)
+				if err != nil {
+					klog.Warningf("Capacity Advisor query failed for region %q: %v", region, err)
+					continue
+				}
+				klog.Infof("Capacity Advisor for region %q: zone=%q, obtainability=%.2f", region, zone, score)
+				results = append(results, capacityResult{region: region, zone: zone, score: score})
 			}
-			klog.Infof("Capacity Advisor for region %q: zone=%q, obtainability=%.2f", region, zone, score)
-			results = append(results, capacityResult{region: region, zone: zone, score: score})
 		}
 
 		if len(results) > 0 {
