@@ -115,6 +115,7 @@ const (
 
 	DisableAutoconfig           = "disable-autoconfig"
 	PassProfilesToSidecarPrefix = "pass-profiles-to-sidecar"
+	EnableGrpcByDefaultPrefix   = "enable-grpc-by-default"
 
 	GoogleCloudCliImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	GolangImage         = "golang:1.22.7"
