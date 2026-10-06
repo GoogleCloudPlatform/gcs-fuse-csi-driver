@@ -54,10 +54,11 @@ var (
 )
 
 // Capacity Advisor settings for queryCapacityAdvice.
-// TODO(b/570275744): Clean up these settings and capacityAdvisorEndpoint when queryCapacityAdvice uses gcloud.
+// TODO(b/570275744): Clean up these settings when queryCapacityAdvice uses gcloud.
 const (
 	// prowCapacityAdvisorProject is allowlisted for STANDARD queries, which are not GA yet.
 	prowCapacityAdvisorProject = "prow-gob-internal-boskos-01"
+	capacityAdvisorEndpoint    = "https://compute.googleapis.com/compute/beta"
 	// capacityAdvisorURLFormat takes the endpoint, project and region.
 	capacityAdvisorURLFormat         = "%s/projects/%s/regions/%s/advice/capacity"
 	capacityAdvisorProvisioningModel = "STANDARD"
@@ -70,9 +71,6 @@ const (
 	// capacityAdvisorStockoutScore is returned, with a random zone, when no zone in the region has capacity.
 	capacityAdvisorStockoutScore = 0.1
 )
-
-// capacityAdvisorEndpoint is a variable so that unit tests can override it.
-var capacityAdvisorEndpoint = "https://compute.googleapis.com/compute/beta"
 
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
 // incorporating custom command paths and default arguments from TestParameters.
