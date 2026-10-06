@@ -31,6 +31,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -215,6 +216,12 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 			tPod.VerifyDefaultingFlagsArePassed(f.Namespace.Name, machineType /* disableAutoconfig */, false)
 		}
 
+		if slices.Contains(configPrefix, specs.EnableGrpcByDefaultPrefix) {
+			stdout, err := tPod.GetSidecarLogs()
+			framework.ExpectNoError(err)
+			gomega.Expect(stdout).To(gomega.ContainSubstring("--enable-grpc-by-default=true"))
+		}
+
 		ginkgo.By("Deleting pod")
 		tPod.Cleanup(ctx)
 	}
@@ -289,6 +296,11 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		testDefaultingFlags(specs.DisableAutoconfig)
 	})
 
+	ginkgo.It("should pass --enable-grpc-by-default=true from driver to gcsfuse", func() {
+		skipIfEnableGrpcByDefaultNotSupported()
+		testDefaultingFlags(specs.EnableGrpcByDefaultPrefix)
+	})
+
 	ginkgo.It("[read ahead config] should update read ahead config knobs", func() {
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
@@ -331,4 +343,11 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 		skipIfKernelParamsNotSupported()
 		testGcsfuseKernelParamsFileFlag()
 	})
+}
+
+func skipIfEnableGrpcByDefaultNotSupported() {
+	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch()
+	if branch != utils.MasterBranchName && !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseEnableGrpcByDefaultVersion)) {
+		e2eskipper.Skipf("skip enable-grpc-by-default test for unsupported gcsfuse version %s", gcsfuseVersion.String())
+	}
 }
