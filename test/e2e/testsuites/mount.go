@@ -31,7 +31,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -346,8 +345,11 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 }
 
 func skipIfEnableGrpcByDefaultNotSupported() {
-	gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch()
-	if branch != utils.MasterBranchName && !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseEnableGrpcByDefaultVersion)) {
-		e2eskipper.Skipf("skip enable-grpc-by-default test for unsupported gcsfuse version %s", gcsfuseVersion.String())
-	}
+	// TODO(b/571079749) Enable test once Phase 3 driver enablement is complete.
+	e2eskipper.Skipf("skip enable-grpc-by-default test until Phase 3 driver enablement")
+
+	// gcsfuseVersion, branch := specs.GCSFuseVersionAndBranch()
+	// if branch != utils.MasterBranchName && !gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseEnableGrpcByDefaultVersion)) {
+	// 	e2eskipper.Skipf("skip enable-grpc-by-default test for unsupported gcsfuse version %s", gcsfuseVersion.String())
+	// }
 }
