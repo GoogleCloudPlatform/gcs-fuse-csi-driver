@@ -80,7 +80,7 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
-	enableLROOnce         sync.Once
+	enableHwGroOnce       sync.Once
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -514,7 +514,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
-	s.enableLROIfApplicable(node)
+	s.enableHwGroIfApplicable(node)
 
 	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
 	if emptyDirBasePath != "" {
@@ -1134,7 +1134,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	s.enableLROIfApplicable(node)
+	s.enableHwGroIfApplicable(node)
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
 	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
@@ -1380,10 +1380,10 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	return nil
 }
 
-// enableLROIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// enableHwGroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the node's default NIC when both --enable-grpc-by-default and --enable-hw-gro are
 // enabled and the node is a TPU v6e (ct6e-*) machine.
-func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
+func (s *nodeServer) enableHwGroIfApplicable(node *corev1.Node) {
 	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault || !s.driver.config.FeatureOptions.EnableHwGro {
 		return
 	}
@@ -1394,8 +1394,8 @@ func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return
 	}
-	s.enableLROOnce.Do(func() {
-		if err := util.EnableLROOnDefaultNIC(); err != nil {
+	s.enableHwGroOnce.Do(func() {
+		if err := util.EnableHwGroOnDefaultNIC(); err != nil {
 			klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
 			return
 		}

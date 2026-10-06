@@ -730,14 +730,14 @@ func (f *fakeEthtoolClient) Close() {
 	f.closed = true
 }
 
-func TestEnableLRO(t *testing.T) {
+func TestEnableHwGro(t *testing.T) {
 	origNewEthtool := newEthtoolClient
 	origRunCmd := runEthtoolCommandFunc
-	origEnableLRO := EnableLROFunc
+	origEnableHwGro := EnableHwGroFunc
 	t.Cleanup(func() {
 		newEthtoolClient = origNewEthtool
 		runEthtoolCommandFunc = origRunCmd
-		EnableLROFunc = origEnableLRO
+		EnableHwGroFunc = origEnableHwGro
 	})
 
 	t.Run("EnableBothWhenRxGroHwAndRxLROAreFalse", func(t *testing.T) {
@@ -752,10 +752,10 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -793,10 +793,10 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -834,10 +834,10 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -863,10 +863,10 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -898,11 +898,11 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err1 := EnableLROOnDefaultNIC()
-		err2 := EnableLROOnDefaultNIC()
+		err1 := EnableHwGroOnDefaultNIC()
+		err2 := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err1 != nil {
@@ -936,10 +936,10 @@ func TestEnableLRO(t *testing.T) {
 			cliFeatures = append(cliFeatures, feature)
 			return errors.New("rx-gro-hw cli not supported")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -979,10 +979,10 @@ func TestEnableLRO(t *testing.T) {
 			cliFeatures = append(cliFeatures, feature)
 			return errors.New("lro cli failed")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1018,10 +1018,10 @@ func TestEnableLRO(t *testing.T) {
 			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -1051,10 +1051,10 @@ func TestEnableLRO(t *testing.T) {
 			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -1076,10 +1076,10 @@ func TestEnableLRO(t *testing.T) {
 			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -1108,10 +1108,10 @@ func TestEnableLRO(t *testing.T) {
 			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -1133,10 +1133,10 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("ethtool CLI failed")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
-		err := EnableLROOnDefaultNIC()
+		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1152,13 +1152,13 @@ func TestEnableLRO(t *testing.T) {
 
 	t.Run("ReturnsErrorOnEmptyOrInvalidNICName", func(t *testing.T) {
 		// Arrange
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 		invalidNICs := []string{"", "   ", "-K", "eth0;id", "eth0 /etc/shadow"}
 
 		for _, nic := range invalidNICs {
 			t.Run(fmt.Sprintf("NIC_%q", nic), func(t *testing.T) {
 				// Act
-				err := enableLROOnNIC(nic)
+				err := enableHwGroOnNIC(nic)
 
 				// Assert
 				if err == nil {
@@ -1180,7 +1180,7 @@ func TestEnableLRO(t *testing.T) {
 		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
-		EnableLROFunc = enableLROOnNIC
+		EnableHwGroFunc = enableHwGroOnNIC
 
 		var wg sync.WaitGroup
 		numWorkers := 10
@@ -1190,7 +1190,7 @@ func TestEnableLRO(t *testing.T) {
 		for i := 0; i < numWorkers; i++ {
 			go func() {
 				defer wg.Done()
-				err := EnableLROOnDefaultNIC()
+				err := EnableHwGroOnDefaultNIC()
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
