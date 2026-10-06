@@ -47,7 +47,7 @@ var (
 	// fuseMaxMaxPagesMu serializes concurrent updates to the host's FUSE max_pages_limit.
 	fuseMaxMaxPagesMu sync.Mutex
 	// ProcSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
-	ProcSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs-fuse/max_pages_limit"
+	ProcSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs/fuse/max_pages_limit"
 
 	// lroMu serializes default NIC LRO checks and updates across concurrent volume mounts.
 	lroMu sync.Mutex
