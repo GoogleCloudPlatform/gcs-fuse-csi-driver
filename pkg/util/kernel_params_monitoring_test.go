@@ -678,14 +678,18 @@ func TestMountUsingElevatedFuseMaxPagesLimitPanic(t *testing.T) {
 }
 
 type fakeEthtoolClient struct {
-	features    map[string]bool
-	featuresErr error
-	changeErr   error
-	changeCalls []map[string]bool
-	closed      bool
+	mu             sync.Mutex
+	features       map[string]bool
+	featuresErr    error
+	changeErr      error
+	changeErrByKey map[string]error
+	changeCalls    []map[string]bool
+	closed         bool
 }
 
 func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.featuresErr != nil {
 		return nil, f.featuresErr
 	}
@@ -697,6 +701,8 @@ func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
 }
 
 func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	reqCopy := make(map[string]bool, len(config))
 	for k, v := range config {
 		reqCopy[k] = v
@@ -705,6 +711,13 @@ func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
 	if f.changeErr != nil {
 		return f.changeErr
 	}
+	for k := range config {
+		if f.changeErrByKey != nil {
+			if err, ok := f.changeErrByKey[k]; ok && err != nil {
+				return err
+			}
+		}
+	}
 	for k, v := range config {
 		f.features[k] = v
 	}
@@ -712,6 +725,8 @@ func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
 }
 
 func (f *fakeEthtoolClient) Close() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.closed = true
 }
 
@@ -725,13 +740,127 @@ func TestEnableLRO(t *testing.T) {
 		EnableLROFunc = origEnableLRO
 	})
 
-	t.Run("EnableWhenRxLROIsFalse", func(t *testing.T) {
+	t.Run("EnableBothWhenRxGroHwAndRxLROAreFalse", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"rx-lro": false},
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic string) error {
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			return errors.New("CLI fallback should not be called")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		// Act
+		err := EnableLROOnDefaultNIC()
+
+		// Assert
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 2 {
+			t.Fatalf("expected 2 change calls, got %d", len(fakeEth.changeCalls))
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"rx-gro-hw": true}) {
+			t.Errorf("changeCalls[0] mismatch: %v", fakeEth.changeCalls[0])
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[1], map[string]bool{"rx-lro": true}) {
+			t.Errorf("changeCalls[1] mismatch: %v", fakeEth.changeCalls[1])
+		}
+		if !fakeEth.features["rx-gro-hw"] {
+			t.Errorf("expected rx-gro-hw to be true")
+		}
+		if !fakeEth.features["rx-lro"] {
+			t.Errorf("expected rx-lro to be true")
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
+	})
+
+	t.Run("EnableBothWhenRxGroHwAndLargeReceiveOffloadAreFalse", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-gro-hw":             false,
+				"large-receive-offload": false,
+			},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			return errors.New("CLI fallback should not be called")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		// Act
+		err := EnableLROOnDefaultNIC()
+
+		// Assert
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 2 {
+			t.Fatalf("expected 2 change calls, got %d", len(fakeEth.changeCalls))
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"rx-gro-hw": true}) {
+			t.Errorf("changeCalls[0] mismatch: %v", fakeEth.changeCalls[0])
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[1], map[string]bool{"large-receive-offload": true}) {
+			t.Errorf("changeCalls[1] mismatch: %v", fakeEth.changeCalls[1])
+		}
+		if !fakeEth.features["rx-gro-hw"] {
+			t.Errorf("expected rx-gro-hw to be true")
+		}
+		if !fakeEth.features["large-receive-offload"] {
+			t.Errorf("expected large-receive-offload to be true")
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
+	})
+
+	t.Run("IdempotentWhenBothAlreadyTrue", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-gro-hw": true,
+				"rx-lro":    true,
+			},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			return errors.New("CLI fallback should not be called")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		// Act
+		err := EnableLROOnDefaultNIC()
+
+		// Assert
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 0 {
+			t.Fatalf("expected 0 change calls, got %d", len(fakeEth.changeCalls))
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
+	})
+
+	t.Run("EnablesOnlyMissingFeatureWhenOneAlreadyTrue", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-gro-hw": true,
+				"rx-lro":    false,
+			},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -747,7 +876,7 @@ func TestEnableLRO(t *testing.T) {
 			t.Fatalf("expected 1 change call, got %d", len(fakeEth.changeCalls))
 		}
 		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"rx-lro": true}) {
-			t.Errorf("changeCalls mismatch: %v", fakeEth.changeCalls[0])
+			t.Errorf("changeCalls[0] mismatch: %v", fakeEth.changeCalls[0])
 		}
 		if !fakeEth.features["rx-lro"] {
 			t.Errorf("expected rx-lro to be true")
@@ -757,97 +886,16 @@ func TestEnableLRO(t *testing.T) {
 		}
 	})
 
-	t.Run("EnableWhenLargeReceiveOffloadIsFalse", func(t *testing.T) {
-		// Arrange
-		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"large-receive-offload": false},
-		}
-		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic string) error {
-			return errors.New("CLI fallback should not be called")
-		}
-		EnableLROFunc = enableLROOnNIC
-
-		// Act
-		err := EnableLROOnDefaultNIC()
-
-		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(fakeEth.changeCalls) != 1 {
-			t.Fatalf("expected 1 change call, got %d", len(fakeEth.changeCalls))
-		}
-		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"large-receive-offload": true}) {
-			t.Errorf("changeCalls mismatch: %v", fakeEth.changeCalls[0])
-		}
-		if !fakeEth.features["large-receive-offload"] {
-			t.Errorf("expected large-receive-offload to be true")
-		}
-		if !fakeEth.closed {
-			t.Errorf("expected client to be closed")
-		}
-	})
-
-	t.Run("IdempotentWhenRxLROAlreadyTrue", func(t *testing.T) {
-		// Arrange
-		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"rx-lro": true},
-		}
-		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic string) error {
-			return errors.New("CLI fallback should not be called")
-		}
-		EnableLROFunc = enableLROOnNIC
-
-		// Act
-		err := EnableLROOnDefaultNIC()
-
-		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(fakeEth.changeCalls) != 0 {
-			t.Fatalf("expected 0 change calls, got %d", len(fakeEth.changeCalls))
-		}
-		if !fakeEth.closed {
-			t.Errorf("expected client to be closed")
-		}
-	})
-
-	t.Run("IdempotentWhenLargeReceiveOffloadAlreadyTrue", func(t *testing.T) {
-		// Arrange
-		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"large-receive-offload": true},
-		}
-		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic string) error {
-			return errors.New("CLI fallback should not be called")
-		}
-		EnableLROFunc = enableLROOnNIC
-
-		// Act
-		err := EnableLROOnDefaultNIC()
-
-		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(fakeEth.changeCalls) != 0 {
-			t.Fatalf("expected 0 change calls, got %d", len(fakeEth.changeCalls))
-		}
-		if !fakeEth.closed {
-			t.Errorf("expected client to be closed")
-		}
-	})
-
 	t.Run("IdempotentAcrossConsecutiveCalls", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"rx-lro": false},
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic string) error {
+		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -863,22 +911,111 @@ func TestEnableLRO(t *testing.T) {
 		if err2 != nil {
 			t.Fatalf("unexpected error2: %v", err2)
 		}
-		if len(fakeEth.changeCalls) != 1 {
-			t.Fatalf("expected 1 change call, got %d", len(fakeEth.changeCalls))
+		if len(fakeEth.changeCalls) != 2 {
+			t.Fatalf("expected 2 change calls across both runs, got %d", len(fakeEth.changeCalls))
 		}
 		if !fakeEth.closed {
 			t.Errorf("expected client to be closed")
 		}
 	})
 
-	t.Run("FallbackToCLIWhenEthtoolClientCreationFails", func(t *testing.T) {
+	t.Run("RxGroHwFailsButLROSucceeds", func(t *testing.T) {
 		// Arrange
-		newEthtoolClient = func() (ethtoolClient, error) {
-			return nil, errors.New("socket ioctl error")
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
+			changeErrByKey: map[string]error{
+				"rx-gro-hw": errors.New("rx-gro-hw ioctl not supported"),
+			},
 		}
-		cliCalls := 0
-		runEthtoolCommandFunc = func(nic string) error {
-			cliCalls++
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		var cliFeatures []string
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			cliFeatures = append(cliFeatures, feature)
+			return errors.New("rx-gro-hw cli not supported")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		// Act
+		err := EnableLROOnDefaultNIC()
+
+		// Assert
+		if err == nil {
+			t.Fatalf("expected error because rx-gro-hw failed, got nil")
+		}
+		if !strings.Contains(err.Error(), "rx-gro-hw ioctl not supported") {
+			t.Errorf("expected error to contain 'rx-gro-hw ioctl not supported', got %v", err)
+		}
+		if !strings.Contains(err.Error(), "rx-gro-hw cli not supported") {
+			t.Errorf("expected error to contain 'rx-gro-hw cli not supported', got %v", err)
+		}
+		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw"}) {
+			t.Errorf("expected CLI fallback only for rx-gro-hw, got %v", cliFeatures)
+		}
+		if !fakeEth.features["rx-lro"] {
+			t.Errorf("expected rx-lro to still succeed and become true despite rx-gro-hw failure")
+		}
+		if fakeEth.features["rx-gro-hw"] {
+			t.Errorf("expected rx-gro-hw to remain false")
+		}
+	})
+
+	t.Run("LROFailsButRxGroHwSucceeds", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
+			changeErrByKey: map[string]error{
+				"rx-lro": errors.New("rx-lro ioctl failed"),
+			},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		var cliFeatures []string
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			cliFeatures = append(cliFeatures, feature)
+			return errors.New("lro cli failed")
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		// Act
+		err := EnableLROOnDefaultNIC()
+
+		// Assert
+		if err == nil {
+			t.Fatalf("expected error because lro failed, got nil")
+		}
+		if !strings.Contains(err.Error(), "rx-lro ioctl failed") {
+			t.Errorf("expected error to contain 'rx-lro ioctl failed', got %v", err)
+		}
+		if !strings.Contains(err.Error(), "lro cli failed") {
+			t.Errorf("expected error to contain 'lro cli failed', got %v", err)
+		}
+		if !reflect.DeepEqual(cliFeatures, []string{"lro"}) {
+			t.Errorf("expected CLI fallback only for lro, got %v", cliFeatures)
+		}
+		if !fakeEth.features["rx-gro-hw"] {
+			t.Errorf("expected rx-gro-hw to still succeed and become true despite lro failure")
+		}
+		if fakeEth.features["rx-lro"] {
+			t.Errorf("expected rx-lro to remain false")
+		}
+	})
+
+	t.Run("PerFeatureCLIFallbackWhenOneFeatureKeyMissingInIoctl", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-lro": false,
+			},
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		var cliFeatures []string
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -890,8 +1027,41 @@ func TestEnableLRO(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cliCalls != 1 {
-			t.Errorf("expected 1 CLI call, got %d", cliCalls)
+		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw"}) {
+			t.Errorf("expected CLI fallback for [rx-gro-hw], got %v", cliFeatures)
+		}
+		if len(fakeEth.changeCalls) != 1 {
+			t.Fatalf("expected 1 ioctl change call for rx-lro, got %d", len(fakeEth.changeCalls))
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"rx-lro": true}) {
+			t.Errorf("changeCalls[0] mismatch: %v", fakeEth.changeCalls[0])
+		}
+		if !fakeEth.features["rx-lro"] {
+			t.Errorf("expected rx-lro to be true")
+		}
+	})
+
+	t.Run("FallbackToCLIWhenEthtoolClientCreationFails", func(t *testing.T) {
+		// Arrange
+		newEthtoolClient = func() (ethtoolClient, error) {
+			return nil, errors.New("socket ioctl error")
+		}
+		var cliFeatures []string
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			cliFeatures = append(cliFeatures, feature)
+			return nil
+		}
+		EnableLROFunc = enableLROOnNIC
+
+		// Act
+		err := EnableLROOnDefaultNIC()
+
+		// Assert
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw", "lro"}) {
+			t.Errorf("expected CLI fallback for [rx-gro-hw lro], got %v", cliFeatures)
 		}
 	})
 
@@ -901,9 +1071,9 @@ func TestEnableLRO(t *testing.T) {
 			featuresErr: errors.New("features error"),
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		cliCalls := 0
-		runEthtoolCommandFunc = func(nic string) error {
-			cliCalls++
+		var cliFeatures []string
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -915,36 +1085,8 @@ func TestEnableLRO(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cliCalls != 1 {
-			t.Errorf("expected 1 CLI call, got %d", cliCalls)
-		}
-		if !fakeEth.closed {
-			t.Errorf("expected client to be closed")
-		}
-	})
-
-	t.Run("FallbackToCLIWhenLROFeatureKeyMissing", func(t *testing.T) {
-		// Arrange
-		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"other-feature": true},
-		}
-		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		cliCalls := 0
-		runEthtoolCommandFunc = func(nic string) error {
-			cliCalls++
-			return nil
-		}
-		EnableLROFunc = enableLROOnNIC
-
-		// Act
-		err := EnableLROOnDefaultNIC()
-
-		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cliCalls != 1 {
-			t.Errorf("expected 1 CLI call, got %d", cliCalls)
+		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw", "lro"}) {
+			t.Errorf("expected CLI fallback for [rx-gro-hw lro], got %v", cliFeatures)
 		}
 		if !fakeEth.closed {
 			t.Errorf("expected client to be closed")
@@ -954,13 +1096,16 @@ func TestEnableLRO(t *testing.T) {
 	t.Run("FallbackToCLIWhenChangeCallFails", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
-			features:  map[string]bool{"rx-lro": false},
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
 			changeErr: errors.New("change error"),
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		cliCalls := 0
-		runEthtoolCommandFunc = func(nic string) error {
-			cliCalls++
+		var cliFeatures []string
+		runEthtoolCommandFunc = func(nic, feature string) error {
+			cliFeatures = append(cliFeatures, feature)
 			return nil
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -972,8 +1117,8 @@ func TestEnableLRO(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cliCalls != 1 {
-			t.Errorf("expected 1 CLI call, got %d", cliCalls)
+		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw", "lro"}) {
+			t.Errorf("expected CLI fallback for [rx-gro-hw lro], got %v", cliFeatures)
 		}
 		if !fakeEth.closed {
 			t.Errorf("expected client to be closed")
@@ -985,7 +1130,7 @@ func TestEnableLRO(t *testing.T) {
 		newEthtoolClient = func() (ethtoolClient, error) {
 			return nil, errors.New("socket ioctl error")
 		}
-		runEthtoolCommandFunc = func(nic string) error {
+		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("ethtool CLI failed")
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -1026,10 +1171,13 @@ func TestEnableLRO(t *testing.T) {
 	t.Run("ConcurrentCallsAreSerializedAndThreadSafe", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{"rx-lro": false},
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic string) error {
+		runEthtoolCommandFunc = func(nic, feature string) error {
 			return errors.New("CLI fallback should not be called")
 		}
 		EnableLROFunc = enableLROOnNIC
@@ -1051,8 +1199,8 @@ func TestEnableLRO(t *testing.T) {
 		wg.Wait()
 
 		// Assert
-		if len(fakeEth.changeCalls) != 1 {
-			t.Fatalf("expected 1 change call, got %d", len(fakeEth.changeCalls))
+		if len(fakeEth.changeCalls) != 2 {
+			t.Fatalf("expected 2 change calls (one for rx-gro-hw and one for rx-lro), got %d", len(fakeEth.changeCalls))
 		}
 		if !fakeEth.closed {
 			t.Errorf("expected client to be closed")

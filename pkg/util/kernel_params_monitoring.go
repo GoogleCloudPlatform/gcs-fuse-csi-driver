@@ -19,6 +19,7 @@ package util
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,9 +57,9 @@ var (
 	newEthtoolClient = func() (ethtoolClient, error) {
 		return ethtool.NewEthtool()
 	}
-	// runEthtoolCommandFunc executes the CLI fallback `ethtool -K <nic> lro on` (overridable for unit testing).
+	// runEthtoolCommandFunc executes the CLI fallback `ethtool -K <nic> <feature> on` (overridable for unit testing).
 	runEthtoolCommandFunc = runEthtoolCommand
-	// EnableLROFunc enables LRO on the specified NIC (overridable for unit testing).
+	// EnableLROFunc enables rx-gro-hw and LRO on the specified NIC (overridable for unit testing).
 	EnableLROFunc = enableLROOnNIC
 )
 
@@ -104,10 +105,10 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
-func runEthtoolCommand(nic string) error {
+func runEthtoolCommand(nic, feature string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ethtool", "-K", nic, "lro", "on")
+	cmd := exec.CommandContext(ctx, "ethtool", "-K", nic, feature, "on")
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -115,40 +116,39 @@ func runEthtoolCommand(nic string) error {
 	}
 	sudoCtx, sudoCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer sudoCancel()
-	sudoCmd := exec.CommandContext(sudoCtx, "sudo", "-n", "ethtool", "-K", nic, "lro", "on")
+	sudoCmd := exec.CommandContext(sudoCtx, "sudo", "-n", "ethtool", "-K", nic, feature, "on")
 	sudoCmd.WaitDelay = time.Second
 	sudoOut, sudoErr := sudoCmd.CombinedOutput()
 	if sudoErr == nil {
 		return nil
 	}
-	return fmt.Errorf("ethtool -K %s lro on failed: %w (output: %s), sudo fallback failed: %w (sudo output: %s)", nic, err, strings.TrimSpace(string(out)), sudoErr, strings.TrimSpace(string(sudoOut)))
+	return fmt.Errorf("ethtool -K %s %s on failed: %w (output: %s), sudo fallback failed: %w (sudo output: %s)", nic, feature, err, strings.TrimSpace(string(out)), sudoErr, strings.TrimSpace(string(sudoOut)))
 }
 
-func enableLROViaIoctl(nic string) error {
+func enableNICFeatureViaIoctl(nic string, candidateKeys []string, featureName string) error {
 	eth, err := newEthtoolClient()
 	if err != nil {
-		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", nic, err)
+		return fmt.Errorf("failed to create ethtool client for NIC %q (%s): %w", nic, featureName, err)
 	}
 	defer eth.Close()
 
 	features, err := eth.Features(nic)
 	if err != nil {
-		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
+		return fmt.Errorf("failed to get ethtool features for NIC %q (%s): %w", nic, featureName, err)
 	}
 
 	var featureKey string
 	var alreadyEnabled, found bool
-	if val, ok := features["rx-lro"]; ok {
-		featureKey = "rx-lro"
-		alreadyEnabled = val
-		found = true
-	} else if val, ok := features["large-receive-offload"]; ok {
-		featureKey = "large-receive-offload"
-		alreadyEnabled = val
-		found = true
+	for _, key := range candidateKeys {
+		if val, ok := features[key]; ok {
+			featureKey = key
+			alreadyEnabled = val
+			found = true
+			break
+		}
 	}
 	if !found {
-		return fmt.Errorf("LRO feature not found in ethtool features for NIC %q", nic)
+		return fmt.Errorf("%s feature not found in ethtool features for NIC %q", featureName, nic)
 	}
 	if alreadyEnabled {
 		return nil
@@ -159,23 +159,9 @@ func enableLROViaIoctl(nic string) error {
 	return nil
 }
 
-// enableLROOnNIC idempotently enables Large Receive Offload (rx-lro / large-receive-offload)
-// on the specified NIC using ethtool ioctls (Features read-before-write Change),
-// falling back to `ethtool -K <nic> lro on` if ioctl creation or execution fails.
-func enableLROOnNIC(nic string) error {
-	lroMu.Lock()
-	defer lroMu.Unlock()
-
-	nic = strings.TrimSpace(nic)
-	if nic == "" {
-		return fmt.Errorf("NIC name cannot be empty")
-	}
-	if strings.HasPrefix(nic, "-") || strings.ContainsAny(nic, " \t\n\r/") {
-		return fmt.Errorf("invalid NIC name %q", nic)
-	}
-
-	if err := enableLROViaIoctl(nic); err != nil {
-		cmdErr := runEthtoolCommandFunc(nic)
+func enableNICFeature(nic string, candidateKeys []string, cliFeature string) error {
+	if err := enableNICFeatureViaIoctl(nic, candidateKeys, cliFeature); err != nil {
+		cmdErr := runEthtoolCommandFunc(nic, cliFeature)
 		if cmdErr == nil {
 			return nil
 		}
@@ -184,10 +170,33 @@ func enableLROOnNIC(nic string) error {
 	return nil
 }
 
-// EnableLROOnDefaultNIC idempotently enables Large Receive Offload (LRO) on the host's default NIC (eth0).
+// enableLROOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
+// (rx-lro / large-receive-offload) on the specified NIC using ethtool ioctls (Features
+// read-before-write Change), falling back to `ethtool -K <nic> <feature> on` per feature
+// if ioctl creation or execution fails. Each feature is attempted independently so that
+// a failure on one feature does not prevent the other from being enabled.
+func enableLROOnNIC(nic string) error {
+	lroMu.Lock()
+	defer lroMu.Unlock()
+
+	nic = strings.TrimSpace(nic)
+	if nic == "" {
+		return fmt.Errorf("NIC name cannot be empty")
+	}
+	if strings.HasPrefix(nic, "-") || strings.ContainsAny(nic, " \t\n\r/;") {
+		return fmt.Errorf("invalid NIC name %q", nic)
+	}
+
+	groErr := enableNICFeature(nic, []string{"rx-gro-hw"}, "rx-gro-hw")
+	lroErr := enableNICFeature(nic, []string{"rx-lro", "large-receive-offload"}, "lro")
+	return errors.Join(groErr, lroErr)
+}
+
+// EnableLROOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// on the host's default NIC (eth0).
 func EnableLROOnDefaultNIC() error {
 	if err := EnableLROFunc(defaultNIC); err != nil {
-		return fmt.Errorf("failed to enable large-receive-offload on NIC %q: %w", defaultNIC, err)
+		return fmt.Errorf("failed to enable rx-gro-hw and large-receive-offload on NIC %q: %w", defaultNIC, err)
 	}
 	return nil
 }

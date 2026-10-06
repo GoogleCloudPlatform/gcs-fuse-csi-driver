@@ -65,6 +65,7 @@ spec:
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
             - --enable-grpc-by-default=false
+            - --enable-hw-gro=false
             - --universe-domain=$(UNIVERSE_DOMAIN)
           ports:
             - containerPort: 9920

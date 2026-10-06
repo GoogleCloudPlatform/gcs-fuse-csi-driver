@@ -1380,10 +1380,11 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	return nil
 }
 
-// enableLROIfApplicable enables Large Receive Offload (LRO) on the node's default NIC
-// when --enable-grpc-by-default is enabled and the node is a TPU v6e (ct6e-*) machine.
+// enableLROIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// on the node's default NIC when both --enable-grpc-by-default and --enable-hw-gro are
+// enabled and the node is a TPU v6e (ct6e-*) machine.
 func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault || !s.driver.config.FeatureOptions.EnableHwGro {
 		return
 	}
 	if node == nil {
@@ -1395,9 +1396,9 @@ func (s *nodeServer) enableLROIfApplicable(node *corev1.Node) {
 	}
 	s.enableLROOnce.Do(func() {
 		if err := util.EnableLROOnDefaultNIC(); err != nil {
-			klog.Errorf("Failed to enable large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
+			klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
 			return
 		}
-		klog.Infof("Successfully ensured large-receive-offload is enabled on default NIC for node %q (machine type %q)", node.Name, machineType)
+		klog.Infof("Successfully ensured rx-gro-hw and large-receive-offload are enabled on default NIC for node %q (machine type %q)", node.Name, machineType)
 	})
 }

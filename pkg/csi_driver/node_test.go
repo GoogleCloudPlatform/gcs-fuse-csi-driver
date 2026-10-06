@@ -4320,38 +4320,58 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 	testCases := []struct {
 		name                string
 		enableGrpcByDefault bool
+		enableHwGro         bool
 		machineType         string
 		enableLROErr        error
 		alreadyMounted      bool
 		expectLROCalled     bool
 	}{
 		{
-			name:                "enableGrpcByDefault=true on ct6e-standard-4t enables LRO",
+			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-4t enables LRO",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-4t",
 			expectLROCalled:     true,
 		},
 		{
-			name:                "enableGrpcByDefault=true on ct6e-standard-8t enables LRO",
+			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-8t enables LRO",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-8t",
 			expectLROCalled:     true,
 		},
 		{
-			name:                "enableGrpcByDefault=false on ct6e-standard-4t does not enable LRO",
-			enableGrpcByDefault: false,
+			name:                "enableGrpcByDefault=true and enableHwGro=false on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: true,
+			enableHwGro:         false,
 			machineType:         "ct6e-standard-4t",
 			expectLROCalled:     false,
 		},
 		{
-			name:                "enableGrpcByDefault=true on non-v6e machine type does not enable LRO",
+			name:                "enableGrpcByDefault=false and enableHwGro=true on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: false,
+			enableHwGro:         true,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "enableGrpcByDefault=false and enableHwGro=false on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: false,
+			enableHwGro:         false,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHwGro=true on non-v6e machine type does not enable LRO",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "n2-standard-8",
 			expectLROCalled:     false,
 		},
 		{
 			name:                "LRO error is logged and does not fail NodePublishVolume",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-4t",
 			enableLROErr:        fmt.Errorf("mock ethtool error"),
 			expectLROCalled:     true,
@@ -4359,6 +4379,7 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 		{
 			name:                "already mounted targetPath skips LRO on republish",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-4t",
 			alreadyMounted:      true,
 			expectLROCalled:     false,
@@ -4408,6 +4429,7 @@ func TestNodePublishVolumeEnableLRO(t *testing.T) {
 			}
 
 			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			driver.config.FeatureOptions.EnableHwGro = tc.enableHwGro
 			driver.config.AssumeGoodSidecarVersion = true
 			ns := newNodeServer(driver, fakeMounter)
 
@@ -4445,38 +4467,58 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 	testCases := []struct {
 		name                string
 		enableGrpcByDefault bool
+		enableHwGro         bool
 		machineType         string
 		enableLROErr        error
 		alreadyMounted      bool
 		expectLROCalled     bool
 	}{
 		{
-			name:                "enableGrpcByDefault=true on ct6e-standard-4t enables LRO",
+			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-4t enables LRO",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-4t",
 			expectLROCalled:     true,
 		},
 		{
-			name:                "enableGrpcByDefault=true on ct6e-standard-8t enables LRO",
+			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-8t enables LRO",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-8t",
 			expectLROCalled:     true,
 		},
 		{
-			name:                "enableGrpcByDefault=false on ct6e-standard-4t does not enable LRO",
-			enableGrpcByDefault: false,
+			name:                "enableGrpcByDefault=true and enableHwGro=false on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: true,
+			enableHwGro:         false,
 			machineType:         "ct6e-standard-4t",
 			expectLROCalled:     false,
 		},
 		{
-			name:                "enableGrpcByDefault=true on non-v6e machine type does not enable LRO",
+			name:                "enableGrpcByDefault=false and enableHwGro=true on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: false,
+			enableHwGro:         true,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "enableGrpcByDefault=false and enableHwGro=false on ct6e-standard-4t does not enable LRO",
+			enableGrpcByDefault: false,
+			enableHwGro:         false,
+			machineType:         "ct6e-standard-4t",
+			expectLROCalled:     false,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHwGro=true on non-v6e machine type does not enable LRO",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "n2-standard-8",
 			expectLROCalled:     false,
 		},
 		{
 			name:                "LRO error is logged and does not fail NodeStageVolume",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-4t",
 			enableLROErr:        fmt.Errorf("mock ethtool error"),
 			expectLROCalled:     true,
@@ -4484,6 +4526,7 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 		{
 			name:                "already mounted stagingPath skips LRO on restage",
 			enableGrpcByDefault: true,
+			enableHwGro:         true,
 			machineType:         "ct6e-standard-4t",
 			alreadyMounted:      true,
 			expectLROCalled:     false,
@@ -4534,6 +4577,7 @@ func TestNodeStageVolumeEnableLRO(t *testing.T) {
 			}
 			ns.mounter = fakeMounter
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			ns.driver.config.FeatureOptions.EnableHwGro = tc.enableHwGro
 			ns.driver.config.AssumeGoodSidecarVersion = true
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
@@ -4574,6 +4618,7 @@ func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
+						EnableHwGro:         true,
 					},
 				},
 			},
@@ -4596,6 +4641,7 @@ func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
+						EnableHwGro:         true,
 					},
 				},
 			},
@@ -4642,6 +4688,66 @@ func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
 		}
 	})
 
+	t.Run("only EnableGrpcByDefault is true and EnableHwGro is false", func(t *testing.T) {
+		// Arrange
+		lroCalls = 0
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{
+						EnableGrpcByDefault: true,
+						EnableHwGro:         false,
+					},
+				},
+			},
+		}
+		validNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					clientset.MachineTypeKey: "ct6e-standard-4t",
+				},
+			},
+		}
+
+		// Act
+		ns.enableLROIfApplicable(validNode)
+
+		// Assert
+		if lroCalls != 0 {
+			t.Errorf("lroCalls = %d, want 0 when EnableHwGro is false", lroCalls)
+		}
+	})
+
+	t.Run("only EnableHwGro is true and EnableGrpcByDefault is false", func(t *testing.T) {
+		// Arrange
+		lroCalls = 0
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{
+						EnableGrpcByDefault: false,
+						EnableHwGro:         true,
+					},
+				},
+			},
+		}
+		validNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					clientset.MachineTypeKey: "ct6e-standard-4t",
+				},
+			},
+		}
+
+		// Act
+		ns.enableLROIfApplicable(validNode)
+
+		// Assert
+		if lroCalls != 0 {
+			t.Errorf("lroCalls = %d, want 0 when EnableGrpcByDefault is false", lroCalls)
+		}
+	})
+
 	t.Run("called only once per nodeServer across multiple invocations", func(t *testing.T) {
 		// Arrange
 		lroCalls = 0
@@ -4650,6 +4756,7 @@ func TestEnableLROIfApplicableNilAndEdgeCases(t *testing.T) {
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
+						EnableHwGro:         true,
 					},
 				},
 			},
