@@ -305,7 +305,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 		mountOptions := "logging:severity:info"
 
-		if n.ClientProtocol == "grpc" {
+		if n.ClientProtocol == "grpc" && config.Prefix != EnableGrpcByDefaultPrefix {
 			mountOptions += ",client-protocol=grpc"
 		}
 		if n.gcsfuseVersion == nil || n.gcsfuseBranch == "" {
