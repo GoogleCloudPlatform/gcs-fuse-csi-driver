@@ -732,11 +732,9 @@ func (f *fakeEthtoolClient) Close() {
 
 func TestEnableHwGro(t *testing.T) {
 	origNewEthtool := newEthtoolClient
-	origRunCmd := runEthtoolCommandFunc
 	origEnableHwGro := EnableHwGroFunc
 	t.Cleanup(func() {
 		newEthtoolClient = origNewEthtool
-		runEthtoolCommandFunc = origRunCmd
 		EnableHwGroFunc = origEnableHwGro
 	})
 
@@ -749,9 +747,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("CLI fallback should not be called")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -790,9 +785,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("CLI fallback should not be called")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -831,9 +823,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("CLI fallback should not be called")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -860,9 +849,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("CLI fallback should not be called")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -895,9 +881,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("CLI fallback should not be called")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -919,7 +902,7 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
-	t.Run("RxGroHwFailsButLROSucceeds", func(t *testing.T) {
+	t.Run("RxGroHwChangeFailsButLROSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -931,11 +914,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		var cliFeatures []string
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			cliFeatures = append(cliFeatures, feature)
-			return errors.New("rx-gro-hw cli not supported")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -948,21 +926,18 @@ func TestEnableHwGro(t *testing.T) {
 		if !strings.Contains(err.Error(), "rx-gro-hw ioctl not supported") {
 			t.Errorf("expected error to contain 'rx-gro-hw ioctl not supported', got %v", err)
 		}
-		if !strings.Contains(err.Error(), "rx-gro-hw cli not supported") {
-			t.Errorf("expected error to contain 'rx-gro-hw cli not supported', got %v", err)
-		}
-		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw"}) {
-			t.Errorf("expected CLI fallback only for rx-gro-hw, got %v", cliFeatures)
-		}
 		if !fakeEth.features["rx-lro"] {
 			t.Errorf("expected rx-lro to still succeed and become true despite rx-gro-hw failure")
 		}
 		if fakeEth.features["rx-gro-hw"] {
 			t.Errorf("expected rx-gro-hw to remain false")
 		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
 	})
 
-	t.Run("LROFailsButRxGroHwSucceeds", func(t *testing.T) {
+	t.Run("LROChangeFailsButRxGroHwSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -974,11 +949,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		var cliFeatures []string
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			cliFeatures = append(cliFeatures, feature)
-			return errors.New("lro cli failed")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
@@ -991,21 +961,18 @@ func TestEnableHwGro(t *testing.T) {
 		if !strings.Contains(err.Error(), "rx-lro ioctl failed") {
 			t.Errorf("expected error to contain 'rx-lro ioctl failed', got %v", err)
 		}
-		if !strings.Contains(err.Error(), "lro cli failed") {
-			t.Errorf("expected error to contain 'lro cli failed', got %v", err)
-		}
-		if !reflect.DeepEqual(cliFeatures, []string{"lro"}) {
-			t.Errorf("expected CLI fallback only for lro, got %v", cliFeatures)
-		}
 		if !fakeEth.features["rx-gro-hw"] {
 			t.Errorf("expected rx-gro-hw to still succeed and become true despite lro failure")
 		}
 		if fakeEth.features["rx-lro"] {
 			t.Errorf("expected rx-lro to remain false")
 		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
 	})
 
-	t.Run("PerFeatureCLIFallbackWhenOneFeatureKeyMissingInIoctl", func(t *testing.T) {
+	t.Run("RxGroHwMissingInFeaturesButLROSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -1013,22 +980,17 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		var cliFeatures []string
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			cliFeatures = append(cliFeatures, feature)
-			return nil
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
 		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if err == nil {
+			t.Fatalf("expected error because rx-gro-hw is missing in features, got nil")
 		}
-		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw"}) {
-			t.Errorf("expected CLI fallback for [rx-gro-hw], got %v", cliFeatures)
+		if !strings.Contains(err.Error(), "rx-gro-hw feature not found in ethtool features") {
+			t.Errorf("expected error to mention missing rx-gro-hw feature, got %v", err)
 		}
 		if len(fakeEth.changeCalls) != 1 {
 			t.Fatalf("expected 1 ioctl change call for rx-lro, got %d", len(fakeEth.changeCalls))
@@ -1039,99 +1001,49 @@ func TestEnableHwGro(t *testing.T) {
 		if !fakeEth.features["rx-lro"] {
 			t.Errorf("expected rx-lro to be true")
 		}
-	})
-
-	t.Run("FallbackToCLIWhenEthtoolClientCreationFails", func(t *testing.T) {
-		// Arrange
-		newEthtoolClient = func() (ethtoolClient, error) {
-			return nil, errors.New("socket ioctl error")
-		}
-		var cliFeatures []string
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			cliFeatures = append(cliFeatures, feature)
-			return nil
-		}
-		EnableHwGroFunc = enableHwGroOnNIC
-
-		// Act
-		err := EnableHwGroOnDefaultNIC()
-
-		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw", "lro"}) {
-			t.Errorf("expected CLI fallback for [rx-gro-hw lro], got %v", cliFeatures)
-		}
-	})
-
-	t.Run("FallbackToCLIWhenFeaturesCallFails", func(t *testing.T) {
-		// Arrange
-		fakeEth := &fakeEthtoolClient{
-			featuresErr: errors.New("features error"),
-		}
-		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		var cliFeatures []string
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			cliFeatures = append(cliFeatures, feature)
-			return nil
-		}
-		EnableHwGroFunc = enableHwGroOnNIC
-
-		// Act
-		err := EnableHwGroOnDefaultNIC()
-
-		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw", "lro"}) {
-			t.Errorf("expected CLI fallback for [rx-gro-hw lro], got %v", cliFeatures)
-		}
 		if !fakeEth.closed {
 			t.Errorf("expected client to be closed")
 		}
 	})
 
-	t.Run("FallbackToCLIWhenChangeCallFails", func(t *testing.T) {
+	t.Run("LROMissingInFeaturesButRxGroHwSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
 				"rx-gro-hw": false,
-				"rx-lro":    false,
 			},
-			changeErr: errors.New("change error"),
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		var cliFeatures []string
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			cliFeatures = append(cliFeatures, feature)
-			return nil
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		// Act
 		err := EnableHwGroOnDefaultNIC()
 
 		// Assert
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if err == nil {
+			t.Fatalf("expected error because lro is missing in features, got nil")
 		}
-		if !reflect.DeepEqual(cliFeatures, []string{"rx-gro-hw", "lro"}) {
-			t.Errorf("expected CLI fallback for [rx-gro-hw lro], got %v", cliFeatures)
+		if !strings.Contains(err.Error(), "lro feature not found in ethtool features") {
+			t.Errorf("expected error to mention missing lro feature, got %v", err)
+		}
+		if len(fakeEth.changeCalls) != 1 {
+			t.Fatalf("expected 1 ioctl change call for rx-gro-hw, got %d", len(fakeEth.changeCalls))
+		}
+		if !reflect.DeepEqual(fakeEth.changeCalls[0], map[string]bool{"rx-gro-hw": true}) {
+			t.Errorf("changeCalls[0] mismatch: %v", fakeEth.changeCalls[0])
+		}
+		if !fakeEth.features["rx-gro-hw"] {
+			t.Errorf("expected rx-gro-hw to be true")
 		}
 		if !fakeEth.closed {
 			t.Errorf("expected client to be closed")
 		}
 	})
 
-	t.Run("ReturnsErrorWhenBothEthtoolIoctlAndCLIFail", func(t *testing.T) {
+	t.Run("ReturnsErrorWhenEthtoolClientCreationFails", func(t *testing.T) {
 		// Arrange
 		newEthtoolClient = func() (ethtoolClient, error) {
 			return nil, errors.New("socket ioctl error")
-		}
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("ethtool CLI failed")
 		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
@@ -1145,8 +1057,58 @@ func TestEnableHwGro(t *testing.T) {
 		if !strings.Contains(err.Error(), "socket ioctl error") {
 			t.Errorf("expected error to contain 'socket ioctl error', got %v", err)
 		}
-		if !strings.Contains(err.Error(), "ethtool CLI failed") {
-			t.Errorf("expected error to contain 'ethtool CLI failed', got %v", err)
+	})
+
+	t.Run("ReturnsErrorWhenFeaturesCallFails", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			featuresErr: errors.New("features error"),
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		EnableHwGroFunc = enableHwGroOnNIC
+
+		// Act
+		err := EnableHwGroOnDefaultNIC()
+
+		// Assert
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "features error") {
+			t.Errorf("expected error to contain 'features error', got %v", err)
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
+	})
+
+	t.Run("ReturnsErrorWhenBothFeaturesFail", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{
+				"rx-gro-hw": false,
+				"rx-lro":    false,
+			},
+			changeErr: errors.New("change error"),
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		EnableHwGroFunc = enableHwGroOnNIC
+
+		// Act
+		err := EnableHwGroOnDefaultNIC()
+
+		// Assert
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to enable rx-gro-hw") {
+			t.Errorf("expected error to contain 'failed to enable rx-gro-hw', got %v", err)
+		}
+		if !strings.Contains(err.Error(), "failed to enable rx-lro") {
+			t.Errorf("expected error to contain 'failed to enable rx-lro', got %v", err)
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
 		}
 	})
 
@@ -1177,9 +1139,6 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		runEthtoolCommandFunc = func(nic, feature string) error {
-			return errors.New("CLI fallback should not be called")
-		}
 		EnableHwGroFunc = enableHwGroOnNIC
 
 		var wg sync.WaitGroup

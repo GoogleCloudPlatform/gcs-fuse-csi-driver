@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,8 +56,6 @@ var (
 	newEthtoolClient = func() (ethtoolClient, error) {
 		return ethtool.NewEthtool()
 	}
-	// runEthtoolCommandFunc executes the CLI fallback `ethtool -K <nic> <feature> on` (overridable for unit testing).
-	runEthtoolCommandFunc = runEthtoolCommand
 	// EnableHwGroFunc enables rx-gro-hw and LRO on the specified NIC (overridable for unit testing).
 	EnableHwGroFunc = enableHwGroOnNIC
 )
@@ -105,38 +102,7 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
-func runEthtoolCommand(nic, feature string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ethtool", "-K", nic, feature, "on")
-	cmd.WaitDelay = time.Second
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
-	}
-	sudoCtx, sudoCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer sudoCancel()
-	sudoCmd := exec.CommandContext(sudoCtx, "sudo", "-n", "ethtool", "-K", nic, feature, "on")
-	sudoCmd.WaitDelay = time.Second
-	sudoOut, sudoErr := sudoCmd.CombinedOutput()
-	if sudoErr == nil {
-		return nil
-	}
-	return fmt.Errorf("ethtool -K %s %s on failed: %w (output: %s), sudo fallback failed: %w (sudo output: %s)", nic, feature, err, strings.TrimSpace(string(out)), sudoErr, strings.TrimSpace(string(sudoOut)))
-}
-
-func enableNICFeatureViaIoctl(nic string, candidateKeys []string, featureName string) error {
-	eth, err := newEthtoolClient()
-	if err != nil {
-		return fmt.Errorf("failed to create ethtool client for NIC %q (%s): %w", nic, featureName, err)
-	}
-	defer eth.Close()
-
-	features, err := eth.Features(nic)
-	if err != nil {
-		return fmt.Errorf("failed to get ethtool features for NIC %q (%s): %w", nic, featureName, err)
-	}
-
+func enableNICFeatureViaIoctl(eth ethtoolClient, features map[string]bool, nic string, candidateKeys []string, featureName string) error {
 	var featureKey string
 	var alreadyEnabled, found bool
 	for _, key := range candidateKeys {
@@ -159,22 +125,10 @@ func enableNICFeatureViaIoctl(nic string, candidateKeys []string, featureName st
 	return nil
 }
 
-func enableNICFeature(nic string, candidateKeys []string, cliFeature string) error {
-	if err := enableNICFeatureViaIoctl(nic, candidateKeys, cliFeature); err != nil {
-		cmdErr := runEthtoolCommandFunc(nic, cliFeature)
-		if cmdErr == nil {
-			return nil
-		}
-		return fmt.Errorf("%w (fallback error: %w)", err, cmdErr)
-	}
-	return nil
-}
-
 // enableHwGroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
 // (rx-lro / large-receive-offload) on the specified NIC using ethtool ioctls (Features
-// read-before-write Change), falling back to `ethtool -K <nic> <feature> on` per feature
-// if ioctl creation or execution fails. Each feature is attempted independently so that
-// a failure on one feature does not prevent the other from being enabled.
+// read-before-write Change). Each feature is attempted independently so that a failure
+// on one feature does not prevent the other from being enabled.
 func enableHwGroOnNIC(nic string) error {
 	hwGroMu.Lock()
 	defer hwGroMu.Unlock()
@@ -187,8 +141,19 @@ func enableHwGroOnNIC(nic string) error {
 		return fmt.Errorf("invalid NIC name %q", nic)
 	}
 
-	groErr := enableNICFeature(nic, []string{"rx-gro-hw"}, "rx-gro-hw")
-	lroErr := enableNICFeature(nic, []string{"rx-lro", "large-receive-offload"}, "lro")
+	eth, err := newEthtoolClient()
+	if err != nil {
+		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", nic, err)
+	}
+	defer eth.Close()
+
+	features, err := eth.Features(nic)
+	if err != nil {
+		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
+	}
+
+	groErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-gro-hw"}, "rx-gro-hw")
+	lroErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-lro", "large-receive-offload"}, "lro")
 	return errors.Join(groErr, lroErr)
 }
 
