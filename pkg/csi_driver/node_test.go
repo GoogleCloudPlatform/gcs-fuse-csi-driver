@@ -4662,7 +4662,7 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 				},
 			}
 
-			for i := 0; i < tc.invocations; i++ {
+			for range tc.invocations {
 				ns.enableHWgroIfApplicable(tc.node)
 			}
 			ns.enableHWgroWg.Wait()
