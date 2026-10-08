@@ -34,7 +34,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const defaultNIC = "eth0"
+// cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
+const cosDefaultNIC = "eth0"
 
 // ethtoolClient abstracts github.com/safchain/ethtool for deterministic unit testing.
 type ethtoolClient interface {
@@ -152,6 +153,13 @@ func enableHwGroOnNIC(nic string) error {
 
 	features, err := eth.Features(nic)
 	if err != nil {
+		// An explicit host OS check (COS vs. Ubuntu) is not needed because "eth0" only
+		// exists on COS nodes, whereas Ubuntu nodes use predictable interface names (e.g. ens4).
+		// When "eth0" is absent, the SIOCETHTOOL ioctl returns ENODEV and we skip cleanly.
+		if errors.Is(err, unix.ENODEV) {
+			klog.Infof("Skipping rx-gro-hw and large-receive-offload enablement: NIC %q is not present on host", nic)
+			return nil
+		}
 		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
 	}
 
@@ -160,14 +168,18 @@ func enableHwGroOnNIC(nic string) error {
 	// LRO as either "rx-lro" or "large-receive-offload".
 	groErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-gro-hw"}, "rx-gro-hw")
 	lroErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-lro", "large-receive-offload"}, "lro")
-	return errors.Join(groErr, lroErr)
+	if err := errors.Join(groErr, lroErr); err != nil {
+		return err
+	}
+	klog.Infof("Successfully ensured rx-gro-hw and large-receive-offload are enabled on NIC %q", nic)
+	return nil
 }
 
 // EnableHwGroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
-// on the host's default NIC (eth0).
+// on the host's COS default NIC (eth0).
 func EnableHwGroOnDefaultNIC() error {
-	if err := EnableHwGroFunc(defaultNIC); err != nil {
-		return fmt.Errorf("failed to enable rx-gro-hw and large-receive-offload on NIC %q: %w", defaultNIC, err)
+	if err := EnableHwGroFunc(cosDefaultNIC); err != nil {
+		return fmt.Errorf("failed to enable rx-gro-hw and large-receive-offload on NIC %q: %w", cosDefaultNIC, err)
 	}
 	return nil
 }

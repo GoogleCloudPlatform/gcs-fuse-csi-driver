@@ -1059,6 +1059,29 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
+	t.Run("SkipsWithoutErrorWhenNICNotPresentOnNonCOSHost", func(t *testing.T) {
+		// Arrange
+		fakeEth := &fakeEthtoolClient{
+			featuresErr: unix.ENODEV,
+		}
+		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
+		EnableHwGroFunc = enableHwGroOnNIC
+
+		// Act
+		err := EnableHwGroOnDefaultNIC()
+
+		// Assert
+		if err != nil {
+			t.Fatalf("expected nil error when eth0 is absent (ENODEV), got: %v", err)
+		}
+		if len(fakeEth.changeCalls) != 0 {
+			t.Fatalf("expected 0 change calls when eth0 is absent, got %d", len(fakeEth.changeCalls))
+		}
+		if !fakeEth.closed {
+			t.Errorf("expected client to be closed")
+		}
+	})
+
 	t.Run("ReturnsErrorWhenFeaturesCallFails", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{

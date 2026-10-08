@@ -1385,8 +1385,8 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 }
 
 // enableHwGroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
-// on the node's default NIC when both --enable-grpc-by-default and --enable-hw-gro are
-// enabled and the node is a TPU v6e (ct6e-*) machine.
+// on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
+// are enabled and the node is a TPU v6e (ct6e-*) machine.
 func (s *nodeServer) enableHwGroIfApplicable(node *corev1.Node) {
 	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault || !s.driver.config.FeatureOptions.EnableHwGro {
 		return
@@ -1399,12 +1399,12 @@ func (s *nodeServer) enableHwGroIfApplicable(node *corev1.Node) {
 		return
 	}
 	// NIC offload tuning is host-wide and best-effort: run it at most once per nodeServer
-	// and log any error without failing the volume mount.
+	// and log any error without failing the volume mount. An explicit OS check (COS vs. Ubuntu)
+	// is not needed here because EnableHwGroOnDefaultNIC targets "eth0", which only exists on
+	// COS nodes and is skipped when absent on Ubuntu nodes.
 	s.enableHwGroOnce.Do(func() {
 		if err := util.EnableHwGroOnDefaultNIC(); err != nil {
 			klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
-			return
 		}
-		klog.Infof("Successfully ensured rx-gro-hw and large-receive-offload are enabled on default NIC for node %q (machine type %q)", node.Name, machineType)
 	})
 }
