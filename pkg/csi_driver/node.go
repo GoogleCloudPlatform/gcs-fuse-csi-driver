@@ -66,7 +66,8 @@ const (
 	// Thus the full timeout is 7 seconds.
 	forceUnmountRetryTimeout = 7 * time.Second
 	forceUnmountRetrySteps   = 6
-	tpuV6eMachineTypePrefix  = "ct6e-"
+	// Machine type prefix for TPU v6e nodes where hardware GRO/LRO offloads are enabled.
+	tpuV6eMachineTypePrefix = "ct6e-"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -80,7 +81,8 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
-	enableHwGroOnce       sync.Once
+	// Ensures host NIC GRO/LRO offloads are configured at most once per nodeServer lifecycle.
+	enableHwGroOnce sync.Once
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -514,6 +516,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes for new sidecar mounts.
 	s.enableHwGroIfApplicable(node)
 
 	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
@@ -1134,6 +1137,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes for new shared mounts.
 	s.enableHwGroIfApplicable(node)
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
@@ -1394,6 +1398,8 @@ func (s *nodeServer) enableHwGroIfApplicable(node *corev1.Node) {
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return
 	}
+	// NIC offload tuning is host-wide and best-effort: run it at most once per nodeServer
+	// and log any error without failing the volume mount.
 	s.enableHwGroOnce.Do(func() {
 		if err := util.EnableHwGroOnDefaultNIC(); err != nil {
 			klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)

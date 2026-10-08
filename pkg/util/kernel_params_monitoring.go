@@ -102,6 +102,9 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
+// enableNICFeatureViaIoctl enables a single NIC offload feature using the first matching
+// kernel ETH_SS_FEATURES key in candidateKeys, skipping the ETHTOOL_SFEATURES ioctl if
+// the feature is already active.
 func enableNICFeatureViaIoctl(eth ethtoolClient, features map[string]bool, nic string, candidateKeys []string, featureName string) error {
 	var featureKey string
 	var alreadyEnabled, found bool
@@ -152,6 +155,9 @@ func enableHwGroOnNIC(nic string) error {
 		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
 	}
 
+	// Apply rx-gro-hw and lro in separate Change calls so that if the NIC/kernel
+	// rejects one offload, the other is still applied. Kernel feature tables expose
+	// LRO as either "rx-lro" or "large-receive-offload".
 	groErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-gro-hw"}, "rx-gro-hw")
 	lroErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-lro", "large-receive-offload"}, "lro")
 	return errors.Join(groErr, lroErr)
