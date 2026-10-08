@@ -562,7 +562,8 @@ func extractErrorFromGcsFuseErrorFile(errMsg []byte) (codes.Code, error) {
 		errMsgStr := string(errMsg)
 		code := codes.Internal
 		if strings.Contains(errMsgStr, "Incorrect Usage") ||
-			strings.Contains(errMsgStr, "unknown flag") || invalidArgumentPatterns.MatchString(errMsgStr) {
+			strings.Contains(errMsgStr, "unknown flag") ||
+			strings.Contains(errMsgStr, "invalid config") || invalidArgumentPatterns.MatchString(errMsgStr) {
 			code = codes.InvalidArgument
 		}
 

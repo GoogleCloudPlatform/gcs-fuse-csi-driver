@@ -69,6 +69,11 @@ func TestExtractErrorFromGcsFuseErrorFile(t *testing.T) {
 				expectedCode: codes.InvalidArgument,
 			},
 			{
+				name:         "invalid config error",
+				errorMessage: []byte("Error: invalid config: error parsing parallel download config: file cache should be enabled for parallel download support"),
+				expectedCode: codes.InvalidArgument,
+			},
+			{
 				name:         "bucket doesn't exist error",
 				errorMessage: []byte("something went wrong: bucket doesn't exist"),
 				expectedCode: codes.NotFound,
