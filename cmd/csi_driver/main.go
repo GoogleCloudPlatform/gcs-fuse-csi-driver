@@ -76,7 +76,7 @@ var (
 	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
 	enableGrpcByDefault            = flag.Bool("enable-grpc-by-default", false, "Enable gRPC by default for new driver enablement.")
-	enableHwGro                    = flag.Bool("enable-hw-gro", false, "Enable hardware GRO (rx-gro-hw) and LRO on the default NIC when enable-grpc-by-default is also enabled.")
+	enableHWgro                    = flag.Bool("enable-hw-gro", false, "Enable hardware GRO (rx-gro-hw) and LRO on the default NIC when enable-grpc-by-default is also enabled.")
 	universeDomain                 = flag.String("universe-domain", "googleapis.com", "The universe domain. The default value is googleapis.com.")
 
 	// GCSFuse kernel params feature.
@@ -259,7 +259,7 @@ func main() {
 			},
 		},
 		EnableGrpcByDefault: *enableGrpcByDefault,
-		EnableHwGro:         *enableHwGro,
+		EnableHWgro:         *enableHWgro,
 	}
 
 	var mounter mount.Interface

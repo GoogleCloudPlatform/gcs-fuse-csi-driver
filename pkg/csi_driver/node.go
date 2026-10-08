@@ -82,7 +82,9 @@ type nodeServer struct {
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
 	// Ensures host NIC GRO/LRO offloads are configured at most once per nodeServer lifecycle.
-	enableHwGroOnce sync.Once
+	enableHWgroOnce sync.Once
+	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
+	enableHWgroWg sync.WaitGroup
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -517,7 +519,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Enable default NIC GRO/LRO offloads on TPU v6e nodes for new sidecar mounts.
-	s.enableHwGroIfApplicable(node)
+	s.enableHWgroIfApplicable(node)
 
 	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
 	if emptyDirBasePath != "" {
@@ -1138,7 +1140,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Enable default NIC GRO/LRO offloads on TPU v6e nodes for new shared mounts.
-	s.enableHwGroIfApplicable(node)
+	s.enableHWgroIfApplicable(node)
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
 	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
@@ -1384,11 +1386,11 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	return nil
 }
 
-// enableHwGroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
 // are enabled and the node is a TPU v6e (ct6e-*) machine.
-func (s *nodeServer) enableHwGroIfApplicable(node *corev1.Node) {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault || !s.driver.config.FeatureOptions.EnableHwGro {
+func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node) {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault || !s.driver.config.FeatureOptions.EnableHWgro {
 		return
 	}
 	if node == nil {
@@ -1399,12 +1401,19 @@ func (s *nodeServer) enableHwGroIfApplicable(node *corev1.Node) {
 		return
 	}
 	// NIC offload tuning is host-wide and best-effort: run it at most once per nodeServer
-	// and log any error without failing the volume mount. An explicit OS check (COS vs. Ubuntu)
-	// is not needed here because EnableHwGroOnDefaultNIC targets "eth0", which only exists on
-	// COS nodes and is skipped when absent on Ubuntu nodes.
-	s.enableHwGroOnce.Do(func() {
-		if err := util.EnableHwGroOnDefaultNIC(); err != nil {
-			klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", node.Name, machineType, err)
-		}
+	// in a background goroutine so that volume mounts are never blocked if SIOCETHTOOL
+	// ioctls contend on the kernel's global rtnl_lock or stall during NIC driver
+	// reconfiguration. An explicit OS check (COS vs. Ubuntu) is not needed here because
+	// EnableHWgroOnDefaultNIC targets "eth0", which only exists on COS nodes and is
+	// skipped when absent on Ubuntu nodes.
+	nodeName := node.Name
+	s.enableHWgroOnce.Do(func() {
+		s.enableHWgroWg.Add(1)
+		go func() {
+			defer s.enableHWgroWg.Done()
+			if err := util.EnableHWgroOnDefaultNIC(); err != nil {
+				klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
+			}
+		}()
 	})
 }

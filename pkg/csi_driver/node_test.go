@@ -4316,88 +4316,88 @@ func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
 	}
 }
 
-func TestNodePublishVolumeEnableHwGro(t *testing.T) {
+func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 	testCases := []struct {
 		name                string
 		enableGrpcByDefault bool
-		enableHwGro         bool
+		enableHWgro         bool
 		machineType         string
-		enableHwGroErr      error
+		enableHWgroErr      error
 		alreadyMounted      bool
-		expectHwGroCalled   bool
+		expectHWgroCalled   bool
 	}{
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-4t enables HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t enables HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   true,
+			expectHWgroCalled:   true,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-8t enables HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-8t enables HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
-			expectHwGroCalled:   true,
+			expectHWgroCalled:   true,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=false on ct6e-standard-4t does not enable HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         false,
+			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "enableGrpcByDefault=false and enableHwGro=true on ct6e-standard-4t does not enable HwGro",
+			name:                "enableGrpcByDefault=false and enableHWgro=true on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "enableGrpcByDefault=false and enableHwGro=false on ct6e-standard-4t does not enable HwGro",
+			name:                "enableGrpcByDefault=false and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
-			enableHwGro:         false,
+			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=true on non-v6e machine type does not enable HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on non-v6e machine type does not enable HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "n2-standard-8",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "HwGro error is logged and does not fail NodePublishVolume",
+			name:                "HWgro error is logged and does not fail NodePublishVolume",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			enableHwGroErr:      fmt.Errorf("mock ethtool error"),
-			expectHwGroCalled:   true,
+			enableHWgroErr:      fmt.Errorf("mock ethtool error"),
+			expectHWgroCalled:   true,
 		},
 		{
-			name:                "already mounted targetPath skips HwGro on republish",
+			name:                "already mounted targetPath skips HWgro on republish",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			alreadyMounted:      true,
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange
-			origEnableHwGro := util.EnableHwGroFunc
+			origEnableHWgro := util.EnableHWgroFunc
 			t.Cleanup(func() {
-				util.EnableHwGroFunc = origEnableHwGro
+				util.EnableHWgroFunc = origEnableHWgro
 			})
 
-			hwGroCalled := false
-			util.EnableHwGroFunc = func(_ string) error {
-				hwGroCalled = true
-				return tc.enableHwGroErr
+			hwGROCalled := false
+			util.EnableHWgroFunc = func(_ string) error {
+				hwGROCalled = true
+				return tc.enableHWgroErr
 			}
 
 			testTargetPath, cleanup := setupTestTargetPath(t)
@@ -4429,7 +4429,7 @@ func TestNodePublishVolumeEnableHwGro(t *testing.T) {
 			}
 
 			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
-			driver.config.FeatureOptions.EnableHwGro = tc.enableHwGro
+			driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
 			driver.config.AssumeGoodSidecarVersion = true
 			ns := newNodeServer(driver, fakeMounter)
 
@@ -4445,19 +4445,20 @@ func TestNodePublishVolumeEnableHwGro(t *testing.T) {
 
 			// Act
 			_, err := ns.NodePublishVolume(t.Context(), req)
+			ns.(*nodeServer).enableHWgroWg.Wait()
 
 			// Assert
 			if err != nil {
 				t.Fatalf("NodePublishVolume failed: %v", err)
 			}
-			if hwGroCalled != tc.expectHwGroCalled {
-				t.Errorf("hwGroCalled = %v, want %v", hwGroCalled, tc.expectHwGroCalled)
+			if hwGROCalled != tc.expectHWgroCalled {
+				t.Errorf("hwGROCalled = %v, want %v", hwGROCalled, tc.expectHWgroCalled)
 			}
 		})
 	}
 }
 
-func TestNodeStageVolumeEnableHwGro(t *testing.T) {
+func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 	nodeID := "test-node"
 	volID := testVolumeID
 	podNamespace := "test-ns"
@@ -4467,84 +4468,84 @@ func TestNodeStageVolumeEnableHwGro(t *testing.T) {
 	testCases := []struct {
 		name                string
 		enableGrpcByDefault bool
-		enableHwGro         bool
+		enableHWgro         bool
 		machineType         string
-		enableHwGroErr      error
+		enableHWgroErr      error
 		alreadyMounted      bool
-		expectHwGroCalled   bool
+		expectHWgroCalled   bool
 	}{
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-4t enables HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t enables HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   true,
+			expectHWgroCalled:   true,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=true on ct6e-standard-8t enables HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-8t enables HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
-			expectHwGroCalled:   true,
+			expectHWgroCalled:   true,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=false on ct6e-standard-4t does not enable HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         false,
+			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "enableGrpcByDefault=false and enableHwGro=true on ct6e-standard-4t does not enable HwGro",
+			name:                "enableGrpcByDefault=false and enableHWgro=true on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "enableGrpcByDefault=false and enableHwGro=false on ct6e-standard-4t does not enable HwGro",
+			name:                "enableGrpcByDefault=false and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
-			enableHwGro:         false,
+			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHwGro=true on non-v6e machine type does not enable HwGro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on non-v6e machine type does not enable HWgro",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "n2-standard-8",
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 		{
-			name:                "HwGro error is logged and does not fail NodeStageVolume",
+			name:                "HWgro error is logged and does not fail NodeStageVolume",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			enableHwGroErr:      fmt.Errorf("mock ethtool error"),
-			expectHwGroCalled:   true,
+			enableHWgroErr:      fmt.Errorf("mock ethtool error"),
+			expectHWgroCalled:   true,
 		},
 		{
-			name:                "already mounted stagingPath skips HwGro on restage",
+			name:                "already mounted stagingPath skips HWgro on restage",
 			enableGrpcByDefault: true,
-			enableHwGro:         true,
+			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			alreadyMounted:      true,
-			expectHwGroCalled:   false,
+			expectHWgroCalled:   false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange
-			origEnableHwGro := util.EnableHwGroFunc
+			origEnableHWgro := util.EnableHWgroFunc
 			t.Cleanup(func() {
-				util.EnableHwGroFunc = origEnableHwGro
+				util.EnableHWgroFunc = origEnableHWgro
 			})
 
-			hwGroCalled := false
-			util.EnableHwGroFunc = func(_ string) error {
-				hwGroCalled = true
-				return tc.enableHwGroErr
+			hwGROCalled := false
+			util.EnableHWgroFunc = func(_ string) error {
+				hwGROCalled = true
+				return tc.enableHWgroErr
 			}
 
 			testStagingPath, cleanupStaging := setupTestStagingPath(t)
@@ -4577,7 +4578,7 @@ func TestNodeStageVolumeEnableHwGro(t *testing.T) {
 			}
 			ns.mounter = fakeMounter
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
-			ns.driver.config.FeatureOptions.EnableHwGro = tc.enableHwGro
+			ns.driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
 			ns.driver.config.AssumeGoodSidecarVersion = true
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
@@ -4585,63 +4586,65 @@ func TestNodeStageVolumeEnableHwGro(t *testing.T) {
 
 			// Act
 			_, err := ns.NodeStageVolume(t.Context(), stageReq)
+			ns.enableHWgroWg.Wait()
 
 			// Assert
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
-			if hwGroCalled != tc.expectHwGroCalled {
-				t.Errorf("hwGroCalled = %v, want %v", hwGroCalled, tc.expectHwGroCalled)
+			if hwGROCalled != tc.expectHWgroCalled {
+				t.Errorf("hwGROCalled = %v, want %v", hwGROCalled, tc.expectHWgroCalled)
 			}
 		})
 	}
 }
 
-func TestEnableHwGroIfApplicableNilAndEdgeCases(t *testing.T) {
+func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 	// Arrange
-	origEnableHwGro := util.EnableHwGroFunc
+	origEnableHWgro := util.EnableHWgroFunc
 	t.Cleanup(func() {
-		util.EnableHwGroFunc = origEnableHwGro
+		util.EnableHWgroFunc = origEnableHWgro
 	})
 
-	hwGroCalls := 0
-	util.EnableHwGroFunc = func(_ string) error {
-		hwGroCalls++
+	hwGROCalls := 0
+	util.EnableHWgroFunc = func(_ string) error {
+		hwGROCalls++
 		return nil
 	}
 
 	t.Run("node is nil", func(t *testing.T) {
 		// Arrange
-		hwGroCalls = 0
+		hwGROCalls = 0
 		ns := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
-						EnableHwGro:         true,
+						EnableHWgro:         true,
 					},
 				},
 			},
 		}
 
 		// Act
-		ns.enableHwGroIfApplicable(nil)
+		ns.enableHWgroIfApplicable(nil)
+		ns.enableHWgroWg.Wait()
 
 		// Assert
-		if hwGroCalls != 0 {
-			t.Errorf("hwGroCalls = %d, want 0 when node is nil", hwGroCalls)
+		if hwGROCalls != 0 {
+			t.Errorf("hwGROCalls = %d, want 0 when node is nil", hwGROCalls)
 		}
 	})
 
 	t.Run("node labels are nil", func(t *testing.T) {
 		// Arrange
-		hwGroCalls = 0
+		hwGROCalls = 0
 		ns := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
-						EnableHwGro:         true,
+						EnableHWgro:         true,
 					},
 				},
 			},
@@ -4653,17 +4656,18 @@ func TestEnableHwGroIfApplicableNilAndEdgeCases(t *testing.T) {
 		}
 
 		// Act
-		ns.enableHwGroIfApplicable(node)
+		ns.enableHWgroIfApplicable(node)
+		ns.enableHWgroWg.Wait()
 
 		// Assert
-		if hwGroCalls != 0 {
-			t.Errorf("hwGroCalls = %d, want 0 when node labels are nil", hwGroCalls)
+		if hwGROCalls != 0 {
+			t.Errorf("hwGROCalls = %d, want 0 when node labels are nil", hwGROCalls)
 		}
 	})
 
 	t.Run("feature options is nil", func(t *testing.T) {
 		// Arrange
-		hwGroCalls = 0
+		hwGROCalls = 0
 		nsNoFeatures := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
@@ -4680,23 +4684,24 @@ func TestEnableHwGroIfApplicableNilAndEdgeCases(t *testing.T) {
 		}
 
 		// Act
-		nsNoFeatures.enableHwGroIfApplicable(node)
+		nsNoFeatures.enableHWgroIfApplicable(node)
+		nsNoFeatures.enableHWgroWg.Wait()
 
 		// Assert
-		if hwGroCalls != 0 {
-			t.Errorf("hwGroCalls = %d, want 0 when FeatureOptions is nil", hwGroCalls)
+		if hwGROCalls != 0 {
+			t.Errorf("hwGROCalls = %d, want 0 when FeatureOptions is nil", hwGROCalls)
 		}
 	})
 
-	t.Run("only EnableGrpcByDefault is true and EnableHwGro is false", func(t *testing.T) {
+	t.Run("only EnableGrpcByDefault is true and EnableHWgro is false", func(t *testing.T) {
 		// Arrange
-		hwGroCalls = 0
+		hwGROCalls = 0
 		ns := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
-						EnableHwGro:         false,
+						EnableHWgro:         false,
 					},
 				},
 			},
@@ -4710,23 +4715,24 @@ func TestEnableHwGroIfApplicableNilAndEdgeCases(t *testing.T) {
 		}
 
 		// Act
-		ns.enableHwGroIfApplicable(validNode)
+		ns.enableHWgroIfApplicable(validNode)
+		ns.enableHWgroWg.Wait()
 
 		// Assert
-		if hwGroCalls != 0 {
-			t.Errorf("hwGroCalls = %d, want 0 when EnableHwGro is false", hwGroCalls)
+		if hwGROCalls != 0 {
+			t.Errorf("hwGROCalls = %d, want 0 when EnableHWgro is false", hwGROCalls)
 		}
 	})
 
-	t.Run("only EnableHwGro is true and EnableGrpcByDefault is false", func(t *testing.T) {
+	t.Run("only EnableHWgro is true and EnableGrpcByDefault is false", func(t *testing.T) {
 		// Arrange
-		hwGroCalls = 0
+		hwGROCalls = 0
 		ns := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: false,
-						EnableHwGro:         true,
+						EnableHWgro:         true,
 					},
 				},
 			},
@@ -4740,23 +4746,24 @@ func TestEnableHwGroIfApplicableNilAndEdgeCases(t *testing.T) {
 		}
 
 		// Act
-		ns.enableHwGroIfApplicable(validNode)
+		ns.enableHWgroIfApplicable(validNode)
+		ns.enableHWgroWg.Wait()
 
 		// Assert
-		if hwGroCalls != 0 {
-			t.Errorf("hwGroCalls = %d, want 0 when EnableGrpcByDefault is false", hwGroCalls)
+		if hwGROCalls != 0 {
+			t.Errorf("hwGROCalls = %d, want 0 when EnableGrpcByDefault is false", hwGROCalls)
 		}
 	})
 
 	t.Run("called only once per nodeServer across multiple invocations", func(t *testing.T) {
 		// Arrange
-		hwGroCalls = 0
+		hwGROCalls = 0
 		ns := &nodeServer{
 			driver: &GCSDriver{
 				config: &GCSDriverConfig{
 					FeatureOptions: &GCSDriverFeatureOptions{
 						EnableGrpcByDefault: true,
-						EnableHwGro:         true,
+						EnableHWgro:         true,
 					},
 				},
 			},
@@ -4770,12 +4777,13 @@ func TestEnableHwGroIfApplicableNilAndEdgeCases(t *testing.T) {
 		}
 
 		// Act
-		ns.enableHwGroIfApplicable(validNode)
-		ns.enableHwGroIfApplicable(validNode)
+		ns.enableHWgroIfApplicable(validNode)
+		ns.enableHWgroIfApplicable(validNode)
+		ns.enableHWgroWg.Wait()
 
 		// Assert
-		if hwGroCalls != 1 {
-			t.Errorf("hwGroCalls = %d, want 1 across multiple invocations on the same nodeServer", hwGroCalls)
+		if hwGROCalls != 1 {
+			t.Errorf("hwGROCalls = %d, want 1 across multiple invocations on the same nodeServer", hwGROCalls)
 		}
 	})
 }

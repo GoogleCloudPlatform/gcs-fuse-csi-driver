@@ -730,15 +730,15 @@ func (f *fakeEthtoolClient) Close() {
 	f.closed = true
 }
 
-func TestEnableHwGro(t *testing.T) {
+func TestEnableHWgro(t *testing.T) {
 	origNewEthtool := newEthtoolClient
-	origEnableHwGro := EnableHwGroFunc
+	origEnableHWgro := EnableHWgroFunc
 	t.Cleanup(func() {
 		newEthtoolClient = origNewEthtool
-		EnableHwGroFunc = origEnableHwGro
+		EnableHWgroFunc = origEnableHWgro
 	})
 
-	t.Run("EnableBothWhenRxGroHwAndRxLROAreFalse", func(t *testing.T) {
+	t.Run("EnableBothWhenRXgroHWAndRXLROAreFalse", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -747,10 +747,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -776,7 +776,7 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
-	t.Run("EnableBothWhenRxGroHwAndLargeReceiveOffloadAreFalse", func(t *testing.T) {
+	t.Run("EnableBothWhenRXgroHWAndLargeReceiveOffloadAreFalse", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -785,10 +785,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -823,10 +823,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -849,10 +849,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -881,11 +881,11 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err1 := EnableHwGroOnDefaultNIC()
-		err2 := EnableHwGroOnDefaultNIC()
+		err1 := EnableHWgroOnDefaultNIC()
+		err2 := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err1 != nil {
@@ -902,7 +902,7 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
-	t.Run("RxGroHwChangeFailsButLROSucceeds", func(t *testing.T) {
+	t.Run("RXgroHWChangeFailsButLROSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -914,10 +914,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -937,7 +937,7 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
-	t.Run("LROChangeFailsButRxGroHwSucceeds", func(t *testing.T) {
+	t.Run("LROChangeFailsButRXgroHWSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -949,10 +949,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -972,7 +972,7 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
-	t.Run("RxGroHwMissingInFeaturesButLROSucceeds", func(t *testing.T) {
+	t.Run("RXgroHWMissingInFeaturesButLROSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -980,10 +980,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1006,7 +1006,7 @@ func TestEnableHwGro(t *testing.T) {
 		}
 	})
 
-	t.Run("LROMissingInFeaturesButRxGroHwSucceeds", func(t *testing.T) {
+	t.Run("LROMissingInFeaturesButRXgroHWSucceeds", func(t *testing.T) {
 		// Arrange
 		fakeEth := &fakeEthtoolClient{
 			features: map[string]bool{
@@ -1014,10 +1014,10 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1045,10 +1045,10 @@ func TestEnableHwGro(t *testing.T) {
 		newEthtoolClient = func() (ethtoolClient, error) {
 			return nil, errors.New("socket ioctl error")
 		}
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1065,10 +1065,10 @@ func TestEnableHwGro(t *testing.T) {
 			featuresErr: unix.ENODEV,
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err != nil {
@@ -1088,10 +1088,10 @@ func TestEnableHwGro(t *testing.T) {
 			featuresErr: errors.New("features error"),
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1115,10 +1115,10 @@ func TestEnableHwGro(t *testing.T) {
 			changeErr: errors.New("change error"),
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		// Act
-		err := EnableHwGroOnDefaultNIC()
+		err := EnableHWgroOnDefaultNIC()
 
 		// Assert
 		if err == nil {
@@ -1137,13 +1137,13 @@ func TestEnableHwGro(t *testing.T) {
 
 	t.Run("ReturnsErrorOnEmptyOrInvalidNICName", func(t *testing.T) {
 		// Arrange
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 		invalidNICs := []string{"", "   ", "-K", "eth0;id", "eth0 /etc/shadow"}
 
 		for _, nic := range invalidNICs {
 			t.Run(fmt.Sprintf("NIC_%q", nic), func(t *testing.T) {
 				// Act
-				err := enableHwGroOnNIC(nic)
+				err := enableHWgroOnNIC(nic)
 
 				// Assert
 				if err == nil {
@@ -1162,7 +1162,7 @@ func TestEnableHwGro(t *testing.T) {
 			},
 		}
 		newEthtoolClient = func() (ethtoolClient, error) { return fakeEth, nil }
-		EnableHwGroFunc = enableHwGroOnNIC
+		EnableHWgroFunc = enableHWgroOnNIC
 
 		var wg sync.WaitGroup
 		numWorkers := 10
@@ -1172,7 +1172,7 @@ func TestEnableHwGro(t *testing.T) {
 		for i := 0; i < numWorkers; i++ {
 			go func() {
 				defer wg.Done()
-				err := EnableHwGroOnDefaultNIC()
+				err := EnableHWgroOnDefaultNIC()
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}

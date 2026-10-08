@@ -50,15 +50,15 @@ var (
 	// ProcSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
 	ProcSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs/fuse/max_pages_limit"
 
-	// hwGroMu serializes default NIC hardware GRO and LRO checks and updates across concurrent volume mounts.
-	hwGroMu sync.Mutex
+	// hwGROMu serializes default NIC hardware GRO and LRO checks and updates across concurrent volume mounts.
+	hwGROMu sync.Mutex
 
 	// newEthtoolClient creates a new ethtool ioctl client (overridable for unit testing).
 	newEthtoolClient = func() (ethtoolClient, error) {
 		return ethtool.NewEthtool()
 	}
-	// EnableHwGroFunc enables rx-gro-hw and LRO on the specified NIC (overridable for unit testing).
-	EnableHwGroFunc = enableHwGroOnNIC
+	// EnableHWgroFunc enables rx-gro-hw and LRO on the specified NIC (overridable for unit testing).
+	EnableHWgroFunc = enableHWgroOnNIC
 )
 
 // FuseMaxMaxPagesUpdateSupported returns true if the host supports FUSE max_pages_limit tuning.
@@ -103,10 +103,10 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
-// enableNICFeatureViaIoctl enables a single NIC offload feature using the first matching
+// enableNICFeatureViaIOCTL enables a single NIC offload feature using the first matching
 // kernel ETH_SS_FEATURES key in candidateKeys, skipping the ETHTOOL_SFEATURES ioctl if
 // the feature is already active.
-func enableNICFeatureViaIoctl(eth ethtoolClient, features map[string]bool, nic string, candidateKeys []string, featureName string) error {
+func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic string, candidateKeys []string, featureName string) error {
 	var featureKey string
 	var alreadyEnabled, found bool
 	for _, key := range candidateKeys {
@@ -129,13 +129,13 @@ func enableNICFeatureViaIoctl(eth ethtoolClient, features map[string]bool, nic s
 	return nil
 }
 
-// enableHwGroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
+// enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
 // (rx-lro / large-receive-offload) on the specified NIC using ethtool ioctls (Features
 // read-before-write Change). Each feature is attempted independently so that a failure
 // on one feature does not prevent the other from being enabled.
-func enableHwGroOnNIC(nic string) error {
-	hwGroMu.Lock()
-	defer hwGroMu.Unlock()
+func enableHWgroOnNIC(nic string) error {
+	hwGROMu.Lock()
+	defer hwGROMu.Unlock()
 
 	nic = strings.TrimSpace(nic)
 	if nic == "" {
@@ -166,8 +166,8 @@ func enableHwGroOnNIC(nic string) error {
 	// Apply rx-gro-hw and lro in separate Change calls so that if the NIC/kernel
 	// rejects one offload, the other is still applied. Kernel feature tables expose
 	// LRO as either "rx-lro" or "large-receive-offload".
-	groErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-gro-hw"}, "rx-gro-hw")
-	lroErr := enableNICFeatureViaIoctl(eth, features, nic, []string{"rx-lro", "large-receive-offload"}, "lro")
+	groErr := enableNICFeatureViaIOCTL(eth, features, nic, []string{"rx-gro-hw"}, "rx-gro-hw")
+	lroErr := enableNICFeatureViaIOCTL(eth, features, nic, []string{"rx-lro", "large-receive-offload"}, "lro")
 	if err := errors.Join(groErr, lroErr); err != nil {
 		return err
 	}
@@ -175,10 +175,10 @@ func enableHwGroOnNIC(nic string) error {
 	return nil
 }
 
-// EnableHwGroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the host's COS default NIC (eth0).
-func EnableHwGroOnDefaultNIC() error {
-	if err := EnableHwGroFunc(cosDefaultNIC); err != nil {
+func EnableHWgroOnDefaultNIC() error {
+	if err := EnableHWgroFunc(cosDefaultNIC); err != nil {
 		return fmt.Errorf("failed to enable rx-gro-hw and large-receive-offload on NIC %q: %w", cosDefaultNIC, err)
 	}
 	return nil
