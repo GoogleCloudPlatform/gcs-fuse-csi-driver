@@ -47,9 +47,9 @@ func InitGcsFuseCSIIstioTestSuite() storageframework.TestSuite {
 		tsInfo: storageframework.TestSuiteInfo{
 			Name: "istio",
 			TestPatterns: []storageframework.TestPattern{
+				// Only run Istio tests on a single volume type to keep E2E test count low,
+				// since Istio/protocol behavior does not depend on how the volume is provisioned.
 				storageframework.DefaultFsCSIEphemeralVolume,
-				storageframework.DefaultFsPreprovisionedPV,
-				storageframework.DefaultFsDynamicPV,
 			},
 		},
 	}
@@ -115,7 +115,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 
 		// When using gRPC or Zonal Buckets, Istio blocks outbound connections to GCS and causes gcsfuse to hang on mount.
 		// Excluding port 443 lets gRPC traffic bypass the Istio sidecar proxy.
-		if zbEnabled(driver) || getClientProtocol(driver) == "grpc" {
+		if zbEnabled(driver) || (getClientProtocol(driver) == "grpc" && configPrefix != specs.EnableGrpcByDefaultPrefix) {
 			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundPorts": "443"})
 		}
 
@@ -136,14 +136,24 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
 	}
 
+	// For gRPC, this test covers the case where the user explicitly sets client-protocol=grpc and
+	// traffic.sidecar.istio.io/excludeOutboundPorts: "443".
 	ginkgo.It("should store data with istio injected at index 0", func() {
 		testGCSFuseWithIstio("", true, false)
 	})
 	ginkgo.It("[metadata prefetch] should store data with istio injected at index 0", func() {
-		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		if !supportsNativeSidecar {
+			e2eskipper.Skipf("skip when native sidecar is not supported")
 		}
 		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, false)
+	})
+
+	ginkgo.It("should store data with istio and fallback to http1 when grpc is enabled by default and excludeOutboundPorts is not set", func() {
+		if getClientProtocol(driver) != "grpc" {
+			e2eskipper.Skipf("skip when client-protocol is not grpc")
+		}
+		skipIfEnableGrpcByDefaultNotSupported()
+		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, false)
 	})
 
 	ginkgo.It("[flaky] should store data with istio injected at the last index", func() {
@@ -154,8 +164,8 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		testGCSFuseWithIstio("", true, true)
 	})
 	ginkgo.It("[metadata prefetch] should store data with istio registry only outbound traffic policy mode", func() {
-		if pattern.VolType == storageframework.DynamicPV || !supportsNativeSidecar {
-			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
+		if !supportsNativeSidecar {
+			e2eskipper.Skipf("skip when native sidecar is not supported")
 		}
 		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, true)
 	})
