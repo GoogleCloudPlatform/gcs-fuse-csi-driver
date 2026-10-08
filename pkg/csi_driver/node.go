@@ -85,6 +85,8 @@ type nodeServer struct {
 	enableHWgroOnce sync.Once
 	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
 	enableHWgroWg sync.WaitGroup
+	// Enables hardware GRO/LRO on the host's default NIC (overridable on nodeServer in tests).
+	enableHWgro func() error
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -97,6 +99,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		k8sClients:            driver.config.K8sClients,
 		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
 		volumeStateStore:      util.NewVolumeStateStore(),
+		enableHWgro:           util.EnableHWgroOnDefaultNIC,
 	}
 }
 
@@ -1406,12 +1409,16 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node) {
 	// reconfiguration. An explicit OS check (COS vs. Ubuntu) is not needed here because
 	// EnableHWgroOnDefaultNIC targets "eth0", which only exists on COS nodes and is
 	// skipped when absent on Ubuntu nodes.
+	enableFn := s.enableHWgro
+	if enableFn == nil {
+		enableFn = util.EnableHWgroOnDefaultNIC
+	}
 	nodeName := node.Name
 	s.enableHWgroOnce.Do(func() {
 		s.enableHWgroWg.Add(1)
 		go func() {
 			defer s.enableHWgroWg.Done()
-			if err := util.EnableHWgroOnDefaultNIC(); err != nil {
+			if err := enableFn(); err != nil {
 				klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
 			}
 		}()

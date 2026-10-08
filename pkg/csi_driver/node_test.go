@@ -4388,18 +4388,6 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			origEnableHWgro := util.EnableHWgroFunc
-			t.Cleanup(func() {
-				util.EnableHWgroFunc = origEnableHWgro
-			})
-
-			hwGROCalled := false
-			util.EnableHWgroFunc = func(_ string) error {
-				hwGROCalled = true
-				return tc.enableHWgroErr
-			}
-
 			testTargetPath, cleanup := setupTestTargetPath(t)
 			defer cleanup()
 
@@ -4431,7 +4419,13 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
 			driver.config.AssumeGoodSidecarVersion = true
-			ns := newNodeServer(driver, fakeMounter)
+			ns := newNodeServer(driver, fakeMounter).(*nodeServer)
+
+			hwGROCalled := false
+			ns.enableHWgro = func() error {
+				hwGROCalled = true
+				return tc.enableHWgroErr
+			}
 
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
@@ -4443,11 +4437,9 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 				},
 			}
 
-			// Act
 			_, err := ns.NodePublishVolume(t.Context(), req)
-			ns.(*nodeServer).enableHWgroWg.Wait()
+			ns.enableHWgroWg.Wait()
 
-			// Assert
 			if err != nil {
 				t.Fatalf("NodePublishVolume failed: %v", err)
 			}
@@ -4536,18 +4528,6 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			origEnableHWgro := util.EnableHWgroFunc
-			t.Cleanup(func() {
-				util.EnableHWgroFunc = origEnableHWgro
-			})
-
-			hwGROCalled := false
-			util.EnableHWgroFunc = func(_ string) error {
-				hwGROCalled = true
-				return tc.enableHWgroErr
-			}
-
 			testStagingPath, cleanupStaging := setupTestStagingPath(t)
 			defer cleanupStaging()
 
@@ -4582,13 +4562,17 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			ns.driver.config.AssumeGoodSidecarVersion = true
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
+			hwGROCalled := false
+			ns.enableHWgro = func() error {
+				hwGROCalled = true
+				return tc.enableHWgroErr
+			}
+
 			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
 
-			// Act
 			_, err := ns.NodeStageVolume(t.Context(), stageReq)
 			ns.enableHWgroWg.Wait()
 
-			// Assert
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -4600,190 +4584,92 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 }
 
 func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
-	// Arrange
-	origEnableHWgro := util.EnableHWgroFunc
-	t.Cleanup(func() {
-		util.EnableHWgroFunc = origEnableHWgro
-	})
+	t.Parallel()
 
-	hwGROCalls := 0
-	util.EnableHWgroFunc = func(_ string) error {
-		hwGROCalls++
-		return nil
+	validNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				clientset.MachineTypeKey: "ct6e-standard-4t",
+			},
+		},
 	}
 
-	t.Run("node is nil", func(t *testing.T) {
-		// Arrange
-		hwGROCalls = 0
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{
-						EnableGrpcByDefault: true,
-						EnableHWgro:         true,
+	testCases := []struct {
+		name        string
+		features    *GCSDriverFeatureOptions
+		node        *corev1.Node
+		invocations int
+		wantCalls   int
+	}{
+		{
+			name:        "node is nil",
+			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:        nil,
+			invocations: 1,
+			wantCalls:   0,
+		},
+		{
+			name:        "node labels are nil",
+			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:        &corev1.Node{},
+			invocations: 1,
+			wantCalls:   0,
+		},
+		{
+			name:        "feature options is nil",
+			features:    nil,
+			node:        validNode,
+			invocations: 1,
+			wantCalls:   0,
+		},
+		{
+			name:        "only EnableGrpcByDefault is true and EnableHWgro is false",
+			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: false},
+			node:        validNode,
+			invocations: 1,
+			wantCalls:   0,
+		},
+		{
+			name:        "only EnableHWgro is true and EnableGrpcByDefault is false",
+			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: false, EnableHWgro: true},
+			node:        validNode,
+			invocations: 1,
+			wantCalls:   0,
+		},
+		{
+			name:        "called only once per nodeServer across multiple invocations",
+			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:        validNode,
+			invocations: 2,
+			wantCalls:   1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			hwGROCalls := 0
+			ns := &nodeServer{
+				driver: &GCSDriver{
+					config: &GCSDriverConfig{
+						FeatureOptions: tc.features,
 					},
 				},
-			},
-		}
-
-		// Act
-		ns.enableHWgroIfApplicable(nil)
-		ns.enableHWgroWg.Wait()
-
-		// Assert
-		if hwGROCalls != 0 {
-			t.Errorf("hwGROCalls = %d, want 0 when node is nil", hwGROCalls)
-		}
-	})
-
-	t.Run("node labels are nil", func(t *testing.T) {
-		// Arrange
-		hwGROCalls = 0
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{
-						EnableGrpcByDefault: true,
-						EnableHWgro:         true,
-					},
+				enableHWgro: func() error {
+					hwGROCalls++
+					return nil
 				},
-			},
-		}
-		node := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: nil,
-			},
-		}
+			}
 
-		// Act
-		ns.enableHWgroIfApplicable(node)
-		ns.enableHWgroWg.Wait()
+			for i := 0; i < tc.invocations; i++ {
+				ns.enableHWgroIfApplicable(tc.node)
+			}
+			ns.enableHWgroWg.Wait()
 
-		// Assert
-		if hwGROCalls != 0 {
-			t.Errorf("hwGROCalls = %d, want 0 when node labels are nil", hwGROCalls)
-		}
-	})
-
-	t.Run("feature options is nil", func(t *testing.T) {
-		// Arrange
-		hwGROCalls = 0
-		nsNoFeatures := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: nil,
-				},
-			},
-		}
-		node := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{
-					clientset.MachineTypeKey: "ct6e-standard-4t",
-				},
-			},
-		}
-
-		// Act
-		nsNoFeatures.enableHWgroIfApplicable(node)
-		nsNoFeatures.enableHWgroWg.Wait()
-
-		// Assert
-		if hwGROCalls != 0 {
-			t.Errorf("hwGROCalls = %d, want 0 when FeatureOptions is nil", hwGROCalls)
-		}
-	})
-
-	t.Run("only EnableGrpcByDefault is true and EnableHWgro is false", func(t *testing.T) {
-		// Arrange
-		hwGROCalls = 0
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{
-						EnableGrpcByDefault: true,
-						EnableHWgro:         false,
-					},
-				},
-			},
-		}
-		validNode := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{
-					clientset.MachineTypeKey: "ct6e-standard-4t",
-				},
-			},
-		}
-
-		// Act
-		ns.enableHWgroIfApplicable(validNode)
-		ns.enableHWgroWg.Wait()
-
-		// Assert
-		if hwGROCalls != 0 {
-			t.Errorf("hwGROCalls = %d, want 0 when EnableHWgro is false", hwGROCalls)
-		}
-	})
-
-	t.Run("only EnableHWgro is true and EnableGrpcByDefault is false", func(t *testing.T) {
-		// Arrange
-		hwGROCalls = 0
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{
-						EnableGrpcByDefault: false,
-						EnableHWgro:         true,
-					},
-				},
-			},
-		}
-		validNode := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{
-					clientset.MachineTypeKey: "ct6e-standard-4t",
-				},
-			},
-		}
-
-		// Act
-		ns.enableHWgroIfApplicable(validNode)
-		ns.enableHWgroWg.Wait()
-
-		// Assert
-		if hwGROCalls != 0 {
-			t.Errorf("hwGROCalls = %d, want 0 when EnableGrpcByDefault is false", hwGROCalls)
-		}
-	})
-
-	t.Run("called only once per nodeServer across multiple invocations", func(t *testing.T) {
-		// Arrange
-		hwGROCalls = 0
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{
-						EnableGrpcByDefault: true,
-						EnableHWgro:         true,
-					},
-				},
-			},
-		}
-		validNode := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{
-					clientset.MachineTypeKey: "ct6e-standard-4t",
-				},
-			},
-		}
-
-		// Act
-		ns.enableHWgroIfApplicable(validNode)
-		ns.enableHWgroIfApplicable(validNode)
-		ns.enableHWgroWg.Wait()
-
-		// Assert
-		if hwGROCalls != 1 {
-			t.Errorf("hwGROCalls = %d, want 1 across multiple invocations on the same nodeServer", hwGROCalls)
-		}
-	})
+			if hwGROCalls != tc.wantCalls {
+				t.Errorf("hwGROCalls = %d, want %d", hwGROCalls, tc.wantCalls)
+			}
+		})
+	}
 }

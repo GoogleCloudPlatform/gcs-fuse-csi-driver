@@ -37,11 +37,10 @@ import (
 // cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
 const cosDefaultNIC = "eth0"
 
-// ethtoolClient abstracts github.com/safchain/ethtool for deterministic unit testing.
+// ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
 type ethtoolClient interface {
 	Features(intf string) (map[string]bool, error)
 	Change(intf string, config map[string]bool) error
-	Close()
 }
 
 var (
@@ -52,13 +51,6 @@ var (
 
 	// hwGROMu serializes default NIC hardware GRO and LRO checks and updates across concurrent volume mounts.
 	hwGROMu sync.Mutex
-
-	// newEthtoolClient creates a new ethtool ioctl client (overridable for unit testing).
-	newEthtoolClient = func() (ethtoolClient, error) {
-		return ethtool.NewEthtool()
-	}
-	// EnableHWgroFunc enables rx-gro-hw and LRO on the specified NIC (overridable for unit testing).
-	EnableHWgroFunc = enableHWgroOnNIC
 )
 
 // FuseMaxMaxPagesUpdateSupported returns true if the host supports FUSE max_pages_limit tuning.
@@ -103,82 +95,64 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
-// enableNICFeatureViaIOCTL enables a single NIC offload feature using the first matching
-// kernel ETH_SS_FEATURES key in candidateKeys, skipping the ETHTOOL_SFEATURES ioctl if
-// the feature is already active.
-func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic string, candidateKeys []string, featureName string) error {
-	var featureKey string
-	var alreadyEnabled, found bool
-	for _, key := range candidateKeys {
-		if val, ok := features[key]; ok {
-			featureKey = key
-			alreadyEnabled = val
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("%s feature not found in ethtool features for NIC %q", featureName, nic)
+// enableNICFeatureViaIOCTL enables a single NIC offload feature by its kernel
+// ETH_SS_FEATURES key, skipping the ETHTOOL_SFEATURES ioctl if already active.
+func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic, feature string) error {
+	alreadyEnabled, ok := features[feature]
+	if !ok {
+		return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
 	}
 	if alreadyEnabled {
 		return nil
 	}
-	if err := eth.Change(nic, map[string]bool{featureKey: true}); err != nil {
-		return fmt.Errorf("failed to enable %s on NIC %q: %w", featureKey, nic, err)
+	if err := eth.Change(nic, map[string]bool{feature: true}); err != nil {
+		return fmt.Errorf("failed to enable %s on NIC %q: %w", feature, nic, err)
 	}
 	return nil
 }
 
 // enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro / large-receive-offload) on the specified NIC using ethtool ioctls (Features
-// read-before-write Change). Each feature is attempted independently so that a failure
-// on one feature does not prevent the other from being enabled.
-func enableHWgroOnNIC(nic string) error {
-	hwGROMu.Lock()
-	defer hwGROMu.Unlock()
-
-	nic = strings.TrimSpace(nic)
-	if nic == "" {
-		return fmt.Errorf("NIC name cannot be empty")
-	}
-	if strings.HasPrefix(nic, "-") || strings.ContainsAny(nic, " \t\n\r/;") {
-		return fmt.Errorf("invalid NIC name %q", nic)
-	}
-
-	eth, err := newEthtoolClient()
-	if err != nil {
-		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", nic, err)
-	}
-	defer eth.Close()
-
+// (rx-lro) on the specified NIC using ethtool ioctls (Features read-before-write Change).
+// Each feature is attempted independently so that a failure on one feature does not prevent
+// the other from being enabled.
+func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	features, err := eth.Features(nic)
 	if err != nil {
 		// An explicit host OS check (COS vs. Ubuntu) is not needed because "eth0" only
 		// exists on COS nodes, whereas Ubuntu nodes use predictable interface names (e.g. ens4).
 		// When "eth0" is absent, the SIOCETHTOOL ioctl returns ENODEV and we skip cleanly.
 		if errors.Is(err, unix.ENODEV) {
-			klog.Infof("Skipping rx-gro-hw and large-receive-offload enablement: NIC %q is not present on host", nic)
+			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
 			return nil
 		}
 		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
 	}
 
-	// Apply rx-gro-hw and lro in separate Change calls so that if the NIC/kernel
-	// rejects one offload, the other is still applied. Kernel feature tables expose
-	// LRO as either "rx-lro" or "large-receive-offload".
-	groErr := enableNICFeatureViaIOCTL(eth, features, nic, []string{"rx-gro-hw"}, "rx-gro-hw")
-	lroErr := enableNICFeatureViaIOCTL(eth, features, nic, []string{"rx-lro", "large-receive-offload"}, "lro")
+	// Apply rx-gro-hw and rx-lro (the kernel ETH_SS_FEATURES key for ethtool's "lro")
+	// in separate Change calls so that if the NIC/kernel rejects one offload, the other
+	// is still applied.
+	groErr := enableNICFeatureViaIOCTL(eth, features, nic, "rx-gro-hw")
+	lroErr := enableNICFeatureViaIOCTL(eth, features, nic, "rx-lro")
 	if err := errors.Join(groErr, lroErr); err != nil {
 		return err
 	}
-	klog.Infof("Successfully ensured rx-gro-hw and large-receive-offload are enabled on NIC %q", nic)
+	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
 	return nil
 }
 
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the host's COS default NIC (eth0).
 func EnableHWgroOnDefaultNIC() error {
-	if err := EnableHWgroFunc(cosDefaultNIC); err != nil {
+	hwGROMu.Lock()
+	defer hwGROMu.Unlock()
+
+	eth, err := ethtool.NewEthtool()
+	if err != nil {
+		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", cosDefaultNIC, err)
+	}
+	defer eth.Close()
+
+	if err := enableHWgroOnNIC(eth, cosDefaultNIC); err != nil {
 		return fmt.Errorf("failed to enable rx-gro-hw and large-receive-offload on NIC %q: %w", cosDefaultNIC, err)
 	}
 	return nil
