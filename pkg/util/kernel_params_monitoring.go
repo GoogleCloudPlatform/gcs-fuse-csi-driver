@@ -34,8 +34,18 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
-const cosDefaultNIC = "eth0"
+const (
+	// cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
+	cosDefaultNIC = "eth0"
+	// hostOSReleasePath is the mounted host /etc/os-release path inside the gcsfusecsi-node container.
+	hostOSReleasePath = "/host-etc-os-release"
+	// minHWgroCOSVersionStr is the minimum COS image version required to enable hardware GRO and LRO offloads.
+	minHWgroCOSVersionStr = "cos-125-19216-395-138"
+)
+
+// minHWgroCOSVersion represents cos-125-19216-395-138 as [milestone, build, branch, patch]
+// corresponding to VERSION_ID=125 and BUILD_ID=19216.395.138 in /etc/os-release.
+var minHWgroCOSVersion = [4]int{125, 19216, 395, 138}
 
 // ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
 type ethtoolClient interface {
@@ -95,6 +105,75 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
+// isCOSVersionSupportedForHWgro parses the host's os-release file at osReleasePath and
+// checks whether the node is running Container-Optimized OS (ID=cos) with an image version
+// greater than or equal to cos-125-19216-395-138 (VERSION_ID=125, BUILD_ID=19216.395.138).
+func isCOSVersionSupportedForHWgro(osReleasePath string) (bool, string, error) {
+	data, err := os.ReadFile(osReleasePath)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to read %q: %w", osReleasePath, err)
+	}
+
+	var id, versionID, buildID string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		switch key {
+		case "ID":
+			id = val
+		case "VERSION_ID":
+			versionID = val
+		case "BUILD_ID":
+			buildID = val
+		}
+	}
+
+	if id == "" {
+		return false, "", fmt.Errorf("missing ID in %q", osReleasePath)
+	}
+	if id != "cos" {
+		return false, id, nil
+	}
+	if versionID == "" || buildID == "" {
+		return false, "", fmt.Errorf("missing VERSION_ID or BUILD_ID in %q", osReleasePath)
+	}
+
+	milestone, err := strconv.Atoi(versionID)
+	if err != nil {
+		return false, "", fmt.Errorf("invalid VERSION_ID %q in %q: %w", versionID, osReleasePath, err)
+	}
+
+	buildParts := strings.Split(buildID, ".")
+	if len(buildParts) != 3 {
+		return false, "", fmt.Errorf("invalid BUILD_ID %q in %q: expected 3 dot-separated components", buildID, osReleasePath)
+	}
+
+	actual := [4]int{milestone}
+	for i, part := range buildParts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return false, "", fmt.Errorf("invalid BUILD_ID %q in %q: %w", buildID, osReleasePath, err)
+		}
+		actual[i+1] = n
+	}
+
+	cosVer := fmt.Sprintf("cos-%d-%d-%d-%d", actual[0], actual[1], actual[2], actual[3])
+	for i := range actual {
+		if actual[i] != minHWgroCOSVersion[i] {
+			return actual[i] > minHWgroCOSVersion[i], cosVer, nil
+		}
+	}
+	return true, cosVer, nil
+}
+
 // enableNICFeatureViaIOCTL enables a single NIC offload feature by its kernel
 // ETH_SS_FEATURES key, skipping the ETHTOOL_SFEATURES ioctl if already active.
 func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic, feature string) error {
@@ -118,9 +197,6 @@ func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic, 
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	features, err := eth.Features(nic)
 	if err != nil {
-		// An explicit host OS check (COS vs. Ubuntu) is not needed because "eth0" only
-		// exists on COS nodes, whereas Ubuntu nodes use predictable interface names (e.g. ens4).
-		// When "eth0" is absent, the SIOCETHTOOL ioctl returns ENODEV and we skip cleanly.
 		if errors.Is(err, unix.ENODEV) {
 			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
 			return nil
@@ -141,10 +217,19 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 }
 
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
-// on the host's COS default NIC (eth0).
+// on the host's COS default NIC (eth0) when the host COS image is >= cos-125-19216-395-138.
 func EnableHWgroOnDefaultNIC() error {
 	hwGROMu.Lock()
 	defer hwGROMu.Unlock()
+
+	supported, cosVer, err := isCOSVersionSupportedForHWgro(hostOSReleasePath)
+	if err != nil {
+		return fmt.Errorf("failed to verify COS image version: %w", err)
+	}
+	if !supported {
+		klog.Infof("Skipping rx-gro-hw and rx-lro enablement: host OS image %q does not meet minimum required COS version %q", cosVer, minHWgroCOSVersionStr)
+		return nil
+	}
 
 	eth, err := ethtool.NewEthtool()
 	if err != nil {

@@ -1406,9 +1406,8 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node) {
 	// NIC offload tuning is host-wide and best-effort: run it at most once per nodeServer
 	// in a background goroutine so that volume mounts are never blocked if SIOCETHTOOL
 	// ioctls contend on the kernel's global rtnl_lock or stall during NIC driver
-	// reconfiguration. An explicit OS check (COS vs. Ubuntu) is not needed here because
-	// EnableHWgroOnDefaultNIC targets "eth0", which only exists on COS nodes and is
-	// skipped when absent on Ubuntu nodes.
+	// reconfiguration. EnableHWgroOnDefaultNIC verifies via /host-etc-os-release that the
+	// host is running COS >= cos-125-19216-395-138 before configuring "eth0".
 	enableFn := s.enableHWgro
 	if enableFn == nil {
 		enableFn = util.EnableHWgroOnDefaultNIC

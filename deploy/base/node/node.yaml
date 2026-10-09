@@ -116,6 +116,9 @@ spec:
               mountPath: /etc/iproute2
             - name: host-proc-sys-fs
               mountPath: /host-proc-sys-fs
+            - name: host-os-release
+              mountPath: /host-etc-os-release
+              readOnly: true
 
             - name: tmp
               mountPath: /tmp
@@ -178,6 +181,10 @@ spec:
           hostPath:
             path: /proc/sys/fs
             type: Directory
+        - name: host-os-release
+          hostPath:
+            path: /etc/os-release
+            type: File
         - name: tmp
           emptyDir:
             sizeLimit: 10Mi
