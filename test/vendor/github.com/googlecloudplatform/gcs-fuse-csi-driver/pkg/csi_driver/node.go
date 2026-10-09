@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -65,6 +66,8 @@ const (
 	// Thus the full timeout is 7 seconds.
 	forceUnmountRetryTimeout = 7 * time.Second
 	forceUnmountRetrySteps   = 6
+	// Machine type prefix for TPU v6e nodes where hardware GRO/LRO offloads are enabled.
+	tpuV6eMachineTypePrefix = "ct6e-"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -78,6 +81,20 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
+	// Caches the host COS version check result for TPU v6e nodes once a check completes without I/O error.
+	cosVersionCheckMu   sync.Mutex
+	cosVersionChecked   bool
+	cosVersionSupported bool
+	// Checks whether the host OS image meets the minimum COS version required for
+	// gRPC-by-default on TPU v6e nodes (overridable on nodeServer in tests).
+	isCOSVersionSupported func() (bool, string, error)
+	// Serializes default NIC GRO/LRO offload enablement, preventing concurrent duplicate runs
+	// and latching once EnableHWgroOnDefaultNIC succeeds while allowing retry on transient errors.
+	enableHWgroMu      sync.Mutex
+	enableHWgroDone    bool
+	enableHWgroRunning bool
+	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests and shutdown.
+	enableHWgroWg sync.WaitGroup
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -90,6 +107,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		k8sClients:            driver.config.K8sClients,
 		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
 		volumeStateStore:      util.NewVolumeStateStore(),
+		isCOSVersionSupported: util.IsCOSVersionSupportedForGrpcByDefault,
 	}
 }
 
@@ -412,7 +430,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
 	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
 	if err != nil {
@@ -422,6 +439,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
 		return nil, err
 	}
+
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, gcsFuseSidecarImage, args.fuseMountOptions)
 
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
@@ -556,6 +575,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err = s.mounter.Mount(args.bucketName, targetPath, FuseMountType, args.fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
 	}
+
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful mount.
+	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
 
 	// Start monitoring goroutine for new mounts.
 	if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
@@ -904,16 +926,64 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 }
 
 // appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
-// mount option if enabled in driver options and supported by the sidecar container image.
+// mount option if enabled for the node and supported by the sidecar container image.
 // If the feature is disabled or unsupported, mount options are returned unmodified.
-func (s *nodeServer) appendGrpcByDefaultOptions(mounterImage string, mountOptions []string) []string {
-	if s.driver.config.FeatureOptions == nil ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
-		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
+func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault {
+		return mountOptions
+	}
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
+		!s.isGrpcByDefaultEnabled(node) {
 		return mountOptions
 	}
 
 	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+}
+
+// isGrpcByDefaultEnabled returns true if --enable-grpc-by-default is enabled for the given node.
+// On TPU v6e (ct6e-*) machines, enable-grpc-by-default is only enabled if the host COS image
+// version is >= cos-125-19216-395-138; on older versions it is false.
+func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
+		return false
+	}
+	if node == nil {
+		return false
+	}
+	machineType, ok := node.Labels[clientset.MachineTypeKey]
+	if !ok || machineType == "" {
+		klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
+		return false
+	}
+	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		return true
+	}
+
+	checkCOS := s.isCOSVersionSupported
+	if checkCOS == nil {
+		checkCOS = util.IsCOSVersionSupportedForGrpcByDefault
+	}
+
+	s.cosVersionCheckMu.Lock()
+	defer s.cosVersionCheckMu.Unlock()
+	if s.cosVersionChecked {
+		return s.cosVersionSupported
+	}
+
+	supported, cosVer, err := checkCOS()
+	if err != nil {
+		klog.Errorf("Disabling enable-grpc-by-default on node %q (machine type %q): failed to verify COS image version: %v", node.Name, machineType, err)
+		return false
+	}
+	s.cosVersionChecked = true
+	if !supported {
+		klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): host OS image %q does not meet minimum required COS version %q", node.Name, machineType, cosVer, util.MinGrpcByDefaultCOSVersionStr)
+		s.cosVersionSupported = false
+		return false
+	}
+	s.cosVersionSupported = true
+	return true
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -1113,7 +1183,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
 	args.fuseMountOptions = s.appendCloudProfilerOptions(podImage, args.enableCloudProfilerForSidecar, podName, string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(podImage, args.fuseMountOptions)
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, podImage, args.fuseMountOptions)
 
 	podUID := string(pod.UID)
 	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
@@ -1204,6 +1274,9 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		}
 		return nil, err
 	}
+
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful shared mount.
+	s.enableHWgroIfApplicable(node, podImage)
 
 	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
@@ -1371,4 +1444,66 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	}
 
 	return nil
+}
+
+// enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
+// on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
+// are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
+// (ct6e-*) machine.
+func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
+		!s.driver.config.FeatureOptions.EnableHWgro ||
+		s.nwMgr == nil ||
+		node == nil {
+		return
+	}
+	machineType := node.Labels[clientset.MachineTypeKey]
+	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		return
+	}
+	s.enableHWgroMu.Lock()
+	if s.enableHWgroDone || s.enableHWgroRunning {
+		s.enableHWgroMu.Unlock()
+		return
+	}
+	s.enableHWgroMu.Unlock()
+
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
+		!s.isGrpcByDefaultEnabled(node) {
+		return
+	}
+
+	// NIC offload tuning is host-wide and best-effort: run it in a background
+	// goroutine so that volume mounts are never blocked if SIOCETHTOOL
+	// ioctls contend on the kernel's global rtnl_lock or stall during NIC driver
+	// reconfiguration. Only one attempt runs at a time; once it succeeds, further
+	// mounts are no-ops, while a transient failure allows a subsequent mount to retry.
+	s.enableHWgroMu.Lock()
+	if s.enableHWgroDone || s.enableHWgroRunning {
+		s.enableHWgroMu.Unlock()
+		return
+	}
+	s.enableHWgroRunning = true
+	s.enableHWgroWg.Add(1)
+	s.enableHWgroMu.Unlock()
+
+	nodeName := node.Name
+	go func() {
+		succeeded := false
+		defer func() {
+			s.enableHWgroMu.Lock()
+			s.enableHWgroRunning = false
+			if succeeded {
+				s.enableHWgroDone = true
+			}
+			s.enableHWgroWg.Done()
+			s.enableHWgroMu.Unlock()
+		}()
+		if err := s.nwMgr.EnableHWgroOnDefaultNIC(); err != nil {
+			klog.Errorf("Failed to enable rx-gro-hw and rx-lro on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
+			return
+		}
+		succeeded = true
+	}()
 }

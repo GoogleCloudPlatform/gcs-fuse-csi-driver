@@ -308,8 +308,8 @@ type realNetworkManager struct {
 	links   []netlink.Link
 	devices []LinkDevice
 
-	mutex   sync.Mutex
-	hwGROMu sync.Mutex
+	mutex         sync.Mutex
+	enableHWgroMu sync.Mutex
 }
 
 var _ NetworkManager = &realNetworkManager{}
@@ -576,7 +576,8 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 }
 
 // enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) together on the specified NIC using ethtool ioctls (Features read-before-write Change).
+// (rx-lro) together on the specified NIC using ethtool ioctls (Features read-before-write Change)
+// and verifies that both features are active afterward.
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	features, err := eth.Features(nic)
 	if err != nil {
@@ -587,8 +588,9 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
 	}
 
+	requiredFeatures := []string{"rx-gro-hw", "rx-lro"}
 	changes := make(map[string]bool)
-	for _, feature := range []string{"rx-gro-hw", "rx-lro"} {
+	for _, feature := range requiredFeatures {
 		alreadyEnabled, ok := features[feature]
 		if !ok {
 			return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
@@ -602,6 +604,18 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 		if err := eth.Change(nic, changes); err != nil {
 			return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
 		}
+		// Linux ETHTOOL_SFEATURES returns a positive bitmask (ETHTOOL_F_UNSUPPORTED / ETHTOOL_F_WISH)
+		// with errno == 0 when a feature is [fixed] or rejected by the NIC driver, which safchain/ethtool
+		// treats as nil error. Re-read Features to verify both offloads actually became active.
+		updatedFeatures, err := eth.Features(nic)
+		if err != nil {
+			return fmt.Errorf("failed to verify ethtool features after change on NIC %q: %w", nic, err)
+		}
+		for _, feature := range requiredFeatures {
+			if !updatedFeatures[feature] {
+				return fmt.Errorf("feature %s remained disabled on NIC %q after ethtool change", feature, nic)
+			}
+		}
 	}
 
 	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
@@ -611,8 +625,8 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the host's COS default NIC (eth0).
 func (mgr *realNetworkManager) EnableHWgroOnDefaultNIC() error {
-	mgr.hwGROMu.Lock()
-	defer mgr.hwGROMu.Unlock()
+	mgr.enableHWgroMu.Lock()
+	defer mgr.enableHWgroMu.Unlock()
 
 	eth, err := ethtool.NewEthtool()
 	if err != nil {

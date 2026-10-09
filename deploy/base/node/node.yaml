@@ -119,7 +119,6 @@ spec:
             - name: host-os-release
               mountPath: /host-etc-os-release
               readOnly: true
-
             - name: tmp
               mountPath: /tmp
         - name: csi-driver-registrar
@@ -184,7 +183,7 @@ spec:
         - name: host-os-release
           hostPath:
             path: /etc/os-release
-            type: File
+            type: ""
         - name: tmp
           emptyDir:
             sizeLimit: 10Mi

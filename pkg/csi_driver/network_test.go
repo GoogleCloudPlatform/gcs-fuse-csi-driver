@@ -35,7 +35,7 @@ type fakeNetworkManager struct {
 	poisonedIP       string
 	enableHWgroFunc  func() error
 	enableHWgroCalls int
-	hwGROMu          sync.Mutex
+	enableHWgroMu    sync.Mutex
 	mutex            sync.Mutex
 }
 
@@ -121,14 +121,21 @@ func (mgr *fakeNetworkManager) AddRoute(table int, gatewayIP, device string) err
 }
 
 func (mgr *fakeNetworkManager) EnableHWgroOnDefaultNIC() error {
-	mgr.hwGROMu.Lock()
-	defer mgr.hwGROMu.Unlock()
-
+	mgr.enableHWgroMu.Lock()
 	mgr.enableHWgroCalls++
-	if mgr.enableHWgroFunc != nil {
-		return mgr.enableHWgroFunc()
+	fn := mgr.enableHWgroFunc
+	mgr.enableHWgroMu.Unlock()
+
+	if fn != nil {
+		return fn()
 	}
 	return nil
+}
+
+func (mgr *fakeNetworkManager) getEnableHWgroCalls() int {
+	mgr.enableHWgroMu.Lock()
+	defer mgr.enableHWgroMu.Unlock()
+	return mgr.enableHWgroCalls
 }
 
 func TestTableNames(t *testing.T) {
@@ -523,14 +530,19 @@ func TestSourceRouteForDevice(t *testing.T) {
 }
 
 type fakeEthtoolClient struct {
-	features    map[string]bool
-	featuresErr error
-	changeErr   error
-	changed     bool
-	changedKeys []string
+	features      map[string]bool
+	fixedFeatures map[string]bool
+	featuresErr   error
+	changeErr     error
+	featuresIntf  string
+	changeIntf    string
+	changed       bool
+	changeCalls   int
+	changedKeys   []string
 }
 
-func (f *fakeEthtoolClient) Features(_ string) (map[string]bool, error) {
+func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
+	f.featuresIntf = intf
 	if f.featuresErr != nil {
 		return nil, f.featuresErr
 	}
@@ -541,8 +553,10 @@ func (f *fakeEthtoolClient) Features(_ string) (map[string]bool, error) {
 	return out, nil
 }
 
-func (f *fakeEthtoolClient) Change(_ string, config map[string]bool) error {
+func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
+	f.changeIntf = intf
 	f.changed = true
+	f.changeCalls++
 	for k := range config {
 		f.changedKeys = append(f.changedKeys, k)
 	}
@@ -551,6 +565,9 @@ func (f *fakeEthtoolClient) Change(_ string, config map[string]bool) error {
 		return f.changeErr
 	}
 	for k, v := range config {
+		if f.fixedFeatures[k] {
+			continue
+		}
 		f.features[k] = v
 	}
 	return nil
@@ -562,6 +579,7 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 	testCases := []struct {
 		name            string
 		initialFeatures map[string]bool
+		fixedFeatures   map[string]bool
 		featuresErr     error
 		changeErr       error
 		wantFeatures    map[string]bool
@@ -627,6 +645,15 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			expectError:     true,
 		},
 		{
+			name:            "returns error when fixed feature remains disabled after Change",
+			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
+			fixedFeatures:   map[string]bool{"rx-lro": true},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": false},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-gro-hw", "rx-lro"},
+			expectError:     true,
+		},
+		{
 			name:        "skips without error when eth0 is absent on non-COS host (ENODEV)",
 			featuresErr: unix.ENODEV,
 			wantChanged: false,
@@ -649,9 +676,10 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 				features[k] = v
 			}
 			fakeEth := &fakeEthtoolClient{
-				features:    features,
-				featuresErr: tc.featuresErr,
-				changeErr:   tc.changeErr,
+				features:      features,
+				fixedFeatures: tc.fixedFeatures,
+				featuresErr:   tc.featuresErr,
+				changeErr:     tc.changeErr,
 			}
 
 			err := enableHWgroOnNIC(fakeEth, cosDefaultNIC)
@@ -662,8 +690,14 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			if !tc.expectError && err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			if fakeEth.featuresIntf != cosDefaultNIC {
+				t.Errorf("featuresIntf = %q, want %q", fakeEth.featuresIntf, cosDefaultNIC)
+			}
 			if fakeEth.changed != tc.wantChanged {
 				t.Errorf("changed = %v, want %v", fakeEth.changed, tc.wantChanged)
+			}
+			if tc.wantChanged && fakeEth.changeIntf != cosDefaultNIC {
+				t.Errorf("changeIntf = %q, want %q", fakeEth.changeIntf, cosDefaultNIC)
 			}
 			if !reflect.DeepEqual(fakeEth.changedKeys, tc.wantChangedKeys) {
 				t.Errorf("changedKeys = %v, want %v", fakeEth.changedKeys, tc.wantChangedKeys)

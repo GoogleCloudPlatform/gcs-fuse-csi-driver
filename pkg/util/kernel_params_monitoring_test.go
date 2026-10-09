@@ -828,6 +828,41 @@ BUILD_ID=19216.395.xyz
 `,
 			expectError: true,
 		},
+		{
+			name: "returns error when BUILD_ID contains negative integer component",
+			content: `ID=cos
+VERSION_ID=126
+BUILD_ID=19500.0.-5
+`,
+			expectError: true,
+		},
+		{
+			name: "returns error when VERSION_ID is negative or signed",
+			content: `ID=cos
+VERSION_ID=-125
+BUILD_ID=19216.395.138
+`,
+			expectError: true,
+		},
+		{
+			name: "inline comments and malformed lines without equals are handled gracefully",
+			content: `MALFORMED_LINE_WITHOUT_EQUALS
+ID=cos # inline comment
+VERSION_ID="125" # milestone comment
+BUILD_ID='19216.395.138' # build comment
+`,
+			wantSupported: true,
+			wantVersion:   "cos-125-19216-395-138",
+		},
+		{
+			name: "unbalanced quotes in ID are not stripped as matching quotes",
+			content: `ID="cos'
+VERSION_ID=125
+BUILD_ID=19216.395.138
+`,
+			wantSupported: false,
+			wantVersion:   `"cos'`,
+		},
 	}
 
 	for _, tc := range testCases {

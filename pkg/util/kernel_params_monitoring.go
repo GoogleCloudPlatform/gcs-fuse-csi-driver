@@ -18,8 +18,10 @@ limitations under the License.
 package util
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,14 +37,12 @@ import (
 const (
 	// hostOSReleasePath is the mounted host /etc/os-release path inside the gcsfusecsi-node container.
 	hostOSReleasePath = "/host-etc-os-release"
+	// maxOSReleaseBytes caps the bytes read from /etc/os-release to prevent unbounded memory allocation.
+	maxOSReleaseBytes = 64 * 1024
 	// MinGrpcByDefaultCOSVersionStr is the minimum COS image version required on TPU v6e nodes
 	// to enable gRPC by default and hardware GRO/LRO offloads.
 	MinGrpcByDefaultCOSVersionStr = "cos-125-19216-395-138"
 )
-
-// minGrpcByDefaultCOSVersion represents cos-125-19216-395-138 as [milestone, build, branch, patch]
-// corresponding to VERSION_ID=125 and BUILD_ID=19216.395.138 in /etc/os-release.
-var minGrpcByDefaultCOSVersion = [4]int{125, 19216, 395, 138}
 
 var (
 	// fuseMaxMaxPagesMu serializes concurrent updates to the host's FUSE max_pages_limit.
@@ -100,18 +100,52 @@ func IsCOSVersionSupportedForGrpcByDefault() (bool, string, error) {
 	return isCOSVersionSupported(hostOSReleasePath)
 }
 
+// parseOSReleaseValue strips trailing inline comments and unquotes a single matching pair
+// of surrounding double or single quotes from an /etc/os-release value.
+func parseOSReleaseValue(raw string) string {
+	val := strings.TrimSpace(raw)
+	if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+		return val[1 : len(val)-1]
+	}
+	if idx := strings.IndexByte(val, '#'); idx >= 0 {
+		val = strings.TrimSpace(val[:idx])
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			return val[1 : len(val)-1]
+		}
+	}
+	return val
+}
+
+// parseNonNegativeDecimal parses a string consisting strictly of ASCII digits ('0'-'9')
+// as a non-negative integer, rejecting negative numbers and '+' signs.
+func parseNonNegativeDecimal(s string) (int, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty numeric component")
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, fmt.Errorf("invalid digit in %q", s)
+		}
+	}
+	return strconv.Atoi(s)
+}
+
 // isCOSVersionSupported parses the host's os-release file at osReleasePath and
 // checks whether the node is running Container-Optimized OS (ID=cos) with an image version
 // greater than or equal to cos-125-19216-395-138 (VERSION_ID=125, BUILD_ID=19216.395.138).
 func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
-	data, err := os.ReadFile(osReleasePath)
+	f, err := os.Open(osReleasePath)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to read %q: %w", osReleasePath, err)
+		return false, "", fmt.Errorf("failed to open %q: %w", osReleasePath, err)
 	}
+	defer func() {
+		_ = f.Close()
+	}()
 
 	var id, versionID, buildID string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
+	scanner := bufio.NewScanner(io.LimitReader(f, maxOSReleaseBytes))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -120,7 +154,7 @@ func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		val = parseOSReleaseValue(val)
 		switch key {
 		case "ID":
 			id = val
@@ -129,6 +163,9 @@ func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
 		case "BUILD_ID":
 			buildID = val
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return false, "", fmt.Errorf("failed to scan %q: %w", osReleasePath, err)
 	}
 
 	if id == "" {
@@ -141,7 +178,7 @@ func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
 		return false, "", fmt.Errorf("missing VERSION_ID or BUILD_ID in %q", osReleasePath)
 	}
 
-	milestone, err := strconv.Atoi(versionID)
+	milestone, err := parseNonNegativeDecimal(versionID)
 	if err != nil {
 		return false, "", fmt.Errorf("invalid VERSION_ID %q in %q: %w", versionID, osReleasePath, err)
 	}
@@ -153,13 +190,15 @@ func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
 
 	actual := [4]int{milestone}
 	for i, part := range buildParts {
-		n, err := strconv.Atoi(part)
+		n, err := parseNonNegativeDecimal(part)
 		if err != nil {
 			return false, "", fmt.Errorf("invalid BUILD_ID %q in %q: %w", buildID, osReleasePath, err)
 		}
 		actual[i+1] = n
 	}
 
+	// Minimum required COS version cos-125-19216-395-138 as [milestone, build, branch, patch].
+	minGrpcByDefaultCOSVersion := [4]int{125, 19216, 395, 138}
 	cosVer := fmt.Sprintf("cos-%d-%d-%d-%d", actual[0], actual[1], actual[2], actual[3])
 	for i := range actual {
 		if actual[i] != minGrpcByDefaultCOSVersion[i] {

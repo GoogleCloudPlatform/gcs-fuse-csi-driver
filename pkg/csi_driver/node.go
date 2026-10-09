@@ -81,8 +81,9 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
-	// Ensures the host COS version check for TPU v6e nodes is performed at most once per nodeServer lifecycle.
-	cosVersionCheckOnce sync.Once
+	// Caches the host COS version check result for TPU v6e nodes once a check completes without I/O error.
+	cosVersionCheckMu   sync.Mutex
+	cosVersionChecked   bool
 	cosVersionSupported bool
 	// Checks whether the host OS image meets the minimum COS version required for
 	// gRPC-by-default on TPU v6e nodes (overridable on nodeServer in tests).
@@ -92,7 +93,7 @@ type nodeServer struct {
 	enableHWgroMu      sync.Mutex
 	enableHWgroDone    bool
 	enableHWgroRunning bool
-	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
+	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests and shutdown.
 	enableHWgroWg sync.WaitGroup
 }
 
@@ -529,9 +530,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
-	// Enable default NIC GRO/LRO offloads on TPU v6e nodes for new sidecar mounts.
-	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
-
 	// Only pass mountOptions flags for defaulting if mounter pod container is managed and satisfies min version requirement
 	if emptyDirBasePath != "" {
 		if err := s.populateDriverFlagsForDefaulting(node, gcsFuseSidecarImage, filepath.Dir(emptyDirBasePath)); err != nil {
@@ -577,6 +575,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err = s.mounter.Mount(args.bucketName, targetPath, FuseMountType, args.fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
 	}
+
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful mount.
+	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
 
 	// Start monitoring goroutine for new mounts.
 	if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
@@ -928,8 +929,12 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 // mount option if enabled for the node and supported by the sidecar container image.
 // If the feature is disabled or unsupported, mount options are returned unmodified.
 func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
-	if !s.isGrpcByDefaultEnabled(node) ||
-		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault {
+		return mountOptions
+	}
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
+		!s.isGrpcByDefaultEnabled(node) {
 		return mountOptions
 	}
 
@@ -946,7 +951,11 @@ func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
 	if node == nil {
 		return false
 	}
-	machineType := node.Labels[clientset.MachineTypeKey]
+	machineType, ok := node.Labels[clientset.MachineTypeKey]
+	if !ok || machineType == "" {
+		klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
+		return false
+	}
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return true
 	}
@@ -955,21 +964,26 @@ func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
 	if checkCOS == nil {
 		checkCOS = util.IsCOSVersionSupportedForGrpcByDefault
 	}
-	s.cosVersionCheckOnce.Do(func() {
-		supported, cosVer, err := checkCOS()
-		if err != nil {
-			klog.Errorf("Disabling enable-grpc-by-default on node %q (machine type %q): failed to verify COS image version: %v", node.Name, machineType, err)
-			s.cosVersionSupported = false
-			return
-		}
-		if !supported {
-			klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): host OS image %q does not meet minimum required COS version %q", node.Name, machineType, cosVer, util.MinGrpcByDefaultCOSVersionStr)
-			s.cosVersionSupported = false
-			return
-		}
-		s.cosVersionSupported = true
-	})
-	return s.cosVersionSupported
+
+	s.cosVersionCheckMu.Lock()
+	defer s.cosVersionCheckMu.Unlock()
+	if s.cosVersionChecked {
+		return s.cosVersionSupported
+	}
+
+	supported, cosVer, err := checkCOS()
+	if err != nil {
+		klog.Errorf("Disabling enable-grpc-by-default on node %q (machine type %q): failed to verify COS image version: %v", node.Name, machineType, err)
+		return false
+	}
+	s.cosVersionChecked = true
+	if !supported {
+		klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): host OS image %q does not meet minimum required COS version %q", node.Name, machineType, cosVer, util.MinGrpcByDefaultCOSVersionStr)
+		s.cosVersionSupported = false
+		return false
+	}
+	s.cosVersionSupported = true
+	return true
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -1185,9 +1199,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	// Enable default NIC GRO/LRO offloads on TPU v6e nodes for new shared mounts.
-	s.enableHWgroIfApplicable(node, podImage)
-
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
 	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
 	if err := s.setupMultiNIC(&args, pod, canUseMultiNIC); err != nil {
@@ -1263,6 +1274,9 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		}
 		return nil, err
 	}
+
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful shared mount.
+	s.enableHWgroIfApplicable(node, podImage)
 
 	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
@@ -1432,21 +1446,34 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	return nil
 }
 
-// enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
 // on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
 // are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
 // (ct6e-*) machine.
 func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
-	if !s.isGrpcByDefaultEnabled(node) ||
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
 		!s.driver.config.FeatureOptions.EnableHWgro ||
-		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
-		s.nwMgr == nil {
+		s.nwMgr == nil ||
+		node == nil {
 		return
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return
 	}
+	s.enableHWgroMu.Lock()
+	if s.enableHWgroDone || s.enableHWgroRunning {
+		s.enableHWgroMu.Unlock()
+		return
+	}
+	s.enableHWgroMu.Unlock()
+
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
+		!s.isGrpcByDefaultEnabled(node) {
+		return
+	}
+
 	// NIC offload tuning is host-wide and best-effort: run it in a background
 	// goroutine so that volume mounts are never blocked if SIOCETHTOOL
 	// ioctls contend on the kernel's global rtnl_lock or stall during NIC driver
@@ -1463,16 +1490,20 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage str
 
 	nodeName := node.Name
 	go func() {
-		defer s.enableHWgroWg.Done()
-		err := s.nwMgr.EnableHWgroOnDefaultNIC()
-
-		s.enableHWgroMu.Lock()
-		defer s.enableHWgroMu.Unlock()
-		s.enableHWgroRunning = false
-		if err != nil {
-			klog.Errorf("Failed to enable rx-gro-hw and large-receive-offload on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
+		succeeded := false
+		defer func() {
+			s.enableHWgroMu.Lock()
+			s.enableHWgroRunning = false
+			if succeeded {
+				s.enableHWgroDone = true
+			}
+			s.enableHWgroWg.Done()
+			s.enableHWgroMu.Unlock()
+		}()
+		if err := s.nwMgr.EnableHWgroOnDefaultNIC(); err != nil {
+			klog.Errorf("Failed to enable rx-gro-hw and rx-lro on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
 			return
 		}
-		s.enableHWgroDone = true
+		succeeded = true
 	}()
 }
