@@ -575,26 +575,8 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 	return nil
 }
 
-// enableNICFeatureViaIOCTL enables a single NIC offload feature by its kernel
-// ETH_SS_FEATURES key, skipping the ETHTOOL_SFEATURES ioctl if already active.
-func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic, feature string) error {
-	alreadyEnabled, ok := features[feature]
-	if !ok {
-		return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
-	}
-	if alreadyEnabled {
-		return nil
-	}
-	if err := eth.Change(nic, map[string]bool{feature: true}); err != nil {
-		return fmt.Errorf("failed to enable %s on NIC %q: %w", feature, nic, err)
-	}
-	return nil
-}
-
 // enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) on the specified NIC using ethtool ioctls (Features read-before-write Change).
-// Each feature is attempted independently so that a failure on one feature does not prevent
-// the other from being enabled.
+// (rx-lro) together on the specified NIC using ethtool ioctls (Features read-before-write Change).
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	features, err := eth.Features(nic)
 	if err != nil {
@@ -605,14 +587,23 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
 	}
 
-	// Apply rx-gro-hw and rx-lro (the kernel ETH_SS_FEATURES key for ethtool's "lro")
-	// in separate Change calls so that if the NIC/kernel rejects one offload, the other
-	// is still applied.
-	groErr := enableNICFeatureViaIOCTL(eth, features, nic, "rx-gro-hw")
-	lroErr := enableNICFeatureViaIOCTL(eth, features, nic, "rx-lro")
-	if err := errors.Join(groErr, lroErr); err != nil {
-		return err
+	changes := make(map[string]bool)
+	for _, feature := range []string{"rx-gro-hw", "rx-lro"} {
+		alreadyEnabled, ok := features[feature]
+		if !ok {
+			return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
+		}
+		if !alreadyEnabled {
+			changes[feature] = true
+		}
 	}
+
+	if len(changes) > 0 {
+		if err := eth.Change(nic, changes); err != nil {
+			return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
+		}
+	}
+
 	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
 	return nil
 }

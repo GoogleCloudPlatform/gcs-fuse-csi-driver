@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 
@@ -522,11 +523,11 @@ func TestSourceRouteForDevice(t *testing.T) {
 }
 
 type fakeEthtoolClient struct {
-	features       map[string]bool
-	featuresErr    error
-	changeErrByKey map[string]error
-	changed        bool
-	changedKeys    []string
+	features    map[string]bool
+	featuresErr error
+	changeErr   error
+	changed     bool
+	changedKeys []string
 }
 
 func (f *fakeEthtoolClient) Features(_ string) (map[string]bool, error) {
@@ -544,9 +545,10 @@ func (f *fakeEthtoolClient) Change(_ string, config map[string]bool) error {
 	f.changed = true
 	for k := range config {
 		f.changedKeys = append(f.changedKeys, k)
-		if err, ok := f.changeErrByKey[k]; ok && err != nil {
-			return err
-		}
+	}
+	slices.Sort(f.changedKeys)
+	if f.changeErr != nil {
+		return f.changeErr
 	}
 	for k, v := range config {
 		f.features[k] = v
@@ -561,14 +563,14 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 		name            string
 		initialFeatures map[string]bool
 		featuresErr     error
-		changeErrByKey  map[string]error
+		changeErr       error
 		wantFeatures    map[string]bool
 		wantChanged     bool
 		wantChangedKeys []string
 		expectError     bool
 	}{
 		{
-			name:            "enables rx-gro-hw and rx-lro when both are false",
+			name:            "enables rx-gro-hw and rx-lro together when both are false",
 			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
 			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
 			wantChanged:     true,
@@ -595,19 +597,17 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			wantChangedKeys: []string{"rx-gro-hw"},
 		},
 		{
-			name:            "returns error and still enables rx-lro when rx-gro-hw is absent from features map",
+			name:            "returns error without changing when rx-gro-hw is absent from features map",
 			initialFeatures: map[string]bool{"rx-lro": false},
-			wantFeatures:    map[string]bool{"rx-lro": true},
-			wantChanged:     true,
-			wantChangedKeys: []string{"rx-lro"},
+			wantFeatures:    map[string]bool{"rx-lro": false},
+			wantChanged:     false,
 			expectError:     true,
 		},
 		{
-			name:            "returns error and still enables rx-gro-hw when rx-lro is absent from features map",
+			name:            "returns error without changing when rx-lro is absent from features map",
 			initialFeatures: map[string]bool{"rx-gro-hw": false},
-			wantFeatures:    map[string]bool{"rx-gro-hw": true},
-			wantChanged:     true,
-			wantChangedKeys: []string{"rx-gro-hw"},
+			wantFeatures:    map[string]bool{"rx-gro-hw": false},
+			wantChanged:     false,
 			expectError:     true,
 		},
 		{
@@ -618,19 +618,10 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			expectError:     true,
 		},
 		{
-			name:            "rx-lro still succeeds when rx-gro-hw change fails",
+			name:            "returns error when Change fails",
 			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
-			changeErrByKey:  map[string]error{"rx-gro-hw": errors.New("unsupported")},
-			wantFeatures:    map[string]bool{"rx-gro-hw": false, "rx-lro": true},
-			wantChanged:     true,
-			wantChangedKeys: []string{"rx-gro-hw", "rx-lro"},
-			expectError:     true,
-		},
-		{
-			name:            "rx-gro-hw still succeeds when rx-lro change fails",
-			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
-			changeErrByKey:  map[string]error{"rx-lro": errors.New("unsupported")},
-			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": false},
+			changeErr:       errors.New("unsupported"),
+			wantFeatures:    map[string]bool{"rx-gro-hw": false, "rx-lro": false},
 			wantChanged:     true,
 			wantChangedKeys: []string{"rx-gro-hw", "rx-lro"},
 			expectError:     true,
@@ -658,9 +649,9 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 				features[k] = v
 			}
 			fakeEth := &fakeEthtoolClient{
-				features:       features,
-				featuresErr:    tc.featuresErr,
-				changeErrByKey: tc.changeErrByKey,
+				features:    features,
+				featuresErr: tc.featuresErr,
+				changeErr:   tc.changeErr,
 			}
 
 			err := enableHWgroOnNIC(fakeEth, cosDefaultNIC)
