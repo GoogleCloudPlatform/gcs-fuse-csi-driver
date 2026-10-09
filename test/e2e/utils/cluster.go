@@ -189,30 +189,25 @@ func apiErrorMessage(body []byte) string {
 // See: https://cloud.google.com/compute/docs/reference/rest/beta/advice/capacity
 // TODO(b/570275744): Replace the POST with gcloud command when gcloud supports STANDARD provisioning model.
 func queryCapacityAdvice(testParams *TestParameters, region, token string) (string, float64, error) {
-	// Restrict capacity search to valid target zones in the region.
-	distributionPolicy := map[string]any{"targetShape": capacityAdvisorTargetShape}
+	// Restrict capacity search to valid target zones in the region (ZB-supported zones for ZB runs,
+	// or standard regional compute zones excluding AI-only zones for non-ZB runs).
 	var zones []string
 	if testParams.EnableZB {
-		// For Zonal Buckets, restrict Capacity Advisor to zones in the region that support ZB.
-		// Fail early if the region (e.g. a custom GkeClusterRegion) has no ZB-supported zones,
-		// rather than sending an unfiltered request that could pick an unsupported zone.
 		zones = zbSupportedZones[region]
-		if len(zones) == 0 {
-			return "", 0, fmt.Errorf("no ZB-supported zones available in region %q", region)
-		}
 	} else {
-		// For non-ZB runs, query standard regional compute zones to exclude non-GKE AI-only zones.
 		zones = queryRegionalStandardZones(testParams, region)
 	}
-	// Only populate distributionPolicy["zones"] when zones are present. In the non-ZB path,
-	// queryRegionalStandardZones returns nil if the gcloud lookup fails; omitting "zones"
-	// lets Capacity Advisor fall back to querying all zones in the region instead of sending an empty list.
-	if len(zones) > 0 {
-		zoneConfigs := make([]map[string]string, 0, len(zones))
-		for _, zone := range zones {
-			zoneConfigs = append(zoneConfigs, map[string]string{"zone": capacityAdvisorZonePrefix + zone})
-		}
-		distributionPolicy["zones"] = zoneConfigs
+	if len(zones) == 0 {
+		return "", 0, fmt.Errorf("no valid target zones available in region %q (enableZB=%t)", region, testParams.EnableZB)
+	}
+
+	zoneConfigs := make([]map[string]string, 0, len(zones))
+	for _, zone := range zones {
+		zoneConfigs = append(zoneConfigs, map[string]string{"zone": capacityAdvisorZonePrefix + zone})
+	}
+	distributionPolicy := map[string]any{
+		"targetShape": capacityAdvisorTargetShape,
+		"zones":       zoneConfigs,
 	}
 
 	// Construct request using the body that 'gcloud beta compute advice capacity' sends (verified via --log-http), but with STANDARD.
