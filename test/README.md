@@ -98,7 +98,7 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `E2E_TEST_GINKGO_PROCS`: default value is `5`. The value will be passed to `ginkgo run --procs` flag.
 - `E2E_TEST_GINKGO_TIMEOUT`: default value is `2h`. The value will be passed to `ginkgo run --timeout` flag.
 - `E2E_TEST_GINKGO_FLAKE_ATTEMPTS`: default value is `2`. The value will be passed to `ginkgo run --flake-attempts` flag.
-- `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket created in the zone -> "$(location provided)" + "-c".
+- `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket created in the selected cluster zone (or `<region>-c` when only a region is provided).
 - `GCSFUSE_CLIENT_PROTOCOL`: default value is 'http1'. Change to 'grpc' to alter the type of protocol gcsfuse uses to communicate with gcs
 - `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
 - `USE_CAPACITY_ADVISOR`: default value is `false` (defaults to `true` in Prow CI). Whether to use GCE Capacity Advisor to select node locations and fallback regions. Only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`; ignored when running on an existing cluster. Requires IAM access to the internal `prow-gob-internal-boskos-01` project while `STANDARD` capacity advice is in preview, so external users should leave this set to `false`.
@@ -133,7 +133,7 @@ When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provi
 - **Version**: Determined by `E2E_TEST_GKE_CLUSTER_VERSION` (local) or `GKE_CLUSTER_VERSION` (CI).
 - **Region & Capacity Selection**: Determined by `GKE_CLUSTER_REGION` (default: `us-central1`).
   - **Dynamic Fallback & Capacity Checks**: When `USE_CAPACITY_ADVISOR=true`, as enabled by default in Prow, the test runner pre-flights compute availability across candidate fallback regions using the Compute Engine Capacity Advisor API. It evaluates obtainability scores, stack-ranks candidate regions from highest to lowest score, and attempts cluster creation in the top-ranked region to mitigate regional stockouts. It queries on-demand (`STANDARD`) capacity against the allowlisted `prow-gob-internal-boskos-01` project, because `STANDARD` is not GA yet, so it requires access to that project. Note that `USE_CAPACITY_ADVISOR` is only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`, and is ignored when running tests against an existing cluster.
-  - **Bucket Co-location**: Selecting a fallback region also implicitly updates the `--test-bucket-location` passed to Ginkgo, ensuring test GCS buckets are co-located in the same region as the cluster to prevent cross-region data transfer.
+  - **Bucket Co-location**: Selecting a fallback region/zone also implicitly updates the `--test-bucket-location` passed to Ginkgo, ensuring test GCS buckets (including Zonal Buckets when `ENABLE_ZB=true`) are co-located in the same region or zone as the cluster to prevent cross-region or cross-zone data transfer.
 - **Node Pool Configuration** (Standard cluster only):
   - **Node Count**: 9 nodes (can be overridden by `E2E_TEST_NUM_NODES` or `NUMBER_NODES` env var).
   - **Machine Type**: `n2-standard-8` (can be overridden by `MACHINE_TYPE` env var).
