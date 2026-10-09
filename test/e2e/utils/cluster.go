@@ -189,17 +189,24 @@ func apiErrorMessage(body []byte) string {
 // See: https://cloud.google.com/compute/docs/reference/rest/beta/advice/capacity
 // TODO(b/570275744): Replace the POST with gcloud command when gcloud supports STANDARD provisioning model.
 func queryCapacityAdvice(testParams *TestParameters, region, token string) (string, float64, error) {
-	// Restrict capacity search to standard regional compute zones to avoid non-GKE AI zones.
+	// Restrict capacity search to valid target zones in the region.
 	distributionPolicy := map[string]any{"targetShape": capacityAdvisorTargetShape}
 	var zones []string
 	if testParams.EnableZB {
+		// For Zonal Buckets, restrict Capacity Advisor to zones in the region that support ZB.
+		// Fail early if the region (e.g. a custom GkeClusterRegion) has no ZB-supported zones,
+		// rather than sending an unfiltered request that could pick an unsupported zone.
 		zones = zbSupportedZones[region]
 		if len(zones) == 0 {
 			return "", 0, fmt.Errorf("no ZB-supported zones available in region %q", region)
 		}
 	} else {
+		// For non-ZB runs, query standard regional compute zones to exclude non-GKE AI-only zones.
 		zones = queryRegionalStandardZones(testParams, region)
 	}
+	// Only populate distributionPolicy["zones"] when zones are present. In the non-ZB path,
+	// queryRegionalStandardZones returns nil if the gcloud lookup fails; omitting "zones"
+	// lets Capacity Advisor fall back to querying all zones in the region instead of sending an empty list.
 	if len(zones) > 0 {
 		zoneConfigs := make([]map[string]string, 0, len(zones))
 		for _, zone := range zones {
@@ -294,6 +301,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 	// Fall back across candidate regions to mitigate stockouts.
 	// testParams.GkeClusterRegion (which defaults to us-central1) is prioritized first,
 	// followed by capacityAdvisorFallbackRegions with typically lower contention.
+	// When EnableZB is true, skip fallback regions without ZB-supported zones (e.g. europe-west3).
 	candidateRegions := []string{testParams.GkeClusterRegion}
 	for _, r := range capacityAdvisorFallbackRegions {
 		if r != testParams.GkeClusterRegion && (!testParams.EnableZB || len(zbSupportedZones[r]) > 0) {
