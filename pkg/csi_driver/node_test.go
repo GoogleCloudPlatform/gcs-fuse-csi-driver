@@ -874,8 +874,7 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
 		machineType              string
-		cosUnsupported           bool
-		cosCheckErr              error
+		kubeletVersion           string
 		userMountOptions         string
 		expectedOptions          []string
 		unexpectedOptions        []string
@@ -927,26 +926,91 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with supported COS version >= cos-125-19216-395-138, expect enable-grpc-by-default=true",
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.37 supported version (= 1.37.1-gke.1552000), expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1552000",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with unsupported older COS version < cos-125-19216-395-138, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.37 unsupported version (< 1.37.1-gke.1552000), expect no enable-grpc-by-default",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
-			cosUnsupported:           true,
+			kubeletVersion:           "v1.37.1-gke.1551999",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with COS version check error, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.36 supported version (= 1.36.0-gke.4681000), expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
-			cosCheckErr:              errors.New("mock os-release read error"),
+			kubeletVersion:           "v1.36.0-gke.4681000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.36 unsupported version (< 1.36.0-gke.4681000), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.36.0-gke.4680999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.35 supported version (= 1.35.6-gke.1258000), expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.35.6-gke.1258000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.35 unsupported version (< 1.35.6-gke.1258000), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.35.6-gke.1257999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.34 supported version (= 1.34.9-gke.1287000), expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.34.9-gke.1287000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.34 unsupported version (< 1.34.9-gke.1287000), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.34.9-gke.1286999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.38 pre-release version (minor >= 1.38), expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.38.0-gke.100",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.33 version (minor < 1.34), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.33.9-gke.9999999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with empty kubelet version, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 	}
@@ -974,10 +1038,11 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
 			fc := clientset.NewFakeClientset()
-			if tc.machineType != "" {
+			if tc.machineType != "" || tc.kubeletVersion != "" {
 				fc.CreateNode(clientset.FakeNodeConfig{
 					IsWorkloadIdentityEnabled: true,
 					MachineType:               tc.machineType,
+					KubeletVersion:            tc.kubeletVersion,
 				})
 			}
 
@@ -992,15 +1057,6 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			ns, ok := newNodeServer(driver, fakeMounter).(*nodeServer)
 			if !ok {
 				t.Fatal("failed to cast NodeServer to *nodeServer")
-			}
-			ns.isCOSVersionSupported = func() (bool, string, error) {
-				if tc.cosCheckErr != nil {
-					return false, "", tc.cosCheckErr
-				}
-				if tc.cosUnsupported {
-					return false, "cos-125-19216-395-137", nil
-				}
-				return true, "cos-125-19216-395-138", nil
 			}
 
 			_, err := ns.NodePublishVolume(t.Context(), req)
@@ -3409,8 +3465,7 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
 		machineType              string
-		cosUnsupported           bool
-		cosCheckErr              error
+		kubeletVersion           string
 		userMountOptions         string
 		expectedOptions          []string
 		unexpectedOptions        []string
@@ -3462,26 +3517,83 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with supported COS version >= cos-125-19216-395-138, expect enable-grpc-by-default=true",
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.37 supported version (= 1.37.1-gke.1552000), expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1552000",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with unsupported older COS version < cos-125-19216-395-138, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.37 unsupported version (< 1.37.1-gke.1552000), expect no enable-grpc-by-default",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
-			cosUnsupported:           true,
+			kubeletVersion:           "v1.37.1-gke.1551999",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with COS version check error, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.36 supported version (= 1.36.0-gke.4681000), expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
-			cosCheckErr:              errors.New("mock os-release read error"),
+			kubeletVersion:           "v1.36.0-gke.4681000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.36 unsupported version (< 1.36.0-gke.4681000), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.36.0-gke.4680999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.35 supported version (= 1.35.6-gke.1258000), expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.35.6-gke.1258000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.35 unsupported version (< 1.35.6-gke.1258000), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.35.6-gke.1257999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.34 supported version (= 1.34.9-gke.1287000), expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.34.9-gke.1287000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.34 unsupported version (< 1.34.9-gke.1287000), expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.34.9-gke.1286999",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with 1.38 pre-release version (minor >= 1.38), expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.38.0-gke.100",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with empty kubelet version, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 	}
@@ -3494,10 +3606,11 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
-			if tc.machineType != "" {
+			if tc.machineType != "" || tc.kubeletVersion != "" {
 				fc.CreateNode(clientset.FakeNodeConfig{
 					IsWorkloadIdentityEnabled: true,
 					MachineType:               tc.machineType,
+					KubeletVersion:            tc.kubeletVersion,
 				})
 			}
 			fc.CreatePod(clientset.FakePodConfig{
@@ -3520,15 +3633,6 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
-			ns.isCOSVersionSupported = func() (bool, string, error) {
-				if tc.cosCheckErr != nil {
-					return false, "", tc.cosCheckErr
-				}
-				if tc.cosUnsupported {
-					return false, "cos-125-19216-395-137", nil
-				}
-				return true, "cos-125-19216-395-138", nil
-			}
 
 			var extraVC map[string]string
 			if tc.userMountOptions != "" {
@@ -4411,8 +4515,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		enableGrpcByDefault bool
 		enableHWgro         bool
 		machineType         string
-		cosUnsupported      bool
-		cosCheckErr         error
+		kubeletVersion      string
 		sidecarUnsupported  bool
 		enableHWgroErrs     []error
 		alreadyMounted      bool
@@ -4424,6 +4527,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      1,
 		},
 		{
@@ -4431,22 +4535,23 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
+			kubeletVersion:      "v1.38.0-gke.100",
 			wantHWgroCalls:      1,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with older COS version does not enable HWgro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with unsupported GKE nodepool version does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			cosUnsupported:      true,
+			kubeletVersion:      "v1.37.1-gke.1551999",
 			wantHWgroCalls:      0,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with COS version check error does not enable HWgro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with empty GKE nodepool version does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			cosCheckErr:         errors.New("mock os-release read error"),
+			kubeletVersion:      "",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4454,6 +4559,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			sidecarUnsupported:  true,
 			wantHWgroCalls:      0,
 		},
@@ -4462,6 +4568,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4469,6 +4576,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: false,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4476,6 +4584,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: false,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4483,6 +4592,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "n2-standard-8",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4490,6 +4600,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			enableHWgroErrs:     []error{errors.New("mock ethtool error")},
 			wantHWgroCalls:      1,
 		},
@@ -4498,6 +4609,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			alreadyMounted:      true,
 			wantHWgroCalls:      0,
 		},
@@ -4506,6 +4618,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			mountCount:          2,
 			wantHWgroCalls:      1,
 		},
@@ -4514,6 +4627,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			enableHWgroErrs:     []error{errors.New("transient EBUSY"), nil},
 			mountCount:          3,
 			wantHWgroCalls:      2,
@@ -4539,6 +4653,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			fc.CreateNode(clientset.FakeNodeConfig{
 				IsWorkloadIdentityEnabled: true,
 				MachineType:               tc.machineType,
+				KubeletVersion:            tc.kubeletVersion,
 			})
 			if tc.alreadyMounted {
 				fc.CreatePod(clientset.FakePodConfig{
@@ -4581,15 +4696,6 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 				}
 				return nil
 			}
-			ns.isCOSVersionSupported = func() (bool, string, error) {
-				if tc.cosCheckErr != nil {
-					return false, "", tc.cosCheckErr
-				}
-				if tc.cosUnsupported {
-					return false, "cos-125-19216-395-137", nil
-				}
-				return true, "cos-125-19216-395-138", nil
-			}
 
 			for i, targetPath := range targetPaths {
 				req := &csi.NodePublishVolumeRequest{
@@ -4630,8 +4736,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		enableGrpcByDefault bool
 		enableHWgro         bool
 		machineType         string
-		cosUnsupported      bool
-		cosCheckErr         error
+		kubeletVersion      string
 		sidecarUnsupported  bool
 		enableHWgroErrs     []error
 		alreadyMounted      bool
@@ -4643,6 +4748,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      1,
 		},
 		{
@@ -4650,22 +4756,23 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
+			kubeletVersion:      "v1.38.0-gke.100",
 			wantHWgroCalls:      1,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with older COS version does not enable HWgro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with unsupported GKE nodepool version does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			cosUnsupported:      true,
+			kubeletVersion:      "v1.37.1-gke.1551999",
 			wantHWgroCalls:      0,
 		},
 		{
-			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with COS version check error does not enable HWgro",
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with empty GKE nodepool version does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			cosCheckErr:         errors.New("mock os-release read error"),
+			kubeletVersion:      "",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4673,6 +4780,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			sidecarUnsupported:  true,
 			wantHWgroCalls:      0,
 		},
@@ -4681,6 +4789,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4688,6 +4797,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: false,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4695,6 +4805,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: false,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4702,6 +4813,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "n2-standard-8",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      0,
 		},
 		{
@@ -4709,6 +4821,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			enableHWgroErrs:     []error{errors.New("mock ethtool error")},
 			wantHWgroCalls:      1,
 		},
@@ -4717,6 +4830,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			alreadyMounted:      true,
 			wantHWgroCalls:      0,
 		},
@@ -4725,6 +4839,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			stageCount:          2,
 			wantHWgroCalls:      1,
 		},
@@ -4733,6 +4848,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
 			enableHWgroErrs:     []error{errors.New("transient EBUSY"), nil},
 			stageCount:          3,
 			wantHWgroCalls:      2,
@@ -4760,6 +4876,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			fc.CreateNode(clientset.FakeNodeConfig{
 				IsWorkloadIdentityEnabled: true,
 				MachineType:               tc.machineType,
+				KubeletVersion:            tc.kubeletVersion,
 			})
 			fc.CreatePod(clientset.FakePodConfig{
 				Name:         podName,
@@ -4794,15 +4911,6 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 				}
 				return nil
 			}
-			ns.isCOSVersionSupported = func() (bool, string, error) {
-				if tc.cosCheckErr != nil {
-					return false, "", tc.cosCheckErr
-				}
-				if tc.cosUnsupported {
-					return false, "cos-125-19216-395-137", nil
-				}
-				return true, "cos-125-19216-395-138", nil
-			}
 
 			for i, stagingPath := range stagingPaths {
 				stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
@@ -4824,13 +4932,23 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 	t.Parallel()
 
-	validNode := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				clientset.MachineTypeKey: "ct6e-standard-4t",
+	newTPUv6eNode := func(kubeletVersion string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					clientset.MachineTypeKey: "ct6e-standard-4t",
+				},
 			},
-		},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: kubeletVersion,
+				},
+			},
+		}
 	}
+	validNode := newTPUv6eNode("v1.37.1-gke.1552000")
+	unsupportedVersionNode := newTPUv6eNode("v1.37.1-gke.1551999")
+	emptyVersionNode := newTPUv6eNode("")
 	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
 	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
 
@@ -4841,8 +4959,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 		mounterImage    string
 		mounterImages   []string
 		nilNwMgr        bool
-		cosUnsupported  bool
-		cosCheckErr     error
 		enableHWgroErrs []error
 		invocations     int
 		wantCalls       int
@@ -4897,20 +5013,18 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			wantCalls:    0,
 		},
 		{
-			name:           "older COS version causes enable-grpc-by-default to be false and skips HWgro",
-			features:       &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:           validNode,
-			mounterImage:   supportedImage,
-			cosUnsupported: true,
-			invocations:    1,
-			wantCalls:      0,
+			name:         "unsupported GKE nodepool version causes enable-grpc-by-default to be false and skips HWgro",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         unsupportedVersionNode,
+			mounterImage: supportedImage,
+			invocations:  1,
+			wantCalls:    0,
 		},
 		{
-			name:         "COS version check error causes enable-grpc-by-default to be false and skips HWgro",
+			name:         "empty GKE nodepool version causes enable-grpc-by-default to be false and skips HWgro",
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:         validNode,
+			node:         emptyVersionNode,
 			mounterImage: supportedImage,
-			cosCheckErr:  errors.New("mock os-release read error"),
 			invocations:  1,
 			wantCalls:    0,
 		},
@@ -4982,15 +5096,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 					},
 				},
 				nwMgr: mgr,
-				isCOSVersionSupported: func() (bool, string, error) {
-					if tc.cosCheckErr != nil {
-						return false, "", tc.cosCheckErr
-					}
-					if tc.cosUnsupported {
-						return false, "cos-125-19216-395-137", nil
-					}
-					return true, "cos-125-19216-395-138", nil
-				},
 			}
 
 			if len(tc.mounterImages) > 0 {
@@ -5011,53 +5116,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 		})
 	}
 
-	t.Run("retries COS version check after transient error and caches result after success", func(t *testing.T) {
-		t.Parallel()
-
-		cosChecks := 0
-		nwMgr := &fakeNetworkManager{}
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-				},
-			},
-			nwMgr: nwMgr,
-			isCOSVersionSupported: func() (bool, string, error) {
-				cosChecks++
-				if cosChecks == 1 {
-					return false, "", errors.New("transient os-release read error")
-				}
-				return true, "cos-125-19216-395-138", nil
-			},
-		}
-
-		// First invocation hits transient COS version read error; should not latch.
-		ns.enableHWgroIfApplicable(validNode, supportedImage)
-		ns.enableHWgroWg.Wait()
-		if got := nwMgr.getEnableHWgroCalls(); got != 0 {
-			t.Fatalf("enableHWgroCalls after transient COS check error = %d, want 0", got)
-		}
-
-		// Second invocation retries COS version check, succeeds, and enables HW GRO.
-		ns.enableHWgroIfApplicable(validNode, supportedImage)
-		ns.enableHWgroWg.Wait()
-		if got := nwMgr.getEnableHWgroCalls(); got != 1 {
-			t.Fatalf("enableHWgroCalls after COS check retry = %d, want 1", got)
-		}
-		if cosChecks != 2 {
-			t.Errorf("cosChecks = %d, want 2", cosChecks)
-		}
-
-		// Subsequent isGrpcByDefaultEnabled call uses cached COS version result without re-running checkCOS.
-		if !ns.isGrpcByDefaultEnabled(validNode) {
-			t.Error("expected isGrpcByDefaultEnabled to return true from cached COS check")
-		}
-		if cosChecks != 2 {
-			t.Errorf("cosChecks after cached check = %d, want 2", cosChecks)
-		}
-	})
-
 	t.Run("skips duplicate concurrent invocation while attempt is already in flight", func(t *testing.T) {
 		t.Parallel()
 
@@ -5077,9 +5135,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 				},
 			},
 			nwMgr: nwMgr,
-			isCOSVersionSupported: func() (bool, string, error) {
-				return true, "cos-125-19216-395-138", nil
-			},
 		}
 
 		ns.enableHWgroIfApplicable(validNode, supportedImage)
@@ -5118,9 +5173,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 				},
 			},
 			nwMgr: nwMgr,
-			isCOSVersionSupported: func() (bool, string, error) {
-				return true, "cos-125-19216-395-138", nil
-			},
 		}
 
 		ns.enableHWgroIfApplicable(validNode, supportedImage)
@@ -5167,9 +5219,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 				},
 			},
 			nwMgr: nwMgr,
-			isCOSVersionSupported: func() (bool, string, error) {
-				return true, "cos-125-19216-395-138", nil
-			},
 		}
 
 		ns.enableHWgroIfApplicable(validNode, supportedImage)
@@ -5189,4 +5238,67 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			t.Errorf("enableHWgroCalls = %d, want 1", got)
 		}
 	})
+}
+
+func TestIsGKENodePoolVersionSupportedForTPUv6e(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name           string
+		kubeletVersion string
+		want           bool
+	}{
+		// 1.37 boundary cases (>= 1.37.1-gke.1552000)
+		{name: "1.37 exact minimum with v prefix", kubeletVersion: "v1.37.1-gke.1552000", want: true},
+		{name: "1.37 exact minimum without v prefix", kubeletVersion: "1.37.1-gke.1552000", want: true},
+		{name: "1.37 above minimum build", kubeletVersion: "v1.37.1-gke.1552001", want: true},
+		{name: "1.37 above minimum patch", kubeletVersion: "v1.37.2-gke.100", want: true},
+		{name: "1.37 below minimum build by 1", kubeletVersion: "v1.37.1-gke.1551999", want: false},
+		{name: "1.37 below minimum build numeric order", kubeletVersion: "v1.37.1-gke.200000", want: false},
+		{name: "1.37 below minimum patch", kubeletVersion: "v1.37.0-gke.9999999", want: false},
+
+		// 1.36 boundary cases (>= 1.36.0-gke.4681000)
+		{name: "1.36 exact minimum with v prefix", kubeletVersion: "v1.36.0-gke.4681000", want: true},
+		{name: "1.36 exact minimum without v prefix", kubeletVersion: "1.36.0-gke.4681000", want: true},
+		{name: "1.36 above minimum build", kubeletVersion: "v1.36.0-gke.4681001", want: true},
+		{name: "1.36 above minimum patch", kubeletVersion: "v1.36.1-gke.100", want: true},
+		{name: "1.36 below minimum build by 1", kubeletVersion: "v1.36.0-gke.4680999", want: false},
+		{name: "1.36 below minimum build numeric order", kubeletVersion: "v1.36.0-gke.500000", want: false},
+
+		// 1.35 boundary cases (>= 1.35.6-gke.1258000)
+		{name: "1.35 exact minimum with v prefix", kubeletVersion: "v1.35.6-gke.1258000", want: true},
+		{name: "1.35 exact minimum without v prefix", kubeletVersion: "1.35.6-gke.1258000", want: true},
+		{name: "1.35 above minimum build", kubeletVersion: "v1.35.6-gke.1258001", want: true},
+		{name: "1.35 above minimum patch", kubeletVersion: "v1.35.7-gke.100", want: true},
+		{name: "1.35 below minimum build by 1", kubeletVersion: "v1.35.6-gke.1257999", want: false},
+		{name: "1.35 below minimum patch", kubeletVersion: "v1.35.5-gke.9999999", want: false},
+
+		// 1.34 boundary cases (>= 1.34.9-gke.1287000)
+		{name: "1.34 exact minimum with v prefix", kubeletVersion: "v1.34.9-gke.1287000", want: true},
+		{name: "1.34 exact minimum without v prefix", kubeletVersion: "1.34.9-gke.1287000", want: true},
+		{name: "1.34 above minimum build", kubeletVersion: "v1.34.9-gke.1287001", want: true},
+		{name: "1.34 above minimum patch", kubeletVersion: "v1.34.10-gke.100", want: true},
+		{name: "1.34 below minimum build by 1", kubeletVersion: "v1.34.9-gke.1286999", want: false},
+		{name: "1.34 below minimum patch", kubeletVersion: "v1.34.8-gke.9999999", want: false},
+
+		// >= 1.38 cases
+		{name: "1.38 initial GKE build", kubeletVersion: "v1.38.0-gke.0", want: true},
+		{name: "1.38 GKE build without v prefix", kubeletVersion: "1.38.0-gke.100", want: true},
+		{name: "1.39 GKE build", kubeletVersion: "v1.39.2-gke.500", want: true},
+
+		// < 1.34 and invalid cases
+		{name: "1.33 GKE build is unsupported", kubeletVersion: "v1.33.9-gke.9999999", want: false},
+		{name: "empty version is unsupported", kubeletVersion: "", want: false},
+		{name: "malformed version is unsupported", kubeletVersion: "not-a-semver", want: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isGKENodePoolVersionSupportedForTPUv6e(tc.kubeletVersion); got != tc.want {
+				t.Errorf("isGKENodePoolVersionSupportedForTPUv6e(%q) = %v, want %v", tc.kubeletVersion, got, tc.want)
+			}
+		})
+	}
 }

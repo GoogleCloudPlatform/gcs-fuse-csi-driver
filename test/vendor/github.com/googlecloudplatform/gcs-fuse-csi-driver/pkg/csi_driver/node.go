@@ -32,6 +32,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"golang.org/x/mod/semver"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -66,8 +67,14 @@ const (
 	// Thus the full timeout is 7 seconds.
 	forceUnmountRetryTimeout = 7 * time.Second
 	forceUnmountRetrySteps   = 6
-	// Machine type prefix for TPU v6e nodes where hardware GRO/LRO offloads are enabled.
-	tpuV6eMachineTypePrefix = "ct6e-"
+	// Machine type prefix for TPU v6e nodes where gRPC-by-default is gated on GKE nodepool version
+	// and hardware GRO/LRO offloads are enabled.
+	tpuV6eMachineTypePrefix = "ct6e-standard-"
+	minTPUv6eGKEVersion134  = "v1.34.9-gke.1287000"
+	minTPUv6eGKEVersion135  = "v1.35.6-gke.1258000"
+	minTPUv6eGKEVersion136  = "v1.36.0-gke.4681000"
+	minTPUv6eGKEVersion137  = "v1.37.1-gke.1552000"
+	minTPUv6eGKEMinor138    = "v1.38"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -81,13 +88,6 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
-	// Caches the host COS version check result for TPU v6e nodes once a check completes without I/O error.
-	cosVersionCheckMu   sync.Mutex
-	cosVersionChecked   bool
-	cosVersionSupported bool
-	// Checks whether the host OS image meets the minimum COS version required for
-	// gRPC-by-default on TPU v6e nodes (overridable on nodeServer in tests).
-	isCOSVersionSupported func() (bool, string, error)
 	// Serializes default NIC GRO/LRO offload enablement, preventing concurrent duplicate runs
 	// and latching once EnableHWgroOnDefaultNIC succeeds while allowing retry on transient errors.
 	enableHWgroMu      sync.Mutex
@@ -107,7 +107,6 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		k8sClients:            driver.config.K8sClients,
 		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
 		volumeStateStore:      util.NewVolumeStateStore(),
-		isCOSVersionSupported: util.IsCOSVersionSupportedForGrpcByDefault,
 	}
 }
 
@@ -942,8 +941,9 @@ func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage 
 }
 
 // isGrpcByDefaultEnabled returns true if --enable-grpc-by-default is enabled for the given node.
-// On TPU v6e (ct6e-*) machines, enable-grpc-by-default is only enabled if the host COS image
-// version is >= cos-125-19216-395-138; on older versions it is false.
+// On TPU v6e (ct6e-standard-*) machines, enable-grpc-by-default is only enabled if the GKE
+// nodepool version (node.Status.NodeInfo.KubeletVersion) meets the minimum required version
+// for its minor release; on older nodepool versions it is disabled.
 func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
 	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
 		return false
@@ -960,30 +960,45 @@ func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
 		return true
 	}
 
-	checkCOS := s.isCOSVersionSupported
-	if checkCOS == nil {
-		checkCOS = util.IsCOSVersionSupportedForGrpcByDefault
-	}
-
-	s.cosVersionCheckMu.Lock()
-	defer s.cosVersionCheckMu.Unlock()
-	if s.cosVersionChecked {
-		return s.cosVersionSupported
-	}
-
-	supported, cosVer, err := checkCOS()
-	if err != nil {
-		klog.Errorf("Disabling enable-grpc-by-default on node %q (machine type %q): failed to verify COS image version: %v", node.Name, machineType, err)
+	kubeletVersion := node.Status.NodeInfo.KubeletVersion
+	if !isGKENodePoolVersionSupportedForTPUv6e(kubeletVersion) {
+		klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): GKE nodepool version %q does not meet minimum required version", node.Name, machineType, kubeletVersion)
 		return false
 	}
-	s.cosVersionChecked = true
-	if !supported {
-		klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): host OS image %q does not meet minimum required COS version %q", node.Name, machineType, cosVer, util.MinGrpcByDefaultCOSVersionStr)
-		s.cosVersionSupported = false
-		return false
-	}
-	s.cosVersionSupported = true
 	return true
+}
+
+// isGKENodePoolVersionSupportedForTPUv6e returns true if the GKE nodepool version
+// meets the minimum version required to enable gRPC by default on TPU v6e (ct6e-standard-*) nodes:
+//   - 1.37: >= 1.37.1-gke.1552000
+//   - 1.36: >= 1.36.0-gke.4681000
+//   - 1.35: >= 1.35.6-gke.1258000
+//   - 1.34: >= 1.34.9-gke.1287000
+//   - >= 1.38: all versions
+func isGKENodePoolVersionSupportedForTPUv6e(kubeletVersion string) bool {
+	v := strings.TrimSpace(kubeletVersion)
+	if v == "" {
+		return false
+	}
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	if !semver.IsValid(v) {
+		return false
+	}
+	majorMinor := semver.MajorMinor(v)
+	switch majorMinor {
+	case "v1.34":
+		return semver.Compare(v, minTPUv6eGKEVersion134) >= 0
+	case "v1.35":
+		return semver.Compare(v, minTPUv6eGKEVersion135) >= 0
+	case "v1.36":
+		return semver.Compare(v, minTPUv6eGKEVersion136) >= 0
+	case "v1.37":
+		return semver.Compare(v, minTPUv6eGKEVersion137) >= 0
+	default:
+		return semver.Compare(majorMinor, minTPUv6eGKEMinor138) >= 0
+	}
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -1449,7 +1464,7 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 // enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
 // on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
 // are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
-// (ct6e-*) machine.
+// (ct6e-standard-*) machine running a supported GKE nodepool version.
 func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
 	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
 		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
