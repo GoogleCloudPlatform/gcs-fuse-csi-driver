@@ -17,19 +17,25 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 type fakeNetworkManager struct {
-	rtTables   string
-	devices    []LinkDevice
-	routes     []Route
-	rules      []Rule
-	poisonedIP string
-	mutex      sync.Mutex
+	rtTables         string
+	devices          []LinkDevice
+	routes           []Route
+	rules            []Rule
+	poisonedIP       string
+	enableHWgroFunc  func() error
+	enableHWgroCalls int
+	hwGROMu          sync.Mutex
+	mutex            sync.Mutex
 }
 
 var _ NetworkManager = &fakeNetworkManager{}
@@ -110,6 +116,17 @@ func (mgr *fakeNetworkManager) AddRoute(table int, gatewayIP, device string) err
 		Gateway: gatewayIP,
 		Device:  device,
 	})
+	return nil
+}
+
+func (mgr *fakeNetworkManager) EnableHWgroOnDefaultNIC() error {
+	mgr.hwGROMu.Lock()
+	defer mgr.hwGROMu.Unlock()
+
+	mgr.enableHWgroCalls++
+	if mgr.enableHWgroFunc != nil {
+		return mgr.enableHWgroFunc()
+	}
 	return nil
 }
 
@@ -499,6 +516,169 @@ func TestSourceRouteForDevice(t *testing.T) {
 			}
 			if !reflect.DeepEqual(append([]Rule{}, mgr.rules...), expectedRules) {
 				t.Errorf("Bad rules, expected %+v, got %+v", expectedRules, mgr.rules)
+			}
+		})
+	}
+}
+
+type fakeEthtoolClient struct {
+	features       map[string]bool
+	featuresErr    error
+	changeErrByKey map[string]error
+	changed        bool
+	changedKeys    []string
+}
+
+func (f *fakeEthtoolClient) Features(_ string) (map[string]bool, error) {
+	if f.featuresErr != nil {
+		return nil, f.featuresErr
+	}
+	out := make(map[string]bool, len(f.features))
+	for k, v := range f.features {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *fakeEthtoolClient) Change(_ string, config map[string]bool) error {
+	f.changed = true
+	for k := range config {
+		f.changedKeys = append(f.changedKeys, k)
+		if err, ok := f.changeErrByKey[k]; ok && err != nil {
+			return err
+		}
+	}
+	for k, v := range config {
+		f.features[k] = v
+	}
+	return nil
+}
+
+func TestEnableHWgroOnNIC(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		initialFeatures map[string]bool
+		featuresErr     error
+		changeErrByKey  map[string]error
+		wantFeatures    map[string]bool
+		wantChanged     bool
+		wantChangedKeys []string
+		expectError     bool
+	}{
+		{
+			name:            "enables rx-gro-hw and rx-lro when both are false",
+			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-gro-hw", "rx-lro"},
+		},
+		{
+			name:            "no-op when both features are already enabled",
+			initialFeatures: map[string]bool{"rx-gro-hw": true, "rx-lro": true},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
+			wantChanged:     false,
+		},
+		{
+			name:            "only changes rx-lro when rx-gro-hw is already enabled",
+			initialFeatures: map[string]bool{"rx-gro-hw": true, "rx-lro": false},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-lro"},
+		},
+		{
+			name:            "only changes rx-gro-hw when rx-lro is already enabled",
+			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": true},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-gro-hw"},
+		},
+		{
+			name:            "returns error and still enables rx-lro when rx-gro-hw is absent from features map",
+			initialFeatures: map[string]bool{"rx-lro": false},
+			wantFeatures:    map[string]bool{"rx-lro": true},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-lro"},
+			expectError:     true,
+		},
+		{
+			name:            "returns error and still enables rx-gro-hw when rx-lro is absent from features map",
+			initialFeatures: map[string]bool{"rx-gro-hw": false},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-gro-hw"},
+			expectError:     true,
+		},
+		{
+			name:            "returns error without changing when both features are absent from features map",
+			initialFeatures: map[string]bool{},
+			wantFeatures:    map[string]bool{},
+			wantChanged:     false,
+			expectError:     true,
+		},
+		{
+			name:            "rx-lro still succeeds when rx-gro-hw change fails",
+			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
+			changeErrByKey:  map[string]error{"rx-gro-hw": errors.New("unsupported")},
+			wantFeatures:    map[string]bool{"rx-gro-hw": false, "rx-lro": true},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-gro-hw", "rx-lro"},
+			expectError:     true,
+		},
+		{
+			name:            "rx-gro-hw still succeeds when rx-lro change fails",
+			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
+			changeErrByKey:  map[string]error{"rx-lro": errors.New("unsupported")},
+			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": false},
+			wantChanged:     true,
+			wantChangedKeys: []string{"rx-gro-hw", "rx-lro"},
+			expectError:     true,
+		},
+		{
+			name:        "skips without error when eth0 is absent on non-COS host (ENODEV)",
+			featuresErr: unix.ENODEV,
+			wantChanged: false,
+			expectError: false,
+		},
+		{
+			name:        "returns error when Features fails with non-ENODEV error",
+			featuresErr: errors.New("ioctl failure"),
+			wantChanged: false,
+			expectError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			features := make(map[string]bool, len(tc.initialFeatures))
+			for k, v := range tc.initialFeatures {
+				features[k] = v
+			}
+			fakeEth := &fakeEthtoolClient{
+				features:       features,
+				featuresErr:    tc.featuresErr,
+				changeErrByKey: tc.changeErrByKey,
+			}
+
+			err := enableHWgroOnNIC(fakeEth, cosDefaultNIC)
+
+			if tc.expectError && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if fakeEth.changed != tc.wantChanged {
+				t.Errorf("changed = %v, want %v", fakeEth.changed, tc.wantChanged)
+			}
+			if !reflect.DeepEqual(fakeEth.changedKeys, tc.wantChangedKeys) {
+				t.Errorf("changedKeys = %v, want %v", fakeEth.changedKeys, tc.wantChangedKeys)
+			}
+			if tc.wantFeatures != nil && !reflect.DeepEqual(fakeEth.features, tc.wantFeatures) {
+				t.Errorf("features = %v, want %v", fakeEth.features, tc.wantFeatures)
 			}
 		})
 	}

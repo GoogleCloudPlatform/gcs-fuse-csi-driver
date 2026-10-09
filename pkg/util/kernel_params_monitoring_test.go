@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"syscall"
 	"testing"
 
@@ -672,123 +671,6 @@ func TestMountUsingElevatedFuseMaxPagesLimitPanic(t *testing.T) {
 	}
 	if finalLimit != 256 {
 		t.Errorf("Expected final limit to be restored to 256, got %d", finalLimit)
-	}
-}
-
-type fakeEthtoolClient struct {
-	features       map[string]bool
-	featuresErr    error
-	changeErrByKey map[string]error
-	changed        bool
-}
-
-func (f *fakeEthtoolClient) Features(_ string) (map[string]bool, error) {
-	if f.featuresErr != nil {
-		return nil, f.featuresErr
-	}
-	out := make(map[string]bool, len(f.features))
-	for k, v := range f.features {
-		out[k] = v
-	}
-	return out, nil
-}
-
-func (f *fakeEthtoolClient) Change(_ string, config map[string]bool) error {
-	f.changed = true
-	for k := range config {
-		if err, ok := f.changeErrByKey[k]; ok && err != nil {
-			return err
-		}
-	}
-	for k, v := range config {
-		f.features[k] = v
-	}
-	return nil
-}
-
-func TestEnableHWgroOnNIC(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name            string
-		initialFeatures map[string]bool
-		featuresErr     error
-		changeErrByKey  map[string]error
-		wantFeatures    map[string]bool
-		wantChanged     bool
-		expectError     bool
-	}{
-		{
-			name:            "enables rx-gro-hw and rx-lro when both are false",
-			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
-			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
-			wantChanged:     true,
-		},
-		{
-			name:            "no-op when both features are already enabled",
-			initialFeatures: map[string]bool{"rx-gro-hw": true, "rx-lro": true},
-			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": true},
-			wantChanged:     false,
-		},
-		{
-			name:            "rx-lro still succeeds when rx-gro-hw change fails",
-			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
-			changeErrByKey:  map[string]error{"rx-gro-hw": errors.New("unsupported")},
-			wantFeatures:    map[string]bool{"rx-gro-hw": false, "rx-lro": true},
-			wantChanged:     true,
-			expectError:     true,
-		},
-		{
-			name:            "rx-gro-hw still succeeds when rx-lro change fails",
-			initialFeatures: map[string]bool{"rx-gro-hw": false, "rx-lro": false},
-			changeErrByKey:  map[string]error{"rx-lro": errors.New("unsupported")},
-			wantFeatures:    map[string]bool{"rx-gro-hw": true, "rx-lro": false},
-			wantChanged:     true,
-			expectError:     true,
-		},
-		{
-			name:        "skips without error when eth0 is absent on non-COS host (ENODEV)",
-			featuresErr: unix.ENODEV,
-			wantChanged: false,
-			expectError: false,
-		},
-		{
-			name:        "returns error when Features fails with non-ENODEV error",
-			featuresErr: errors.New("ioctl failure"),
-			wantChanged: false,
-			expectError: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			features := make(map[string]bool, len(tc.initialFeatures))
-			for k, v := range tc.initialFeatures {
-				features[k] = v
-			}
-			fakeEth := &fakeEthtoolClient{
-				features:       features,
-				featuresErr:    tc.featuresErr,
-				changeErrByKey: tc.changeErrByKey,
-			}
-
-			err := enableHWgroOnNIC(fakeEth, cosDefaultNIC)
-
-			if tc.expectError && err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !tc.expectError && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if fakeEth.changed != tc.wantChanged {
-				t.Errorf("changed = %v, want %v", fakeEth.changed, tc.wantChanged)
-			}
-			if tc.wantFeatures != nil && !reflect.DeepEqual(fakeEth.features, tc.wantFeatures) {
-				t.Errorf("features = %v, want %v", fakeEth.features, tc.wantFeatures)
-			}
-		})
 	}
 }
 

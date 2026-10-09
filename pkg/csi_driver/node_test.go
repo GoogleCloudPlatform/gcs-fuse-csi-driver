@@ -4407,23 +4407,26 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		enableHWgro         bool
 		machineType         string
 		cosUnsupported      bool
-		enableHWgroErr      error
+		cosCheckErr         error
+		sidecarUnsupported  bool
+		enableHWgroErrs     []error
 		alreadyMounted      bool
-		expectHWgroCalled   bool
+		mountCount          int
+		wantHWgroCalls      int
 	}{
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t enables HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   true,
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-8t enables HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
-			expectHWgroCalled:   true,
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with older COS version does not enable HWgro",
@@ -4431,43 +4434,59 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			cosUnsupported:      true,
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with COS version check error does not enable HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			cosCheckErr:         fmt.Errorf("mock os-release read error"),
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with unsupported sidecar version does not enable HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			sidecarUnsupported:  true,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=false and enableHWgro=true on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=false and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on non-v6e machine type does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "n2-standard-8",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "HWgro error is logged and does not fail NodePublishVolume",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			enableHWgroErr:      fmt.Errorf("mock ethtool error"),
-			expectHWgroCalled:   true,
+			enableHWgroErrs:     []error{fmt.Errorf("mock ethtool error")},
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "already mounted targetPath skips HWgro on republish",
@@ -4475,7 +4494,24 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			alreadyMounted:      true,
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "succeeds on first mount and does not re-run on second mount",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			mountCount:          2,
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "retries on second mount after transient error and latches on third mount",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			enableHWgroErrs:     []error{fmt.Errorf("transient EBUSY"), nil},
+			mountCount:          3,
+			wantHWgroCalls:      2,
 		},
 	}
 
@@ -4511,39 +4547,59 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 
 			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
-			driver.config.AssumeGoodSidecarVersion = true
+			driver.config.AssumeGoodSidecarVersion = !tc.sidecarUnsupported
 			ns := newNodeServer(driver, fakeMounter).(*nodeServer)
 
-			hwGROCalled := false
-			ns.enableHWgro = func() error {
-				hwGROCalled = true
-				return tc.enableHWgroErr
+			nwMgr := driver.config.NetworkManager.(*fakeNetworkManager)
+			errIdx := 0
+			nwMgr.enableHWgroFunc = func() error {
+				if errIdx < len(tc.enableHWgroErrs) {
+					err := tc.enableHWgroErrs[errIdx]
+					errIdx++
+					return err
+				}
+				return nil
 			}
 			ns.isCOSVersionSupported = func() (bool, string, error) {
+				if tc.cosCheckErr != nil {
+					return false, "", tc.cosCheckErr
+				}
 				if tc.cosUnsupported {
 					return false, "cos-125-19216-395-137", nil
 				}
 				return true, "cos-125-19216-395-138", nil
 			}
 
-			req := &csi.NodePublishVolumeRequest{
-				VolumeId:         testVolumeID,
-				TargetPath:       testTargetPath,
-				VolumeCapability: testVolumeCapability,
-				VolumeContext: map[string]string{
-					VolumeContextKeyPodName:      "test-pod",
-					VolumeContextKeyPodNamespace: "test-ns",
-				},
+			mounts := tc.mountCount
+			if mounts <= 0 {
+				mounts = 1
 			}
+			for i := range mounts {
+				targetPath := testTargetPath
+				if i > 0 {
+					var extraCleanup func()
+					targetPath, extraCleanup = setupTestTargetPath(t)
+					defer extraCleanup()
+				}
+				req := &csi.NodePublishVolumeRequest{
+					VolumeId:         testVolumeID,
+					TargetPath:       targetPath,
+					VolumeCapability: testVolumeCapability,
+					VolumeContext: map[string]string{
+						VolumeContextKeyPodName:      "test-pod",
+						VolumeContextKeyPodNamespace: "test-ns",
+					},
+				}
 
-			_, err := ns.NodePublishVolume(t.Context(), req)
-			ns.enableHWgroWg.Wait()
+				_, err := ns.NodePublishVolume(t.Context(), req)
+				ns.enableHWgroWg.Wait()
 
-			if err != nil {
-				t.Fatalf("NodePublishVolume failed: %v", err)
+				if err != nil {
+					t.Fatalf("NodePublishVolume (mount %d) failed: %v", i, err)
+				}
 			}
-			if hwGROCalled != tc.expectHWgroCalled {
-				t.Errorf("hwGROCalled = %v, want %v", hwGROCalled, tc.expectHWgroCalled)
+			if nwMgr.enableHWgroCalls != tc.wantHWgroCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", nwMgr.enableHWgroCalls, tc.wantHWgroCalls)
 			}
 		})
 	}
@@ -4562,23 +4618,26 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		enableHWgro         bool
 		machineType         string
 		cosUnsupported      bool
-		enableHWgroErr      error
+		cosCheckErr         error
+		sidecarUnsupported  bool
+		enableHWgroErrs     []error
 		alreadyMounted      bool
-		expectHWgroCalled   bool
+		stageCount          int
+		wantHWgroCalls      int
 	}{
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t enables HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   true,
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-8t enables HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
-			expectHWgroCalled:   true,
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with older COS version does not enable HWgro",
@@ -4586,43 +4645,59 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			cosUnsupported:      true,
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with COS version check error does not enable HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			cosCheckErr:         fmt.Errorf("mock os-release read error"),
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with unsupported sidecar version does not enable HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			sidecarUnsupported:  true,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=false and enableHWgro=true on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=false and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
 			enableGrpcByDefault: false,
 			enableHWgro:         false,
 			machineType:         "ct6e-standard-4t",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=true on non-v6e machine type does not enable HWgro",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "n2-standard-8",
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "HWgro error is logged and does not fail NodeStageVolume",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
-			enableHWgroErr:      fmt.Errorf("mock ethtool error"),
-			expectHWgroCalled:   true,
+			enableHWgroErrs:     []error{fmt.Errorf("mock ethtool error")},
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "already mounted stagingPath skips HWgro on restage",
@@ -4630,7 +4705,24 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			alreadyMounted:      true,
-			expectHWgroCalled:   false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "succeeds on first stage and does not re-run on second stage",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			stageCount:          2,
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "retries on second stage after transient error and latches on third stage",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			enableHWgroErrs:     []error{fmt.Errorf("transient EBUSY"), nil},
+			stageCount:          3,
+			wantHWgroCalls:      2,
 		},
 	}
 
@@ -4667,31 +4759,50 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			ns.mounter = fakeMounter
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			ns.driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
-			ns.driver.config.AssumeGoodSidecarVersion = true
+			ns.driver.config.AssumeGoodSidecarVersion = !tc.sidecarUnsupported
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-			hwGROCalled := false
-			ns.enableHWgro = func() error {
-				hwGROCalled = true
-				return tc.enableHWgroErr
+			errIdx := 0
+			testEnv.nwMgr.enableHWgroFunc = func() error {
+				if errIdx < len(tc.enableHWgroErrs) {
+					err := tc.enableHWgroErrs[errIdx]
+					errIdx++
+					return err
+				}
+				return nil
 			}
 			ns.isCOSVersionSupported = func() (bool, string, error) {
+				if tc.cosCheckErr != nil {
+					return false, "", tc.cosCheckErr
+				}
 				if tc.cosUnsupported {
 					return false, "cos-125-19216-395-137", nil
 				}
 				return true, "cos-125-19216-395-138", nil
 			}
 
-			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
-
-			_, err := ns.NodeStageVolume(t.Context(), stageReq)
-			ns.enableHWgroWg.Wait()
-
-			if err != nil {
-				t.Fatalf("NodeStageVolume failed: %v", err)
+			stages := tc.stageCount
+			if stages <= 0 {
+				stages = 1
 			}
-			if hwGROCalled != tc.expectHWgroCalled {
-				t.Errorf("hwGROCalled = %v, want %v", hwGROCalled, tc.expectHWgroCalled)
+			for i := range stages {
+				stagingPath := testStagingPath
+				if i > 0 {
+					var extraCleanup func()
+					stagingPath, extraCleanup = setupTestStagingPath(t)
+					defer extraCleanup()
+				}
+				stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+
+				_, err := ns.NodeStageVolume(t.Context(), stageReq)
+				ns.enableHWgroWg.Wait()
+
+				if err != nil {
+					t.Fatalf("NodeStageVolume (stage %d) failed: %v", i, err)
+				}
+			}
+			if testEnv.nwMgr.enableHWgroCalls != tc.wantHWgroCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", testEnv.nwMgr.enableHWgroCalls, tc.wantHWgroCalls)
 			}
 		})
 	}
@@ -4707,64 +4818,128 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			},
 		},
 	}
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
 
 	testCases := []struct {
-		name           string
-		features       *GCSDriverFeatureOptions
-		node           *corev1.Node
-		cosUnsupported bool
-		invocations    int
-		wantCalls      int
+		name            string
+		features        *GCSDriverFeatureOptions
+		node            *corev1.Node
+		mounterImage    string
+		mounterImages   []string
+		nilNwMgr        bool
+		cosUnsupported  bool
+		cosCheckErr     error
+		enableHWgroErrs []error
+		invocations     int
+		wantCalls       int
 	}{
 		{
-			name:        "node is nil",
-			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:        nil,
-			invocations: 1,
-			wantCalls:   0,
+			name:         "node is nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         nil,
+			mounterImage: supportedImage,
+			invocations:  1,
+			wantCalls:    0,
 		},
 		{
-			name:        "node labels are nil",
-			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:        &corev1.Node{},
-			invocations: 1,
-			wantCalls:   0,
+			name:         "node labels are nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         &corev1.Node{},
+			mounterImage: supportedImage,
+			invocations:  1,
+			wantCalls:    0,
 		},
 		{
-			name:        "feature options is nil",
-			features:    nil,
-			node:        validNode,
-			invocations: 1,
-			wantCalls:   0,
+			name:         "feature options is nil",
+			features:     nil,
+			node:         validNode,
+			mounterImage: supportedImage,
+			invocations:  1,
+			wantCalls:    0,
 		},
 		{
-			name:        "only EnableGrpcByDefault is true and EnableHWgro is false",
-			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: false},
-			node:        validNode,
-			invocations: 1,
-			wantCalls:   0,
+			name:         "network manager is nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			nilNwMgr:     true,
+			invocations:  1,
+			wantCalls:    0,
 		},
 		{
-			name:        "only EnableHWgro is true and EnableGrpcByDefault is false",
-			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: false, EnableHWgro: true},
-			node:        validNode,
-			invocations: 1,
-			wantCalls:   0,
+			name:         "only EnableGrpcByDefault is true and EnableHWgro is false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: false},
+			node:         validNode,
+			mounterImage: supportedImage,
+			invocations:  1,
+			wantCalls:    0,
+		},
+		{
+			name:         "only EnableHWgro is true and EnableGrpcByDefault is false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			invocations:  1,
+			wantCalls:    0,
 		},
 		{
 			name:           "older COS version causes enable-grpc-by-default to be false and skips HWgro",
 			features:       &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:           validNode,
+			mounterImage:   supportedImage,
 			cosUnsupported: true,
 			invocations:    1,
 			wantCalls:      0,
 		},
 		{
-			name:        "called only once per nodeServer across multiple invocations",
-			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:        validNode,
-			invocations: 2,
-			wantCalls:   1,
+			name:         "COS version check error causes enable-grpc-by-default to be false and skips HWgro",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			cosCheckErr:  errors.New("mock os-release read error"),
+			invocations:  1,
+			wantCalls:    0,
+		},
+		{
+			name:         "unsupported sidecar version skips HWgro",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: unsupportedImage,
+			invocations:  1,
+			wantCalls:    0,
+		},
+		{
+			name:          "unsupported sidecar version does not latch and allows subsequent supported sidecar invocation",
+			features:      &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:          validNode,
+			mounterImages: []string{unsupportedImage, supportedImage, supportedImage},
+			wantCalls:     1,
+		},
+		{
+			name:         "empty sidecar image skips HWgro",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: "",
+			invocations:  1,
+			wantCalls:    0,
+		},
+		{
+			name:         "called only once per nodeServer across multiple invocations",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			invocations:  2,
+			wantCalls:    1,
+		},
+		{
+			name:            "retries on subsequent invocation after transient failure and latches after success",
+			features:        &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:            validNode,
+			mounterImage:    supportedImage,
+			enableHWgroErrs: []error{errors.New("transient EBUSY"), nil},
+			invocations:     3,
+			wantCalls:       2,
 		},
 	}
 
@@ -4772,18 +4947,32 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			hwGROCalls := 0
+			errIdx := 0
+			nwMgr := &fakeNetworkManager{
+				enableHWgroFunc: func() error {
+					if errIdx < len(tc.enableHWgroErrs) {
+						err := tc.enableHWgroErrs[errIdx]
+						errIdx++
+						return err
+					}
+					return nil
+				},
+			}
+			var mgr NetworkManager = nwMgr
+			if tc.nilNwMgr {
+				mgr = nil
+			}
 			ns := &nodeServer{
 				driver: &GCSDriver{
 					config: &GCSDriverConfig{
 						FeatureOptions: tc.features,
 					},
 				},
-				enableHWgro: func() error {
-					hwGROCalls++
-					return nil
-				},
+				nwMgr: mgr,
 				isCOSVersionSupported: func() (bool, string, error) {
+					if tc.cosCheckErr != nil {
+						return false, "", tc.cosCheckErr
+					}
 					if tc.cosUnsupported {
 						return false, "cos-125-19216-395-137", nil
 					}
@@ -4791,14 +4980,153 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 				},
 			}
 
-			for range tc.invocations {
-				ns.enableHWgroIfApplicable(tc.node)
+			if len(tc.mounterImages) > 0 {
+				for _, img := range tc.mounterImages {
+					ns.enableHWgroIfApplicable(tc.node, img)
+					ns.enableHWgroWg.Wait()
+				}
+			} else {
+				for range tc.invocations {
+					ns.enableHWgroIfApplicable(tc.node, tc.mounterImage)
+					ns.enableHWgroWg.Wait()
+				}
 			}
-			ns.enableHWgroWg.Wait()
 
-			if hwGROCalls != tc.wantCalls {
-				t.Errorf("hwGROCalls = %d, want %d", hwGROCalls, tc.wantCalls)
+			if nwMgr.enableHWgroCalls != tc.wantCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", nwMgr.enableHWgroCalls, tc.wantCalls)
 			}
 		})
 	}
+
+	t.Run("skips duplicate concurrent invocation while attempt is already in flight", func(t *testing.T) {
+		t.Parallel()
+
+		started := make(chan struct{})
+		release := make(chan struct{})
+		nwMgr := &fakeNetworkManager{
+			enableHWgroFunc: func() error {
+				close(started)
+				<-release
+				return nil
+			},
+		}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+			isCOSVersionSupported: func() (bool, string, error) {
+				return true, "cos-125-19216-395-138", nil
+			},
+		}
+
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		<-started
+		// Second invocation arrives while the first is still running; it should be a no-op.
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		close(release)
+		ns.enableHWgroWg.Wait()
+
+		if nwMgr.enableHWgroCalls != 1 {
+			t.Errorf("enableHWgroCalls = %d, want 1", nwMgr.enableHWgroCalls)
+		}
+	})
+
+	t.Run("skips concurrent invocation during in-flight failure and retries on subsequent invocation", func(t *testing.T) {
+		t.Parallel()
+
+		started := make(chan struct{})
+		release := make(chan struct{})
+		attempt := 0
+		nwMgr := &fakeNetworkManager{
+			enableHWgroFunc: func() error {
+				attempt++
+				if attempt == 1 {
+					close(started)
+					<-release
+					return errors.New("transient EBUSY")
+				}
+				return nil
+			},
+		}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+			isCOSVersionSupported: func() (bool, string, error) {
+				return true, "cos-125-19216-395-138", nil
+			},
+		}
+
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		<-started
+		// Concurrent invocation while first attempt is in flight should return immediately without calling EnableHWgroOnDefaultNIC.
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		close(release)
+		ns.enableHWgroWg.Wait()
+
+		if nwMgr.enableHWgroCalls != 1 {
+			t.Fatalf("enableHWgroCalls after in-flight failure = %d, want 1", nwMgr.enableHWgroCalls)
+		}
+
+		// Subsequent invocation after the first attempt failed should retry and succeed.
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+		// Further invocation after success should be a no-op.
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+
+		if nwMgr.enableHWgroCalls != 2 {
+			t.Errorf("enableHWgroCalls after retry and latch = %d, want 2", nwMgr.enableHWgroCalls)
+		}
+	})
+
+	t.Run("in-flight EnableHWgroOnDefaultNIC does not block foreground AddSourceRouteForDevice", func(t *testing.T) {
+		t.Parallel()
+
+		started := make(chan struct{})
+		release := make(chan struct{})
+		nwMgr := &fakeNetworkManager{
+			devices: []LinkDevice{{Name: "eth0", Driver: "gve", NumaNode: 0}},
+			routes:  []Route{{Device: "eth0", Gateway: "10.128.0.1", Source: "10.128.0.13", Table: 254}},
+			enableHWgroFunc: func() error {
+				close(started)
+				<-release
+				return nil
+			},
+		}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+			isCOSVersionSupported: func() (bool, string, error) {
+				return true, "cos-125-19216-395-138", nil
+			},
+		}
+
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		<-started
+		// Foreground multi-NIC routing setup must not block while EnableHWgroOnDefaultNIC is in flight.
+		src, err := AddSourceRouteForDevice(ns.nwMgr, "eth0")
+		if err != nil {
+			t.Fatalf("AddSourceRouteForDevice failed while EnableHWgroOnDefaultNIC in flight: %v", err)
+		}
+		if src != "10.128.0.13" {
+			t.Errorf("AddSourceRouteForDevice source = %q, want %q", src, "10.128.0.13")
+		}
+		close(release)
+		ns.enableHWgroWg.Wait()
+
+		if nwMgr.enableHWgroCalls != 1 {
+			t.Errorf("enableHWgroCalls = %d, want 1", nwMgr.enableHWgroCalls)
+		}
+	})
 }

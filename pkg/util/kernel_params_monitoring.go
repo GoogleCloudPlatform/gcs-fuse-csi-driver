@@ -19,7 +19,6 @@ package util
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,14 +28,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/safchain/ethtool"
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 )
 
 const (
-	// cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
-	cosDefaultNIC = "eth0"
 	// hostOSReleasePath is the mounted host /etc/os-release path inside the gcsfusecsi-node container.
 	hostOSReleasePath = "/host-etc-os-release"
 	// MinGrpcByDefaultCOSVersionStr is the minimum COS image version required on TPU v6e nodes
@@ -48,20 +44,11 @@ const (
 // corresponding to VERSION_ID=125 and BUILD_ID=19216.395.138 in /etc/os-release.
 var minGrpcByDefaultCOSVersion = [4]int{125, 19216, 395, 138}
 
-// ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
-type ethtoolClient interface {
-	Features(intf string) (map[string]bool, error)
-	Change(intf string, config map[string]bool) error
-}
-
 var (
 	// fuseMaxMaxPagesMu serializes concurrent updates to the host's FUSE max_pages_limit.
 	fuseMaxMaxPagesMu sync.Mutex
 	// ProcSysFsFuseMaxPagesLimitPath is the host FUSE max_pages_limit path (overridable for unit testing).
 	ProcSysFsFuseMaxPagesLimitPath = "/host-proc-sys-fs/fuse/max_pages_limit"
-
-	// hwGROMu serializes default NIC hardware GRO and LRO checks and updates across concurrent volume mounts.
-	hwGROMu sync.Mutex
 )
 
 // FuseMaxMaxPagesUpdateSupported returns true if the host supports FUSE max_pages_limit tuning.
@@ -180,66 +167,6 @@ func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
 		}
 	}
 	return true, cosVer, nil
-}
-
-// enableNICFeatureViaIOCTL enables a single NIC offload feature by its kernel
-// ETH_SS_FEATURES key, skipping the ETHTOOL_SFEATURES ioctl if already active.
-func enableNICFeatureViaIOCTL(eth ethtoolClient, features map[string]bool, nic, feature string) error {
-	alreadyEnabled, ok := features[feature]
-	if !ok {
-		return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
-	}
-	if alreadyEnabled {
-		return nil
-	}
-	if err := eth.Change(nic, map[string]bool{feature: true}); err != nil {
-		return fmt.Errorf("failed to enable %s on NIC %q: %w", feature, nic, err)
-	}
-	return nil
-}
-
-// enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) on the specified NIC using ethtool ioctls (Features read-before-write Change).
-// Each feature is attempted independently so that a failure on one feature does not prevent
-// the other from being enabled.
-func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
-	features, err := eth.Features(nic)
-	if err != nil {
-		if errors.Is(err, unix.ENODEV) {
-			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
-			return nil
-		}
-		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
-	}
-
-	// Apply rx-gro-hw and rx-lro (the kernel ETH_SS_FEATURES key for ethtool's "lro")
-	// in separate Change calls so that if the NIC/kernel rejects one offload, the other
-	// is still applied.
-	groErr := enableNICFeatureViaIOCTL(eth, features, nic, "rx-gro-hw")
-	lroErr := enableNICFeatureViaIOCTL(eth, features, nic, "rx-lro")
-	if err := errors.Join(groErr, lroErr); err != nil {
-		return err
-	}
-	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
-	return nil
-}
-
-// EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
-// on the host's COS default NIC (eth0).
-func EnableHWgroOnDefaultNIC() error {
-	hwGROMu.Lock()
-	defer hwGROMu.Unlock()
-
-	eth, err := ethtool.NewEthtool()
-	if err != nil {
-		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", cosDefaultNIC, err)
-	}
-	defer eth.Close()
-
-	if err := enableHWgroOnNIC(eth, cosDefaultNIC); err != nil {
-		return fmt.Errorf("failed to enable rx-gro-hw and large-receive-offload on NIC %q: %w", cosDefaultNIC, err)
-	}
-	return nil
 }
 
 // validateParamValue converts the string value to an integer and checks it against safe bounds.
