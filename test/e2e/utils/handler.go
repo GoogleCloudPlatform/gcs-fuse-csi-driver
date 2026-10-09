@@ -47,6 +47,7 @@ type TestParameters struct {
 	// GkeClusterRegion specifies the target GKE cluster region and implicitly sets
 	// Ginkgo's --test-bucket-location to co-locate test GCS buckets with the cluster.
 	GkeClusterRegion    string
+	GkeClusterZone      string
 	GkeClusterVersion   string
 	GkeReleaseChannel   string
 	GkeNodeVersion      string
@@ -362,6 +363,11 @@ func Handle(testParams *TestParameters) error {
 		}
 	}
 
+	testBucketLocation := testParams.GkeClusterRegion
+	if testParams.EnableZB && testParams.GkeClusterZone != "" {
+		testBucketLocation = testParams.GkeClusterZone
+	}
+
 	//nolint:gosec
 	cmd := exec.Command("ginkgo", "run", "-v",
 		"--procs", testParams.GinkgoProcs,
@@ -375,7 +381,7 @@ func Handle(testParams *TestParameters) error {
 		"--",
 		"--client-protocol", testParams.GcsfuseClientProtocol,
 		"--provider", "skeleton",
-		"--test-bucket-location", testParams.GkeClusterRegion,
+		"--test-bucket-location", testBucketLocation,
 		fmt.Sprintf("--enable-zb=%s", strconv.FormatBool(testParams.EnableZB)),
 		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
 		fmt.Sprintf("--enable-gcsfuse-profiles-test=%s", strconv.FormatBool(testParams.EnableGcsFuseProfiles)),

@@ -72,6 +72,30 @@ const (
 	capacityAdvisorStockoutScore = 0.1
 )
 
+// capacityAdvisorFallbackRegions are the fallback regions queried by Capacity Advisor
+// (after testParams.GkeClusterRegion, which defaults to "us-central1") to mitigate stockouts.
+var capacityAdvisorFallbackRegions = []string{
+	"us-east4",
+	"us-east1",
+	"us-west1",
+	"us-west4",
+	"europe-west1",
+	"europe-west3",
+}
+
+// zbSupportedZones maps Capacity Advisor candidate regions (testParams.GkeClusterRegion and
+// capacityAdvisorFallbackRegions) to the GCE zones in that region that support GCS Zonal Buckets
+// (RAPID storage class) and have rapid_zonal_bytes quota in Boskos.
+// See: https://cloud.google.com/storage/docs/locations#location-z
+var zbSupportedZones = map[string][]string{
+	"us-central1":  {"us-central1-a", "us-central1-b", "us-central1-c", "us-central1-f"},
+	"us-east4":     {"us-east4-a", "us-east4-b", "us-east4-c"},
+	"us-east1":     {"us-east1-b", "us-east1-d"},
+	"us-west1":     {"us-west1-a", "us-west1-b", "us-west1-c"},
+	"us-west4":     {"us-west4-a", "us-west4-b", "us-west4-c"},
+	"europe-west1": {"europe-west1-b", "europe-west1-c", "europe-west1-d"},
+}
+
 // gcloudCommand constructs an exec.Cmd for a gcloud command,
 // incorporating custom command paths and default arguments from TestParameters.
 func gcloudCommand(testParams *TestParameters, args ...string) *exec.Cmd {
@@ -165,14 +189,25 @@ func apiErrorMessage(body []byte) string {
 // See: https://cloud.google.com/compute/docs/reference/rest/beta/advice/capacity
 // TODO(b/570275744): Replace the POST with gcloud command when gcloud supports STANDARD provisioning model.
 func queryCapacityAdvice(testParams *TestParameters, region, token string) (string, float64, error) {
-	// Restrict capacity search to standard regional compute zones to avoid non-GKE AI zones.
-	distributionPolicy := map[string]any{"targetShape": capacityAdvisorTargetShape}
-	if zones := queryRegionalStandardZones(testParams, region); len(zones) > 0 {
-		zoneConfigs := make([]map[string]string, 0, len(zones))
-		for _, zone := range zones {
-			zoneConfigs = append(zoneConfigs, map[string]string{"zone": capacityAdvisorZonePrefix + zone})
-		}
-		distributionPolicy["zones"] = zoneConfigs
+	// Restrict capacity search to valid target zones in the region (ZB-supported zones for ZB runs,
+	// or standard regional compute zones excluding AI-only zones for non-ZB runs).
+	var zones []string
+	if testParams.EnableZB {
+		zones = zbSupportedZones[region]
+	} else {
+		zones = queryRegionalStandardZones(testParams, region)
+	}
+	if len(zones) == 0 {
+		return "", 0, fmt.Errorf("no valid target zones available in region %q (enableZB=%t)", region, testParams.EnableZB)
+	}
+
+	zoneConfigs := make([]map[string]string, 0, len(zones))
+	for _, zone := range zones {
+		zoneConfigs = append(zoneConfigs, map[string]string{"zone": capacityAdvisorZonePrefix + zone})
+	}
+	distributionPolicy := map[string]any{
+		"targetShape": capacityAdvisorTargetShape,
+		"zones":       zoneConfigs,
 	}
 
 	// Construct request using the body that 'gcloud beta compute advice capacity' sends (verified via --log-http), but with STANDARD.
@@ -258,24 +293,14 @@ func clusterUpGKE(testParams *TestParameters) error {
 		klog.Infof("Skipping gcloud components update for local run.")
 	}
 
-	// Fall back across candidate regions to mitigate stockouts; Zonal Buckets
-	// are pinned to testParams.GkeClusterRegion (which defaults to us-central1).
-	// For standard clusters, testParams.GkeClusterRegion is prioritized first,
-	// followed by candidate fallback regions with typically lower contention.
+	// Fall back across candidate regions to mitigate stockouts.
+	// testParams.GkeClusterRegion (which defaults to us-central1) is prioritized first,
+	// followed by capacityAdvisorFallbackRegions with typically lower contention.
+	// When EnableZB is true, skip fallback regions without ZB-supported zones (e.g. europe-west3).
 	candidateRegions := []string{testParams.GkeClusterRegion}
-	if !testParams.EnableZB {
-		fallbackRegions := []string{
-			"us-east4",
-			"us-east1",
-			"us-west1",
-			"us-west4",
-			"europe-west1",
-			"europe-west3",
-		}
-		for _, r := range fallbackRegions {
-			if r != testParams.GkeClusterRegion {
-				candidateRegions = append(candidateRegions, r)
-			}
+	for _, r := range capacityAdvisorFallbackRegions {
+		if r != testParams.GkeClusterRegion && (!testParams.EnableZB || len(zbSupportedZones[r]) > 0) {
+			candidateRegions = append(candidateRegions, r)
 		}
 	}
 
@@ -319,11 +344,12 @@ func clusterUpGKE(testParams *TestParameters) error {
 			}
 			klog.Infof("Selecting highest-scoring region %q (zone: %q, score: %.2f)", best.region, best.zone, best.score)
 
-			// Note: Updating GkeClusterRegion here implicitly updates the
+			// Note: Updating GkeClusterRegion (and GkeClusterZone for ZB) here implicitly updates the
 			// --test-bucket-location passed to Ginkgo. This ensures that the
 			// GCS buckets created during tests are co-located in this fallback
-			// region, preventing cross-region data transfer.
+			// region/zone, preventing cross-region or cross-zone data transfer.
 			testParams.GkeClusterRegion = best.region
+			testParams.GkeClusterZone = best.zone
 			// Autopilot manages node placement dynamically across zones within the region,
 			// so --node-locations is only applied to Standard clusters.
 			if !testParams.UseGKEAutopilot {

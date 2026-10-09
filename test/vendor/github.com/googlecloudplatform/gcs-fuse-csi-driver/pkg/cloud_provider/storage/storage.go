@@ -152,10 +152,19 @@ func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket)
 	}
 	if obj.EnableZB {
 		// Zonal Buckets are only supported for HNS, Uniform Bucket Level Access, and RAPID storage class.
-		// us-central1-f cannot be used for zb but there is no way to prevent jobs from using it. Instead we pin the bucket to us-central1-c.
-		klog.V(4).Infof("Creating bucket ZB in %v-c", obj.Location)
+		// GCS requires BucketAttrs.Location to be the parent region (e.g. "us-central1") and
+		// CustomPlacementConfig.DataLocations to be the zone (e.g. "us-central1-a").
+		var zone string
+		if parts := strings.Split(obj.Location, "-"); len(parts) == 3 {
+			// Extract the region from the zone since BucketAttrs.Location must be a region.
+			bktAttrs.Location = strings.Join(parts[:2], "-")
+			zone = obj.Location
+		} else {
+			zone = obj.Location + "-c"
+		}
+		klog.V(4).Infof("Creating bucket ZB in %v (region %v)", zone, bktAttrs.Location)
 		bktAttrs.CustomPlacementConfig = &storage.CustomPlacementConfig{
-			DataLocations: []string{obj.Location + "-c"},
+			DataLocations: []string{zone},
 		}
 		bktAttrs.UniformBucketLevelAccess.Enabled = true
 		bktAttrs.HierarchicalNamespace.Enabled = true
