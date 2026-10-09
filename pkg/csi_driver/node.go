@@ -81,6 +81,12 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
+	// Ensures the host COS version check for TPU v6e nodes is performed at most once per nodeServer lifecycle.
+	cosVersionCheckOnce sync.Once
+	cosVersionSupported bool
+	// Checks whether the host OS image meets the minimum COS version required for
+	// gRPC-by-default on TPU v6e nodes (overridable on nodeServer in tests).
+	isCOSVersionSupported func() (bool, string, error)
 	// Ensures host NIC GRO/LRO offloads are configured at most once per nodeServer lifecycle.
 	enableHWgroOnce sync.Once
 	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
@@ -99,6 +105,7 @@ func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
 		k8sClients:            driver.config.K8sClients,
 		limiter:               *rate.NewLimiter(rate.Every(time.Second), 10),
 		volumeStateStore:      util.NewVolumeStateStore(),
+		isCOSVersionSupported: util.IsCOSVersionSupportedForGrpcByDefault,
 		enableHWgro:           util.EnableHWgroOnDefaultNIC,
 	}
 }
@@ -422,7 +429,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
 	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
 	if err != nil {
@@ -432,6 +438,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err := s.checkWINodeLabel(node, pod.Spec.HostNetwork); err != nil {
 		return nil, err
 	}
+
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, gcsFuseSidecarImage, args.fuseMountOptions)
 
 	// Since the webhook mutating ordering is not definitive,
 	// the sidecar position is not checked in the ValidatePodHasSidecarContainerInjected func.
@@ -917,16 +925,51 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 }
 
 // appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
-// mount option if enabled in driver options and supported by the sidecar container image.
+// mount option if enabled for the node and supported by the sidecar container image.
 // If the feature is disabled or unsupported, mount options are returned unmodified.
-func (s *nodeServer) appendGrpcByDefaultOptions(mounterImage string, mountOptions []string) []string {
-	if s.driver.config.FeatureOptions == nil ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
+func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
+	if !s.isGrpcByDefaultEnabled(node) ||
 		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
 		return mountOptions
 	}
 
 	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+}
+
+// isGrpcByDefaultEnabled returns true if --enable-grpc-by-default is enabled for the given node.
+// On TPU v6e (ct6e-*) machines, enable-grpc-by-default is only enabled if the host COS image
+// version is >= cos-125-19216-395-138; on older versions it is false.
+func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
+		return false
+	}
+	if node == nil {
+		return false
+	}
+	machineType := node.Labels[clientset.MachineTypeKey]
+	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		return true
+	}
+
+	checkCOS := s.isCOSVersionSupported
+	if checkCOS == nil {
+		checkCOS = util.IsCOSVersionSupportedForGrpcByDefault
+	}
+	s.cosVersionCheckOnce.Do(func() {
+		supported, cosVer, err := checkCOS()
+		if err != nil {
+			klog.Errorf("Disabling enable-grpc-by-default on node %q (machine type %q): failed to verify COS image version: %v", node.Name, machineType, err)
+			s.cosVersionSupported = false
+			return
+		}
+		if !supported {
+			klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): host OS image %q does not meet minimum required COS version %q", node.Name, machineType, cosVer, util.MinGrpcByDefaultCOSVersionStr)
+			s.cosVersionSupported = false
+			return
+		}
+		s.cosVersionSupported = true
+	})
+	return s.cosVersionSupported
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -1126,7 +1169,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
 	args.fuseMountOptions = s.appendCloudProfilerOptions(podImage, args.enableCloudProfilerForSidecar, podName, string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(podImage, args.fuseMountOptions)
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, podImage, args.fuseMountOptions)
 
 	podUID := string(pod.UID)
 	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
@@ -1393,10 +1436,7 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 // on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
 // are enabled and the node is a TPU v6e (ct6e-*) machine.
 func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node) {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault || !s.driver.config.FeatureOptions.EnableHWgro {
-		return
-	}
-	if node == nil {
+	if !s.isGrpcByDefaultEnabled(node) || !s.driver.config.FeatureOptions.EnableHWgro {
 		return
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
@@ -1406,8 +1446,7 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node) {
 	// NIC offload tuning is host-wide and best-effort: run it at most once per nodeServer
 	// in a background goroutine so that volume mounts are never blocked if SIOCETHTOOL
 	// ioctls contend on the kernel's global rtnl_lock or stall during NIC driver
-	// reconfiguration. EnableHWgroOnDefaultNIC verifies via /host-etc-os-release that the
-	// host is running COS >= cos-125-19216-395-138 before configuring "eth0".
+	// reconfiguration.
 	enableFn := s.enableHWgro
 	if enableFn == nil {
 		enableFn = util.EnableHWgroOnDefaultNIC

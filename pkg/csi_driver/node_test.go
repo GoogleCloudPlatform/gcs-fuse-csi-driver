@@ -873,6 +873,9 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 		name                     string
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
+		machineType              string
+		cosUnsupported           bool
+		cosCheckErr              error
 		userMountOptions         string
 		expectedOptions          []string
 		unexpectedOptions        []string
@@ -923,6 +926,29 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with supported COS version >= cos-125-19216-395-138, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unsupported older COS version < cos-125-19216-395-138, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			cosUnsupported:           true,
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with COS version check error, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			cosCheckErr:              fmt.Errorf("mock os-release read error"),
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -947,17 +973,34 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			}
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
-			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
-			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
-			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			fc := clientset.NewFakeClientset()
+			if tc.machineType != "" {
+				fc.CreateNode(clientset.FakeNodeConfig{
+					IsWorkloadIdentityEnabled: true,
+					MachineType:               tc.machineType,
+				})
+			}
+
+			driver := initTestDriver(t, fakeMounter, fc)
+			s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+			if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 				t.Fatalf("failed to create the fake bucket: %v", err)
 			}
 
 			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
-			ns := newNodeServer(driver, fakeMounter)
+			ns := newNodeServer(driver, fakeMounter).(*nodeServer)
+			ns.isCOSVersionSupported = func() (bool, string, error) {
+				if tc.cosCheckErr != nil {
+					return false, "", tc.cosCheckErr
+				}
+				if tc.cosUnsupported {
+					return false, "cos-125-19216-395-137", nil
+				}
+				return true, "cos-125-19216-395-138", nil
+			}
 
-			_, err := ns.NodePublishVolume(context.Background(), req)
+			_, err := ns.NodePublishVolume(t.Context(), req)
 			if err != nil {
 				t.Fatalf("failed to publish volume: %v", err)
 			}
@@ -3362,6 +3405,9 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 		name                     string
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
+		machineType              string
+		cosUnsupported           bool
+		cosCheckErr              error
 		userMountOptions         string
 		expectedOptions          []string
 		unexpectedOptions        []string
@@ -3412,6 +3458,29 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with supported COS version >= cos-125-19216-395-138, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unsupported older COS version < cos-125-19216-395-138, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			cosUnsupported:           true,
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with COS version check error, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			cosCheckErr:              fmt.Errorf("mock os-release read error"),
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -3422,6 +3491,12 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
+			if tc.machineType != "" {
+				fc.CreateNode(clientset.FakeNodeConfig{
+					IsWorkloadIdentityEnabled: true,
+					MachineType:               tc.machineType,
+				})
+			}
 			fc.CreatePod(clientset.FakePodConfig{
 				Name:         podName,
 				Namespace:    podNamespace,
@@ -3442,6 +3517,15 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			ns.driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+			ns.isCOSVersionSupported = func() (bool, string, error) {
+				if tc.cosCheckErr != nil {
+					return false, "", tc.cosCheckErr
+				}
+				if tc.cosUnsupported {
+					return false, "cos-125-19216-395-137", nil
+				}
+				return true, "cos-125-19216-395-138", nil
+			}
 
 			var extraVC map[string]string
 			if tc.userMountOptions != "" {
@@ -3449,7 +3533,7 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			}
 			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, extraVC)
 
-			_, err := ns.NodeStageVolume(context.Background(), stageReq)
+			_, err := ns.NodeStageVolume(t.Context(), stageReq)
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -4322,6 +4406,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		enableGrpcByDefault bool
 		enableHWgro         bool
 		machineType         string
+		cosUnsupported      bool
 		enableHWgroErr      error
 		alreadyMounted      bool
 		expectHWgroCalled   bool
@@ -4339,6 +4424,14 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
 			expectHWgroCalled:   true,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with older COS version does not enable HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			cosUnsupported:      true,
+			expectHWgroCalled:   false,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
@@ -4426,6 +4519,12 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 				hwGROCalled = true
 				return tc.enableHWgroErr
 			}
+			ns.isCOSVersionSupported = func() (bool, string, error) {
+				if tc.cosUnsupported {
+					return false, "cos-125-19216-395-137", nil
+				}
+				return true, "cos-125-19216-395-138", nil
+			}
 
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
@@ -4462,6 +4561,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		enableGrpcByDefault bool
 		enableHWgro         bool
 		machineType         string
+		cosUnsupported      bool
 		enableHWgroErr      error
 		alreadyMounted      bool
 		expectHWgroCalled   bool
@@ -4479,6 +4579,14 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-8t",
 			expectHWgroCalled:   true,
+		},
+		{
+			name:                "enableGrpcByDefault=true and enableHWgro=true on ct6e-standard-4t with older COS version does not enable HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			cosUnsupported:      true,
+			expectHWgroCalled:   false,
 		},
 		{
 			name:                "enableGrpcByDefault=true and enableHWgro=false on ct6e-standard-4t does not enable HWgro",
@@ -4567,6 +4675,12 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 				hwGROCalled = true
 				return tc.enableHWgroErr
 			}
+			ns.isCOSVersionSupported = func() (bool, string, error) {
+				if tc.cosUnsupported {
+					return false, "cos-125-19216-395-137", nil
+				}
+				return true, "cos-125-19216-395-138", nil
+			}
 
 			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, nil)
 
@@ -4595,11 +4709,12 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name        string
-		features    *GCSDriverFeatureOptions
-		node        *corev1.Node
-		invocations int
-		wantCalls   int
+		name           string
+		features       *GCSDriverFeatureOptions
+		node           *corev1.Node
+		cosUnsupported bool
+		invocations    int
+		wantCalls      int
 	}{
 		{
 			name:        "node is nil",
@@ -4637,6 +4752,14 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			wantCalls:   0,
 		},
 		{
+			name:           "older COS version causes enable-grpc-by-default to be false and skips HWgro",
+			features:       &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:           validNode,
+			cosUnsupported: true,
+			invocations:    1,
+			wantCalls:      0,
+		},
+		{
 			name:        "called only once per nodeServer across multiple invocations",
 			features:    &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:        validNode,
@@ -4659,6 +4782,12 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 				enableHWgro: func() error {
 					hwGROCalls++
 					return nil
+				},
+				isCOSVersionSupported: func() (bool, string, error) {
+					if tc.cosUnsupported {
+						return false, "cos-125-19216-395-137", nil
+					}
+					return true, "cos-125-19216-395-138", nil
 				},
 			}
 

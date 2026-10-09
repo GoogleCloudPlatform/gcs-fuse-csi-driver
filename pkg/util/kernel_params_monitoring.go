@@ -39,13 +39,14 @@ const (
 	cosDefaultNIC = "eth0"
 	// hostOSReleasePath is the mounted host /etc/os-release path inside the gcsfusecsi-node container.
 	hostOSReleasePath = "/host-etc-os-release"
-	// minHWgroCOSVersionStr is the minimum COS image version required to enable hardware GRO and LRO offloads.
-	minHWgroCOSVersionStr = "cos-125-19216-395-138"
+	// MinGrpcByDefaultCOSVersionStr is the minimum COS image version required on TPU v6e nodes
+	// to enable gRPC by default and hardware GRO/LRO offloads.
+	MinGrpcByDefaultCOSVersionStr = "cos-125-19216-395-138"
 )
 
-// minHWgroCOSVersion represents cos-125-19216-395-138 as [milestone, build, branch, patch]
+// minGrpcByDefaultCOSVersion represents cos-125-19216-395-138 as [milestone, build, branch, patch]
 // corresponding to VERSION_ID=125 and BUILD_ID=19216.395.138 in /etc/os-release.
-var minHWgroCOSVersion = [4]int{125, 19216, 395, 138}
+var minGrpcByDefaultCOSVersion = [4]int{125, 19216, 395, 138}
 
 // ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
 type ethtoolClient interface {
@@ -105,10 +106,17 @@ func getDeviceMajorMinor(targetPath string) (major uint32, minor uint32, err err
 	return
 }
 
-// isCOSVersionSupportedForHWgro parses the host's os-release file at osReleasePath and
+// IsCOSVersionSupportedForGrpcByDefault checks whether the host's /etc/os-release
+// (mounted at /host-etc-os-release) is Container-Optimized OS (ID=cos) with an image
+// version greater than or equal to cos-125-19216-395-138.
+func IsCOSVersionSupportedForGrpcByDefault() (bool, string, error) {
+	return isCOSVersionSupported(hostOSReleasePath)
+}
+
+// isCOSVersionSupported parses the host's os-release file at osReleasePath and
 // checks whether the node is running Container-Optimized OS (ID=cos) with an image version
 // greater than or equal to cos-125-19216-395-138 (VERSION_ID=125, BUILD_ID=19216.395.138).
-func isCOSVersionSupportedForHWgro(osReleasePath string) (bool, string, error) {
+func isCOSVersionSupported(osReleasePath string) (bool, string, error) {
 	data, err := os.ReadFile(osReleasePath)
 	if err != nil {
 		return false, "", fmt.Errorf("failed to read %q: %w", osReleasePath, err)
@@ -167,8 +175,8 @@ func isCOSVersionSupportedForHWgro(osReleasePath string) (bool, string, error) {
 
 	cosVer := fmt.Sprintf("cos-%d-%d-%d-%d", actual[0], actual[1], actual[2], actual[3])
 	for i := range actual {
-		if actual[i] != minHWgroCOSVersion[i] {
-			return actual[i] > minHWgroCOSVersion[i], cosVer, nil
+		if actual[i] != minGrpcByDefaultCOSVersion[i] {
+			return actual[i] > minGrpcByDefaultCOSVersion[i], cosVer, nil
 		}
 	}
 	return true, cosVer, nil
@@ -217,19 +225,10 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 }
 
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
-// on the host's COS default NIC (eth0) when the host COS image is >= cos-125-19216-395-138.
+// on the host's COS default NIC (eth0).
 func EnableHWgroOnDefaultNIC() error {
 	hwGROMu.Lock()
 	defer hwGROMu.Unlock()
-
-	supported, cosVer, err := isCOSVersionSupportedForHWgro(hostOSReleasePath)
-	if err != nil {
-		return fmt.Errorf("failed to verify COS image version: %w", err)
-	}
-	if !supported {
-		klog.Infof("Skipping rx-gro-hw and rx-lro enablement: host OS image %q does not meet minimum required COS version %q", cosVer, minHWgroCOSVersionStr)
-		return nil
-	}
 
 	eth, err := ethtool.NewEthtool()
 	if err != nil {

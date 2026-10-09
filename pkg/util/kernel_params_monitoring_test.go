@@ -792,7 +792,7 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 	}
 }
 
-func TestIsCOSVersionSupportedForHWgro(t *testing.T) {
+func TestIsCOSVersionSupported(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -959,7 +959,7 @@ BUILD_ID=19216.395.xyz
 				}
 			}
 
-			supported, gotVersion, err := isCOSVersionSupportedForHWgro(osReleasePath)
+			supported, gotVersion, err := isCOSVersionSupported(osReleasePath)
 
 			if tc.expectError && err == nil {
 				t.Fatal("expected error, got nil")
