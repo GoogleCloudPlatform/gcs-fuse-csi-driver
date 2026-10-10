@@ -130,6 +130,10 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 		newStatus := corev1.NodeStatus{
 			// Used by the gcsfuse profiles feature to determine if the recommended cache fits in the node.
 			Allocatable: nodeObj.Status.Allocatable,
+			// Used to check the GKE nodepool version on TPU v6e nodes for gRPC-by-default gating.
+			NodeInfo: corev1.NodeSystemInfo{
+				KubeletVersion: nodeObj.Status.NodeInfo.KubeletVersion,
+			},
 		}
 
 		newAnnotations := map[string]string{}
