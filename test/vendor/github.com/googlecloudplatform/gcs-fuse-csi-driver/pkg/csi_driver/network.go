@@ -34,6 +34,8 @@ import (
 const (
 	// cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
 	cosDefaultNIC    = "eth0"
+	rxGroHWFeature   = "rx-gro-hw"
+	rxLROFeature     = "rx-lro"
 	gcsFuseTableName = "gcsfusecsi"
 	iprouteTableName = "/etc/iproute2/rt_tables"
 	sysDevTemplate   = "/sys/class/net/%s/device/numa_node"
@@ -587,7 +589,7 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
 	}
 
-	requiredFeatures := []string{"rx-gro-hw", "rx-lro"}
+	requiredFeatures := []string{rxGroHWFeature, rxLROFeature}
 	changes := make(map[string]bool)
 	for _, feature := range requiredFeatures {
 		alreadyEnabled, ok := features[feature]

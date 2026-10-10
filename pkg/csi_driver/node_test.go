@@ -4371,6 +4371,18 @@ func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
 	}
 }
 
+type fakeFailingMounter struct {
+	*mount.FakeMounter
+	mountErr error
+}
+
+func (f *fakeFailingMounter) Mount(source, target, fstype string, options []string) error {
+	if f.mountErr != nil {
+		return f.mountErr
+	}
+	return f.FakeMounter.Mount(source, target, fstype, options)
+}
+
 func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 	t.Parallel()
 
@@ -4381,9 +4393,8 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		machineType         string
 		kubeletVersion      string
 		sidecarUnsupported  bool
-		enableHWgroErrs     []error
+		enableHWgroErr      error
 		alreadyMounted      bool
-		mountCount          int
 		wantHWgroCalls      int
 	}{
 		{
@@ -4465,7 +4476,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
-			enableHWgroErrs:     []error{errors.New("mock ethtool error")},
+			enableHWgroErr:      errors.New("mock ethtool error"),
 			wantHWgroCalls:      1,
 		},
 		{
@@ -4477,41 +4488,14 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			alreadyMounted:      true,
 			wantHWgroCalls:      0,
 		},
-		{
-			name:                "succeeds on first mount and does not re-run on second mount",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			mountCount:          2,
-			wantHWgroCalls:      1,
-		},
-		{
-			name:                "retries on second mount after transient error and latches on third mount",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			enableHWgroErrs:     []error{errors.New("transient EBUSY"), nil},
-			mountCount:          3,
-			wantHWgroCalls:      2,
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mounts := tc.mountCount
-			if mounts <= 0 {
-				mounts = 1
-			}
-			targetPaths := make([]string, mounts)
-			for i := range mounts {
-				tp, cleanup := setupTestTargetPath(t)
-				t.Cleanup(cleanup)
-				targetPaths[i] = tp
-			}
+			targetPath, cleanup := setupTestTargetPath(t)
+			t.Cleanup(cleanup)
 
 			fc := clientset.NewFakeClientset()
 			fc.CreateNode(clientset.FakeNodeConfig{
@@ -4530,7 +4514,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 
 			mountPoints := []mount.MountPoint{}
 			if tc.alreadyMounted {
-				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: targetPaths[0], Type: FuseMountType}}
+				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: targetPath, Type: FuseMountType}}
 			}
 			fakeMounter := mount.NewFakeMounter(mountPoints)
 			driver := initTestDriver(t, fakeMounter, fc)
@@ -4551,39 +4535,202 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			if !ok {
 				t.Fatal("failed to cast NetworkManager to *fakeNetworkManager")
 			}
-			errIdx := 0
 			nwMgr.enableHWgroFunc = func() error {
-				if errIdx < len(tc.enableHWgroErrs) {
-					err := tc.enableHWgroErrs[errIdx]
-					errIdx++
-					return err
-				}
-				return nil
+				return tc.enableHWgroErr
 			}
 
-			for i, targetPath := range targetPaths {
-				req := &csi.NodePublishVolumeRequest{
-					VolumeId:         testVolumeID,
-					TargetPath:       targetPath,
-					VolumeCapability: testVolumeCapability,
-					VolumeContext: map[string]string{
-						VolumeContextKeyPodName:      "test-pod",
-						VolumeContextKeyPodNamespace: "test-ns",
-					},
-				}
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       targetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
+			}
 
-				_, err := ns.NodePublishVolume(t.Context(), req)
-				ns.enableHWgroWg.Wait()
+			_, err := ns.NodePublishVolume(t.Context(), req)
+			ns.enableHWgroWg.Wait()
 
-				if err != nil {
-					t.Fatalf("NodePublishVolume (mount %d) failed: %v", i, err)
-				}
+			if err != nil {
+				t.Fatalf("NodePublishVolume failed: %v", err)
 			}
 			if got := nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
 				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
 			}
 		})
 	}
+
+	t.Run("does not enable HWgro when mount fails on supported TPU v6e node", func(t *testing.T) {
+		t.Parallel()
+
+		targetPath, cleanup := setupTestTargetPath(t)
+		t.Cleanup(cleanup)
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+		failingMounter := &fakeFailingMounter{
+			FakeMounter: fakeMounter,
+			mountErr:    errors.New("mock mount failure"),
+		}
+		driver := initTestDriver(t, fakeMounter, fc)
+		s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+		if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			t.Fatalf("failed to create the fake bucket: %v", err)
+		}
+		driver.config.FeatureOptions.EnableGrpcByDefault = true
+		driver.config.FeatureOptions.EnableHWgro = true
+		driver.config.AssumeGoodSidecarVersion = true
+		ns, ok := newNodeServer(driver, failingMounter).(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		nwMgr, ok := driver.config.NetworkManager.(*fakeNetworkManager)
+		if !ok {
+			t.Fatal("failed to cast NetworkManager to *fakeNetworkManager")
+		}
+
+		req := &csi.NodePublishVolumeRequest{
+			VolumeId:         testVolumeID,
+			TargetPath:       targetPath,
+			VolumeCapability: testVolumeCapability,
+			VolumeContext: map[string]string{
+				VolumeContextKeyPodName:      "test-pod",
+				VolumeContextKeyPodNamespace: "test-ns",
+			},
+		}
+
+		_, err := ns.NodePublishVolume(t.Context(), req)
+		ns.enableHWgroWg.Wait()
+
+		if err == nil {
+			t.Fatal("expected NodePublishVolume to fail when mount fails, got nil")
+		}
+		if got := nwMgr.getEnableHWgroCalls(); got != 0 {
+			t.Errorf("enableHWgroCalls = %d, want 0", got)
+		}
+	})
+
+	t.Run("succeeds on first mount and does not re-run on second mount", func(t *testing.T) {
+		t.Parallel()
+
+		targetPath1, cleanup1 := setupTestTargetPath(t)
+		t.Cleanup(cleanup1)
+		targetPath2, cleanup2 := setupTestTargetPath(t)
+		t.Cleanup(cleanup2)
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+		driver := initTestDriver(t, fakeMounter, fc)
+		s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+		if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			t.Fatalf("failed to create the fake bucket: %v", err)
+		}
+		driver.config.FeatureOptions.EnableGrpcByDefault = true
+		driver.config.FeatureOptions.EnableHWgro = true
+		driver.config.AssumeGoodSidecarVersion = true
+		ns, ok := newNodeServer(driver, fakeMounter).(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		nwMgr, ok := driver.config.NetworkManager.(*fakeNetworkManager)
+		if !ok {
+			t.Fatal("failed to cast NetworkManager to *fakeNetworkManager")
+		}
+
+		for i, targetPath := range []string{targetPath1, targetPath2} {
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       targetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
+			}
+			if _, err := ns.NodePublishVolume(t.Context(), req); err != nil {
+				t.Fatalf("NodePublishVolume (mount %d) failed: %v", i, err)
+			}
+			ns.enableHWgroWg.Wait()
+		}
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 1 {
+			t.Errorf("enableHWgroCalls = %d, want 1", got)
+		}
+	})
+
+	t.Run("retries on second mount after transient error and latches on third mount", func(t *testing.T) {
+		t.Parallel()
+
+		targetPaths := make([]string, 3)
+		for i := range 3 {
+			tp, cleanup := setupTestTargetPath(t)
+			t.Cleanup(cleanup)
+			targetPaths[i] = tp
+		}
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+		driver := initTestDriver(t, fakeMounter, fc)
+		s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+		if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			t.Fatalf("failed to create the fake bucket: %v", err)
+		}
+		driver.config.FeatureOptions.EnableGrpcByDefault = true
+		driver.config.FeatureOptions.EnableHWgro = true
+		driver.config.AssumeGoodSidecarVersion = true
+		ns, ok := newNodeServer(driver, fakeMounter).(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		nwMgr, ok := driver.config.NetworkManager.(*fakeNetworkManager)
+		if !ok {
+			t.Fatal("failed to cast NetworkManager to *fakeNetworkManager")
+		}
+		attempt := 0
+		nwMgr.enableHWgroFunc = func() error {
+			attempt++
+			if attempt == 1 {
+				return errors.New("transient EBUSY")
+			}
+			return nil
+		}
+
+		for i, targetPath := range targetPaths {
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       targetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
+			}
+			if _, err := ns.NodePublishVolume(t.Context(), req); err != nil {
+				t.Fatalf("NodePublishVolume (mount %d) failed: %v", i, err)
+			}
+			ns.enableHWgroWg.Wait()
+		}
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 2 {
+			t.Errorf("enableHWgroCalls = %d, want 2", got)
+		}
+	})
 }
 
 func TestNodeStageVolumeEnableHWgro(t *testing.T) {
@@ -4602,9 +4749,8 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		machineType         string
 		kubeletVersion      string
 		sidecarUnsupported  bool
-		enableHWgroErrs     []error
+		enableHWgroErr      error
 		alreadyMounted      bool
-		stageCount          int
 		wantHWgroCalls      int
 	}{
 		{
@@ -4686,7 +4832,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
-			enableHWgroErrs:     []error{errors.New("mock ethtool error")},
+			enableHWgroErr:      errors.New("mock ethtool error"),
 			wantHWgroCalls:      1,
 		},
 		{
@@ -4698,41 +4844,14 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			alreadyMounted:      true,
 			wantHWgroCalls:      0,
 		},
-		{
-			name:                "succeeds on first stage and does not re-run on second stage",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			stageCount:          2,
-			wantHWgroCalls:      1,
-		},
-		{
-			name:                "retries on second stage after transient error and latches on third stage",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			enableHWgroErrs:     []error{errors.New("transient EBUSY"), nil},
-			stageCount:          3,
-			wantHWgroCalls:      2,
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			stages := tc.stageCount
-			if stages <= 0 {
-				stages = 1
-			}
-			stagingPaths := make([]string, stages)
-			for i := range stages {
-				sp, cleanupStaging := setupTestStagingPath(t)
-				t.Cleanup(cleanupStaging)
-				stagingPaths[i] = sp
-			}
+			stagingPath, cleanupStaging := setupTestStagingPath(t)
+			t.Cleanup(cleanupStaging)
 
 			sharedMountOptions, _ := setupSharedMountOptions(t, podUID)
 
@@ -4752,7 +4871,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 
 			mountPoints := []mount.MountPoint{}
 			if tc.alreadyMounted {
-				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: stagingPaths[0], Type: FuseMountType}}
+				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: stagingPath, Type: FuseMountType}}
 			}
 			fakeMounter := mount.NewFakeMounter(mountPoints)
 			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
@@ -4766,31 +4885,182 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			ns.driver.config.AssumeGoodSidecarVersion = !tc.sidecarUnsupported
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-			errIdx := 0
 			testEnv.nwMgr.enableHWgroFunc = func() error {
-				if errIdx < len(tc.enableHWgroErrs) {
-					err := tc.enableHWgroErrs[errIdx]
-					errIdx++
-					return err
-				}
-				return nil
+				return tc.enableHWgroErr
 			}
 
-			for i, stagingPath := range stagingPaths {
-				stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
 
-				_, err := ns.NodeStageVolume(t.Context(), stageReq)
-				ns.enableHWgroWg.Wait()
+			_, err := ns.NodeStageVolume(t.Context(), stageReq)
+			ns.enableHWgroWg.Wait()
 
-				if err != nil {
-					t.Fatalf("NodeStageVolume (stage %d) failed: %v", i, err)
-				}
+			if err != nil {
+				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
 			if got := testEnv.nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
 				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
 			}
 		})
 	}
+
+	t.Run("does not enable HWgro when shared mount fails on supported TPU v6e node", func(t *testing.T) {
+		t.Parallel()
+
+		stagingPath, cleanupStaging := setupTestStagingPath(t)
+		t.Cleanup(cleanupStaging)
+
+		sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
+		mounterServer.mountFunc = func(req *mounter.MountRequest) error {
+			return errors.New("mock shared mount failure")
+		}
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fc.CreatePod(clientset.FakePodConfig{
+			Name:         podName,
+			Namespace:    podNamespace,
+			UID:          podUID,
+			PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+			IsMounterPod: true,
+		})
+
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+		testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+		ns, ok := testEnv.ns.(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		ns.mounter = fakeMounter
+		ns.driver.config.FeatureOptions.EnableGrpcByDefault = true
+		ns.driver.config.FeatureOptions.EnableHWgro = true
+		ns.driver.config.AssumeGoodSidecarVersion = true
+		ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+		stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+
+		_, err := ns.NodeStageVolume(t.Context(), stageReq)
+		ns.enableHWgroWg.Wait()
+
+		if err == nil {
+			t.Fatal("expected NodeStageVolume to fail when mount fails, got nil")
+		}
+		if got := testEnv.nwMgr.getEnableHWgroCalls(); got != 0 {
+			t.Errorf("enableHWgroCalls = %d, want 0", got)
+		}
+	})
+
+	t.Run("succeeds on first stage and does not re-run on second stage", func(t *testing.T) {
+		t.Parallel()
+
+		stagingPath1, cleanup1 := setupTestStagingPath(t)
+		t.Cleanup(cleanup1)
+		stagingPath2, cleanup2 := setupTestStagingPath(t)
+		t.Cleanup(cleanup2)
+
+		sharedMountOptions, _ := setupSharedMountOptions(t, podUID)
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fc.CreatePod(clientset.FakePodConfig{
+			Name:         podName,
+			Namespace:    podNamespace,
+			UID:          podUID,
+			PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+			IsMounterPod: true,
+		})
+
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+		testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+		ns, ok := testEnv.ns.(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		ns.mounter = fakeMounter
+		ns.driver.config.FeatureOptions.EnableGrpcByDefault = true
+		ns.driver.config.FeatureOptions.EnableHWgro = true
+		ns.driver.config.AssumeGoodSidecarVersion = true
+		ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+		for i, stagingPath := range []string{stagingPath1, stagingPath2} {
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+			if _, err := ns.NodeStageVolume(t.Context(), stageReq); err != nil {
+				t.Fatalf("NodeStageVolume (stage %d) failed: %v", i, err)
+			}
+			ns.enableHWgroWg.Wait()
+		}
+
+		if got := testEnv.nwMgr.getEnableHWgroCalls(); got != 1 {
+			t.Errorf("enableHWgroCalls = %d, want 1", got)
+		}
+	})
+
+	t.Run("retries on second stage after transient error and latches on third stage", func(t *testing.T) {
+		t.Parallel()
+
+		stagingPaths := make([]string, 3)
+		for i := range 3 {
+			sp, cleanupStaging := setupTestStagingPath(t)
+			t.Cleanup(cleanupStaging)
+			stagingPaths[i] = sp
+		}
+
+		sharedMountOptions, _ := setupSharedMountOptions(t, podUID)
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fc.CreatePod(clientset.FakePodConfig{
+			Name:         podName,
+			Namespace:    podNamespace,
+			UID:          podUID,
+			PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+			IsMounterPod: true,
+		})
+
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+		testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+		ns, ok := testEnv.ns.(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		ns.mounter = fakeMounter
+		ns.driver.config.FeatureOptions.EnableGrpcByDefault = true
+		ns.driver.config.FeatureOptions.EnableHWgro = true
+		ns.driver.config.AssumeGoodSidecarVersion = true
+		ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+
+		attempt := 0
+		testEnv.nwMgr.enableHWgroFunc = func() error {
+			attempt++
+			if attempt == 1 {
+				return errors.New("transient EBUSY")
+			}
+			return nil
+		}
+
+		for i, stagingPath := range stagingPaths {
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+			if _, err := ns.NodeStageVolume(t.Context(), stageReq); err != nil {
+				t.Fatalf("NodeStageVolume (stage %d) failed: %v", i, err)
+			}
+			ns.enableHWgroWg.Wait()
+		}
+
+		if got := testEnv.nwMgr.getEnableHWgroCalls(); got != 2 {
+			t.Errorf("enableHWgroCalls = %d, want 2", got)
+		}
+	})
 }
 
 func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
@@ -4817,22 +5087,42 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
 
 	testCases := []struct {
-		name            string
-		features        *GCSDriverFeatureOptions
-		node            *corev1.Node
-		mounterImage    string
-		mounterImages   []string
-		nilNwMgr        bool
-		enableHWgroErrs []error
-		invocations     int
-		wantCalls       int
+		name         string
+		nilNS        bool
+		nilDriver    bool
+		nilConfig    bool
+		features     *GCSDriverFeatureOptions
+		node         *corev1.Node
+		mounterImage string
+		nilNwMgr     bool
+		wantCalls    int
 	}{
+		{
+			name:         "nodeServer is nil",
+			nilNS:        true,
+			node:         validNode,
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "driver is nil",
+			nilDriver:    true,
+			node:         validNode,
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "driver config is nil",
+			nilConfig:    true,
+			node:         validNode,
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
 		{
 			name:         "node is nil",
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:         nil,
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4840,7 +5130,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:         &corev1.Node{},
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4848,7 +5137,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     nil,
 			node:         validNode,
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4857,7 +5145,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			node:         validNode,
 			mounterImage: supportedImage,
 			nilNwMgr:     true,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4865,7 +5152,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: false},
 			node:         validNode,
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4873,7 +5159,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false, EnableHWgro: true},
 			node:         validNode,
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4881,7 +5166,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:         unsupportedVersionNode,
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4889,7 +5173,6 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:         emptyVersionNode,
 			mounterImage: supportedImage,
-			invocations:  1,
 			wantCalls:    0,
 		},
 		{
@@ -4897,40 +5180,14 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:         validNode,
 			mounterImage: unsupportedImage,
-			invocations:  1,
 			wantCalls:    0,
-		},
-		{
-			name:          "unsupported sidecar version does not latch and allows subsequent supported sidecar invocation",
-			features:      &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:          validNode,
-			mounterImages: []string{unsupportedImage, supportedImage, supportedImage},
-			wantCalls:     1,
 		},
 		{
 			name:         "empty sidecar image skips HWgro",
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			node:         validNode,
 			mounterImage: "",
-			invocations:  1,
 			wantCalls:    0,
-		},
-		{
-			name:         "called only once per nodeServer across multiple invocations",
-			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:         validNode,
-			mounterImage: supportedImage,
-			invocations:  2,
-			wantCalls:    1,
-		},
-		{
-			name:            "retries on subsequent invocation after transient failure and latches after success",
-			features:        &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-			node:            validNode,
-			mounterImage:    supportedImage,
-			enableHWgroErrs: []error{errors.New("transient EBUSY"), nil},
-			invocations:     3,
-			wantCalls:       2,
 		},
 	}
 
@@ -4938,40 +5195,30 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			errIdx := 0
-			nwMgr := &fakeNetworkManager{
-				enableHWgroFunc: func() error {
-					if errIdx < len(tc.enableHWgroErrs) {
-						err := tc.enableHWgroErrs[errIdx]
-						errIdx++
-						return err
-					}
-					return nil
-				},
-			}
+			nwMgr := &fakeNetworkManager{}
 			var mgr NetworkManager = nwMgr
 			if tc.nilNwMgr {
 				mgr = nil
 			}
-			ns := &nodeServer{
-				driver: &GCSDriver{
-					config: &GCSDriverConfig{
-						FeatureOptions: tc.features,
-					},
-				},
-				nwMgr: mgr,
+			var ns *nodeServer
+			if !tc.nilNS {
+				var drv *GCSDriver
+				if !tc.nilDriver {
+					var cfg *GCSDriverConfig
+					if !tc.nilConfig {
+						cfg = &GCSDriverConfig{FeatureOptions: tc.features}
+					}
+					drv = &GCSDriver{config: cfg}
+				}
+				ns = &nodeServer{
+					driver: drv,
+					nwMgr:  mgr,
+				}
 			}
 
-			if len(tc.mounterImages) > 0 {
-				for _, img := range tc.mounterImages {
-					ns.enableHWgroIfApplicable(tc.node, img)
-					ns.enableHWgroWg.Wait()
-				}
-			} else {
-				for range tc.invocations {
-					ns.enableHWgroIfApplicable(tc.node, tc.mounterImage)
-					ns.enableHWgroWg.Wait()
-				}
+			ns.enableHWgroIfApplicable(tc.node, tc.mounterImage)
+			if ns != nil {
+				ns.enableHWgroWg.Wait()
 			}
 
 			if got := nwMgr.getEnableHWgroCalls(); got != tc.wantCalls {
@@ -4979,6 +5226,90 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("called only once per nodeServer across multiple invocations", func(t *testing.T) {
+		t.Parallel()
+
+		nwMgr := &fakeNetworkManager{}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+		}
+
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 1 {
+			t.Errorf("enableHWgroCalls = %d, want 1", got)
+		}
+	})
+
+	t.Run("retries on subsequent invocation after transient failure and latches after success", func(t *testing.T) {
+		t.Parallel()
+
+		attempt := 0
+		nwMgr := &fakeNetworkManager{
+			enableHWgroFunc: func() error {
+				attempt++
+				if attempt == 1 {
+					return errors.New("transient EBUSY")
+				}
+				return nil
+			},
+		}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+		}
+
+		for range 3 {
+			ns.enableHWgroIfApplicable(validNode, supportedImage)
+			ns.enableHWgroWg.Wait()
+		}
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 2 {
+			t.Errorf("enableHWgroCalls = %d, want 2", got)
+		}
+	})
+
+	t.Run("unsupported sidecar version does not latch and allows subsequent supported sidecar invocation", func(t *testing.T) {
+		t.Parallel()
+
+		nwMgr := &fakeNetworkManager{}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+		}
+
+		ns.enableHWgroIfApplicable(validNode, unsupportedImage)
+		ns.enableHWgroWg.Wait()
+		if got := nwMgr.getEnableHWgroCalls(); got != 0 {
+			t.Fatalf("enableHWgroCalls after unsupported sidecar = %d, want 0", got)
+		}
+
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 1 {
+			t.Errorf("enableHWgroCalls after supported sidecar = %d, want 1", got)
+		}
+	})
 
 	t.Run("skips duplicate concurrent invocation while attempt is already in flight", func(t *testing.T) {
 		t.Parallel()
@@ -5104,6 +5435,142 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 	})
 }
 
+func TestIsGrpcByDefaultEnabled(t *testing.T) {
+	t.Parallel()
+
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
+	newNode := func(machineType, kubeletVersion string) *corev1.Node {
+		var labels map[string]string
+		if machineType != "" {
+			labels = map[string]string{clientset.MachineTypeKey: machineType}
+		}
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: labels,
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: kubeletVersion,
+				},
+			},
+		}
+	}
+
+	testCases := []struct {
+		name         string
+		nilNS        bool
+		nilDriver    bool
+		nilConfig    bool
+		features     *GCSDriverFeatureOptions
+		node         *corev1.Node
+		mounterImage string
+		want         bool
+	}{
+		{
+			name:         "nodeServer is nil",
+			nilNS:        true,
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "driver is nil",
+			nilDriver:    true,
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "driver config is nil",
+			nilConfig:    true,
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "feature options is nil",
+			features:     nil,
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "EnableGrpcByDefault is false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "unsupported sidecar version",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: unsupportedImage,
+			want:         false,
+		},
+		{
+			name:         "node is nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         nil,
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "node missing machine-type label",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "non-TPU v6e machine type with empty kubelet version returns true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("n2-standard-8", ""),
+			mounterImage: supportedImage,
+			want:         true,
+		},
+		{
+			name:         "TPU v6e machine type with supported kubelet version returns true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         true,
+		},
+		{
+			name:         "TPU v6e machine type with unsupported kubelet version returns false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var ns *nodeServer
+			if !tc.nilNS {
+				var drv *GCSDriver
+				if !tc.nilDriver {
+					var cfg *GCSDriverConfig
+					if !tc.nilConfig {
+						cfg = &GCSDriverConfig{FeatureOptions: tc.features}
+					}
+					drv = &GCSDriver{config: cfg}
+				}
+				ns = &nodeServer{driver: drv}
+			}
+
+			if got := ns.isGrpcByDefaultEnabled(tc.node, tc.mounterImage); got != tc.want {
+				t.Errorf("isGrpcByDefaultEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsGKENodePoolVersionSupportedForTPUv6e(t *testing.T) {
 	t.Parallel()
 
@@ -5150,9 +5617,11 @@ func TestIsGKENodePoolVersionSupportedForTPUv6e(t *testing.T) {
 		{name: "1.38 GKE build without v prefix", kubeletVersion: "1.38.0-gke.100", want: true},
 		{name: "1.39 GKE build", kubeletVersion: "v1.39.2-gke.500", want: true},
 
-		// < 1.34 and invalid cases
+		// < 1.34, whitespace, and invalid cases
 		{name: "1.33 GKE build is unsupported", kubeletVersion: "v1.33.9-gke.9999999", want: false},
+		{name: "whitespace-padded supported version is trimmed and supported", kubeletVersion: "  v1.37.1-gke.1552000\n", want: true},
 		{name: "empty version is unsupported", kubeletVersion: "", want: false},
+		{name: "whitespace-only version is unsupported", kubeletVersion: "   ", want: false},
 		{name: "malformed version is unsupported", kubeletVersion: "not-a-semver", want: false},
 	}
 

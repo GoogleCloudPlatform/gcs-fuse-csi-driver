@@ -1461,7 +1461,7 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage str
 		return
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
-	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) || !s.isGrpcByDefaultEnabled(node, mounterImage) {
+	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return
 	}
 
@@ -1471,7 +1471,7 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage str
 	// reconfiguration. Only one attempt runs at a time; once it succeeds, further
 	// mounts are no-ops, while a transient failure allows a subsequent mount to retry.
 	s.enableHWgroMu.Lock()
-	if s.enableHWgroDone || s.enableHWgroRunning {
+	if s.enableHWgroDone || s.enableHWgroRunning || !s.isGrpcByDefaultEnabled(node, mounterImage) {
 		s.enableHWgroMu.Unlock()
 		return
 	}
