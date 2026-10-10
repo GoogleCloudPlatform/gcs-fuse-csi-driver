@@ -275,7 +275,4 @@ func (driver *GCSDriver) Run(ctx context.Context, cancel context.CancelFunc, end
 	klog.Info("Shutting down gRPC server.")
 	s.Stop()
 	s.Wait()
-	if ns, ok := driver.ns.(*nodeServer); ok && ns != nil {
-		ns.enableHWgroWg.Wait()
-	}
 }

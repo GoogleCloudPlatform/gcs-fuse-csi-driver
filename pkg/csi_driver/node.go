@@ -88,7 +88,7 @@ type nodeServer struct {
 	enableHWgroMu      sync.Mutex
 	enableHWgroDone    bool
 	enableHWgroRunning bool
-	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests and shutdown.
+	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
 	enableHWgroWg sync.WaitGroup
 }
 
