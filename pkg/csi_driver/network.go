@@ -308,8 +308,7 @@ type realNetworkManager struct {
 	links   []netlink.Link
 	devices []LinkDevice
 
-	mutex         sync.Mutex
-	enableHWgroMu sync.Mutex
+	mutex sync.Mutex
 }
 
 var _ NetworkManager = &realNetworkManager{}
@@ -625,9 +624,6 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the host's COS default NIC (eth0).
 func (mgr *realNetworkManager) EnableHWgroOnDefaultNIC() error {
-	mgr.enableHWgroMu.Lock()
-	defer mgr.enableHWgroMu.Unlock()
-
 	eth, err := ethtool.NewEthtool()
 	if err != nil {
 		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", cosDefaultNIC, err)

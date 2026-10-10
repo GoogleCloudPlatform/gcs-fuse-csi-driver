@@ -70,11 +70,6 @@ const (
 	// Machine type prefix for TPU v6e nodes where gRPC-by-default is gated on GKE nodepool version
 	// and hardware GRO/LRO offloads are enabled.
 	tpuV6eMachineTypePrefix = "ct6e-standard-"
-	minTPUv6eGKEVersion134  = "v1.34.9-gke.1287000"
-	minTPUv6eGKEVersion135  = "v1.35.6-gke.1258000"
-	minTPUv6eGKEVersion136  = "v1.36.0-gke.4681000"
-	minTPUv6eGKEVersion137  = "v1.37.1-gke.1552000"
-	minTPUv6eGKEMinor138    = "v1.38"
 )
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
@@ -928,31 +923,26 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 // mount option if enabled for the node and supported by the sidecar container image.
 // If the feature is disabled or unsupported, mount options are returned unmodified.
 func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault {
+	if !s.isGrpcByDefaultEnabled(node, mounterImage) {
 		return mountOptions
 	}
-	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
-		!s.isGrpcByDefaultEnabled(node) {
-		return mountOptions
-	}
-
 	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
 }
 
-// isGrpcByDefaultEnabled returns true if --enable-grpc-by-default is enabled for the given node.
+// isGrpcByDefaultEnabled returns true if --enable-grpc-by-default is enabled, supported by the
+// sidecar/mounter container image, and supported for the given node.
 // On TPU v6e (ct6e-standard-*) machines, enable-grpc-by-default is only enabled if the GKE
 // nodepool version (node.Status.NodeInfo.KubeletVersion) meets the minimum required version
 // for its minor release; on older nodepool versions it is disabled.
-func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node) bool {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil || !s.driver.config.FeatureOptions.EnableGrpcByDefault {
+func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node, mounterImage string) bool {
+	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
+		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
+		node == nil {
 		return false
 	}
-	if node == nil {
-		return false
-	}
-	machineType, ok := node.Labels[clientset.MachineTypeKey]
-	if !ok || machineType == "" {
+	machineType := node.Labels[clientset.MachineTypeKey]
+	if machineType == "" {
 		klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
 		return false
 	}
@@ -986,18 +976,17 @@ func isGKENodePoolVersionSupportedForTPUv6e(kubeletVersion string) bool {
 	if !semver.IsValid(v) {
 		return false
 	}
-	majorMinor := semver.MajorMinor(v)
-	switch majorMinor {
+	switch majorMinor := semver.MajorMinor(v); majorMinor {
 	case "v1.34":
-		return semver.Compare(v, minTPUv6eGKEVersion134) >= 0
+		return semver.Compare(v, "v1.34.9-gke.1287000") >= 0
 	case "v1.35":
-		return semver.Compare(v, minTPUv6eGKEVersion135) >= 0
+		return semver.Compare(v, "v1.35.6-gke.1258000") >= 0
 	case "v1.36":
-		return semver.Compare(v, minTPUv6eGKEVersion136) >= 0
+		return semver.Compare(v, "v1.36.0-gke.4681000") >= 0
 	case "v1.37":
-		return semver.Compare(v, minTPUv6eGKEVersion137) >= 0
+		return semver.Compare(v, "v1.37.1-gke.1552000") >= 0
 	default:
-		return semver.Compare(majorMinor, minTPUv6eGKEMinor138) >= 0
+		return semver.Compare(majorMinor, "v1.38") >= 0
 	}
 }
 
@@ -1466,26 +1455,13 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 // are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
 // (ct6e-standard-*) machine running a supported GKE nodepool version.
 func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
-		!s.driver.config.FeatureOptions.EnableHWgro ||
-		s.nwMgr == nil ||
-		node == nil {
+	if s == nil || s.nwMgr == nil || node == nil ||
+		s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableHWgro {
 		return
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
-	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
-		return
-	}
-	s.enableHWgroMu.Lock()
-	if s.enableHWgroDone || s.enableHWgroRunning {
-		s.enableHWgroMu.Unlock()
-		return
-	}
-	s.enableHWgroMu.Unlock()
-
-	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
-		!s.isGrpcByDefaultEnabled(node) {
+	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) || !s.isGrpcByDefaultEnabled(node, mounterImage) {
 		return
 	}
 
@@ -1505,20 +1481,16 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage str
 
 	nodeName := node.Name
 	go func() {
-		succeeded := false
-		defer func() {
-			s.enableHWgroMu.Lock()
-			s.enableHWgroRunning = false
-			if succeeded {
-				s.enableHWgroDone = true
-			}
-			s.enableHWgroWg.Done()
-			s.enableHWgroMu.Unlock()
-		}()
-		if err := s.nwMgr.EnableHWgroOnDefaultNIC(); err != nil {
+		err := s.nwMgr.EnableHWgroOnDefaultNIC()
+		if err != nil {
 			klog.Errorf("Failed to enable rx-gro-hw and rx-lro on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
-			return
 		}
-		succeeded = true
+		s.enableHWgroMu.Lock()
+		s.enableHWgroRunning = false
+		if err == nil {
+			s.enableHWgroDone = true
+		}
+		s.enableHWgroWg.Done()
+		s.enableHWgroMu.Unlock()
 	}()
 }
