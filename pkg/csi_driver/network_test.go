@@ -25,6 +25,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/safchain/ethtool"
 	"golang.org/x/sys/unix"
 )
 
@@ -531,19 +532,21 @@ func TestSourceRouteForDevice(t *testing.T) {
 }
 
 type fakeEthtoolClient struct {
-	features          map[string]bool
-	fixedFeatures     map[string]bool
-	featuresErr       error
-	verifyFeaturesErr error
-	changeErr         error
-	featuresIntf      string
-	changeIntf        string
-	changed           bool
-	changeCalls       int
-	changedKeys       []string
+	features             map[string]bool
+	fixedFeatures        map[string]bool
+	neverChangedFeatures map[string]bool
+	rejectedFeatures     map[string]bool
+	featuresErr          error
+	verifyFeaturesErr    error
+	changeErr            error
+	featuresIntf         string
+	changeIntf           string
+	changed              bool
+	changeCalls          int
+	changedKeys          []string
 }
 
-func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
+func (f *fakeEthtoolClient) FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error) {
 	f.featuresIntf = intf
 	if f.changed && f.verifyFeaturesErr != nil {
 		return nil, f.verifyFeaturesErr
@@ -551,7 +554,16 @@ func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
 	if f.featuresErr != nil {
 		return nil, f.featuresErr
 	}
-	return maps.Clone(f.features), nil
+	out := make(map[string]ethtool.FeatureState, len(f.features))
+	for k, active := range f.features {
+		out[k] = ethtool.FeatureState{
+			Available:    !f.fixedFeatures[k],
+			Requested:    active,
+			Active:       active,
+			NeverChanged: f.neverChangedFeatures[k],
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
@@ -566,7 +578,7 @@ func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
 		return f.changeErr
 	}
 	for k, v := range config {
-		if f.fixedFeatures[k] {
+		if f.fixedFeatures[k] || f.neverChangedFeatures[k] || f.rejectedFeatures[k] {
 			continue
 		}
 		f.features[k] = v
@@ -578,16 +590,18 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name              string
-		initialFeatures   map[string]bool
-		fixedFeatures     map[string]bool
-		featuresErr       error
-		verifyFeaturesErr error
-		changeErr         error
-		wantFeatures      map[string]bool
-		wantChanged       bool
-		wantChangedKeys   []string
-		expectError       bool
+		name                 string
+		initialFeatures      map[string]bool
+		fixedFeatures        map[string]bool
+		neverChangedFeatures map[string]bool
+		rejectedFeatures     map[string]bool
+		featuresErr          error
+		verifyFeaturesErr    error
+		changeErr            error
+		wantFeatures         map[string]bool
+		wantChanged          bool
+		wantChangedKeys      []string
+		expectError          bool
 	}{
 		{
 			name:            "enables rx-gro-hw and rx-lro together when both are false",
@@ -615,6 +629,32 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			wantFeatures:    map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
 			wantChanged:     true,
 			wantChangedKeys: []string{rxGroHWFeature},
+		},
+		{
+			name:            "tolerates fixed rx-gro-hw and enables mutable rx-lro",
+			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			fixedFeatures:   map[string]bool{rxGroHWFeature: true},
+			wantFeatures:    map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
+			wantChanged:     true,
+			wantChangedKeys: []string{rxLROFeature},
+			expectError:     false,
+		},
+		{
+			name:                 "tolerates never_changed rx-lro and enables mutable rx-gro-hw",
+			initialFeatures:      map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			neverChangedFeatures: map[string]bool{rxLROFeature: true},
+			wantFeatures:         map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantChanged:          true,
+			wantChangedKeys:      []string{rxGroHWFeature},
+			expectError:          false,
+		},
+		{
+			name:            "no-op without error when both features are fixed and disabled",
+			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			fixedFeatures:   map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantFeatures:    map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wantChanged:     false,
+			expectError:     false,
 		},
 		{
 			name:            "returns error without changing when rx-gro-hw is absent from features map",
@@ -647,7 +687,7 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			expectError:     true,
 		},
 		{
-			name:              "returns error when post-Change Features verification fails",
+			name:              "returns error when post-Change FeaturesWithState verification fails",
 			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
 			verifyFeaturesErr: errors.New("verify ioctl failure"),
 			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
@@ -656,22 +696,22 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			expectError:       true,
 		},
 		{
-			name:            "returns error when fixed rx-gro-hw feature remains disabled after Change",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			fixedFeatures:   map[string]bool{rxGroHWFeature: true},
-			wantFeatures:    map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxGroHWFeature, rxLROFeature},
-			expectError:     true,
+			name:             "returns error when mutable rx-gro-hw feature remains disabled after Change",
+			initialFeatures:  map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			rejectedFeatures: map[string]bool{rxGroHWFeature: true},
+			wantFeatures:     map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
+			wantChanged:      true,
+			wantChangedKeys:  []string{rxGroHWFeature, rxLROFeature},
+			expectError:      true,
 		},
 		{
-			name:            "returns error when fixed rx-lro feature remains disabled after Change",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			fixedFeatures:   map[string]bool{rxLROFeature: true},
-			wantFeatures:    map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxGroHWFeature, rxLROFeature},
-			expectError:     true,
+			name:             "returns error when mutable rx-lro feature remains disabled after Change",
+			initialFeatures:  map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			rejectedFeatures: map[string]bool{rxLROFeature: true},
+			wantFeatures:     map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantChanged:      true,
+			wantChangedKeys:  []string{rxGroHWFeature, rxLROFeature},
+			expectError:      true,
 		},
 		{
 			name:        "skips without error when eth0 is absent on non-COS host (ENODEV)",
@@ -680,7 +720,7 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:        "returns error when Features fails with non-ENODEV error",
+			name:        "returns error when FeaturesWithState fails with non-ENODEV error",
 			featuresErr: errors.New("ioctl failure"),
 			wantChanged: false,
 			expectError: true,
@@ -692,11 +732,13 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			t.Parallel()
 
 			fakeEth := &fakeEthtoolClient{
-				features:          maps.Clone(tc.initialFeatures),
-				fixedFeatures:     tc.fixedFeatures,
-				featuresErr:       tc.featuresErr,
-				verifyFeaturesErr: tc.verifyFeaturesErr,
-				changeErr:         tc.changeErr,
+				features:             maps.Clone(tc.initialFeatures),
+				fixedFeatures:        tc.fixedFeatures,
+				neverChangedFeatures: tc.neverChangedFeatures,
+				rejectedFeatures:     tc.rejectedFeatures,
+				featuresErr:          tc.featuresErr,
+				verifyFeaturesErr:    tc.verifyFeaturesErr,
+				changeErr:            tc.changeErr,
 			}
 
 			err := enableHWgroOnNIC(fakeEth, cosDefaultNIC)

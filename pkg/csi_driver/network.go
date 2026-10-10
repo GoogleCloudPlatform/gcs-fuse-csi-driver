@@ -46,7 +46,7 @@ const (
 
 // ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
 type ethtoolClient interface {
-	Features(intf string) (map[string]bool, error)
+	FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error)
 	Change(intf string, config map[string]bool) error
 }
 
@@ -576,11 +576,17 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 	return nil
 }
 
+// isFeatureFixed returns true if the ethtool feature is immutable ([fixed]),
+// i.e., not available for modification by the driver or marked never_changed by the kernel.
+func isFeatureFixed(state ethtool.FeatureState) bool {
+	return !state.Available || state.NeverChanged
+}
+
 // enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) together on the specified NIC using ethtool ioctls (Features read-before-write Change)
-// and verifies that both features are active afterward.
+// (rx-lro) together on the specified NIC using ethtool ioctls (FeaturesWithState read-before-write Change),
+// tolerating features marked [fixed] and verifying that mutable features become active afterward.
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
-	features, err := eth.Features(nic)
+	features, err := eth.FeaturesWithState(nic)
 	if err != nil {
 		if errors.Is(err, unix.ENODEV) {
 			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
@@ -592,13 +598,18 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	requiredFeatures := []string{rxGroHWFeature, rxLROFeature}
 	changes := make(map[string]bool)
 	for _, feature := range requiredFeatures {
-		alreadyEnabled, ok := features[feature]
+		state, ok := features[feature]
 		if !ok {
 			return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
 		}
-		if !alreadyEnabled {
-			changes[feature] = true
+		if state.Active {
+			continue
 		}
+		if isFeatureFixed(state) {
+			klog.Infof("Skipping %s enablement on NIC %q: feature is [fixed]", feature, nic)
+			continue
+		}
+		changes[feature] = true
 	}
 
 	if len(changes) > 0 {
@@ -606,14 +617,17 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 			return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
 		}
 		// Linux ETHTOOL_SFEATURES returns a positive bitmask (ETHTOOL_F_UNSUPPORTED / ETHTOOL_F_WISH)
-		// with errno == 0 when a feature is [fixed] or rejected by the NIC driver, which safchain/ethtool
-		// treats as nil error. Re-read Features to verify both offloads actually became active.
-		updatedFeatures, err := eth.Features(nic)
+		// with errno == 0 when a feature is rejected by the NIC driver, which safchain/ethtool
+		// treats as nil error. Re-read FeaturesWithState to verify requested offloads became active.
+		updatedFeatures, err := eth.FeaturesWithState(nic)
 		if err != nil {
 			return fmt.Errorf("failed to verify ethtool features after change on NIC %q: %w", nic, err)
 		}
 		for _, feature := range requiredFeatures {
-			if !updatedFeatures[feature] {
+			if !changes[feature] {
+				continue
+			}
+			if !updatedFeatures[feature].Active {
 				return fmt.Errorf("feature %s remained disabled on NIC %q after ethtool change", feature, nic)
 			}
 		}
