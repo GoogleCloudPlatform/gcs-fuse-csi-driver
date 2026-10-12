@@ -296,9 +296,9 @@ func clusterUpGKE(testParams *TestParameters) error {
 	// Fall back across candidate regions to mitigate stockouts.
 	// testParams.GkeClusterRegion (which defaults to us-central1) is prioritized first,
 	// followed by capacityAdvisorFallbackRegions with typically lower contention.
-	// When EnableZB is true, skip fallback regions without ZB-supported zones (e.g. europe-west3).
 	candidateRegions := []string{testParams.GkeClusterRegion}
 	for _, r := range capacityAdvisorFallbackRegions {
+		// Avoid duplicating GkeClusterRegion, and for ZB runs skip fallback regions without ZB support (e.g. europe-west3).
 		if r != testParams.GkeClusterRegion && (!testParams.EnableZB || len(zbSupportedZones[r]) > 0) {
 			candidateRegions = append(candidateRegions, r)
 		}
