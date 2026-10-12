@@ -4830,53 +4830,64 @@ func TestEnableHWgroIfApplicable(t *testing.T) {
 			}
 		})
 	}
+}
 
-	t.Run("deduplicates concurrent invocations, retries after transient failure, and latches on success", func(t *testing.T) {
-		t.Parallel()
+func TestEnableHWgroIfApplicableConcurrencyAndRetry(t *testing.T) {
+	t.Parallel()
 
-		started := make(chan struct{})
-		release := make(chan struct{})
-		var attempt atomic.Int32
-		nwMgr := &fakeNetworkManager{
-			enableHWgroFunc: func() error {
-				if attempt.Add(1) == 1 {
-					close(started)
-					<-release
-					return errors.New("transient EBUSY")
-				}
-				return nil
+	validNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "test-node",
+			Labels: map[string]string{clientset.MachineTypeKey: "ct6e-standard-4t"},
+		},
+		Status: corev1.NodeStatus{
+			NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.37.1-gke.1552000"},
+		},
+	}
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var attempt atomic.Int32
+	nwMgr := &fakeNetworkManager{
+		enableHWgroFunc: func() error {
+			if attempt.Add(1) == 1 {
+				close(started)
+				<-release
+				return errors.New("transient EBUSY")
+			}
+			return nil
+		},
+	}
+	ns := &nodeServer{
+		driver: &GCSDriver{
+			config: &GCSDriverConfig{
+				FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
 			},
-		}
-		ns := &nodeServer{
-			driver: &GCSDriver{
-				config: &GCSDriverConfig{
-					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
-				},
-			},
-			nwMgr: nwMgr,
-		}
+		},
+		nwMgr: nwMgr,
+	}
 
-		// First attempt starts in background; concurrent call while in-flight is skipped.
-		ns.enableHWgroIfApplicable(validNode, supportedImage)
-		<-started
-		ns.enableHWgroIfApplicable(validNode, supportedImage)
-		close(release)
-		ns.enableHWgroWg.Wait()
+	// First attempt starts in background; concurrent call while in-flight is skipped.
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	<-started
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	close(release)
+	ns.enableHWgroWg.Wait()
 
-		if got := nwMgr.getEnableHWgroCalls(); got != 1 {
-			t.Fatalf("enableHWgroCalls after in-flight failure = %d, want 1", got)
-		}
+	if got := nwMgr.getEnableHWgroCalls(); got != 1 {
+		t.Fatalf("enableHWgroCalls after in-flight failure = %d, want 1", got)
+	}
 
-		// Next call retries and succeeds; third call is a latched no-op.
-		ns.enableHWgroIfApplicable(validNode, supportedImage)
-		ns.enableHWgroWg.Wait()
-		ns.enableHWgroIfApplicable(validNode, supportedImage)
-		ns.enableHWgroWg.Wait()
+	// Next call retries and succeeds; third call is a latched no-op.
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroWg.Wait()
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroWg.Wait()
 
-		if got := nwMgr.getEnableHWgroCalls(); got != 2 {
-			t.Errorf("enableHWgroCalls after retry and latch = %d, want 2", got)
-		}
-	})
+	if got := nwMgr.getEnableHWgroCalls(); got != 2 {
+		t.Errorf("enableHWgroCalls after retry and latch = %d, want 2", got)
+	}
 }
 
 func TestIsGrpcByDefaultEnabled(t *testing.T) {
