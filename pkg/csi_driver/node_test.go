@@ -942,6 +942,22 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			kubeletVersion:           "v1.37.1-gke.1551999",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "not-a-semver",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -3461,6 +3477,22 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			kubeletVersion:           "v1.37.1-gke.1551999",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect no enable-grpc-by-default",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "not-a-semver",
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -4409,6 +4441,30 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      1,
 		},
 		{
+			name:                "skips HWgro on TPU v6e node with older skewed GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1551999",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with missing GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with unparseable GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "not-a-semver",
+			wantHWgroCalls:      0,
+		},
+		{
 			name:                "skips HWgro when enableHWgro is false",
 			enableGrpcByDefault: true,
 			enableHWgro:         false,
@@ -4551,6 +4607,30 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      1,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with older skewed GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1551999",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with missing GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with unparseable GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "not-a-semver",
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "skips HWgro when enableHWgro is false",
@@ -4882,6 +4962,20 @@ func TestIsGrpcByDefaultEnabled(t *testing.T) {
 			name:         "TPU v6e machine type with unsupported kubelet version returns false",
 			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
 			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "TPU v6e machine type with missing kubelet version returns false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", ""),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "TPU v6e machine type with unparseable kubelet version returns false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "not-a-semver"),
 			mounterImage: supportedImage,
 			want:         false,
 		},
