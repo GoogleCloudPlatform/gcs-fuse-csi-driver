@@ -47,6 +47,7 @@ type TestParameters struct {
 	// GkeClusterRegion specifies the target GKE cluster region and implicitly sets
 	// Ginkgo's --test-bucket-location to co-locate test GCS buckets with the cluster.
 	GkeClusterRegion    string
+	GkeClusterZone      string
 	GkeClusterVersion   string
 	GkeReleaseChannel   string
 	GkeNodeVersion      string
@@ -362,6 +363,20 @@ func Handle(testParams *TestParameters) error {
 		}
 	}
 
+	testBucketLocation := testParams.GkeClusterRegion
+	if testParams.EnableZB {
+		zones := zbSupportedZones[testParams.GkeClusterRegion]
+		if slices.Contains(zones, testParams.GkeClusterZone) {
+			testBucketLocation = testParams.GkeClusterZone
+		} else if len(zones) > 0 {
+			testBucketLocation = zones[0]
+		} else {
+			fallbackZone := zbSupportedZones["us-central1"][0]
+			klog.Errorf("Region %q has no known ZB-supported zones; falling back to %q for test bucket location", testParams.GkeClusterRegion, fallbackZone)
+			testBucketLocation = fallbackZone
+		}
+	}
+
 	//nolint:gosec
 	cmd := exec.Command("ginkgo", "run", "-v",
 		"--procs", testParams.GinkgoProcs,
@@ -375,7 +390,7 @@ func Handle(testParams *TestParameters) error {
 		"--",
 		"--client-protocol", testParams.GcsfuseClientProtocol,
 		"--provider", "skeleton",
-		"--test-bucket-location", testParams.GkeClusterRegion,
+		"--test-bucket-location", testBucketLocation,
 		fmt.Sprintf("--enable-zb=%s", strconv.FormatBool(testParams.EnableZB)),
 		fmt.Sprintf("--skip-gcp-sa-test=%s", strconv.FormatBool(testParams.GinkgoSkipGcpSaTest)),
 		fmt.Sprintf("--enable-gcsfuse-profiles-test=%s", strconv.FormatBool(testParams.EnableGcsFuseProfiles)),
