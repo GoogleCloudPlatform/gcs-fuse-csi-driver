@@ -98,7 +98,7 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `E2E_TEST_GINKGO_PROCS`: default value is `5`. The value will be passed to `ginkgo run --procs` flag.
 - `E2E_TEST_GINKGO_TIMEOUT`: default value is `2h`. The value will be passed to `ginkgo run --timeout` flag.
 - `E2E_TEST_GINKGO_FLAKE_ATTEMPTS`: default value is `2`. The value will be passed to `ginkgo run --flake-attempts` flag.
-- `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket created in the selected cluster zone (or `<region>-c` when only a region is provided).
+- `ENABLE_ZB`: default value is `false`. Change it to `true` if you want the bucket used during testing to be a Zonal Bucket created in the selected cluster zone (or the first known ZB-supported zone in the region when only a region is provided, falling back to `us-central1-a` if the region has no known ZB zones).
 - `GCSFUSE_CLIENT_PROTOCOL`: default value is 'http1'. Change to 'grpc' to alter the type of protocol gcsfuse uses to communicate with gcs
 - `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
 - `USE_CAPACITY_ADVISOR`: default value is `false` (defaults to `true` in Prow CI). Whether to use GCE Capacity Advisor to select node locations and fallback regions. Only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`; ignored when running on an existing cluster. Requires IAM access to the internal `prow-gob-internal-boskos-01` project while `STANDARD` capacity advice is in preview, so external users should leave this set to `false`.

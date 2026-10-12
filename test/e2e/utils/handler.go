@@ -364,8 +364,17 @@ func Handle(testParams *TestParameters) error {
 	}
 
 	testBucketLocation := testParams.GkeClusterRegion
-	if testParams.EnableZB && testParams.GkeClusterZone != "" {
-		testBucketLocation = testParams.GkeClusterZone
+	if testParams.EnableZB {
+		zones := zbSupportedZones[testParams.GkeClusterRegion]
+		if slices.Contains(zones, testParams.GkeClusterZone) {
+			testBucketLocation = testParams.GkeClusterZone
+		} else if len(zones) > 0 {
+			testBucketLocation = zones[0]
+		} else {
+			fallbackZone := zbSupportedZones["us-central1"][0]
+			klog.Errorf("Region %q has no known ZB-supported zones; falling back to %q for test bucket location", testParams.GkeClusterRegion, fallbackZone)
+			testBucketLocation = fallbackZone
+		}
 	}
 
 	//nolint:gosec

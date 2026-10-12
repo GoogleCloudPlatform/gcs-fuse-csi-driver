@@ -154,14 +154,13 @@ func (service *gcsService) CreateBucket(ctx context.Context, obj *ServiceBucket)
 		// Zonal Buckets are only supported for HNS, Uniform Bucket Level Access, and RAPID storage class.
 		// GCS requires BucketAttrs.Location to be the parent region (e.g. "us-central1") and
 		// CustomPlacementConfig.DataLocations to be the zone (e.g. "us-central1-a").
-		var zone string
-		if parts := strings.Split(obj.Location, "-"); len(parts) == 3 {
-			// Extract the region from the zone since BucketAttrs.Location must be a region.
-			bktAttrs.Location = strings.Join(parts[:2], "-")
-			zone = obj.Location
-		} else {
-			zone = obj.Location + "-c"
+		parts := strings.Split(obj.Location, "-")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("CreateBucket operation failed for Zonal Bucket %q: expected a zone location (e.g. \"us-central1-a\"), got %q", obj.Name, obj.Location)
 		}
+		// Extract the region from the zone since BucketAttrs.Location must be a region.
+		bktAttrs.Location = strings.Join(parts[:2], "-")
+		zone := obj.Location
 		klog.V(4).Infof("Creating bucket ZB in %v (region %v)", zone, bktAttrs.Location)
 		bktAttrs.CustomPlacementConfig = &storage.CustomPlacementConfig{
 			DataLocations: []string{zone},
