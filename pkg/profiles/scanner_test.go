@@ -1720,8 +1720,6 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 		name           string
 		pv             *v1.PersistentVolume
 		expectedPolicy string
-		expectError    bool
-		expectedError  string
 	}{
 		{
 			name: "should return 'admit-on-first-miss' when explicitly set",
@@ -1738,7 +1736,6 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 				},
 			},
 			expectedPolicy: "admit-on-first-miss",
-			expectError:    false,
 		},
 		{
 			name: "should return 'admit-on-second-miss' when explicitly set",
@@ -1755,7 +1752,6 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 				},
 			},
 			expectedPolicy: "admit-on-second-miss",
-			expectError:    false,
 		},
 		{
 			name: "should return 'no-read-admission' when explicitly set",
@@ -1772,7 +1768,6 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 				},
 			},
 			expectedPolicy: "no-read-admission",
-			expectError:    false,
 		},
 		{
 			name: "should return default 'admit-on-first-miss' when attribute is not set",
@@ -1787,46 +1782,13 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 				},
 			},
 			expectedPolicy: "admit-on-first-miss",
-			expectError:    false,
-		},
-		{
-			name: "should return an error for an invalid admission policy",
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-4"},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"anywhereCacheAdmissionPolicy": "invalid-policy",
-							},
-						},
-					},
-				},
-			},
-			expectedPolicy: "",
-			expectError:    true,
-			expectedError:  "invalid anywhere cache admission policy provided: invalid-policy, valid values are \"admit-on-first-miss\", \"admit-on-second-miss\", or \"no-read-admission\"",
 		},
 	}
 
 	// Run tests
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			policy, err := anywhereCacheAdmissionPolicyVal(tc.pv, nil)
-
-			if tc.expectError {
-				if err == nil {
-					t.Errorf("Expected an error, but got nil")
-				}
-				if err != nil && err.Error() != tc.expectedError {
-					t.Errorf("Expected error message '%s', but got '%s'", tc.expectedError, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error, but got: %v", err)
-				}
-			}
-
+			policy := anywhereCacheAdmissionPolicyVal(tc.pv, nil)
 			if policy != tc.expectedPolicy {
 				t.Errorf("Expected policy '%s', but got '%s'", tc.expectedPolicy, policy)
 			}

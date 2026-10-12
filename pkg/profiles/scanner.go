@@ -132,7 +132,6 @@ const (
 	// Anywhere Cache API constants
 	anywhereCacheAPIAdmitOnFirstMiss  = "admit-on-first-miss"
 	anywhereCacheAPIAdmitOnSecondMiss = "admit-on-second-miss"
-	anywhereCacheAPINoReadAdmission   = "no-read-admission"
 	anywhereCacheAPITTL               = "ttl"
 	anywhereCacheAPIAdmissionPolicy   = "admission_policy"
 	anywhereCacheAPIRunning           = "running"
@@ -1136,10 +1135,7 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: %v", pv.Name, err)
 	}
-	anywhereCacheAdmissionPolicy, err := anywhereCacheAdmissionPolicyVal(pv, sc)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
-	}
+	anywhereCacheAdmissionPolicy := anywhereCacheAdmissionPolicyVal(pv, sc)
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
@@ -1222,14 +1218,8 @@ func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*
 }
 
 // anywhereCacheAdmissionPolicyVal returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
-func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (string, error) {
-	admissionPolicy := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
-	switch admissionPolicy {
-	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission:
-		return admissionPolicy, nil
-	default:
-		return "", fmt.Errorf("invalid anywhere cache admission policy provided: %s, valid values are %q, %q, or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission)
-	}
+func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) string {
+	return profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
 }
 
 func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
