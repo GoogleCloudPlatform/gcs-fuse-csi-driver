@@ -1758,6 +1758,23 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 			expectError:    false,
 		},
 		{
+			name: "should return 'no-read-admission' when explicitly set",
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-no-read-admission"},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeAttributes: map[string]string{
+								"anywhereCacheAdmissionPolicy": "no-read-admission",
+							},
+						},
+					},
+				},
+			},
+			expectedPolicy: "no-read-admission",
+			expectError:    false,
+		},
+		{
 			name: "should return default 'admit-on-first-miss' when attribute is not set",
 			pv: &v1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{Name: "pv-test-3"},
@@ -1788,7 +1805,7 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 			},
 			expectedPolicy: "",
 			expectError:    true,
-			expectedError:  "invalid anywhere cache admission policy provided provided: invalid-policy, valid values are \"admit-on-first-miss\" or \"admit-on-second-miss\"",
+			expectedError:  "invalid anywhere cache admission policy provided provided: invalid-policy, valid values are \"admit-on-first-miss\", \"admit-on-second-miss\", or \"no-read-admission\"",
 		},
 	}
 

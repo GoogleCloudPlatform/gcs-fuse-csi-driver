@@ -132,6 +132,7 @@ const (
 	// Anywhere Cache API constants
 	anywhereCacheAPIAdmitOnFirstMiss  = "admit-on-first-miss"
 	anywhereCacheAPIAdmitOnSecondMiss = "admit-on-second-miss"
+	anywhereCacheAPINoReadAdmission   = "no-read-admission"
 	anywhereCacheAPITTL               = "ttl"
 	anywhereCacheAPIAdmissionPolicy   = "admission_policy"
 	anywhereCacheAPIRunning           = "running"
@@ -1224,10 +1225,10 @@ func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*
 func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (string, error) {
 	admissionPolicy := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
 	switch admissionPolicy {
-	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss:
+	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission:
 		return admissionPolicy, nil
 	default:
-		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss)
+		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q, %q, or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission)
 	}
 }
 
