@@ -1012,9 +1012,15 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 // isCacheConfigSynced checks if the existing Anywhere Cache configuration (gotAC)
 // matches the desired configuration (wantAC). It compares the admission policy
 // and TTL (both seconds and nanoseconds).
+// Note: GCS Anywhere Cache is deprecating "admit-on-second-miss" and remapping
+// it server-side to "admit-on-first-miss". Therefore, if wantAC requests
+// "admit-on-second-miss", gotAC having "admit-on-first-miss" is also considered
+// synced to avoid triggering an infinite UpdateAnywhereCache loop.
 // Returns true if the configurations are synced, false otherwise.
 func (s *Scanner) isCacheConfigSynced(gotAC, wantAC *controlpb.AnywhereCache) bool {
-	policyMatch := strings.EqualFold(gotAC.GetAdmissionPolicy(), wantAC.GetAdmissionPolicy())
+	policyMatch := strings.EqualFold(gotAC.GetAdmissionPolicy(), wantAC.GetAdmissionPolicy()) ||
+		(strings.EqualFold(wantAC.GetAdmissionPolicy(), anywhereCacheAPIAdmitOnSecondMiss) &&
+			strings.EqualFold(gotAC.GetAdmissionPolicy(), anywhereCacheAPIAdmitOnFirstMiss))
 	ttlMatch := gotAC.GetTtl().GetSeconds() == wantAC.GetTtl().GetSeconds() &&
 		gotAC.GetTtl().GetNanos() == wantAC.GetTtl().GetNanos()
 	return policyMatch && ttlMatch

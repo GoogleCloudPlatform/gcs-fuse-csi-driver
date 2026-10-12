@@ -2536,6 +2536,51 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
+			name: "AnyC found - want admit-on-second-miss remapped server-side to admit-on-first-miss - should treat as synced",
+			setupMocks: func() {
+				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+					return []string{"zone-a", "zone-b"}, nil
+				}
+			},
+			wantErr: false,
+			wantResults: map[string]*anywhereCacheSyncResult{
+				"zone-a": {
+					message: "running",
+					done:    true,
+				},
+				"zone-b": {
+					message: "running",
+					done:    true,
+				},
+			},
+			pv: &v1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+				},
+				Spec: v1.PersistentVolumeSpec{
+					PersistentVolumeSource: v1.PersistentVolumeSource{
+						CSI: &v1.CSIPersistentVolumeSource{
+							VolumeHandle: "my-bucket",
+							VolumeAttributes: map[string]string{
+								"anywhereCacheTTL":             "2h",
+								"anywhereCacheAdmissionPolicy": "admit-on-second-miss",
+								"anywhereCacheZones":           "*",
+							},
+						},
+					},
+				},
+			},
+			storageControlClient: &mockStorageControlClient{
+				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{
+						Ttl:             durationpb.New(2 * time.Hour),
+						AdmissionPolicy: "admit-on-first-miss",
+						State:           "running",
+					}, nil
+				},
+			},
+		},
+		{
 			name: "Edge Case - No zones returned",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(_ context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
@@ -2575,9 +2620,91 @@ func TestCreateAnywhereCache(t *testing.T) {
 				if wantResult.message != gotResult.message {
 					t.Fatalf("zone %q want state: %q, got state: %q", zone, wantResult.message, gotResult.message)
 				}
+				if wantResult.done != gotResult.done {
+					t.Fatalf("zone %q want done: %t, got done: %t", zone, wantResult.done, gotResult.done)
+				}
 				if errors.Is(wantResult.err, errRequeueNeeded) != errors.Is(gotResult.err, errRequeueNeeded) {
 					t.Fatalf("zone %q want requeueNeeded: %t, got requeueNeeded: %t", zone, errors.Is(wantResult.err, errRequeueNeeded), errors.Is(gotResult.err, errRequeueNeeded))
 				}
+			}
+		})
+	}
+}
+
+func TestIsCacheConfigSynced(t *testing.T) {
+	s := &Scanner{}
+	testCases := []struct {
+		name     string
+		gotAC    *controlpb.AnywhereCache
+		wantAC   *controlpb.AnywhereCache
+		expected bool
+	}{
+		{
+			name: "want admit-on-first-miss and got admit-on-first-miss with same TTL -> synced",
+			gotAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(1 * time.Hour),
+				AdmissionPolicy: "admit-on-first-miss",
+			},
+			wantAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(1 * time.Hour),
+				AdmissionPolicy: "admit-on-first-miss",
+			},
+			expected: true,
+		},
+		{
+			name: "want admit-on-second-miss and got admit-on-second-miss with same TTL -> synced",
+			gotAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(2 * time.Hour),
+				AdmissionPolicy: "admit-on-second-miss",
+			},
+			wantAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(2 * time.Hour),
+				AdmissionPolicy: "admit-on-second-miss",
+			},
+			expected: true,
+		},
+		{
+			name: "want admit-on-second-miss and got admit-on-first-miss (remapped server-side) with same TTL -> synced",
+			gotAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(2 * time.Hour),
+				AdmissionPolicy: "admit-on-first-miss",
+			},
+			wantAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(2 * time.Hour),
+				AdmissionPolicy: "admit-on-second-miss",
+			},
+			expected: true,
+		},
+		{
+			name: "want admit-on-first-miss and got admit-on-second-miss with same TTL -> not synced",
+			gotAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(1 * time.Hour),
+				AdmissionPolicy: "admit-on-second-miss",
+			},
+			wantAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(1 * time.Hour),
+				AdmissionPolicy: "admit-on-first-miss",
+			},
+			expected: false,
+		},
+		{
+			name: "want admit-on-second-miss and got admit-on-first-miss with different TTL -> not synced",
+			gotAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(1 * time.Hour),
+				AdmissionPolicy: "admit-on-first-miss",
+			},
+			wantAC: &controlpb.AnywhereCache{
+				Ttl:             durationpb.New(2 * time.Hour),
+				AdmissionPolicy: "admit-on-second-miss",
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := s.isCacheConfigSynced(tc.gotAC, tc.wantAC); got != tc.expected {
+				t.Errorf("isCacheConfigSynced() = %v, want %v", got, tc.expected)
 			}
 		})
 	}
