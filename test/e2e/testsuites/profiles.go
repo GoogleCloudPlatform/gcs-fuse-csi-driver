@@ -611,18 +611,8 @@ func (t *gcsFuseCSIProfilesTestSuite) validateAC(vrList []*storageframework.Volu
 				g.Expect(ac.Ttl.AsDuration()).To(gomega.Equal(expectedTTLAsTimeDuration), "AC TTL mismatch")
 
 				// Admission Policy Validation.
-				// GCS Anywhere Cache is deprecating "admit-on-second-miss" and remapping it
-				// server-side to "admit-on-first-miss". Accept either value when
-				// "admit-on-second-miss" is requested.
 				expectedAPolicy := vr.Pv.Spec.CSI.VolumeAttributes[anywhereCacheAdmissionPolicyKey]
-				if expectedAPolicy == "" {
-					expectedAPolicy = "admit-on-first-miss"
-				}
-				if expectedAPolicy == "admit-on-second-miss" {
-					g.Expect(ac.AdmissionPolicy).To(gomega.BeElementOf([]string{"admit-on-first-miss", "admit-on-second-miss"}), "AC AdmissionPolicy mismatch")
-				} else {
-					g.Expect(ac.AdmissionPolicy).To(gomega.Equal(expectedAPolicy), "AC AdmissionPolicy mismatch")
-				}
+				g.Expect(ac.AdmissionPolicy).To(gomega.Equal(expectedAPolicy), "AC AdmissionPolicy mismatch")
 
 				// State Validation.
 				state := ac.State
