@@ -548,7 +548,6 @@ type fakeEthtoolClient struct {
 	featuresCalls        int
 	changeCalls          int
 	changedKeys          []string
-	closed               bool
 }
 
 func (f *fakeEthtoolClient) FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error) {
@@ -605,10 +604,6 @@ func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
 		f.requestedFeatures[k] = v
 	}
 	return nil
-}
-
-func (f *fakeEthtoolClient) Close() {
-	f.closed = true
 }
 
 func TestEnableHWgroOnNIC(t *testing.T) {
@@ -888,59 +883,4 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestEnableHWgroOnDefaultNIC(t *testing.T) {
-	t.Parallel()
-
-	t.Run("delegates to enableHWgroOnNIC on eth0 and closes ethtool client", func(t *testing.T) {
-		t.Parallel()
-
-		fakeEth := &fakeEthtoolClient{
-			features: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-		}
-		mgr := &realNetworkManager{
-			newEthtool: func() (ethtoolClient, error) {
-				return fakeEth, nil
-			},
-		}
-
-		if err := mgr.EnableHWgroOnDefaultNIC(); err != nil {
-			t.Fatalf("EnableHWgroOnDefaultNIC() unexpected error: %v", err)
-		}
-		if !fakeEth.closed {
-			t.Error("expected ethtool client Close() to be called")
-		}
-		if fakeEth.featuresIntf != cosDefaultNIC {
-			t.Errorf("featuresIntf = %q, want %q", fakeEth.featuresIntf, cosDefaultNIC)
-		}
-		if fakeEth.featuresCalls != 2 {
-			t.Errorf("featuresCalls = %d, want 2", fakeEth.featuresCalls)
-		}
-		if fakeEth.changeCalls != 1 {
-			t.Errorf("changeCalls = %d, want 1", fakeEth.changeCalls)
-		}
-		wantFeatures := map[string]bool{rxGroHWFeature: true, rxLROFeature: true}
-		if !maps.Equal(fakeEth.features, wantFeatures) {
-			t.Errorf("features = %v, want %v", fakeEth.features, wantFeatures)
-		}
-	})
-
-	t.Run("returns error when newEthtool fails", func(t *testing.T) {
-		t.Parallel()
-
-		mgr := &realNetworkManager{
-			newEthtool: func() (ethtoolClient, error) {
-				return nil, errors.New("mock socket error")
-			},
-		}
-
-		err := mgr.EnableHWgroOnDefaultNIC()
-		if err == nil {
-			t.Fatal("expected error when newEthtool fails, got nil")
-		}
-		if !strings.Contains(err.Error(), "failed to create ethtool client for NIC \"eth0\"") {
-			t.Errorf("error = %v, want substring %q", err, "failed to create ethtool client for NIC \"eth0\"")
-		}
-	})
 }

@@ -928,16 +928,6 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled, sidecar version supported, user specifies enable-grpc-by-default=false, expect enable-grpc-by-default=false preserved without injecting true",
-			enableGrpcByDefault:      true,
-			assumeGoodSidecarVersion: true,
-			machineType:              "ct6e-standard-4t",
-			kubeletVersion:           "v1.37.1-gke.1552000",
-			userMountOptions:         "implicit-dirs,enable-grpc-by-default=false",
-			expectedOptions:          []string{"implicit-dirs", "enable-grpc-by-default=false"},
-			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
-		},
-		{
 			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
@@ -3457,16 +3447,6 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled, mounter pod image supported, user specifies enable-grpc-by-default=false, expect enable-grpc-by-default=false preserved without injecting true",
-			enableGrpcByDefault:      true,
-			assumeGoodSidecarVersion: true,
-			machineType:              "ct6e-standard-4t",
-			kubeletVersion:           "v1.37.1-gke.1552000",
-			userMountOptions:         "implicit-dirs,enable-grpc-by-default=false",
-			expectedOptions:          []string{"implicit-dirs", "enable-grpc-by-default=false"},
-			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
-		},
-		{
 			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
@@ -4416,7 +4396,6 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		machineType         string
 		kubeletVersion      string
 		sidecarUnsupported  bool
-		userMountOptions    string
 		enableHWgroErr      error
 		alreadyMounted      bool
 		wantHWgroCalls      int
@@ -4495,33 +4474,6 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      0,
 		},
 		{
-			name:                "explicit user enable-grpc-by-default=false skips HWgro",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "enable-grpc-by-default=false",
-			wantHWgroCalls:      0,
-		},
-		{
-			name:                "explicit user client-protocol=http1 skips HWgro",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "client-protocol=http1",
-			wantHWgroCalls:      0,
-		},
-		{
-			name:                "explicit user gcs-connection:client-protocol:http1 skips HWgro",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "gcs-connection:client-protocol:http1",
-			wantHWgroCalls:      0,
-		},
-		{
 			name:                "HWgro error is logged and does not fail NodePublishVolume",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
@@ -4538,26 +4490,6 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			alreadyMounted:      true,
 			wantHWgroCalls:      1,
-		},
-		{
-			name:                "already mounted targetPath with explicit enable-grpc-by-default=false skips HWgro on republish",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "enable-grpc-by-default=false",
-			alreadyMounted:      true,
-			wantHWgroCalls:      0,
-		},
-		{
-			name:                "already mounted targetPath with explicit client-protocol=http1 skips HWgro on republish",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "client-protocol=http1",
-			alreadyMounted:      true,
-			wantHWgroCalls:      0,
 		},
 	}
 
@@ -4610,19 +4542,14 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 				return tc.enableHWgroErr
 			}
 
-			volumeContext := map[string]string{
-				VolumeContextKeyPodName:      "test-pod",
-				VolumeContextKeyPodNamespace: "test-ns",
-			}
-			if tc.userMountOptions != "" {
-				volumeContext[VolumeContextKeyMountOptions] = tc.userMountOptions
-			}
-
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				TargetPath:       targetPath,
 				VolumeCapability: testVolumeCapability,
-				VolumeContext:    volumeContext,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
 			}
 
 			_, err := ns.NodePublishVolume(t.Context(), req)
@@ -4890,7 +4817,6 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		machineType         string
 		kubeletVersion      string
 		sidecarUnsupported  bool
-		userMountOptions    string
 		enableHWgroErr      error
 		alreadyMounted      bool
 		wantHWgroCalls      int
@@ -4969,33 +4895,6 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      0,
 		},
 		{
-			name:                "explicit user enable-grpc-by-default=false skips HWgro",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "enable-grpc-by-default=false",
-			wantHWgroCalls:      0,
-		},
-		{
-			name:                "explicit user client-protocol=http1 skips HWgro",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "client-protocol=http1",
-			wantHWgroCalls:      0,
-		},
-		{
-			name:                "explicit user gcs-connection:client-protocol:http1 skips HWgro",
-			enableGrpcByDefault: true,
-			enableHWgro:         true,
-			machineType:         "ct6e-standard-4t",
-			kubeletVersion:      "v1.37.1-gke.1552000",
-			userMountOptions:    "gcs-connection:client-protocol:http1",
-			wantHWgroCalls:      0,
-		},
-		{
 			name:                "HWgro error is logged and does not fail NodeStageVolume",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
@@ -5058,11 +4957,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 				return tc.enableHWgroErr
 			}
 
-			var extraVC map[string]string
-			if tc.userMountOptions != "" {
-				extraVC = map[string]string{VolumeContextKeyMountOptions: tc.userMountOptions}
-			}
-			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, extraVC)
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
 
 			_, err := ns.NodeStageVolume(t.Context(), stageReq)
 			ns.enableHWgroWg.Wait()

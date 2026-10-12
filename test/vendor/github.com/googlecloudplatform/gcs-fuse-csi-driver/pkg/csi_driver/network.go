@@ -48,7 +48,6 @@ const (
 type ethtoolClient interface {
 	FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error)
 	Change(intf string, config map[string]bool) error
-	Close()
 }
 
 // LinkDevice is information for a particular interface like eth0.
@@ -308,9 +307,8 @@ func getGcsFuseTableId(mgr NetworkManager, device string) (int, error) {
 }
 
 type realNetworkManager struct {
-	links      []netlink.Link
-	devices    []LinkDevice
-	newEthtool func() (ethtoolClient, error)
+	links   []netlink.Link
+	devices []LinkDevice
 
 	mutex sync.Mutex
 }
@@ -319,9 +317,7 @@ var _ NetworkManager = &realNetworkManager{}
 
 // NewNetworkManager returns a real network manager that manipulates routing tables.
 func NewNetworkManager() NetworkManager {
-	return &realNetworkManager{
-		newEthtool: func() (ethtoolClient, error) { return ethtool.NewEthtool() },
-	}
+	return &realNetworkManager{}
 }
 
 func (mgr *realNetworkManager) Lock() {
@@ -697,7 +693,7 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the host's COS default NIC (eth0).
 func (mgr *realNetworkManager) EnableHWgroOnDefaultNIC() error {
-	eth, err := mgr.newEthtool()
+	eth, err := ethtool.NewEthtool()
 	if err != nil {
 		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", cosDefaultNIC, err)
 	}

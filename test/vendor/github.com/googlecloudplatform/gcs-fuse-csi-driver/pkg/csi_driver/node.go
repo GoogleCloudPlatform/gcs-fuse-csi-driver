@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -525,7 +524,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
 			s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, args.bucketName, vs)
 		}
-		s.enableHWgroIfApplicable(node, gcsFuseSidecarImage, args.fuseMountOptions...)
+		s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
@@ -581,9 +580,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful mount.
-	if hasGrpcByDefaultEnabledMountOption(args.fuseMountOptions) {
-		s.enableHWgroIfApplicable(node, gcsFuseSidecarImage, args.fuseMountOptions...)
-	}
+	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
 
 	// Start monitoring goroutine for new mounts.
 	if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
@@ -931,43 +928,14 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 	return mountOptions
 }
 
-// appendGrpcByDefaultOptions appends "enable-grpc-by-default=true" to mountOptions when
-// not already specified by the user and the enable-grpc-by-default feature is enabled on
-// the driver, supported by the sidecar, and supported by the node (including TPU v6e GKE
-// nodepool version gating).
+// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
+// mount option if enabled for the node and supported by the sidecar container image.
+// If the feature is disabled or unsupported, mount options are returned unmodified.
 func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
-	for _, opt := range mountOptions {
-		if opt == util.EnableGrpcByDefaultConst || strings.HasPrefix(opt, util.EnableGrpcByDefaultConst+"=") {
-			return mountOptions
-		}
-	}
 	if !s.isGrpcByDefaultEnabled(node, mounterImage) {
 		return mountOptions
 	}
-	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=" + util.TrueStr})
-}
-
-// hasGrpcByDefaultEnabledMountOption returns true if mountOptions contains "enable-grpc-by-default=true".
-func hasGrpcByDefaultEnabledMountOption(mountOptions []string) bool {
-	return slices.Contains(mountOptions, util.EnableGrpcByDefaultConst+"="+util.TrueStr)
-}
-
-// hasGrpcMountOptionOptOut returns true if mountOptions explicitly disables
-// enable-grpc-by-default or explicitly configures HTTP/1 as the client protocol.
-func hasGrpcMountOptionOptOut(mountOptions []string) bool {
-	for _, opt := range mountOptions {
-		opt, _ = strings.CutPrefix(opt, "o=")
-		if v, ok := strings.CutPrefix(opt, util.EnableGrpcByDefaultConst+"="); ok && !strings.EqualFold(v, util.TrueStr) {
-			return true
-		}
-		if v, ok := strings.CutPrefix(opt, "client-protocol="); ok && strings.EqualFold(v, "http1") {
-			return true
-		}
-		if v, ok := strings.CutPrefix(opt, "gcs-connection:client-protocol:"); ok && strings.EqualFold(v, "http1") {
-			return true
-		}
-	}
-	return false
+	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
 }
 
 // isGrpcByDefaultEnabled checks if the enable-grpc-by-default feature is enabled in the driver config,
@@ -1324,9 +1292,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful shared mount.
-	if hasGrpcByDefaultEnabledMountOption(args.fuseMountOptions) {
-		s.enableHWgroIfApplicable(node, podImage, args.fuseMountOptions...)
-	}
+	s.enableHWgroIfApplicable(node, podImage)
 
 	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
@@ -1498,15 +1464,13 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 
 // enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
 // on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
-// are enabled, the volume has not opted out of gRPC via mount options, the sidecar/mounter image
-// supports gRPC by default, and the node is a TPU v6e (ct6e-standard-*) machine running a
-// supported GKE nodepool version.
-func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string, mountOptions ...string) {
+// are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
+// (ct6e-standard-*) machine running a supported GKE nodepool version.
+func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
 	if s == nil || s.nwMgr == nil || node == nil ||
 		s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
 		!s.driver.config.FeatureOptions.EnableHWgro ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
-		hasGrpcMountOptionOptOut(mountOptions) {
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault {
 		return
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
@@ -1520,11 +1484,7 @@ func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage str
 	// reconfiguration. Only one attempt runs at a time; once it succeeds, further
 	// mounts are no-ops, while a transient failure allows a subsequent mount to retry.
 	s.enableHWgroMu.Lock()
-	if s.enableHWgroDone || s.enableHWgroRunning {
-		s.enableHWgroMu.Unlock()
-		return
-	}
-	if !hasGrpcByDefaultEnabledMountOption(mountOptions) && !s.isGrpcByDefaultEnabled(node, mounterImage) {
+	if s.enableHWgroDone || s.enableHWgroRunning || !s.isGrpcByDefaultEnabled(node, mounterImage) {
 		s.enableHWgroMu.Unlock()
 		return
 	}
