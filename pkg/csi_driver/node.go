@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -70,15 +71,16 @@ const (
 	// Machine type prefix for TPU v6e nodes where gRPC-by-default is gated on GKE nodepool version
 	// and hardware GRO/LRO offloads are enabled.
 	tpuV6eMachineTypePrefix = "ct6e-standard-"
-
-	// Minimum GKE nodepool versions required to enable gRPC by default on TPU v6e nodes.
-	gkePrereleasePrefix    = "-gke."
-	minGKEVersionTPUv6e134 = "v1.34.9-gke.1287000"
-	minGKEVersionTPUv6e135 = "v1.35.6-gke.1258000"
-	minGKEVersionTPUv6e136 = "v1.36.0-gke.4681000"
-	minGKEVersionTPUv6e137 = "v1.37.1-gke.1552000"
-	minGKEVersionTPUv6e138 = "v1.38"
+	gkePrereleasePrefix     = "-gke."
 )
+
+// Minimum GKE nodepool versions required to enable gRPC by default on TPU v6e nodes per minor release.
+var minGKEVersionByMinorForTPUv6e = map[string]string{
+	"v1.34": "v1.34.9-gke.1287000",
+	"v1.35": "v1.35.6-gke.1258000",
+	"v1.36": "v1.36.0-gke.4681000",
+	"v1.37": "v1.37.1-gke.1552000",
+}
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
 type nodeServer struct {
@@ -93,9 +95,8 @@ type nodeServer struct {
 	volumeStateStore      *util.VolumeStateStore
 	// Serializes default NIC GRO/LRO offload enablement, preventing concurrent duplicate runs
 	// and latching once EnableHWgroOnDefaultNIC succeeds while allowing retry on transient errors.
-	enableHWgroMu      sync.Mutex
-	enableHWgroDone    bool
-	enableHWgroRunning bool
+	enableHWgroMu   sync.Mutex
+	enableHWgroDone atomic.Bool
 	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
 	enableHWgroWg sync.WaitGroup
 }
@@ -945,7 +946,7 @@ func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage 
 // "ct6e-standard-"), it checks that the GKE nodepool version meets the minimum supported version
 // per minor release.
 func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node, mounterImage string) bool {
-	if s == nil || s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+	if s.driver.config.FeatureOptions == nil ||
 		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
 		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
 		node == nil {
@@ -987,18 +988,11 @@ func isGKENodePoolVersionSupportedForTPUv6e(kubeletVersion string) bool {
 	if !semver.IsValid(v) || !strings.HasPrefix(semver.Prerelease(v), gkePrereleasePrefix) {
 		return false
 	}
-	switch majorMinor := semver.MajorMinor(v); majorMinor {
-	case "v1.34":
-		return semver.Compare(v, minGKEVersionTPUv6e134) >= 0
-	case "v1.35":
-		return semver.Compare(v, minGKEVersionTPUv6e135) >= 0
-	case "v1.36":
-		return semver.Compare(v, minGKEVersionTPUv6e136) >= 0
-	case "v1.37":
-		return semver.Compare(v, minGKEVersionTPUv6e137) >= 0
-	default:
-		return semver.Compare(majorMinor, minGKEVersionTPUv6e138) >= 0
+	majorMinor := semver.MajorMinor(v)
+	if minVer, ok := minGKEVersionByMinorForTPUv6e[majorMinor]; ok {
+		return semver.Compare(v, minVer) >= 0
 	}
+	return semver.Compare(majorMinor, "v1.38") >= 0
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -1467,47 +1461,32 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 // are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
 // (ct6e-standard-*) machine running a supported GKE nodepool version.
 func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
-	if s == nil || s.nwMgr == nil || node == nil ||
-		s.driver == nil || s.driver.config == nil || s.driver.config.FeatureOptions == nil ||
+	if s.enableHWgroDone.Load() || s.nwMgr == nil ||
+		!s.isGrpcByDefaultEnabled(node, mounterImage) ||
 		!s.driver.config.FeatureOptions.EnableHWgro ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault {
-		return
-	}
-	machineType := node.Labels[clientset.MachineTypeKey]
-	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		!strings.HasPrefix(node.Labels[clientset.MachineTypeKey], tpuV6eMachineTypePrefix) {
 		return
 	}
 
 	// NIC offload tuning is host-wide and best-effort: run it in a background
-	// goroutine so that volume mounts are never blocked if SIOCETHTOOL
-	// ioctls contend on the kernel's global rtnl_lock or stall during NIC driver
-	// reconfiguration. Only one attempt runs at a time; once it succeeds, further
-	// mounts are no-ops, while a transient failure allows a subsequent mount to retry.
-	s.enableHWgroMu.Lock()
-	if s.enableHWgroDone || s.enableHWgroRunning || !s.isGrpcByDefaultEnabled(node, mounterImage) {
+	// goroutine so that volume mounts are never blocked if SIOCETHTOOL ioctls
+	// contend on the kernel's global rtnl_lock or stall during NIC reconfiguration.
+	if !s.enableHWgroMu.TryLock() {
+		return
+	}
+	if s.enableHWgroDone.Load() {
 		s.enableHWgroMu.Unlock()
 		return
 	}
-	s.enableHWgroRunning = true
-	s.enableHWgroWg.Add(1)
-	s.enableHWgroMu.Unlock()
 
-	nodeName := node.Name
+	s.enableHWgroWg.Add(1)
 	go func() {
-		var succeeded bool
-		defer func() {
-			s.enableHWgroMu.Lock()
-			s.enableHWgroRunning = false
-			if succeeded {
-				s.enableHWgroDone = true
-			}
-			s.enableHWgroWg.Done()
-			s.enableHWgroMu.Unlock()
-		}()
+		defer s.enableHWgroWg.Done()
+		defer s.enableHWgroMu.Unlock()
 		if err := s.nwMgr.EnableHWgroOnDefaultNIC(); err != nil {
-			klog.Errorf("Failed to enable rx-gro-hw and rx-lro on default NIC for node %q (machine type %q): %v", nodeName, machineType, err)
+			klog.Errorf("Failed to enable rx-gro-hw and rx-lro on default NIC for node %q: %v", node.Name, err)
 			return
 		}
-		succeeded = true
+		s.enableHWgroDone.Store(true)
 	}()
 }

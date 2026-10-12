@@ -46,7 +46,6 @@ const (
 
 // ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
 type ethtoolClient interface {
-	FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error)
 	Change(intf string, config map[string]bool) error
 }
 
@@ -576,117 +575,18 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 	return nil
 }
 
-// isFeatureFixed returns true if the ethtool feature is immutable ([fixed]),
-// i.e., not available for modification by the driver or marked never_changed by the kernel.
-func isFeatureFixed(state ethtool.FeatureState) bool {
-	return !state.Available || state.NeverChanged
-}
-
-// enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) on the specified NIC using ethtool ioctls (FeaturesWithState read-before-write Change),
-// tolerating features marked [fixed] or rejected by kernel/driver wish (ETHTOOL_F_WISH) and
-// verifying that requested offloads become active afterward.
+// enableHWgroOnNIC enables hardware GRO (rx-gro-hw) and Large Receive Offload
+// (rx-lro) together on the specified NIC using ethtool ioctls.
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
-	features, err := eth.FeaturesWithState(nic)
-	if err != nil {
+	if err := eth.Change(nic, map[string]bool{rxGroHWFeature: true, rxLROFeature: true}); err != nil {
 		if errors.Is(err, unix.ENODEV) {
 			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
 			return nil
 		}
-		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
+		return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
 	}
 
-	requiredFeatures := []string{rxGroHWFeature, rxLROFeature}
-	changes := make(map[string]bool)
-	foundFeatures := 0
-	for _, feature := range requiredFeatures {
-		state, ok := features[feature]
-		if !ok {
-			klog.Warningf("Skipping %s enablement on NIC %q: feature not found in ethtool features", feature, nic)
-			continue
-		}
-		foundFeatures++
-		if state.Active {
-			continue
-		}
-		if isFeatureFixed(state) {
-			klog.Infof("Skipping %s enablement on NIC %q: feature is [fixed]", feature, nic)
-			continue
-		}
-		if state.Requested {
-			klog.Warningf("Skipping %s enablement on NIC %q: feature was already requested but rejected by driver (ETHTOOL_F_WISH)", feature, nic)
-			continue
-		}
-		changes[feature] = true
-	}
-	if foundFeatures == 0 {
-		return fmt.Errorf("neither %s nor %s found in ethtool features for NIC %q", rxGroHWFeature, rxLROFeature, nic)
-	}
-
-	if len(changes) > 0 {
-		if err := eth.Change(nic, changes); err != nil {
-			return fmt.Errorf("failed to enable ethtool features %v on NIC %q: %w", changes, nic, err)
-		}
-		// Linux ETHTOOL_SFEATURES returns a positive bitmask (ETHTOOL_F_UNSUPPORTED / ETHTOOL_F_WISH)
-		// with errno == 0 when a feature is cleared by netdev_fix_features (e.g., mutual exclusion
-		// between rx-gro-hw and rx-lro) or rejected by the NIC driver, which safchain/ethtool
-		// treats as nil error. Re-read FeaturesWithState to inspect the resulting state.
-		updatedFeatures, err := eth.FeaturesWithState(nic)
-		if err != nil {
-			return fmt.Errorf("failed to verify ethtool features after change on NIC %q: %w", nic, err)
-		}
-		features = updatedFeatures
-		anyActive := features[rxGroHWFeature].Active || features[rxLROFeature].Active
-		for _, feature := range requiredFeatures {
-			if !changes[feature] {
-				continue
-			}
-			uState := features[feature]
-			if uState.Active {
-				continue
-			}
-			if uState.Requested || isFeatureFixed(uState) {
-				klog.Warningf("Feature %s on NIC %q was requested but remained inactive (ETHTOOL_F_WISH: requested=%t, fixed=%t)", feature, nic, uState.Requested, isFeatureFixed(uState))
-				continue
-			}
-			if anyActive {
-				klog.Warningf("Feature %s remained disabled on NIC %q after ethtool change, continuing because another offload feature is active", feature, nic)
-				continue
-			}
-			return fmt.Errorf("feature %s remained disabled on NIC %q after ethtool change", feature, nic)
-		}
-	}
-
-	var activeFeatures, skippedFeatures []string
-	for _, feature := range requiredFeatures {
-		state, ok := features[feature]
-		if !ok {
-			skippedFeatures = append(skippedFeatures, feature+" (not found)")
-			continue
-		}
-		if state.Active {
-			activeFeatures = append(activeFeatures, feature)
-			continue
-		}
-		if isFeatureFixed(state) {
-			skippedFeatures = append(skippedFeatures, feature+" ([fixed])")
-			continue
-		}
-		if state.Requested {
-			skippedFeatures = append(skippedFeatures, feature+" (ETHTOOL_F_WISH)")
-			continue
-		}
-		skippedFeatures = append(skippedFeatures, feature+" (inactive)")
-	}
-
-	switch {
-	case len(activeFeatures) == 0:
-		klog.Warningf("Neither %s nor %s could be enabled on NIC %q (skipped: %s)", rxGroHWFeature, rxLROFeature, nic, strings.Join(skippedFeatures, ", "))
-	case len(skippedFeatures) == 0:
-		klog.Infof("Successfully ensured %s and %s are enabled on NIC %q", rxGroHWFeature, rxLROFeature, nic)
-	default:
-		klog.Infof("Successfully ensured %s enabled on NIC %q (skipped: %s)", strings.Join(activeFeatures, ", "), nic, strings.Join(skippedFeatures, ", "))
-	}
+	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
 	return nil
 }
 
