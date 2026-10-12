@@ -48,6 +48,7 @@ const (
 type ethtoolClient interface {
 	FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error)
 	Change(intf string, config map[string]bool) error
+	Close()
 }
 
 // LinkDevice is information for a particular interface like eth0.
@@ -307,8 +308,9 @@ func getGcsFuseTableId(mgr NetworkManager, device string) (int, error) {
 }
 
 type realNetworkManager struct {
-	links   []netlink.Link
-	devices []LinkDevice
+	links      []netlink.Link
+	devices    []LinkDevice
+	newEthtool func() (ethtoolClient, error)
 
 	mutex sync.Mutex
 }
@@ -317,7 +319,9 @@ var _ NetworkManager = &realNetworkManager{}
 
 // NewNetworkManager returns a real network manager that manipulates routing tables.
 func NewNetworkManager() NetworkManager {
-	return &realNetworkManager{}
+	return &realNetworkManager{
+		newEthtool: func() (ethtoolClient, error) { return ethtool.NewEthtool() },
+	}
 }
 
 func (mgr *realNetworkManager) Lock() {
@@ -583,8 +587,9 @@ func isFeatureFixed(state ethtool.FeatureState) bool {
 }
 
 // enableHWgroOnNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) together on the specified NIC using ethtool ioctls (FeaturesWithState read-before-write Change),
-// tolerating features marked [fixed] and verifying that mutable features become active afterward.
+// (rx-lro) on the specified NIC using ethtool ioctls (FeaturesWithState read-before-write Change),
+// tolerating features marked [fixed] or rejected by kernel/driver wish (ETHTOOL_F_WISH) and
+// verifying that requested offloads become active afterward.
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	features, err := eth.FeaturesWithState(nic)
 	if err != nil {
@@ -597,11 +602,14 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 
 	requiredFeatures := []string{rxGroHWFeature, rxLROFeature}
 	changes := make(map[string]bool)
+	foundFeatures := 0
 	for _, feature := range requiredFeatures {
 		state, ok := features[feature]
 		if !ok {
-			return fmt.Errorf("%s feature not found in ethtool features for NIC %q", feature, nic)
+			klog.Warningf("Skipping %s enablement on NIC %q: feature not found in ethtool features", feature, nic)
+			continue
 		}
+		foundFeatures++
 		if state.Active {
 			continue
 		}
@@ -609,38 +617,87 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 			klog.Infof("Skipping %s enablement on NIC %q: feature is [fixed]", feature, nic)
 			continue
 		}
+		if state.Requested {
+			klog.Warningf("Skipping %s enablement on NIC %q: feature was already requested but rejected by driver (ETHTOOL_F_WISH)", feature, nic)
+			continue
+		}
 		changes[feature] = true
+	}
+	if foundFeatures == 0 {
+		return fmt.Errorf("neither %s nor %s found in ethtool features for NIC %q", rxGroHWFeature, rxLROFeature, nic)
 	}
 
 	if len(changes) > 0 {
 		if err := eth.Change(nic, changes); err != nil {
-			return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
+			return fmt.Errorf("failed to enable ethtool features %v on NIC %q: %w", changes, nic, err)
 		}
 		// Linux ETHTOOL_SFEATURES returns a positive bitmask (ETHTOOL_F_UNSUPPORTED / ETHTOOL_F_WISH)
-		// with errno == 0 when a feature is rejected by the NIC driver, which safchain/ethtool
-		// treats as nil error. Re-read FeaturesWithState to verify requested offloads became active.
+		// with errno == 0 when a feature is cleared by netdev_fix_features (e.g., mutual exclusion
+		// between rx-gro-hw and rx-lro) or rejected by the NIC driver, which safchain/ethtool
+		// treats as nil error. Re-read FeaturesWithState to inspect the resulting state.
 		updatedFeatures, err := eth.FeaturesWithState(nic)
 		if err != nil {
 			return fmt.Errorf("failed to verify ethtool features after change on NIC %q: %w", nic, err)
 		}
+		features = updatedFeatures
+		anyActive := features[rxGroHWFeature].Active || features[rxLROFeature].Active
 		for _, feature := range requiredFeatures {
 			if !changes[feature] {
 				continue
 			}
-			if !updatedFeatures[feature].Active {
-				return fmt.Errorf("feature %s remained disabled on NIC %q after ethtool change", feature, nic)
+			uState := features[feature]
+			if uState.Active {
+				continue
 			}
+			if uState.Requested || isFeatureFixed(uState) {
+				klog.Warningf("Feature %s on NIC %q was requested but remained inactive (ETHTOOL_F_WISH: requested=%t, fixed=%t)", feature, nic, uState.Requested, isFeatureFixed(uState))
+				continue
+			}
+			if anyActive {
+				klog.Warningf("Feature %s remained disabled on NIC %q after ethtool change, continuing because another offload feature is active", feature, nic)
+				continue
+			}
+			return fmt.Errorf("feature %s remained disabled on NIC %q after ethtool change", feature, nic)
 		}
 	}
 
-	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
+	var activeFeatures, skippedFeatures []string
+	for _, feature := range requiredFeatures {
+		state, ok := features[feature]
+		if !ok {
+			skippedFeatures = append(skippedFeatures, feature+" (not found)")
+			continue
+		}
+		if state.Active {
+			activeFeatures = append(activeFeatures, feature)
+			continue
+		}
+		if isFeatureFixed(state) {
+			skippedFeatures = append(skippedFeatures, feature+" ([fixed])")
+			continue
+		}
+		if state.Requested {
+			skippedFeatures = append(skippedFeatures, feature+" (ETHTOOL_F_WISH)")
+			continue
+		}
+		skippedFeatures = append(skippedFeatures, feature+" (inactive)")
+	}
+
+	switch {
+	case len(activeFeatures) == 0:
+		klog.Warningf("Neither %s nor %s could be enabled on NIC %q (skipped: %s)", rxGroHWFeature, rxLROFeature, nic, strings.Join(skippedFeatures, ", "))
+	case len(skippedFeatures) == 0:
+		klog.Infof("Successfully ensured %s and %s are enabled on NIC %q", rxGroHWFeature, rxLROFeature, nic)
+	default:
+		klog.Infof("Successfully ensured %s enabled on NIC %q (skipped: %s)", strings.Join(activeFeatures, ", "), nic, strings.Join(skippedFeatures, ", "))
+	}
 	return nil
 }
 
 // EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
 // on the host's COS default NIC (eth0).
 func (mgr *realNetworkManager) EnableHWgroOnDefaultNIC() error {
-	eth, err := ethtool.NewEthtool()
+	eth, err := mgr.newEthtool()
 	if err != nil {
 		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", cosDefaultNIC, err)
 	}

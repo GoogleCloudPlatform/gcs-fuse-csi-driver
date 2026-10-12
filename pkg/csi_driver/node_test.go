@@ -24,9 +24,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -924,6 +926,16 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			assumeGoodSidecarVersion: true,
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user specifies enable-grpc-by-default=false, expect enable-grpc-by-default=false preserved without injecting true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1552000",
+			userMountOptions:         "implicit-dirs,enable-grpc-by-default=false",
+			expectedOptions:          []string{"implicit-dirs", "enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
 			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
@@ -3445,6 +3457,16 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
+			name:                     "feature flag enabled, mounter pod image supported, user specifies enable-grpc-by-default=false, expect enable-grpc-by-default=false preserved without injecting true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1552000",
+			userMountOptions:         "implicit-dirs,enable-grpc-by-default=false",
+			expectedOptions:          []string{"implicit-dirs", "enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
 			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
@@ -4373,6 +4395,7 @@ func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
 
 type fakeFailingMounter struct {
 	*mount.FakeMounter
+
 	mountErr error
 }
 
@@ -4393,6 +4416,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		machineType         string
 		kubeletVersion      string
 		sidecarUnsupported  bool
+		userMountOptions    string
 		enableHWgroErr      error
 		alreadyMounted      bool
 		wantHWgroCalls      int
@@ -4471,6 +4495,33 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      0,
 		},
 		{
+			name:                "explicit user enable-grpc-by-default=false skips HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "enable-grpc-by-default=false",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "explicit user client-protocol=http1 skips HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "client-protocol=http1",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "explicit user gcs-connection:client-protocol:http1 skips HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "gcs-connection:client-protocol:http1",
+			wantHWgroCalls:      0,
+		},
+		{
 			name:                "HWgro error is logged and does not fail NodePublishVolume",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
@@ -4480,11 +4531,31 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      1,
 		},
 		{
-			name:                "already mounted targetPath skips HWgro on republish",
+			name:                "already mounted targetPath triggers HWgro on republish when not yet done",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
+			alreadyMounted:      true,
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "already mounted targetPath with explicit enable-grpc-by-default=false skips HWgro on republish",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "enable-grpc-by-default=false",
+			alreadyMounted:      true,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "already mounted targetPath with explicit client-protocol=http1 skips HWgro on republish",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "client-protocol=http1",
 			alreadyMounted:      true,
 			wantHWgroCalls:      0,
 		},
@@ -4539,14 +4610,19 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 				return tc.enableHWgroErr
 			}
 
+			volumeContext := map[string]string{
+				VolumeContextKeyPodName:      "test-pod",
+				VolumeContextKeyPodNamespace: "test-ns",
+			}
+			if tc.userMountOptions != "" {
+				volumeContext[VolumeContextKeyMountOptions] = tc.userMountOptions
+			}
+
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				TargetPath:       targetPath,
 				VolumeCapability: testVolumeCapability,
-				VolumeContext: map[string]string{
-					VolumeContextKeyPodName:      "test-pod",
-					VolumeContextKeyPodNamespace: "test-ns",
-				},
+				VolumeContext:    volumeContext,
 			}
 
 			_, err := ns.NodePublishVolume(t.Context(), req)
@@ -4702,10 +4778,9 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		if !ok {
 			t.Fatal("failed to cast NetworkManager to *fakeNetworkManager")
 		}
-		attempt := 0
+		var attempt atomic.Int32
 		nwMgr.enableHWgroFunc = func() error {
-			attempt++
-			if attempt == 1 {
+			if attempt.Add(1) == 1 {
 				return errors.New("transient EBUSY")
 			}
 			return nil
@@ -4723,6 +4798,72 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			}
 			if _, err := ns.NodePublishVolume(t.Context(), req); err != nil {
 				t.Fatalf("NodePublishVolume (mount %d) failed: %v", i, err)
+			}
+			ns.enableHWgroWg.Wait()
+		}
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 2 {
+			t.Errorf("enableHWgroCalls = %d, want 2", got)
+		}
+	})
+
+	t.Run("retries on republish of already-mounted targetPath after transient error and latches on subsequent republish", func(t *testing.T) {
+		t.Parallel()
+
+		targetPath, cleanup := setupTestTargetPath(t)
+		t.Cleanup(cleanup)
+
+		fc := clientset.NewFakeClientset()
+		fc.CreateNode(clientset.FakeNodeConfig{
+			IsWorkloadIdentityEnabled: true,
+			MachineType:               "ct6e-standard-4t",
+			KubeletVersion:            "v1.37.1-gke.1552000",
+		})
+		fc.CreatePod(clientset.FakePodConfig{
+			Name:         "test-pod",
+			Namespace:    "test-ns",
+			PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+			IsMounterPod: false,
+		})
+		fakeMounter := mount.NewFakeMounter([]mount.MountPoint{
+			{Device: testVolumeID, Path: targetPath, Type: FuseMountType},
+		})
+		driver := initTestDriver(t, fakeMounter, fc)
+		s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+		if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			t.Fatalf("failed to create the fake bucket: %v", err)
+		}
+		driver.config.FeatureOptions.EnableGrpcByDefault = true
+		driver.config.FeatureOptions.EnableHWgro = true
+		driver.config.AssumeGoodSidecarVersion = true
+		ns, ok := newNodeServer(driver, fakeMounter).(*nodeServer)
+		if !ok {
+			t.Fatal("failed to cast NodeServer to *nodeServer")
+		}
+		nwMgr, ok := driver.config.NetworkManager.(*fakeNetworkManager)
+		if !ok {
+			t.Fatal("failed to cast NetworkManager to *fakeNetworkManager")
+		}
+		var attempt atomic.Int32
+		nwMgr.enableHWgroFunc = func() error {
+			if attempt.Add(1) == 1 {
+				return errors.New("transient EBUSY")
+			}
+			return nil
+		}
+
+		req := &csi.NodePublishVolumeRequest{
+			VolumeId:         testVolumeID,
+			TargetPath:       targetPath,
+			VolumeCapability: testVolumeCapability,
+			VolumeContext: map[string]string{
+				VolumeContextKeyPodName:      "test-pod",
+				VolumeContextKeyPodNamespace: "test-ns",
+			},
+		}
+		for i := range 3 {
+			if _, err := ns.NodePublishVolume(t.Context(), req); err != nil {
+				t.Fatalf("NodePublishVolume (republish %d) failed: %v", i, err)
 			}
 			ns.enableHWgroWg.Wait()
 		}
@@ -4749,6 +4890,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		machineType         string
 		kubeletVersion      string
 		sidecarUnsupported  bool
+		userMountOptions    string
 		enableHWgroErr      error
 		alreadyMounted      bool
 		wantHWgroCalls      int
@@ -4827,6 +4969,33 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      0,
 		},
 		{
+			name:                "explicit user enable-grpc-by-default=false skips HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "enable-grpc-by-default=false",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "explicit user client-protocol=http1 skips HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "client-protocol=http1",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "explicit user gcs-connection:client-protocol:http1 skips HWgro",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			userMountOptions:    "gcs-connection:client-protocol:http1",
+			wantHWgroCalls:      0,
+		},
+		{
 			name:                "HWgro error is logged and does not fail NodeStageVolume",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
@@ -4889,7 +5058,11 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 				return tc.enableHWgroErr
 			}
 
-			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+			var extraVC map[string]string
+			if tc.userMountOptions != "" {
+				extraVC = map[string]string{VolumeContextKeyMountOptions: tc.userMountOptions}
+			}
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, extraVC)
 
 			_, err := ns.NodeStageVolume(t.Context(), stageReq)
 			ns.enableHWgroWg.Wait()
@@ -4910,7 +5083,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		t.Cleanup(cleanupStaging)
 
 		sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
-		mounterServer.mountFunc = func(req *mounter.MountRequest) error {
+		mounterServer.mountFunc = func(_ *mounter.MountRequest) error {
 			return errors.New("mock shared mount failure")
 		}
 
@@ -5040,10 +5213,9 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		ns.driver.config.AssumeGoodSidecarVersion = true
 		ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 
-		attempt := 0
+		var attempt atomic.Int32
 		testEnv.nwMgr.enableHWgroFunc = func() error {
-			attempt++
-			if attempt == 1 {
+			if attempt.Add(1) == 1 {
 				return errors.New("transient EBUSY")
 			}
 			return nil
@@ -5253,11 +5425,10 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 	t.Run("retries on subsequent invocation after transient failure and latches after success", func(t *testing.T) {
 		t.Parallel()
 
-		attempt := 0
+		var attempt atomic.Int32
 		nwMgr := &fakeNetworkManager{
 			enableHWgroFunc: func() error {
-				attempt++
-				if attempt == 1 {
+				if attempt.Add(1) == 1 {
 					return errors.New("transient EBUSY")
 				}
 				return nil
@@ -5276,6 +5447,54 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 			ns.enableHWgroIfApplicable(validNode, supportedImage)
 			ns.enableHWgroWg.Wait()
 		}
+
+		if got := nwMgr.getEnableHWgroCalls(); got != 2 {
+			t.Errorf("enableHWgroCalls = %d, want 2", got)
+		}
+	})
+
+	t.Run("defer resets enableHWgroRunning and completes WaitGroup on abnormal goroutine exit", func(t *testing.T) {
+		t.Parallel()
+
+		var attempt atomic.Int32
+		nwMgr := &fakeNetworkManager{
+			enableHWgroFunc: func() error {
+				if attempt.Add(1) == 1 {
+					runtime.Goexit()
+				}
+				return nil
+			},
+		}
+		ns := &nodeServer{
+			driver: &GCSDriver{
+				config: &GCSDriverConfig{
+					FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+				},
+			},
+			nwMgr: nwMgr,
+		}
+
+		// First invocation exits abnormally via runtime.Goexit(); defer must still reset
+		// enableHWgroRunning=false, keep enableHWgroDone=false, and call enableHWgroWg.Done().
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+
+		ns.enableHWgroMu.Lock()
+		runningAfterExit := ns.enableHWgroRunning
+		doneAfterExit := ns.enableHWgroDone
+		ns.enableHWgroMu.Unlock()
+		if runningAfterExit {
+			t.Fatal("expected enableHWgroRunning to be false after abnormal goroutine exit")
+		}
+		if doneAfterExit {
+			t.Fatal("expected enableHWgroDone to be false after abnormal goroutine exit")
+		}
+
+		// Subsequent invocation should retry, succeed, and latch enableHWgroDone=true.
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
+		ns.enableHWgroIfApplicable(validNode, supportedImage)
+		ns.enableHWgroWg.Wait()
 
 		if got := nwMgr.getEnableHWgroCalls(); got != 2 {
 			t.Errorf("enableHWgroCalls = %d, want 2", got)
@@ -5349,11 +5568,10 @@ func TestEnableHWgroIfApplicableNilAndEdgeCases(t *testing.T) {
 
 		started := make(chan struct{})
 		release := make(chan struct{})
-		attempt := 0
+		var attempt atomic.Int32
 		nwMgr := &fakeNetworkManager{
 			enableHWgroFunc: func() error {
-				attempt++
-				if attempt == 1 {
+				if attempt.Add(1) == 1 {
 					close(started)
 					<-release
 					return errors.New("transient EBUSY")
@@ -5616,6 +5834,18 @@ func TestIsGKENodePoolVersionSupportedForTPUv6e(t *testing.T) {
 		{name: "1.38 initial GKE build", kubeletVersion: "v1.38.0-gke.0", want: true},
 		{name: "1.38 GKE build without v prefix", kubeletVersion: "1.38.0-gke.100", want: true},
 		{name: "1.39 GKE build", kubeletVersion: "v1.39.2-gke.500", want: true},
+
+		// Non-GKE plain releases, RC tags, and alpha/beta pre-releases (rejected)
+		{name: "non-GKE plain release v1.34.9 is rejected", kubeletVersion: "v1.34.9", want: false},
+		{name: "non-GKE plain release v1.35.6 is rejected", kubeletVersion: "v1.35.6", want: false},
+		{name: "non-GKE plain release v1.36.0 is rejected", kubeletVersion: "v1.36.0", want: false},
+		{name: "non-GKE plain release v1.37.1 is rejected", kubeletVersion: "v1.37.1", want: false},
+		{name: "non-GKE plain release v1.38.0 is rejected", kubeletVersion: "v1.38.0", want: false},
+		{name: "non-GKE RC tag v1.36.0-rc.1 is rejected", kubeletVersion: "v1.36.0-rc.1", want: false},
+		{name: "non-GKE RC tag v1.38.0-rc.1 is rejected", kubeletVersion: "v1.38.0-rc.1", want: false},
+		{name: "non-GKE alpha tag v1.38.0-alpha.0 is rejected", kubeletVersion: "v1.38.0-alpha.0", want: false},
+		{name: "non-GKE beta tag v1.37.2-beta.1 is rejected", kubeletVersion: "v1.37.2-beta.1", want: false},
+		{name: "missing gke dot separator v1.38.0-gke is rejected", kubeletVersion: "v1.38.0-gke", want: false},
 
 		// < 1.34, whitespace, and invalid cases
 		{name: "1.33 GKE build is unsupported", kubeletVersion: "v1.33.9-gke.9999999", want: false},

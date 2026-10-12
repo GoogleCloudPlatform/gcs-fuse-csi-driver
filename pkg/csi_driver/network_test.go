@@ -22,6 +22,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -533,8 +534,10 @@ func TestSourceRouteForDevice(t *testing.T) {
 
 type fakeEthtoolClient struct {
 	features             map[string]bool
+	requestedFeatures    map[string]bool
 	fixedFeatures        map[string]bool
 	neverChangedFeatures map[string]bool
+	wishFeatures         map[string]bool
 	rejectedFeatures     map[string]bool
 	featuresErr          error
 	verifyFeaturesErr    error
@@ -542,12 +545,15 @@ type fakeEthtoolClient struct {
 	featuresIntf         string
 	changeIntf           string
 	changed              bool
+	featuresCalls        int
 	changeCalls          int
 	changedKeys          []string
+	closed               bool
 }
 
 func (f *fakeEthtoolClient) FeaturesWithState(intf string) (map[string]ethtool.FeatureState, error) {
 	f.featuresIntf = intf
+	f.featuresCalls++
 	if f.changed && f.verifyFeaturesErr != nil {
 		return nil, f.verifyFeaturesErr
 	}
@@ -556,9 +562,13 @@ func (f *fakeEthtoolClient) FeaturesWithState(intf string) (map[string]ethtool.F
 	}
 	out := make(map[string]ethtool.FeatureState, len(f.features))
 	for k, active := range f.features {
+		requested := active
+		if f.requestedFeatures != nil && f.requestedFeatures[k] {
+			requested = true
+		}
 		out[k] = ethtool.FeatureState{
 			Available:    !f.fixedFeatures[k],
-			Requested:    active,
+			Requested:    requested,
 			Active:       active,
 			NeverChanged: f.neverChangedFeatures[k],
 		}
@@ -577,13 +587,28 @@ func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
 	if f.changeErr != nil {
 		return f.changeErr
 	}
+	if f.requestedFeatures == nil {
+		f.requestedFeatures = make(map[string]bool)
+	}
 	for k, v := range config {
-		if f.fixedFeatures[k] || f.neverChangedFeatures[k] || f.rejectedFeatures[k] {
+		if f.fixedFeatures[k] || f.neverChangedFeatures[k] {
+			continue
+		}
+		if f.wishFeatures[k] {
+			f.requestedFeatures[k] = v
+			continue
+		}
+		if f.rejectedFeatures[k] {
 			continue
 		}
 		f.features[k] = v
+		f.requestedFeatures[k] = v
 	}
 	return nil
+}
+
+func (f *fakeEthtoolClient) Close() {
+	f.closed = true
 }
 
 func TestEnableHWgroOnNIC(t *testing.T) {
@@ -592,52 +617,99 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 	testCases := []struct {
 		name                 string
 		initialFeatures      map[string]bool
+		requestedFeatures    map[string]bool
 		fixedFeatures        map[string]bool
 		neverChangedFeatures map[string]bool
+		wishFeatures         map[string]bool
 		rejectedFeatures     map[string]bool
 		featuresErr          error
 		verifyFeaturesErr    error
 		changeErr            error
 		wantFeatures         map[string]bool
 		wantChanged          bool
+		wantFeaturesCalls    int
+		wantChangeCalls      int
 		wantChangedKeys      []string
 		expectError          bool
+		wantErrSubstr        string
 	}{
 		{
-			name:            "enables rx-gro-hw and rx-lro together when both are false",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			wantFeatures:    map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxGroHWFeature, rxLROFeature},
+			name:              "enables rx-gro-hw and rx-lro together when both are false",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature, rxLROFeature},
 		},
 		{
-			name:            "no-op when both features are already enabled",
-			initialFeatures: map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
-			wantFeatures:    map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
-			wantChanged:     false,
+			name:              "no-op when both features are already enabled",
+			initialFeatures:   map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantChanged:       false,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   0,
 		},
 		{
-			name:            "only changes rx-lro when rx-gro-hw is already enabled",
-			initialFeatures: map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
-			wantFeatures:    map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxLROFeature},
+			name:              "only changes rx-lro when rx-gro-hw is already enabled",
+			initialFeatures:   map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxLROFeature},
 		},
 		{
-			name:            "only changes rx-gro-hw when rx-lro is already enabled",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
-			wantFeatures:    map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxGroHWFeature},
+			name:              "only changes rx-gro-hw when rx-lro is already enabled",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature},
 		},
 		{
-			name:            "tolerates fixed rx-gro-hw and enables mutable rx-lro",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			fixedFeatures:   map[string]bool{rxGroHWFeature: true},
-			wantFeatures:    map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxLROFeature},
-			expectError:     false,
+			name:              "succeeds when kernel clears rx-lro due to mutual exclusion with active rx-gro-hw (ETHTOOL_F_WISH)",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wishFeatures:      map[string]bool{rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature, rxLROFeature},
+			expectError:       false,
+		},
+		{
+			name:              "skips already wish-rejected rx-lro without calling Change when rx-gro-hw is active",
+			initialFeatures:   map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			requestedFeatures: map[string]bool{rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantChanged:       false,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   0,
+			expectError:       false,
+		},
+		{
+			name:              "succeeds without error when both features are wish-rejected by driver (ETHTOOL_F_WISH)",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wishFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature, rxLROFeature},
+			expectError:       false,
+		},
+		{
+			name:              "tolerates fixed rx-gro-hw and enables mutable rx-lro",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			fixedFeatures:     map[string]bool{rxGroHWFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxLROFeature},
+			expectError:       false,
 		},
 		{
 			name:                 "tolerates never_changed rx-lro and enables mutable rx-gro-hw",
@@ -645,46 +717,62 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			neverChangedFeatures: map[string]bool{rxLROFeature: true},
 			wantFeatures:         map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
 			wantChanged:          true,
+			wantFeaturesCalls:    2,
+			wantChangeCalls:      1,
 			wantChangedKeys:      []string{rxGroHWFeature},
 			expectError:          false,
 		},
 		{
-			name:            "no-op without error when both features are fixed and disabled",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			fixedFeatures:   map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
-			wantFeatures:    map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			wantChanged:     false,
-			expectError:     false,
+			name:              "no-op without error when both features are fixed and disabled",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			fixedFeatures:     map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wantChanged:       false,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   0,
+			expectError:       false,
 		},
 		{
-			name:            "returns error without changing when rx-gro-hw is absent from features map",
-			initialFeatures: map[string]bool{rxLROFeature: false},
-			wantFeatures:    map[string]bool{rxLROFeature: false},
-			wantChanged:     false,
-			expectError:     true,
+			name:              "enables rx-lro when rx-gro-hw is absent from features map",
+			initialFeatures:   map[string]bool{rxLROFeature: false},
+			wantFeatures:      map[string]bool{rxLROFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxLROFeature},
+			expectError:       false,
 		},
 		{
-			name:            "returns error without changing when rx-lro is absent from features map",
-			initialFeatures: map[string]bool{rxGroHWFeature: false},
-			wantFeatures:    map[string]bool{rxGroHWFeature: false},
-			wantChanged:     false,
-			expectError:     true,
+			name:              "enables rx-gro-hw when rx-lro is absent from features map",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false},
+			wantFeatures:      map[string]bool{rxGroHWFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature},
+			expectError:       false,
 		},
 		{
-			name:            "returns error without changing when both features are absent from features map",
-			initialFeatures: map[string]bool{},
-			wantFeatures:    map[string]bool{},
-			wantChanged:     false,
-			expectError:     true,
+			name:              "returns error without changing when both features are absent from features map",
+			initialFeatures:   map[string]bool{},
+			wantFeatures:      map[string]bool{},
+			wantChanged:       false,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   0,
+			expectError:       true,
+			wantErrSubstr:     "neither rx-gro-hw nor rx-lro found",
 		},
 		{
-			name:            "returns error when Change fails",
-			initialFeatures: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			changeErr:       errors.New("unsupported"),
-			wantFeatures:    map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			wantChanged:     true,
-			wantChangedKeys: []string{rxGroHWFeature, rxLROFeature},
-			expectError:     true,
+			name:              "returns error reporting actual changes map when Change fails",
+			initialFeatures:   map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			changeErr:         errors.New("unsupported"),
+			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantChanged:       true,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxLROFeature},
+			expectError:       true,
+			wantErrSubstr:     "map[rx-lro:true]",
 		},
 		{
 			name:              "returns error when post-Change FeaturesWithState verification fails",
@@ -692,38 +780,61 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			verifyFeaturesErr: errors.New("verify ioctl failure"),
 			wantFeatures:      map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
 			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
 			wantChangedKeys:   []string{rxGroHWFeature, rxLROFeature},
 			expectError:       true,
 		},
 		{
-			name:             "returns error when mutable rx-gro-hw feature remains disabled after Change",
-			initialFeatures:  map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			rejectedFeatures: map[string]bool{rxGroHWFeature: true},
-			wantFeatures:     map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
-			wantChanged:      true,
-			wantChangedKeys:  []string{rxGroHWFeature, rxLROFeature},
-			expectError:      true,
+			name:              "succeeds when mutable rx-gro-hw remains disabled but rx-lro becomes active",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			rejectedFeatures:  map[string]bool{rxGroHWFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature, rxLROFeature},
+			expectError:       false,
 		},
 		{
-			name:             "returns error when mutable rx-lro feature remains disabled after Change",
-			initialFeatures:  map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
-			rejectedFeatures: map[string]bool{rxLROFeature: true},
-			wantFeatures:     map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
-			wantChanged:      true,
-			wantChangedKeys:  []string{rxGroHWFeature, rxLROFeature},
-			expectError:      true,
+			name:              "returns error when mutable features remain disabled without ETHTOOL_F_WISH and neither is active",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			rejectedFeatures:  map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature, rxLROFeature},
+			expectError:       true,
+			wantErrSubstr:     "remained disabled",
 		},
 		{
-			name:        "skips without error when eth0 is absent on non-COS host (ENODEV)",
-			featuresErr: unix.ENODEV,
-			wantChanged: false,
-			expectError: false,
+			name:              "returns error when single available mutable feature remains disabled without ETHTOOL_F_WISH",
+			initialFeatures:   map[string]bool{rxGroHWFeature: false},
+			rejectedFeatures:  map[string]bool{rxGroHWFeature: true},
+			wantFeatures:      map[string]bool{rxGroHWFeature: false},
+			wantChanged:       true,
+			wantFeaturesCalls: 2,
+			wantChangeCalls:   1,
+			wantChangedKeys:   []string{rxGroHWFeature},
+			expectError:       true,
+			wantErrSubstr:     "feature rx-gro-hw remained disabled",
 		},
 		{
-			name:        "returns error when FeaturesWithState fails with non-ENODEV error",
-			featuresErr: errors.New("ioctl failure"),
-			wantChanged: false,
-			expectError: true,
+			name:              "skips without error when eth0 is absent on non-COS host (ENODEV)",
+			featuresErr:       unix.ENODEV,
+			wantChanged:       false,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   0,
+			expectError:       false,
+		},
+		{
+			name:              "returns error when FeaturesWithState fails with non-ENODEV error",
+			featuresErr:       errors.New("ioctl failure"),
+			wantChanged:       false,
+			wantFeaturesCalls: 1,
+			wantChangeCalls:   0,
+			expectError:       true,
 		},
 	}
 
@@ -733,8 +844,10 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 
 			fakeEth := &fakeEthtoolClient{
 				features:             maps.Clone(tc.initialFeatures),
+				requestedFeatures:    maps.Clone(tc.requestedFeatures),
 				fixedFeatures:        tc.fixedFeatures,
 				neverChangedFeatures: tc.neverChangedFeatures,
+				wishFeatures:         tc.wishFeatures,
 				rejectedFeatures:     tc.rejectedFeatures,
 				featuresErr:          tc.featuresErr,
 				verifyFeaturesErr:    tc.verifyFeaturesErr,
@@ -749,11 +862,20 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			if !tc.expectError && err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			if tc.wantErrSubstr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrSubstr)) {
+				t.Errorf("error = %v, want substring %q", err, tc.wantErrSubstr)
+			}
 			if fakeEth.featuresIntf != cosDefaultNIC {
 				t.Errorf("featuresIntf = %q, want %q", fakeEth.featuresIntf, cosDefaultNIC)
 			}
+			if fakeEth.featuresCalls != tc.wantFeaturesCalls {
+				t.Errorf("featuresCalls = %d, want %d", fakeEth.featuresCalls, tc.wantFeaturesCalls)
+			}
 			if fakeEth.changed != tc.wantChanged {
 				t.Errorf("changed = %v, want %v", fakeEth.changed, tc.wantChanged)
+			}
+			if fakeEth.changeCalls != tc.wantChangeCalls {
+				t.Errorf("changeCalls = %d, want %d", fakeEth.changeCalls, tc.wantChangeCalls)
 			}
 			if tc.wantChanged && fakeEth.changeIntf != cosDefaultNIC {
 				t.Errorf("changeIntf = %q, want %q", fakeEth.changeIntf, cosDefaultNIC)
@@ -766,4 +888,59 @@ func TestEnableHWgroOnNIC(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnableHWgroOnDefaultNIC(t *testing.T) {
+	t.Parallel()
+
+	t.Run("delegates to enableHWgroOnNIC on eth0 and closes ethtool client", func(t *testing.T) {
+		t.Parallel()
+
+		fakeEth := &fakeEthtoolClient{
+			features: map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+		}
+		mgr := &realNetworkManager{
+			newEthtool: func() (ethtoolClient, error) {
+				return fakeEth, nil
+			},
+		}
+
+		if err := mgr.EnableHWgroOnDefaultNIC(); err != nil {
+			t.Fatalf("EnableHWgroOnDefaultNIC() unexpected error: %v", err)
+		}
+		if !fakeEth.closed {
+			t.Error("expected ethtool client Close() to be called")
+		}
+		if fakeEth.featuresIntf != cosDefaultNIC {
+			t.Errorf("featuresIntf = %q, want %q", fakeEth.featuresIntf, cosDefaultNIC)
+		}
+		if fakeEth.featuresCalls != 2 {
+			t.Errorf("featuresCalls = %d, want 2", fakeEth.featuresCalls)
+		}
+		if fakeEth.changeCalls != 1 {
+			t.Errorf("changeCalls = %d, want 1", fakeEth.changeCalls)
+		}
+		wantFeatures := map[string]bool{rxGroHWFeature: true, rxLROFeature: true}
+		if !maps.Equal(fakeEth.features, wantFeatures) {
+			t.Errorf("features = %v, want %v", fakeEth.features, wantFeatures)
+		}
+	})
+
+	t.Run("returns error when newEthtool fails", func(t *testing.T) {
+		t.Parallel()
+
+		mgr := &realNetworkManager{
+			newEthtool: func() (ethtoolClient, error) {
+				return nil, errors.New("mock socket error")
+			},
+		}
+
+		err := mgr.EnableHWgroOnDefaultNIC()
+		if err == nil {
+			t.Fatal("expected error when newEthtool fails, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to create ethtool client for NIC \"eth0\"") {
+			t.Errorf("error = %v, want substring %q", err, "failed to create ethtool client for NIC \"eth0\"")
+		}
+	})
 }
