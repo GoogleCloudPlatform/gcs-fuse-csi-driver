@@ -20,7 +20,6 @@ package clientset
 import (
 	"context"
 	"strconv"
-	"sync"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -91,7 +90,6 @@ type FakeConfigMapConfig struct {
 }
 
 type FakeClientset struct {
-	mu                sync.Mutex
 	Client            kubernetes.Interface
 	fakePod           *corev1.Pod
 	fakeNode          *corev1.Node
@@ -147,9 +145,6 @@ func (c *FakeClientset) ConfigureSCLister(_ context.Context) {}
 func (c *FakeClientset) ConfigurePodTemplateLister(_ context.Context) {}
 
 func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	config := webhook.FakeConfig()
 
 	if podConfig.SidecarLimits != nil {
@@ -231,9 +226,6 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 }
 
 func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.fakeNode = &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "",
@@ -253,9 +245,6 @@ func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 }
 
 func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        pvConfig.Name,
@@ -278,9 +267,6 @@ func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
 }
 
 func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        pvcConfig.Name,
@@ -296,9 +282,6 @@ func (c *FakeClientset) CreatePVC(pvcConfig FakePVCConfig) {
 }
 
 func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	sc := &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   scConfig.Name,
@@ -313,9 +296,6 @@ func (c *FakeClientset) CreateSC(scConfig FakeSCConfig) {
 }
 
 func (c *FakeClientset) CreatePodTemplate(podTemplateConfig FakePodTemplateConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	podTemplate := &corev1.PodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podTemplateConfig.Name,
@@ -328,18 +308,12 @@ func (c *FakeClientset) CreatePodTemplate(podTemplateConfig FakePodTemplateConfi
 }
 
 func (c *FakeClientset) AddPodVolumes(volumes []corev1.Volume) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.fakePod != nil {
 		c.fakePod.Spec.Volumes = append(c.fakePod.Spec.Volumes, volumes...)
 	}
 }
 
 func (c *FakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.GetPodErr != nil {
 		return nil, c.GetPodErr
 	}
@@ -354,18 +328,12 @@ func (c *FakeClientset) GetMounterPod(namespace, name string) (*corev1.Pod, erro
 }
 
 func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.fakeNode.ObjectMeta.Name = name
 
 	return c.fakeNode, nil
 }
 
 func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if pv, ok := c.fakePVs[name]; ok {
 		return pv, nil
 	}
@@ -374,9 +342,6 @@ func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
 }
 
 func (c *FakeClientset) GetMounterPodsByName(podName string) ([]*corev1.Pod, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.ListPodErr != nil {
 		return nil, c.ListPodErr
 	}
@@ -390,9 +355,6 @@ func (c *FakeClientset) GetMounterPodsByName(podName string) ([]*corev1.Pod, err
 }
 
 func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolumeClaim, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if pvc, ok := c.fakePVCs[name]; ok {
 		return pvc, nil
 	}
@@ -401,9 +363,6 @@ func (c *FakeClientset) GetPVC(namespace, name string) (*corev1.PersistentVolume
 }
 
 func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if sc, ok := c.fakeSCs[name]; ok {
 		return sc, nil
 	}
@@ -412,9 +371,6 @@ func (c *FakeClientset) GetSC(name string) (*storagev1.StorageClass, error) {
 }
 
 func (c *FakeClientset) GetPodTemplate(namespace, name string) (*corev1.PodTemplate, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.GetPodTemplateErr != nil {
 		return nil, c.GetPodTemplateErr
 	}
@@ -428,9 +384,6 @@ func (c *FakeClientset) GetPodTemplate(namespace, name string) (*corev1.PodTempl
 func (c *FakeClientset) ConfigureConfigMapLister(_ context.Context, _ string) {}
 
 func (c *FakeClientset) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if cm, ok := c.fakeConfigMaps[name]; ok {
 		return cm, nil
 	}
@@ -438,9 +391,6 @@ func (c *FakeClientset) GetConfigMap(namespace, name string) (*corev1.ConfigMap,
 }
 
 func (c *FakeClientset) CreateConfigMap(cmConfig FakeConfigMapConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cmConfig.Name,
