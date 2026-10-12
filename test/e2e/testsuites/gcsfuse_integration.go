@@ -78,7 +78,7 @@ const (
 
 	gkeTempDir = "/gcsfuse-tmp"
 
-	gcsfuseGoEnvSetupFormat = "export GO_VERSION=$(%v) && export GOTOOLCHAIN=go$GO_VERSION && export PATH=$PATH:/usr/local/go/bin"
+	gcsfuseGoEnvSetupFormat = "export GO_VERSION=$(%v) && export GO_VERSION=${GO_VERSION#go} && export GOTOOLCHAIN=go$GO_VERSION+auto && export PATH=$PATH:/usr/local/go/bin"
 )
 
 // testPackageTimeoutMap controls the duration of the `-timeout` flag passed to the underlying `go test` executions.
@@ -663,7 +663,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 
-		baseTestCommand := fmt.Sprintf("export GOTOOLCHAIN=go%v && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, mountPath)
+		baseTestCommand := fmt.Sprintf("export GO_VERSION=%v && export GO_VERSION=${GO_VERSION#go} && export GOTOOLCHAIN=go$GO_VERSION+auto && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		if zbEnabled(driver) {
 			baseTestCommand += " --zonal=true"
 		}
