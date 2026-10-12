@@ -1805,7 +1805,7 @@ func TestGetAnywhereCacheAdmissionPolicyFromPV(t *testing.T) {
 			},
 			expectedPolicy: "",
 			expectError:    true,
-			expectedError:  "invalid anywhere cache admission policy provided provided: invalid-policy, valid values are \"admit-on-first-miss\", \"admit-on-second-miss\", or \"no-read-admission\"",
+			expectedError:  "invalid anywhere cache admission policy provided: invalid-policy, valid values are \"admit-on-first-miss\", \"admit-on-second-miss\", or \"no-read-admission\"",
 		},
 	}
 

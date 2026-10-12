@@ -1228,7 +1228,7 @@ func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.Stor
 	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission:
 		return admissionPolicy, nil
 	default:
-		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q, %q, or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission)
+		return "", fmt.Errorf("invalid anywhere cache admission policy provided: %s, valid values are %q, %q, or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss, anywhereCacheAPINoReadAdmission)
 	}
 }
 
