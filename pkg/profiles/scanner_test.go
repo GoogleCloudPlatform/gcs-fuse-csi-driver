@@ -2515,51 +2515,6 @@ func TestCreateAnywhereCache(t *testing.T) {
 			},
 		},
 		{
-			name: "AnyC found - want admit-on-second-miss remapped server-side to admit-on-first-miss - should treat as synced",
-			setupMocks: func() {
-				utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
-					return []string{"zone-a", "zone-b"}, nil
-				}
-			},
-			wantErr: false,
-			wantResults: map[string]*anywhereCacheSyncResult{
-				"zone-a": {
-					message: "running",
-					done:    true,
-				},
-				"zone-b": {
-					message: "running",
-					done:    true,
-				},
-			},
-			pv: &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pv",
-				},
-				Spec: v1.PersistentVolumeSpec{
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						CSI: &v1.CSIPersistentVolumeSource{
-							VolumeHandle: "my-bucket",
-							VolumeAttributes: map[string]string{
-								"anywhereCacheTTL":             "2h",
-								"anywhereCacheAdmissionPolicy": "admit-on-second-miss",
-								"anywhereCacheZones":           "*",
-							},
-						},
-					},
-				},
-			},
-			storageControlClient: &mockStorageControlClient{
-				GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
-					return &controlpb.AnywhereCache{
-						Ttl:             durationpb.New(2 * time.Hour),
-						AdmissionPolicy: "admit-on-first-miss",
-						State:           "running",
-					}, nil
-				},
-			},
-		},
-		{
 			name: "Edge Case - No zones returned",
 			setupMocks: func() {
 				utilGetZonesForClusterLocation = func(_ context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
@@ -2610,81 +2565,154 @@ func TestCreateAnywhereCache(t *testing.T) {
 	}
 }
 
-func TestIsCacheConfigSynced(t *testing.T) {
-	s := &Scanner{}
-	testCases := []struct {
-		name     string
-		gotAC    *controlpb.AnywhereCache
-		wantAC   *controlpb.AnywhereCache
-		expected bool
-	}{
-		{
-			name: "want admit-on-first-miss and got admit-on-first-miss with same TTL -> synced",
-			gotAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(1 * time.Hour),
-				AdmissionPolicy: "admit-on-first-miss",
-			},
-			wantAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(1 * time.Hour),
-				AdmissionPolicy: "admit-on-first-miss",
-			},
-			expected: true,
+func TestSyncAnywhereCacheServerOverrideCache(t *testing.T) {
+	ctx := context.Background()
+	origGetZones := utilGetZonesForClusterLocation
+	utilGetZonesForClusterLocation = func(ctx context.Context, projNumber string, service *compute.Service, location string) ([]string, error) {
+		return []string{"zone-a"}, nil
+	}
+	t.Cleanup(func() {
+		utilGetZonesForClusterLocation = origGetZones
+	})
+
+	pv := &v1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-pv",
 		},
-		{
-			name: "want admit-on-second-miss and got admit-on-second-miss with same TTL -> synced",
-			gotAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(2 * time.Hour),
-				AdmissionPolicy: "admit-on-second-miss",
+		Spec: v1.PersistentVolumeSpec{
+			PersistentVolumeSource: v1.PersistentVolumeSource{
+				CSI: &v1.CSIPersistentVolumeSource{
+					VolumeHandle: "my-bucket",
+					VolumeAttributes: map[string]string{
+						"anywhereCacheTTL":             "2h",
+						"anywhereCacheAdmissionPolicy": "admit-on-second-miss",
+						"anywhereCacheZones":           "*",
+					},
+				},
 			},
-			wantAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(2 * time.Hour),
-				AdmissionPolicy: "admit-on-second-miss",
-			},
-			expected: true,
-		},
-		{
-			name: "want admit-on-second-miss and got admit-on-first-miss (remapped server-side) with same TTL -> synced",
-			gotAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(2 * time.Hour),
-				AdmissionPolicy: "admit-on-first-miss",
-			},
-			wantAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(2 * time.Hour),
-				AdmissionPolicy: "admit-on-second-miss",
-			},
-			expected: true,
-		},
-		{
-			name: "want admit-on-first-miss and got admit-on-second-miss with same TTL -> not synced",
-			gotAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(1 * time.Hour),
-				AdmissionPolicy: "admit-on-second-miss",
-			},
-			wantAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(1 * time.Hour),
-				AdmissionPolicy: "admit-on-first-miss",
-			},
-			expected: false,
-		},
-		{
-			name: "want admit-on-second-miss and got admit-on-first-miss with different TTL -> not synced",
-			gotAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(1 * time.Hour),
-				AdmissionPolicy: "admit-on-first-miss",
-			},
-			wantAC: &controlpb.AnywhereCache{
-				Ttl:             durationpb.New(2 * time.Hour),
-				AdmissionPolicy: "admit-on-second-miss",
-			},
-			expected: false,
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := s.isCacheConfigSynced(tc.gotAC, tc.wantAC); got != tc.expected {
-				t.Errorf("isCacheConfigSynced() = %v, want %v", got, tc.expected)
-			}
-		})
-	}
+	t.Run("create succeeds then server overrides admission policy -> treated as synced without update", func(t *testing.T) {
+		cacheExists := false
+		updateCalls := 0
+		client := &mockStorageControlClient{
+			GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+				if !cacheExists {
+					return nil, status.Errorf(codes.NotFound, "not found")
+				}
+				// Server created cache but overrode admission_policy to admit-on-first-miss.
+				return &controlpb.AnywhereCache{
+					Name:            req.GetName(),
+					Ttl:             durationpb.New(2 * time.Hour),
+					AdmissionPolicy: "admit-on-first-miss",
+					State:           "running",
+				}, nil
+			},
+			CreateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.CreateAnywhereCacheRequest, opts ...gax.CallOption) (*control.CreateAnywhereCacheOperation, error) {
+				cacheExists = true
+				return &control.CreateAnywhereCacheOperation{}, nil
+			},
+			UpdateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
+				updateCalls++
+				return &control.UpdateAnywhereCacheOperation{}, nil
+			},
+		}
+
+		s := &Scanner{
+			eventRecorder:        record.NewFakeRecorder(10),
+			config:               &ScannerConfig{ClusterLocation: "us-central1", ProjectNumber: "123"},
+			storageControlClient: client,
+			succeededACConfigs:   make(map[anywhereCacheConfigKey]bool),
+		}
+
+		zones, _ := anywhereCacheZonesVal(pv, nil)
+
+		// First sync: cache does not exist yet -> creates it and records config as succeeded.
+		res1, err := s.syncAnywhereCache(ctx, pv, nil, zones)
+		if err != nil {
+			t.Fatalf("unexpected error on first sync: %v", err)
+		}
+		if res1["zone-a"].message != "creating" || res1["zone-a"].done {
+			t.Fatalf("expected creating/done=false on first sync, got %+v", res1["zone-a"])
+		}
+
+		// Second sync: cache is running, server returned admit-on-first-miss, but config already succeeded -> should treat as synced without calling update.
+		res2, err := s.syncAnywhereCache(ctx, pv, nil, zones)
+		if err != nil {
+			t.Fatalf("unexpected error on second sync: %v", err)
+		}
+		if res2["zone-a"].message != "running" || !res2["zone-a"].done {
+			t.Fatalf("expected running/done=true on second sync, got %+v", res2["zone-a"])
+		}
+		if updateCalls != 0 {
+			t.Fatalf("expected 0 UpdateAnywhereCache calls, got %d", updateCalls)
+		}
+	})
+
+	t.Run("existing cache mismatches on first encounter -> updates once then treats as synced on next reconcile", func(t *testing.T) {
+		updateCalls := 0
+		client := &mockStorageControlClient{
+			GetAnywhereCacheFunc: func(ctx context.Context, req *controlpb.GetAnywhereCacheRequest, opts ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+				// Server always returns admit-on-first-miss even after UpdateAnywhereCache.
+				return &controlpb.AnywhereCache{
+					Name:            req.GetName(),
+					Ttl:             durationpb.New(2 * time.Hour),
+					AdmissionPolicy: "admit-on-first-miss",
+					State:           "running",
+				}, nil
+			},
+			UpdateAnywhereCacheFunc: func(ctx context.Context, req *controlpb.UpdateAnywhereCacheRequest, opts ...gax.CallOption) (*control.UpdateAnywhereCacheOperation, error) {
+				updateCalls++
+				return &control.UpdateAnywhereCacheOperation{}, nil
+			},
+		}
+
+		s := &Scanner{
+			eventRecorder:        record.NewFakeRecorder(10),
+			config:               &ScannerConfig{ClusterLocation: "us-central1", ProjectNumber: "123"},
+			storageControlClient: client,
+			succeededACConfigs:   make(map[anywhereCacheConfigKey]bool),
+		}
+
+		zones, _ := anywhereCacheZonesVal(pv, nil)
+
+		// First sync: config has not succeeded before -> triggers UpdateAnywhereCache once.
+		res1, err := s.syncAnywhereCache(ctx, pv, nil, zones)
+		if err != nil {
+			t.Fatalf("unexpected error on first sync: %v", err)
+		}
+		if res1["zone-a"].message != "updating" || res1["zone-a"].done {
+			t.Fatalf("expected updating/done=false on first sync, got %+v", res1["zone-a"])
+		}
+		if updateCalls != 1 {
+			t.Fatalf("expected 1 UpdateAnywhereCache call on first sync, got %d", updateCalls)
+		}
+
+		// Second sync: exact same config has already succeeded -> breaks loop and treats as running/done.
+		res2, err := s.syncAnywhereCache(ctx, pv, nil, zones)
+		if err != nil {
+			t.Fatalf("unexpected error on second sync: %v", err)
+		}
+		if res2["zone-a"].message != "running" || !res2["zone-a"].done {
+			t.Fatalf("expected running/done=true on second sync, got %+v", res2["zone-a"])
+		}
+		if updateCalls != 1 {
+			t.Fatalf("expected no additional UpdateAnywhereCache calls on second sync, got %d", updateCalls)
+		}
+
+		// Third sync with a NEW config (TTL changed to 3h): hasn't succeeded yet -> triggers UpdateAnywhereCache.
+		pvUpdated := pv.DeepCopy()
+		pvUpdated.Spec.CSI.VolumeAttributes["anywhereCacheTTL"] = "3h"
+		res3, err := s.syncAnywhereCache(ctx, pvUpdated, nil, zones)
+		if err != nil {
+			t.Fatalf("unexpected error on third sync: %v", err)
+		}
+		if res3["zone-a"].message != "updating" || res3["zone-a"].done {
+			t.Fatalf("expected updating/done=false when config changes, got %+v", res3["zone-a"])
+		}
+		if updateCalls != 2 {
+			t.Fatalf("expected 2 UpdateAnywhereCache calls after config change, got %d", updateCalls)
+		}
+	})
 }
