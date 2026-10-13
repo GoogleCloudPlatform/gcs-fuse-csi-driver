@@ -935,27 +935,30 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with unsupported GKE nodepool version, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with unsupported GKE nodepool version, expect enable-grpc-by-default=false",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
 			kubeletVersion:           "v1.37.1-gke.1551999",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect enable-grpc-by-default=false",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
 			kubeletVersion:           "",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect enable-grpc-by-default=false",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
 			kubeletVersion:           "not-a-semver",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 	}
@@ -3470,27 +3473,30 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with unsupported GKE nodepool version, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with unsupported GKE nodepool version, expect enable-grpc-by-default=false",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
 			kubeletVersion:           "v1.37.1-gke.1551999",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect enable-grpc-by-default=false",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
 			kubeletVersion:           "",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 		{
-			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect no enable-grpc-by-default",
+			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect enable-grpc-by-default=false",
 			enableGrpcByDefault:      true,
 			assumeGoodSidecarVersion: true,
 			machineType:              "ct6e-standard-4t",
 			kubeletVersion:           "not-a-semver",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
 			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
 		},
 	}
@@ -5002,6 +5008,128 @@ func TestIsGrpcByDefaultEnabled(t *testing.T) {
 
 			if got := ns.isGrpcByDefaultEnabled(tc.node, tc.mounterImage); got != tc.want {
 				t.Errorf("isGrpcByDefaultEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAppendGrpcByDefaultOptions(t *testing.T) {
+	t.Parallel()
+
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
+	newNode := func(machineType, kubeletVersion string) *corev1.Node {
+		var labels map[string]string
+		if machineType != "" {
+			labels = map[string]string{clientset.MachineTypeKey: machineType}
+		}
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: labels,
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: kubeletVersion,
+				},
+			},
+		}
+	}
+
+	testCases := []struct {
+		name         string
+		features     *GCSDriverFeatureOptions
+		node         *corev1.Node
+		mounterImage string
+		mountOptions []string
+		want         []string
+	}{
+		{
+			name:         "supported TPU v6e GKE version appends enable-grpc-by-default=true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "older skewed TPU v6e GKE version appends enable-grpc-by-default=false to override autoconfig",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "missing TPU v6e GKE version appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", ""),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "unparseable TPU v6e GKE version appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "not-a-semver"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "driver flag disabled on TPU v6e appends enable-grpc-by-default=false to override autoconfig",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "missing machine-type label appends enable-grpc-by-default=false to fail closed",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "nil node appends enable-grpc-by-default=false to fail closed",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         nil,
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "driver flag disabled on non-TPU v6e node does not append flag",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"ro"},
+		},
+		{
+			name:         "unsupported sidecar version does not append flag even on older TPU v6e",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: unsupportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"ro"},
+		},
+		{
+			name:         "user-provided enable-grpc-by-default is preserved without conflict",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"enable-grpc-by-default=true"},
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ns := &nodeServer{
+				driver: &GCSDriver{config: &GCSDriverConfig{FeatureOptions: tc.features}},
+			}
+
+			got := ns.appendGrpcByDefaultOptions(tc.node, tc.mounterImage, tc.mountOptions)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("appendGrpcByDefaultOptions() = %v, want %v", got, tc.want)
 			}
 		})
 	}

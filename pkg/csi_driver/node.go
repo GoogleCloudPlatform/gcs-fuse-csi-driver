@@ -929,14 +929,28 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 	return mountOptions
 }
 
-// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
-// mount option if enabled for the node and supported by the sidecar container image.
-// If the feature is disabled or unsupported, mount options are returned unmodified.
+// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default
+// mount option if supported by the sidecar container image.
+// On TPU v6e nodes (or when the node machine-type label is missing) where
+// isGrpcByDefaultEnabled evaluates to false (e.g., older GKE nodepool version
+// or driver flag disabled), it explicitly appends enable-grpc-by-default=false
+// so GCSFuse's machine-type autoconfig does not enable gRPC by default.
 func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
-	if !s.isGrpcByDefaultEnabled(node, mounterImage) {
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
 		return mountOptions
 	}
-	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+	for _, opt := range mountOptions {
+		if opt == util.EnableGrpcByDefaultConst || strings.HasPrefix(opt, util.EnableGrpcByDefaultConst+"=") {
+			return mountOptions
+		}
+	}
+	if s.isGrpcByDefaultEnabled(node, mounterImage) {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+	}
+	if node == nil || node.Labels[clientset.MachineTypeKey] == "" || strings.HasPrefix(node.Labels[clientset.MachineTypeKey], tpuV6eMachineTypePrefix) {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	return mountOptions
 }
 
 // isGrpcByDefaultEnabled checks if the enable-grpc-by-default feature is enabled in the driver config,
