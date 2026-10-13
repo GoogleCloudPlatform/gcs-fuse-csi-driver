@@ -947,7 +947,21 @@ func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage 
 	if s.isGrpcByDefaultEnabled(node, mounterImage) {
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
 	}
-	if node == nil || node.Labels[clientset.MachineTypeKey] == "" || strings.HasPrefix(node.Labels[clientset.MachineTypeKey], tpuV6eMachineTypePrefix) {
+	if node == nil {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	machineType := node.Labels[clientset.MachineTypeKey]
+	enableGrpcByDefault := s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.EnableGrpcByDefault
+	if machineType == "" {
+		if enableGrpcByDefault {
+			klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
+		}
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	if strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		if enableGrpcByDefault {
+			klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): GKE nodepool version %q does not meet minimum required version", node.Name, machineType, node.Status.NodeInfo.KubeletVersion)
+		}
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
 	}
 	return mountOptions
@@ -968,19 +982,13 @@ func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node, mounterImage stri
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
 	if machineType == "" {
-		klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
 		return false
 	}
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return true
 	}
 
-	kubeletVersion := node.Status.NodeInfo.KubeletVersion
-	if !isGKENodePoolVersionSupportedForTPUv6e(kubeletVersion) {
-		klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): GKE nodepool version %q does not meet minimum required version", node.Name, machineType, kubeletVersion)
-		return false
-	}
-	return true
+	return isGKENodePoolVersionSupportedForTPUv6e(node.Status.NodeInfo.KubeletVersion)
 }
 
 // isGKENodePoolVersionSupportedForTPUv6e returns true if the given kubeletVersion is a valid GKE

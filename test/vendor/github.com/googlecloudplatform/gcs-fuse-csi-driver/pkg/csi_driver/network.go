@@ -46,6 +46,7 @@ const (
 
 // ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
 type ethtoolClient interface {
+	Features(intf string) (map[string]bool, error)
 	Change(intf string, config map[string]bool) error
 }
 
@@ -576,17 +577,26 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 }
 
 // enableHWgroOnNIC enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) together on the specified NIC using ethtool ioctls.
+// (rx-lro) together on the specified NIC using ethtool ioctls if not already enabled.
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
-	if err := eth.Change(nic, map[string]bool{rxGroHWFeature: true, rxLROFeature: true}); err != nil {
+	features, err := eth.Features(nic)
+	if err != nil {
 		if errors.Is(err, unix.ENODEV) {
 			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
 			return nil
 		}
+		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
+	}
+	if features[rxGroHWFeature] && features[rxLROFeature] {
+		klog.Infof("rx-gro-hw and rx-lro are already enabled on NIC %q", nic)
+		return nil
+	}
+
+	if err := eth.Change(nic, map[string]bool{rxGroHWFeature: true, rxLROFeature: true}); err != nil {
 		return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
 	}
 
-	klog.Infof("Successfully ensured rx-gro-hw and rx-lro are enabled on NIC %q", nic)
+	klog.Infof("Successfully enabled rx-gro-hw and rx-lro on NIC %q", nic)
 	return nil
 }
 
