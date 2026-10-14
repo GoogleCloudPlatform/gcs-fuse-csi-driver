@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -45,6 +46,7 @@ import (
 
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	clientexec "k8s.io/client-go/util/exec"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -497,10 +499,23 @@ func (t *TestPod) VerifyExecInPodSucceedWithFullOutput(f *framework.Framework, c
 }
 
 // VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code.
+// Uses gomega.Eventually to poll until the command fails with the expected exit code,
+// rather than execCommandInContainerWithFullOutputWithRetry which retries until the command succeeds.
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
-	stdout, stderr, err := execCommandInContainerWithFullOutputWithRetry(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
-	gomega.Expect(err).Should(gomega.HaveOccurred(),
-		fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
+	gomega.Eventually(func() error {
+		stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+		if err == nil {
+			return fmt.Errorf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr)
+		}
+		var exitErr clientexec.CodeExitError
+		if !errors.As(err, &exitErr) {
+			return fmt.Errorf("%q should fail with exit code %d, but failed with non-exit error %w\nstdout: %s\nstderr: %s", shExec, exitCode, err, stdout, stderr)
+		}
+		if exitErr.ExitStatus() != exitCode {
+			return fmt.Errorf("%q should fail with exit code %d, but failed with exit code %d\nstdout: %s\nstderr: %s", shExec, exitCode, exitErr.ExitStatus(), stdout, stderr)
+		}
+		return nil
+	}, "2m", "5s").Should(gomega.Succeed())
 }
 
 // VerifyExecInPodFailWithMessage verifies that shExec fails in the target pod AND that the failure
