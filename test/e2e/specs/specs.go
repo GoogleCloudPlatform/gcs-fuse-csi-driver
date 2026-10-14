@@ -500,17 +500,23 @@ func (t *TestPod) VerifyExecInPodSucceedWithFullOutput(f *framework.Framework, c
 
 // VerifyExecInPodFail verifies shell cmd in target pod fail with certain exit code.
 //
-// It passes as soon as the command exits non-zero. Exec errors without an exit code are
-// retried, and so is a zero exit, since IAM changes can take minutes to propagate.
+// It stops polling as soon as the command exits non-zero, then checks the exit code. Exec
+// errors without an exit code are retried, and so is a zero exit, since IAM changes can take
+// minutes to propagate.
 func (t *TestPod) VerifyExecInPodFail(f *framework.Framework, containerName, shExec string, exitCode int) {
+	var exitErr clientexec.ExitError
+	var stdout, stderr string
 	gomega.Eventually(func(g gomega.Gomega) {
-		stdout, stderr, err := e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
+		var err error
+		stdout, stderr, err = e2epod.ExecCommandInContainerWithFullOutput(f, t.pod.Name, containerName, "/bin/sh", "-c", shExec)
 		g.Expect(err).To(gomega.HaveOccurred(),
 			fmt.Sprintf("%q should fail with exit code %d, but exit without error\nstdout: %s\nstderr: %s", shExec, exitCode, stdout, stderr))
-		var exitErr clientexec.ExitError
 		g.Expect(errors.As(err, &exitErr)).To(gomega.BeTrue(),
 			fmt.Sprintf("%q did not exit with a code: %v\nstdout: %s\nstderr: %s", shExec, err, stdout, stderr))
 	}, "10m", "5s").Should(gomega.Succeed())
+
+	gomega.Expect(exitErr.ExitStatus()).To(gomega.Equal(exitCode),
+		fmt.Sprintf("%q failed with exit code %d, expected %d\nstdout: %s\nstderr: %s", shExec, exitErr.ExitStatus(), exitCode, stdout, stderr))
 }
 
 // VerifyExecInPodFailWithMessage verifies that shExec fails in the target pod AND that the failure
