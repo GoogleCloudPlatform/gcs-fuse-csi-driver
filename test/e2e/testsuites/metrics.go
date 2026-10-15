@@ -158,6 +158,23 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 	}
 	hasMetricsCardFixes := hasMetricsCardinalityFixes()
 
+	hasNewMetricsSchema := func() bool {
+		gcsfuseVersionStr := specs.GetGCSFuseVersion()
+		_, branch := utils.GCSFuseBranch(gcsfuseVersionStr)
+		if branch == utils.MasterBranchName {
+			return true
+		}
+
+		if gcsfuseVersionStr == "" {
+			return false
+		}
+
+		gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
+
+		return gcsfuseVersion.AtLeast(version.MustParseSemantic(utils.MinGCSFuseNewMetricsSchemaVersion))
+	}
+	useNewMetricsSchema := hasNewMetricsSchema()
+
 	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string, expectMetrics bool) {
 		ginkgo.By("Running file operations on the volume")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
@@ -242,6 +259,13 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 		metricsToVerify := append([]string{}, expectedMetricNames...)
+		if useNewMetricsSchema {
+			for i, metricName := range metricsToVerify {
+				if metricName == "fs_ops_latency" {
+					metricsToVerify[i] = "fs_ops_latencies"
+				}
+			}
+		}
 		if gcsfuseDriver.ClientProtocol == "grpc" {
 			gcsfuseVersionStr := specs.GetGCSFuseVersion()
 			gcsfuseVersion := version.MustParseSemantic(gcsfuseVersionStr)
