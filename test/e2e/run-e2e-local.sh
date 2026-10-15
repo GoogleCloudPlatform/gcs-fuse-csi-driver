@@ -36,6 +36,7 @@ readonly build_gcsfuse_from_source="${BUILD_GCSFUSE_FROM_SOURCE:-false}"
 readonly manage_cluster_lifecycle="${E2E_TEST_MANAGE_CLUSTER_LIFECYCLE:-false}"
 readonly use_boskos="${E2E_TEST_USE_BOSKOS:-false}"
 readonly project_id="${E2E_TEST_PROJECT_ID:-}"
+readonly gke_gcloud_args="${E2E_TEST_GKE_GCLOUD_ARGS:-${GKE_GCLOUD_ARGS:-}}" # This is needed to pass SA credentials or extra flags with gcloud command (e.g. during boskos debugging).
 readonly num_nodes="${E2E_TEST_NUM_NODES:-${NUMBER_NODES:-9}}"
 readonly boskos_resource_type="${E2E_TEST_BOSKOS_RESOURCE_TYPE:-${GCE_PD_BOSKOS_RESOURCE_TYPE:-gke-internal-project}}"
 
@@ -102,6 +103,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --gke-cluster-region=${gke_cluster_region} \
             --use-gke-autopilot=${use_gke_autopilot} \
             --api-endpoint-override=${cloudsdk_api_endpoint_overrides_container} \
+            --gke-gcloud-args=\"${gke_gcloud_args}\" \
             --image-registry=${REGISTRY} \
             --build-gcs-fuse-csi-driver=${build_gcs_fuse_csi_driver} \
             --build-gcs-fuse-from-source=${build_gcsfuse_from_source} \
