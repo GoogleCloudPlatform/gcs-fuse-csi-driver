@@ -19,6 +19,7 @@ package driver
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -28,6 +29,16 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	mount "k8s.io/mount-utils"
 )
+
+func newTestSocketDir(t *testing.T) string {
+	t.Helper()
+	tmpDir, err := os.MkdirTemp("/tmp", "f_sock")
+	if err != nil {
+		t.Fatalf("failed to create temp socket dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	return tmpDir
+}
 
 func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Interface) *GCSDriver {
 	t.Helper()
@@ -47,7 +58,7 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
 			SharedMountOptions: &SharedMountOptions{
 				Enabled:         true,
-				FuseSocketDir:   "/tmp/fuse-sockets",
+				FuseSocketDir:   newTestSocketDir(t),
 				DriverNamespace: "gcs-fuse-csi-driver",
 			},
 		},
@@ -83,7 +94,7 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 			FeatureGCSFuseProfiles: &FeatureGCSFuseProfiles{},
 			SharedMountOptions: &SharedMountOptions{
 				Enabled:         true,
-				FuseSocketDir:   "/tmp/fuse-sockets",
+				FuseSocketDir:   newTestSocketDir(t),
 				DriverNamespace: "gcs-fuse-csi-driver",
 			},
 		},
