@@ -346,6 +346,9 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 			}
 			mf := families[metricName]
 			if mf == nil {
+				mf = families["volume_"+metricName]
+			}
+			if mf == nil {
 				continue
 			}
 			metricsList := metricsForVolume(mf, bucketName, expectedMounterPodName, volumeName, namespace, true /* expectEmptyPodUID */)
@@ -356,6 +359,9 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 		g.Expect(metricsFound).To(gomega.BeNumerically(">", 0), fmt.Sprintf("expected metrics to be found for volume %s under Mounter Pod %s", volumeName, expectedMounterPodName))
 
 		fsOpsFamily := families["fs_ops_count"]
+		if fsOpsFamily == nil {
+			fsOpsFamily = families["volume_fs_ops_count"]
+		}
 		g.Expect(fsOpsFamily).ToNot(gomega.BeNil(), "expected fs_ops_count metric family to be present")
 		fsOpsMetrics := metricsForVolume(fsOpsFamily, bucketName, expectedMounterPodName, volumeName, namespace, true /* expectEmptyPodUID */)
 		g.Expect(fsOpsMetrics).ToNot(gomega.BeEmpty(), fmt.Sprintf("expected fs_ops_count metrics for volume %s with pod_name %s", volumeName, expectedMounterPodName))
