@@ -65,6 +65,7 @@ spec:
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
             - --enable-grpc-by-default=false
+            - --enable-hw-gro=true
             - --universe-domain=$(UNIVERSE_DOMAIN)
           ports:
             - containerPort: 9920
@@ -115,7 +116,6 @@ spec:
               mountPath: /etc/iproute2
             - name: host-proc-sys-fs
               mountPath: /host-proc-sys-fs
-
             - name: tmp
               mountPath: /tmp
         - name: csi-driver-registrar

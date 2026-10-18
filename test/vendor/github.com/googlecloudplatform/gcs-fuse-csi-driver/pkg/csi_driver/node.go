@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -31,6 +33,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/profiles"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"golang.org/x/mod/semver"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -65,7 +68,19 @@ const (
 	// Thus the full timeout is 7 seconds.
 	forceUnmountRetryTimeout = 7 * time.Second
 	forceUnmountRetrySteps   = 6
+	// Machine type prefix for TPU v6e nodes where gRPC-by-default is gated on GKE nodepool version
+	// and hardware GRO/LRO offloads are enabled.
+	tpuV6eMachineTypePrefix = "ct6e-standard-"
+	gkePrereleasePrefix     = "-gke."
 )
+
+// Minimum GKE nodepool versions required to enable gRPC by default on TPU v6e nodes per minor release.
+var minGKEVersionByMinorForTPUv6e = map[string]string{
+	"v1.34": "v1.34.9-gke.1287000",
+	"v1.35": "v1.35.6-gke.1258000",
+	"v1.36": "v1.36.0-gke.4681000",
+	"v1.37": "v1.37.1-gke.1552000",
+}
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
 type nodeServer struct {
@@ -78,6 +93,12 @@ type nodeServer struct {
 	k8sClients            clientset.Interface
 	limiter               rate.Limiter
 	volumeStateStore      *util.VolumeStateStore
+	// Serializes default NIC GRO/LRO offload enablement, preventing concurrent duplicate runs
+	// and latching once EnableHWgroOnDefaultNIC succeeds while allowing retry on transient errors.
+	enableHWgroMu   sync.Mutex
+	enableHWgroDone atomic.Bool
+	// Tracks the background GRO/LRO enablement goroutine for deterministic synchronization in tests.
+	enableHWgroWg sync.WaitGroup
 }
 
 func newNodeServer(driver *GCSDriver, mounter mount.Interface) csi.NodeServer {
@@ -412,7 +433,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
 	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
 	if err != nil {
@@ -505,6 +525,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
 			s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, args.bucketName, vs)
 		}
+		s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
@@ -538,6 +559,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, gcsFuseSidecarImage, args.fuseMountOptions)
+
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
 	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, args.bucketName) {
 		// Note: enable-gcsfuse-kernel-params *must* be delimeted with an "=" sign, since it's an internal CSI flag.
@@ -556,6 +579,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err = s.mounter.Mount(args.bucketName, targetPath, FuseMountType, args.fuseMountOptions); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to mount volume %q to target path %q: %v", args.bucketName, targetPath, err)
 	}
+
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful mount.
+	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
 
 	// Start monitoring goroutine for new mounts.
 	if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
@@ -903,17 +929,92 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 	return mountOptions
 }
 
-// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
-// mount option if enabled in driver options and supported by the sidecar container image.
-// If the feature is disabled or unsupported, mount options are returned unmodified.
-func (s *nodeServer) appendGrpcByDefaultOptions(mounterImage string, mountOptions []string) []string {
-	if s.driver.config.FeatureOptions == nil ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
-		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
+// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default
+// mount option if supported by the sidecar container image.
+// On TPU v6e nodes (or when the node machine-type label is missing) where
+// isGrpcByDefaultEnabled evaluates to false (e.g., older GKE nodepool version
+// or driver flag disabled), it explicitly appends enable-grpc-by-default=false
+// so GCSFuse's machine-type autoconfig does not enable gRPC by default.
+func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
+	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
 		return mountOptions
 	}
+	for _, opt := range mountOptions {
+		if opt == util.EnableGrpcByDefaultConst || strings.HasPrefix(opt, util.EnableGrpcByDefaultConst+"=") {
+			return mountOptions
+		}
+	}
+	if s.isGrpcByDefaultEnabled(node, mounterImage) {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+	}
+	if node == nil {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	machineType := node.Labels[clientset.MachineTypeKey]
+	enableGrpcByDefault := s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.EnableGrpcByDefault
+	if machineType == "" {
+		if enableGrpcByDefault {
+			klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
+		}
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	if strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		if enableGrpcByDefault {
+			klog.Infof("Disabling enable-grpc-by-default on node %q (machine type %q): GKE nodepool version %q does not meet minimum required version", node.Name, machineType, node.Status.NodeInfo.KubeletVersion)
+		}
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	return mountOptions
+}
 
-	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+// isGrpcByDefaultEnabled checks if the enable-grpc-by-default feature is enabled in the driver config,
+// supported by the given sidecar mounter image version, and supported by the node's machine type
+// and GKE nodepool version. It fails closed (returns false) if the node's machine-type label
+// ("node.kubernetes.io/instance-type") is missing or empty. On TPU v6e nodes (machine type prefix
+// "ct6e-standard-"), it checks that the GKE nodepool version meets the minimum supported version
+// per minor release.
+func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node, mounterImage string) bool {
+	if s.driver.config.FeatureOptions == nil ||
+		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
+		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) ||
+		node == nil {
+		return false
+	}
+	machineType := node.Labels[clientset.MachineTypeKey]
+	if machineType == "" {
+		return false
+	}
+	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
+		return true
+	}
+
+	return isGKENodePoolVersionSupportedForTPUv6e(node.Status.NodeInfo.KubeletVersion)
+}
+
+// isGKENodePoolVersionSupportedForTPUv6e returns true if the given kubeletVersion is a valid GKE
+// version (carrying a "-gke." prerelease suffix) that meets the minimum GKE nodepool version
+// required to enable gRPC by default on TPU v6e nodes:
+//   - 1.34: >= 1.34.9-gke.1287000
+//   - 1.35: >= 1.35.6-gke.1258000
+//   - 1.36: >= 1.36.0-gke.4681000
+//   - 1.37: >= 1.37.1-gke.1552000
+//   - 1.38+: all GKE versions supported
+func isGKENodePoolVersionSupportedForTPUv6e(kubeletVersion string) bool {
+	v := strings.TrimSpace(kubeletVersion)
+	if v == "" {
+		return false
+	}
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	if !semver.IsValid(v) || !strings.HasPrefix(semver.Prerelease(v), gkePrereleasePrefix) {
+		return false
+	}
+	majorMinor := semver.MajorMinor(v)
+	if minVer, ok := minGKEVersionByMinorForTPUv6e[majorMinor]; ok {
+		return semver.Compare(v, minVer) >= 0
+	}
+	return semver.Compare(majorMinor, "v1.38") >= 0
 }
 
 func gcsFuseSidecarContainerImage(pod *corev1.Pod) string {
@@ -1113,7 +1214,6 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	s.populateTokenAndBucketAccessCheckOptions(pod, podImage, vc, &args, podNamespace, pod.Spec.ServiceAccountName)
 	args.fuseMountOptions = s.appendCloudProfilerOptions(podImage, args.enableCloudProfilerForSidecar, podName, string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(podImage, args.fuseMountOptions)
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(podImage, args.fuseMountOptions)
 
 	podUID := string(pod.UID)
 	emptyDirBasePath := s.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath(podUID)
@@ -1128,6 +1228,8 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
+
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, podImage, args.fuseMountOptions)
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
 	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
@@ -1204,6 +1306,9 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		}
 		return nil, err
 	}
+
+	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful shared mount.
+	s.enableHWgroIfApplicable(node, podImage)
 
 	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
@@ -1371,4 +1476,39 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	}
 
 	return nil
+}
+
+// enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
+// on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
+// are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
+// (ct6e-standard-*) machine running a supported GKE nodepool version.
+func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
+	if s.enableHWgroDone.Load() || s.nwMgr == nil ||
+		!s.isGrpcByDefaultEnabled(node, mounterImage) ||
+		!s.driver.config.FeatureOptions.EnableHWgro ||
+		!strings.HasPrefix(node.Labels[clientset.MachineTypeKey], tpuV6eMachineTypePrefix) {
+		return
+	}
+
+	// NIC offload tuning is host-wide and best-effort: run it in a background
+	// goroutine so that volume mounts are never blocked if SIOCETHTOOL ioctls
+	// contend on the kernel's global rtnl_lock or stall during NIC reconfiguration.
+	if !s.enableHWgroMu.TryLock() {
+		return
+	}
+	if s.enableHWgroDone.Load() {
+		s.enableHWgroMu.Unlock()
+		return
+	}
+
+	s.enableHWgroWg.Add(1)
+	go func() {
+		defer s.enableHWgroWg.Done()
+		defer s.enableHWgroMu.Unlock()
+		if err := s.nwMgr.EnableHWgroOnDefaultNIC(); err != nil {
+			klog.Errorf("Failed to enable rx-gro-hw and rx-lro on default NIC for node %q: %v", node.Name, err)
+			return
+		}
+		s.enableHWgroDone.Store(true)
+	}()
 }

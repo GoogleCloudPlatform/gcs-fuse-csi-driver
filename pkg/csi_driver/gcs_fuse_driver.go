@@ -66,6 +66,7 @@ type GCSDriverFeatureOptions struct {
 	GoMemLimitOptions         *GoMemLimitOptions
 	SharedMountOptions        *SharedMountOptions
 	EnableGrpcByDefault       bool
+	EnableHWgro               bool
 }
 
 type GCSDriverConfig struct {

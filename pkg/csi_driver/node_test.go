@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	mount "k8s.io/mount-utils"
@@ -872,6 +874,8 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 		name                     string
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
+		machineType              string
+		kubeletVersion           string
 		userMountOptions         string
 		expectedOptions          []string
 		unexpectedOptions        []string
@@ -922,6 +926,41 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1552000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unsupported GKE nodepool version, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1551999",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "not-a-semver",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -946,17 +985,29 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			}
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
-			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
-			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
-			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+			fc := clientset.NewFakeClientset()
+			if tc.machineType != "" || tc.kubeletVersion != "" {
+				fc.CreateNode(clientset.FakeNodeConfig{
+					IsWorkloadIdentityEnabled: true,
+					MachineType:               tc.machineType,
+					KubeletVersion:            tc.kubeletVersion,
+				})
+			}
+
+			driver := initTestDriver(t, fakeMounter, fc)
+			s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+			if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 				t.Fatalf("failed to create the fake bucket: %v", err)
 			}
 
 			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			driver.config.AssumeGoodSidecarVersion = tc.assumeGoodSidecarVersion
-			ns := newNodeServer(driver, fakeMounter)
+			ns, ok := newNodeServer(driver, fakeMounter).(*nodeServer)
+			if !ok {
+				t.Fatal("failed to cast NodeServer to *nodeServer")
+			}
 
-			_, err := ns.NodePublishVolume(context.Background(), req)
+			_, err := ns.NodePublishVolume(t.Context(), req)
 			if err != nil {
 				t.Fatalf("failed to publish volume: %v", err)
 			}
@@ -3361,6 +3412,8 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 		name                     string
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
+		machineType              string
+		kubeletVersion           string
 		userMountOptions         string
 		expectedOptions          []string
 		unexpectedOptions        []string
@@ -3411,6 +3464,41 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
 		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1552000",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unsupported GKE nodepool version, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1551999",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with missing GKE nodepool version, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled on ct6e-standard-4t with unparseable GKE nodepool version, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "not-a-semver",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -3421,6 +3509,13 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
 
 			fc := clientset.NewFakeClientset()
+			if tc.machineType != "" || tc.kubeletVersion != "" {
+				fc.CreateNode(clientset.FakeNodeConfig{
+					IsWorkloadIdentityEnabled: true,
+					MachineType:               tc.machineType,
+					KubeletVersion:            tc.kubeletVersion,
+				})
+			}
 			fc.CreatePod(clientset.FakePodConfig{
 				Name:         podName,
 				Namespace:    podNamespace,
@@ -3448,7 +3543,7 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			}
 			stageReq := newTestNodeStageVolumeRequest(testStagingPath, podName, podNamespace, extraVC)
 
-			_, err := ns.NodeStageVolume(context.Background(), stageReq)
+			_, err := ns.NodeStageVolume(t.Context(), stageReq)
 			if err != nil {
 				t.Fatalf("NodeStageVolume failed: %v", err)
 			}
@@ -4312,5 +4407,844 @@ func TestNodeStageVolumeMounterPodOOM(t *testing.T) {
 	st, ok := status.FromError(err)
 	if !ok || st.Code() != codes.ResourceExhausted {
 		t.Fatalf("Expected error code ResourceExhausted, got %v (err: %v)", st.Code(), err)
+	}
+}
+
+type fakeFailingMounter struct {
+	*mount.FakeMounter
+
+	mountErr error
+}
+
+func (f *fakeFailingMounter) Mount(source, target, fstype string, options []string) error {
+	if f.mountErr != nil {
+		return f.mountErr
+	}
+	return f.FakeMounter.Mount(source, target, fstype, options)
+}
+
+func TestNodePublishVolumeEnableHWgro(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name                string
+		enableGrpcByDefault bool
+		enableHWgro         bool
+		machineType         string
+		kubeletVersion      string
+		enableHWgroErr      error
+		mountErr            error
+		alreadyMounted      bool
+		wantErr             bool
+		wantHWgroCalls      int
+	}{
+		{
+			name:                "enables HWgro on supported TPU v6e node when both flags are enabled",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with older skewed GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1551999",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with missing GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with unparseable GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "not-a-semver",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro when enableHWgro is false",
+			enableGrpcByDefault: true,
+			enableHWgro:         false,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on non-v6e machine type",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "n2-standard-8",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "HWgro error is logged and does not fail NodePublishVolume",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			enableHWgroErr:      errors.New("mock ethtool error"),
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "already mounted targetPath triggers HWgro on republish when not yet done",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			alreadyMounted:      true,
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "does not enable HWgro when mount fails",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			mountErr:            errors.New("mock mount failure"),
+			wantErr:             true,
+			wantHWgroCalls:      0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			targetPath, cleanup := setupTestTargetPath(t)
+			t.Cleanup(cleanup)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreateNode(clientset.FakeNodeConfig{
+				IsWorkloadIdentityEnabled: true,
+				MachineType:               tc.machineType,
+				KubeletVersion:            tc.kubeletVersion,
+			})
+			if tc.alreadyMounted {
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         "test-pod",
+					Namespace:    "test-ns",
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: false,
+				})
+			}
+
+			var mountPoints []mount.MountPoint
+			if tc.alreadyMounted {
+				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: targetPath, Type: FuseMountType}}
+			}
+			fakeMounter := mount.NewFakeMounter(mountPoints)
+			var mounterIface mount.Interface = fakeMounter
+			if tc.mountErr != nil {
+				mounterIface = &fakeFailingMounter{FakeMounter: fakeMounter, mountErr: tc.mountErr}
+			}
+
+			driver := initTestDriver(t, fakeMounter, fc)
+			s, _ := driver.config.StorageServiceManager.SetupService(t.Context(), nil, "")
+			if _, err := s.CreateBucket(t.Context(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatalf("failed to create the fake bucket: %v", err)
+			}
+
+			driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
+			driver.config.AssumeGoodSidecarVersion = true
+			ns := newNodeServer(driver, mounterIface).(*nodeServer)
+
+			nwMgr := driver.config.NetworkManager.(*fakeNetworkManager)
+			nwMgr.enableHWgroFunc = func() error { return tc.enableHWgroErr }
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       targetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:      "test-pod",
+					VolumeContextKeyPodNamespace: "test-ns",
+				},
+			}
+
+			_, err := ns.NodePublishVolume(t.Context(), req)
+			ns.enableHWgroWg.Wait()
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NodePublishVolume error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got := nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
+			}
+		})
+	}
+}
+
+func TestNodeStageVolumeEnableHWgro(t *testing.T) {
+	t.Parallel()
+
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	testCases := []struct {
+		name                string
+		enableGrpcByDefault bool
+		enableHWgro         bool
+		machineType         string
+		kubeletVersion      string
+		enableHWgroErr      error
+		mountErr            error
+		alreadyMounted      bool
+		wantErr             bool
+		wantHWgroCalls      int
+	}{
+		{
+			name:                "enables HWgro on supported TPU v6e node when both flags are enabled",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with older skewed GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1551999",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with missing GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on TPU v6e node with unparseable GKE nodepool version",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "not-a-semver",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro when enableHWgro is false",
+			enableGrpcByDefault: true,
+			enableHWgro:         false,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "HWgro error is logged and does not fail NodeStageVolume",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			enableHWgroErr:      errors.New("mock ethtool error"),
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "already mounted stagingPath skips HWgro on restage",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			alreadyMounted:      true,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "does not enable HWgro when shared mount fails",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			mountErr:            errors.New("mock shared mount failure"),
+			wantErr:             true,
+			wantHWgroCalls:      0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stagingPath, cleanupStaging := setupTestStagingPath(t)
+			t.Cleanup(cleanupStaging)
+
+			sharedMountOptions, mounterServer := setupSharedMountOptions(t, podUID)
+			if tc.mountErr != nil {
+				mounterServer.mountFunc = func(_ *mounter.MountRequest) error { return tc.mountErr }
+			}
+
+			fc := clientset.NewFakeClientset()
+			fc.CreateNode(clientset.FakeNodeConfig{
+				IsWorkloadIdentityEnabled: true,
+				MachineType:               tc.machineType,
+				KubeletVersion:            tc.kubeletVersion,
+			})
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			var mountPoints []mount.MountPoint
+			if tc.alreadyMounted {
+				mountPoints = []mount.MountPoint{{Device: testVolumeID, Path: stagingPath, Type: FuseMountType}}
+			}
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns := testEnv.ns.(*nodeServer)
+			ns.mounter = mount.NewFakeMounter(mountPoints)
+			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
+			ns.driver.config.FeatureOptions.EnableHWgro = tc.enableHWgro
+			ns.driver.config.AssumeGoodSidecarVersion = true
+			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
+			testEnv.nwMgr.enableHWgroFunc = func() error { return tc.enableHWgroErr }
+
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+			_, err := ns.NodeStageVolume(t.Context(), stageReq)
+			ns.enableHWgroWg.Wait()
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NodeStageVolume error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got := testEnv.nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
+			}
+		})
+	}
+}
+
+func TestEnableHWgroIfApplicable(t *testing.T) {
+	t.Parallel()
+
+	newNode := func(machineType, kubeletVersion string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{clientset.MachineTypeKey: machineType},
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{KubeletVersion: kubeletVersion},
+			},
+		}
+	}
+	validNode := newNode("ct6e-standard-4t", "v1.37.1-gke.1552000")
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
+
+	testCases := []struct {
+		name         string
+		features     *GCSDriverFeatureOptions
+		node         *corev1.Node
+		mounterImage string
+		nilNwMgr     bool
+		wantCalls    int
+	}{
+		{
+			name:         "enables HWgro when all conditions are met on ct6e-standard-4t",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			wantCalls:    1,
+		},
+		{
+			name:         "skips when EnableHWgro is false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: false},
+			node:         validNode,
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "skips when EnableGrpcByDefault is false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "skips on non-TPU v6e machine type",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "skips when GKE nodepool version is unsupported",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "skips when sidecar version is unsupported",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: unsupportedImage,
+			wantCalls:    0,
+		},
+		{
+			name:         "skips when network manager is nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			nilNwMgr:     true,
+			wantCalls:    0,
+		},
+		{
+			name:         "skips when node is nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         nil,
+			mounterImage: supportedImage,
+			wantCalls:    0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			nwMgr := &fakeNetworkManager{}
+			var mgr NetworkManager = nwMgr
+			if tc.nilNwMgr {
+				mgr = nil
+			}
+			ns := &nodeServer{
+				driver: &GCSDriver{config: &GCSDriverConfig{FeatureOptions: tc.features}},
+				nwMgr:  mgr,
+			}
+
+			ns.enableHWgroIfApplicable(tc.node, tc.mounterImage)
+			ns.enableHWgroWg.Wait()
+
+			if got := nwMgr.getEnableHWgroCalls(); got != tc.wantCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestEnableHWgroIfApplicableConcurrencyAndRetry(t *testing.T) {
+	t.Parallel()
+
+	validNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "test-node",
+			Labels: map[string]string{clientset.MachineTypeKey: "ct6e-standard-4t"},
+		},
+		Status: corev1.NodeStatus{
+			NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.37.1-gke.1552000"},
+		},
+	}
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var attempt atomic.Int32
+	nwMgr := &fakeNetworkManager{
+		enableHWgroFunc: func() error {
+			if attempt.Add(1) == 1 {
+				close(started)
+				<-release
+				return errors.New("transient EBUSY")
+			}
+			return nil
+		},
+	}
+	ns := &nodeServer{
+		driver: &GCSDriver{
+			config: &GCSDriverConfig{
+				FeatureOptions: &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			},
+		},
+		nwMgr: nwMgr,
+	}
+
+	// First attempt starts in background; concurrent call while in-flight is skipped.
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	<-started
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	close(release)
+	ns.enableHWgroWg.Wait()
+
+	if got := nwMgr.getEnableHWgroCalls(); got != 1 {
+		t.Fatalf("enableHWgroCalls after in-flight failure = %d, want 1", got)
+	}
+
+	// Next call retries and succeeds; third call is a latched no-op.
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroWg.Wait()
+	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroWg.Wait()
+
+	if got := nwMgr.getEnableHWgroCalls(); got != 2 {
+		t.Errorf("enableHWgroCalls after retry and latch = %d, want 2", got)
+	}
+}
+
+func TestIsGrpcByDefaultEnabled(t *testing.T) {
+	t.Parallel()
+
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
+	newNode := func(machineType, kubeletVersion string) *corev1.Node {
+		var labels map[string]string
+		if machineType != "" {
+			labels = map[string]string{clientset.MachineTypeKey: machineType}
+		}
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: labels,
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: kubeletVersion,
+				},
+			},
+		}
+	}
+
+	testCases := []struct {
+		name         string
+		features     *GCSDriverFeatureOptions
+		node         *corev1.Node
+		mounterImage string
+		want         bool
+	}{
+		{
+			name:         "feature options is nil",
+			features:     nil,
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "EnableGrpcByDefault is false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "unsupported sidecar version",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: unsupportedImage,
+			want:         false,
+		},
+		{
+			name:         "node is nil",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         nil,
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "node missing machine-type label",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "non-TPU v6e machine type with empty kubelet version returns true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("n2-standard-8", ""),
+			mounterImage: supportedImage,
+			want:         true,
+		},
+		{
+			name:         "TPU v6e machine type with supported kubelet version returns true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         true,
+		},
+		{
+			name:         "TPU v6e machine type with unsupported kubelet version returns false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "TPU v6e machine type with missing kubelet version returns false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", ""),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+		{
+			name:         "TPU v6e machine type with unparseable kubelet version returns false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "not-a-semver"),
+			mounterImage: supportedImage,
+			want:         false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ns := &nodeServer{
+				driver: &GCSDriver{config: &GCSDriverConfig{FeatureOptions: tc.features}},
+			}
+
+			if got := ns.isGrpcByDefaultEnabled(tc.node, tc.mounterImage); got != tc.want {
+				t.Errorf("isGrpcByDefaultEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAppendGrpcByDefaultOptions(t *testing.T) {
+	t.Parallel()
+
+	supportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1000.0.0-gke.0"
+	unsupportedImage := "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0"
+	newNode := func(machineType, kubeletVersion string) *corev1.Node {
+		var labels map[string]string
+		if machineType != "" {
+			labels = map[string]string{clientset.MachineTypeKey: machineType}
+		}
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: labels,
+			},
+			Status: corev1.NodeStatus{
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: kubeletVersion,
+				},
+			},
+		}
+	}
+
+	testCases := []struct {
+		name         string
+		features     *GCSDriverFeatureOptions
+		node         *corev1.Node
+		mounterImage string
+		mountOptions []string
+		want         []string
+	}{
+		{
+			name:         "supported TPU v6e GKE version appends enable-grpc-by-default=true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "older skewed TPU v6e GKE version appends enable-grpc-by-default=false to override autoconfig",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "missing TPU v6e GKE version appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", ""),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "unparseable TPU v6e GKE version appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "not-a-semver"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "driver flag disabled on TPU v6e appends enable-grpc-by-default=false to override autoconfig",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "missing machine-type label appends enable-grpc-by-default=false to fail closed",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "nil node appends enable-grpc-by-default=false to fail closed",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         nil,
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:         "non-TPU v6e node appends enable-grpc-by-default=true regardless of kubelet version",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "non-TPU v6e node with empty kubelet version appends enable-grpc-by-default=true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("n2-standard-8", ""),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "other TPU generation (v5e) appends enable-grpc-by-default=true without GKE version gate",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct5lp-hightpu-4t", "v1.34.0-gke.1000"),
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "driver flag disabled on non-TPU v6e node does not append flag",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"ro"},
+		},
+		{
+			name:         "driver flag disabled on non-ct6e high-performance node does not append flag to allow autoconfig",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("a3-highgpu-8g", "v1.34.0-gke.1000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"ro"},
+		},
+		{
+			name:         "unsupported sidecar version does not append flag even on older TPU v6e",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: unsupportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"ro"},
+		},
+		{
+			name:         "user-provided enable-grpc-by-default=true on older TPU v6e is preserved without conflict",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"enable-grpc-by-default=true"},
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "user-provided enable-grpc-by-default=false on non-TPU v6e node is preserved",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"enable-grpc-by-default=false"},
+			want:         []string{"enable-grpc-by-default=false"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ns := &nodeServer{
+				driver: &GCSDriver{config: &GCSDriverConfig{FeatureOptions: tc.features}},
+			}
+
+			got := ns.appendGrpcByDefaultOptions(tc.node, tc.mounterImage, tc.mountOptions)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("appendGrpcByDefaultOptions() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsGKENodePoolVersionSupportedForTPUv6e(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name           string
+		kubeletVersion string
+		want           bool
+	}{
+		// 1.37 boundary cases (>= 1.37.1-gke.1552000)
+		{name: "1.37 exact minimum with v prefix", kubeletVersion: "v1.37.1-gke.1552000", want: true},
+		{name: "1.37 exact minimum without v prefix", kubeletVersion: "1.37.1-gke.1552000", want: true},
+		{name: "1.37 above minimum build", kubeletVersion: "v1.37.1-gke.1552001", want: true},
+		{name: "1.37 above minimum patch", kubeletVersion: "v1.37.2-gke.100", want: true},
+		{name: "1.37 below minimum build by 1", kubeletVersion: "v1.37.1-gke.1551999", want: false},
+		{name: "1.37 below minimum build numeric order", kubeletVersion: "v1.37.1-gke.200000", want: false},
+		{name: "1.37 below minimum patch", kubeletVersion: "v1.37.0-gke.9999999", want: false},
+
+		// 1.36 boundary cases (>= 1.36.0-gke.4681000)
+		{name: "1.36 exact minimum with v prefix", kubeletVersion: "v1.36.0-gke.4681000", want: true},
+		{name: "1.36 exact minimum without v prefix", kubeletVersion: "1.36.0-gke.4681000", want: true},
+		{name: "1.36 above minimum build", kubeletVersion: "v1.36.0-gke.4681001", want: true},
+		{name: "1.36 above minimum patch", kubeletVersion: "v1.36.1-gke.100", want: true},
+		{name: "1.36 below minimum build by 1", kubeletVersion: "v1.36.0-gke.4680999", want: false},
+		{name: "1.36 below minimum build numeric order", kubeletVersion: "v1.36.0-gke.500000", want: false},
+
+		// 1.35 boundary cases (>= 1.35.6-gke.1258000)
+		{name: "1.35 exact minimum with v prefix", kubeletVersion: "v1.35.6-gke.1258000", want: true},
+		{name: "1.35 exact minimum without v prefix", kubeletVersion: "1.35.6-gke.1258000", want: true},
+		{name: "1.35 above minimum build", kubeletVersion: "v1.35.6-gke.1258001", want: true},
+		{name: "1.35 above minimum patch", kubeletVersion: "v1.35.7-gke.100", want: true},
+		{name: "1.35 below minimum build by 1", kubeletVersion: "v1.35.6-gke.1257999", want: false},
+		{name: "1.35 below minimum patch", kubeletVersion: "v1.35.5-gke.9999999", want: false},
+
+		// 1.34 boundary cases (>= 1.34.9-gke.1287000)
+		{name: "1.34 exact minimum with v prefix", kubeletVersion: "v1.34.9-gke.1287000", want: true},
+		{name: "1.34 exact minimum without v prefix", kubeletVersion: "1.34.9-gke.1287000", want: true},
+		{name: "1.34 above minimum build", kubeletVersion: "v1.34.9-gke.1287001", want: true},
+		{name: "1.34 above minimum patch", kubeletVersion: "v1.34.10-gke.100", want: true},
+		{name: "1.34 below minimum build by 1", kubeletVersion: "v1.34.9-gke.1286999", want: false},
+		{name: "1.34 below minimum patch", kubeletVersion: "v1.34.8-gke.9999999", want: false},
+
+		// >= 1.38 cases
+		{name: "1.38 initial GKE build", kubeletVersion: "v1.38.0-gke.0", want: true},
+		{name: "1.38 GKE build without v prefix", kubeletVersion: "1.38.0-gke.100", want: true},
+		{name: "1.39 GKE build", kubeletVersion: "v1.39.2-gke.500", want: true},
+
+		// Non-GKE plain releases, RC tags, and alpha/beta pre-releases (rejected)
+		{name: "non-GKE plain release v1.34.9 is rejected", kubeletVersion: "v1.34.9", want: false},
+		{name: "non-GKE plain release v1.35.6 is rejected", kubeletVersion: "v1.35.6", want: false},
+		{name: "non-GKE plain release v1.36.0 is rejected", kubeletVersion: "v1.36.0", want: false},
+		{name: "non-GKE plain release v1.37.1 is rejected", kubeletVersion: "v1.37.1", want: false},
+		{name: "non-GKE plain release v1.38.0 is rejected", kubeletVersion: "v1.38.0", want: false},
+		{name: "non-GKE RC tag v1.36.0-rc.1 is rejected", kubeletVersion: "v1.36.0-rc.1", want: false},
+		{name: "non-GKE RC tag v1.38.0-rc.1 is rejected", kubeletVersion: "v1.38.0-rc.1", want: false},
+		{name: "non-GKE alpha tag v1.38.0-alpha.0 is rejected", kubeletVersion: "v1.38.0-alpha.0", want: false},
+		{name: "non-GKE beta tag v1.37.2-beta.1 is rejected", kubeletVersion: "v1.37.2-beta.1", want: false},
+		{name: "missing gke dot separator v1.38.0-gke is rejected", kubeletVersion: "v1.38.0-gke", want: false},
+
+		// < 1.34, whitespace, and invalid cases
+		{name: "1.33 GKE build is unsupported", kubeletVersion: "v1.33.9-gke.9999999", want: false},
+		{name: "whitespace-padded supported version is trimmed and supported", kubeletVersion: "  v1.37.1-gke.1552000\n", want: true},
+		{name: "empty version is unsupported", kubeletVersion: "", want: false},
+		{name: "whitespace-only version is unsupported", kubeletVersion: "   ", want: false},
+		{name: "malformed version is unsupported", kubeletVersion: "not-a-semver", want: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isGKENodePoolVersionSupportedForTPUv6e(tc.kubeletVersion); got != tc.want {
+				t.Errorf("isGKENodePoolVersionSupportedForTPUv6e(%q) = %v, want %v", tc.kubeletVersion, got, tc.want)
+			}
+		})
 	}
 }
