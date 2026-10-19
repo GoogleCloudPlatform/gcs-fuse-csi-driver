@@ -450,6 +450,54 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 				expectedSupported:          false,
 				minFeatureVersionSupported: SidecarGrpcByDefaultMinVersion,
 			},
+			{
+				name:                       "customer tag - should return true for supported sidecar version with customer name in tag",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "customer tag - should return true when major.minor.patch equals min version and customer name is lexically before gke",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-customera-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "customer tag - should return true for supported sidecar version with container registry gke.gcr.io",
+				imageName:                  "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "customer tag - should return true for supported sidecar version in staging gcr",
+				imageName:                  "gcr.io/gke-release-staging/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0@sha256:abcd",
+				expectedSupported:          true,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "customer tag - should return false for unsupported sidecar version with customer name in tag",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.21.0-customer-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "customer tag - should return false when gke patch is lower even if customer name is lexically after gke",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.0-customerz-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: "v1.22.0-gke.1",
+			},
+			{
+				name:                       "customer tag - should return false for private sidecar with customer name in tag",
+				imageName:                  "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
+			{
+				name:                       "customer tag - should return false for malformed tag with empty customer name",
+				imageName:                  "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29--gke.0@sha256:abcd",
+				expectedSupported:          false,
+				minFeatureVersionSupported: GCSFuseKernelParamsMinVersion,
+			},
 		}
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
@@ -512,6 +560,21 @@ func TestIsStrictManagedSidecarImage(t *testing.T) {
 		{
 			name:      "malicious suffix bypass AR with gcr.io in path - should return false",
 			imageName: "docker.io/attacker/something.gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.23.0-gke.1",
+			want:      false,
+		},
+		{
+			name:      "official regional GCR with customer name in tag - should return true",
+			imageName: "us-central1-artifactregistry.gcr.io/gke-release/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0",
+			want:      true,
+		},
+		{
+			name:      "official gke.gcr.io host with customer name in tag - should return true",
+			imageName: "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0",
+			want:      true,
+		},
+		{
+			name:      "customer GCR with customer name in tag - should return false",
+			imageName: "customer.gcr.io/dir/gcs-fuse-csi-driver-sidecar-mounter:v1.22.29-customer-gke.0",
 			want:      false,
 		},
 	}

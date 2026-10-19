@@ -99,13 +99,15 @@ const (
 )
 
 var (
-	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+\.*`
+	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+\.*`
 	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
-	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+.*`
 	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
 
-	strictManagedSidecarPatternAR = `^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+-gke\.\d+.*`
+	strictManagedSidecarPatternAR = `^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+.*`
 	strictManagedSidecarRegexAR   = regexp.MustCompile(strictManagedSidecarPatternAR)
+
+	customerVersionRegex = regexp.MustCompile(`^(v\d+\.\d+\.\d+)(?:-[a-zA-Z0-9]+)+(-gke\.\d+.*)$`)
 
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
@@ -698,6 +700,7 @@ func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, s
 		return false
 	}
 	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
+	imageVersion = customerVersionRegex.ReplaceAllString(imageVersion, "$1$2")
 	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
 		klog.Infof("managed sidecar version satisfies the minimum required version %q", sidecarMinSupportedVersion)
 		return true
