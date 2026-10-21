@@ -175,7 +175,7 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 	}
 	useNewMetricsSchema := hasNewMetricsSchema()
 
-	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName string, expectMetrics bool) {
+	verifyMetrics := func(tPod *specs.TestPod, volumeResource *storageframework.VolumeResource, mountPath, volumeName, expectedControllerType, expectedControllerName string, expectMetrics bool) {
 		ginkgo.By("Running file operations on the volume")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 
@@ -252,10 +252,42 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 			volume = volumeResource.Pv.Name
 		}
 		podName := tPod.GetPodName()
+		volumeMetricsSchemaEnabled := tPod.IsCSIDriverVolumeMetricsSchemaEnabled(ctx)
 
 		// Iterate through the expected metric names and check if they are present in the scraped metrics with correct labels.
-		getMetrics := func(metricFamily *dto.MetricFamily) []*dto.Metric {
-			return metricsForVolume(metricFamily, bucketName, podName, volume, f.Namespace.Name, hasMetricsCardFixes)
+		getMetrics := func(metricFamily *dto.MetricFamily, useVolumeSchema bool) []*dto.Metric {
+			metricsList := []*dto.Metric{}
+			if metricFamily != nil {
+				for _, m := range metricFamily.GetMetric() {
+					labels := make(map[string]string, len(m.GetLabel()))
+					for _, pair := range m.GetLabel() {
+						labels[pair.GetName()] = pair.GetValue()
+					}
+
+					_, hasPodUID := labels["pod_uid"]
+					controllerType, hasControllerType := labels["k8s_controller_type"]
+					controllerName, hasControllerName := labels["k8s_controller_name"]
+					schemaLabelsValid := !hasControllerType && !hasControllerName && (hasMetricsCardFixes == (labels["pod_uid"] == "")) // cardinality fixes and pod_uid being empty should go hand in hand
+					if useVolumeSchema {
+						// When enable-gcsfuse-volume-metrics-schema is enabled, pod_uid is omitted
+						// and k8s_controller_type/k8s_controller_name are emitted with expected values alongside non-empty pod_name.
+						schemaLabelsValid = !hasPodUID &&
+							hasControllerType &&
+							hasControllerName &&
+							controllerType == expectedControllerType &&
+							controllerName == expectedControllerName
+					}
+
+					if labels["bucket_name"] == bucketName &&
+						labels["pod_name"] == podName &&
+						labels["volume_name"] == volume &&
+						labels["namespace_name"] == f.Namespace.Name &&
+						schemaLabelsValid {
+						metricsList = append(metricsList, m)
+					}
+				}
+			}
+			return metricsList
 		}
 
 		metricsToVerify := append([]string{}, expectedMetricNames...)
@@ -275,7 +307,20 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		}
 
 		for _, metricName := range metricsToVerify {
-			metricsList := getMetrics(families[metricName])
+			isGrpc := strings.HasPrefix(metricName, "grpc_")
+			useVolumeSchema := volumeMetricsSchemaEnabled && !isGrpc
+			if useVolumeSchema && (metricName == "fs_ops_latency" || metricName == "fs_ops_latencies") {
+				gomega.Expect(getMetrics(families["fs_ops_latency"], false)).To(gomega.BeEmpty(), "did not expect legacy fs_ops_latency when volume metrics schema is enabled")
+				metricName = "fs_ops_latencies"
+			} else if !useVolumeSchema && metricName == "fs_ops_latencies" && families["fs_ops_latencies"] == nil {
+				metricName = "fs_ops_latency"
+			}
+			lookupName := metricName
+			if useVolumeSchema {
+				lookupName = "volume_" + metricName
+			}
+			metricFamily := families[lookupName]
+			metricsList := getMetrics(metricFamily, useVolumeSchema)
 			ginkgo.By(fmt.Sprintf("Printing full metricList %+v", metricsList))
 
 			// Skip the gcs_reader_count validation if Zonal Bucket is enabled.
@@ -326,6 +371,15 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 
 		ginkgo.By("Configuring the pod")
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
+		expectedControllerType := ""
+		expectedControllerName := ""
+		if testName == testNameSinglePodShouldEmitMetrics {
+			tPod.SetLabels(map[string]string{
+				"jobset.sigs.k8s.io/jobset-name": "test-jobset",
+			})
+			expectedControllerType = "jobset"
+			expectedControllerName = "test-jobset"
+		}
 		for i, vr := range l.volumeResourceList {
 			tPod.SetupVolume(vr, fmt.Sprintf("%v-%v", volumeName, i), fmt.Sprintf("%v/%v", mountPath, i), false)
 		}
@@ -337,9 +391,13 @@ func (t *gcsFuseCSIMetricsTestSuite) DefineTests(driver storageframework.TestDri
 		ginkgo.By("Checking that the pod is running")
 		tPod.WaitForRunning(ctx)
 
+		if testName == testNamePodExceedsThresholdVolumesShouldNotEmitMetrics {
+			expectMetrics = tPod.IsCSIDriverVolumeMetricsSchemaEnabled(ctx)
+		}
+
 		for i, vr := range l.volumeResourceList {
 			ginkgo.By(fmt.Sprintf("Checking metrics from volume %v", i))
-			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), expectMetrics)
+			verifyMetrics(tPod, vr, fmt.Sprintf("%v/%v", mountPath, i), fmt.Sprintf("%v-%v", volumeName, i), expectedControllerType, expectedControllerName, expectMetrics)
 		}
 	}
 
@@ -432,12 +490,19 @@ func metricsForVolume(metricFamily *dto.MetricFamily, bucketName, podName, volum
 			labels[pair.GetName()] = pair.GetValue()
 		}
 
+		_, hasPodUID := labels["pod_uid"]
+		_, hasControllerType := labels["k8s_controller_type"]
+		_, hasControllerName := labels["k8s_controller_name"]
+		// Support both the legacy k8s_pod schema (where pod_uid is present) and the
+		// k8s_gcs_fuse_volume schema (where pod_uid is omitted and controller labels are emitted).
+		schemaLabelsValid := (!hasControllerType && !hasControllerName && (expectEmptyPodUID == (labels["pod_uid"] == ""))) ||
+			(!hasPodUID && hasControllerType && hasControllerName)
+
 		if labels["bucket_name"] == bucketName &&
 			labels["pod_name"] == podName &&
 			labels["volume_name"] == volumeName &&
 			labels["namespace_name"] == namespace &&
-			// Cardinality fixes and pod_uid being empty should go hand in hand.
-			(expectEmptyPodUID == (labels["pod_uid"] == "")) {
+			schemaLabelsValid {
 			metricsList = append(metricsList, m)
 		}
 	}

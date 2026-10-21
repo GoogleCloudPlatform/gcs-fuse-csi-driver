@@ -2192,125 +2192,156 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 		},
 	}
 
-	testCases := []volumeTestCase{
-		{
-			name:                        "should register collector for 1 gcsfuse ephemeral volume",
-			totalEphemeralVolumeCount:   1,
-			gcsFuseEphemeralVolumeCount: 1,
-			expectCollectorRegistered:   true,
-		},
-		{
-			name:                         "should register collector for 1 gcsfuse persistent volume",
-			totalPersistentVolumeCount:   1,
-			gcsFusePersistentVolumeCount: 1,
-			expectCollectorRegistered:    true,
-		},
-		{
-			name:                         "should register collector for a mix of gcsfuse volumes",
-			totalEphemeralVolumeCount:    2,
-			totalPersistentVolumeCount:   2,
-			gcsFuseEphemeralVolumeCount:  1,
-			gcsFusePersistentVolumeCount: 1,
-			expectCollectorRegistered:    true,
-		},
-		{
-			name:                        "should register collector for 10 gcsfuse ephemeral volumes",
-			totalEphemeralVolumeCount:   10,
-			gcsFuseEphemeralVolumeCount: 10,
-			expectCollectorRegistered:   true,
-		},
-		{
-			name:                         "should register collector for 10 gcsfuse persistent volumes",
-			totalPersistentVolumeCount:   10,
-			gcsFusePersistentVolumeCount: 10,
-			expectCollectorRegistered:    true,
-		},
-		{
-			name:                         "should register collector for a mix of 10 gcsfuse volumes",
-			totalEphemeralVolumeCount:    5,
-			totalPersistentVolumeCount:   5,
-			gcsFuseEphemeralVolumeCount:  5,
-			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    true,
-		},
-		{
-			name:                        "should not register collector for 11 gcsfuse ephemeral volumes",
-			totalEphemeralVolumeCount:   11,
-			gcsFuseEphemeralVolumeCount: 11,
-			expectCollectorRegistered:   false,
-		},
-		{
-			name:                         "should not register collector for 11 gcsfuse persistent volumes",
-			totalPersistentVolumeCount:   11,
-			gcsFusePersistentVolumeCount: 11,
-			expectCollectorRegistered:    false,
-		},
-		{
-			name:                         "should not register collector for a mix of 11 gcsfuse volumes",
-			totalEphemeralVolumeCount:    6,
-			totalPersistentVolumeCount:   5,
-			gcsFuseEphemeralVolumeCount:  6,
-			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    false,
-		},
-		{
-			name:                         "should register collector with other non gcsfuse volumes",
-			totalEphemeralVolumeCount:    5,
-			totalPersistentVolumeCount:   5,
-			gcsFuseEphemeralVolumeCount:  2,
-			gcsFusePersistentVolumeCount: 2,
-			expectCollectorRegistered:    true,
-		},
-		{
-			name:                         "should not register collector with other non gcsfuse volumes when gcsfuse volumes exceeds limit",
-			totalEphemeralVolumeCount:    15,
-			totalPersistentVolumeCount:   15,
-			gcsFuseEphemeralVolumeCount:  6,
-			gcsFusePersistentVolumeCount: 5,
-			expectCollectorRegistered:    false,
-		},
+	flagOptions := []struct {
+		enableSchema bool
+	}{
+		{enableSchema: true},
+		{enableSchema: false},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Setup mock clientset
-			fakeClientSet := clientset.NewFakeClientset()
-			volumes := createVolumesTestCase(fakeClientSet, tc)
-
-			fakeClientSet.AddPodVolumes(volumes)
-			// Setup node server
-			testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
-			ns, ok := testEnv.ns.(*nodeServer)
-			if !ok {
-				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+	for _, flagOpt := range flagOptions {
+		t.Run(fmt.Sprintf("EnableGcsFuseVolumeMetricsSchema=%v", flagOpt.enableSchema), func(t *testing.T) {
+			testCases := []struct {
+				name                         string
+				totalEphemeralVolumeCount    int
+				totalPersistentVolumeCount   int
+				gcsFuseEphemeralVolumeCount  int
+				gcsFusePersistentVolumeCount int
+				expectCollectorRegistered    bool
+			}{
+				{
+					name:                        "should register collector for 1 gcsfuse ephemeral volume",
+					totalEphemeralVolumeCount:   1,
+					gcsFuseEphemeralVolumeCount: 1,
+					expectCollectorRegistered:   true,
+				},
+				{
+					name:                         "should register collector for 1 gcsfuse persistent volume",
+					totalPersistentVolumeCount:   1,
+					gcsFusePersistentVolumeCount: 1,
+					expectCollectorRegistered:    true,
+				},
+				{
+					name:                         "should register collector for a mix of gcsfuse volumes",
+					totalEphemeralVolumeCount:    2,
+					totalPersistentVolumeCount:   2,
+					gcsFuseEphemeralVolumeCount:  1,
+					gcsFusePersistentVolumeCount: 1,
+					expectCollectorRegistered:    true,
+				},
+				{
+					name:                        "should register collector for 10 gcsfuse ephemeral volumes",
+					totalEphemeralVolumeCount:   10,
+					gcsFuseEphemeralVolumeCount: 10,
+					expectCollectorRegistered:   true,
+				},
+				{
+					name:                         "should register collector for 10 gcsfuse persistent volumes",
+					totalPersistentVolumeCount:   10,
+					gcsFusePersistentVolumeCount: 10,
+					expectCollectorRegistered:    true,
+				},
+				{
+					name:                         "should register collector for a mix of 10 gcsfuse volumes",
+					totalEphemeralVolumeCount:    5,
+					totalPersistentVolumeCount:   5,
+					gcsFuseEphemeralVolumeCount:  5,
+					gcsFusePersistentVolumeCount: 5,
+					expectCollectorRegistered:    true,
+				},
+				{
+					name:                        "11 gcsfuse ephemeral volumes",
+					totalEphemeralVolumeCount:   11,
+					gcsFuseEphemeralVolumeCount: 11,
+					expectCollectorRegistered:   flagOpt.enableSchema,
+				},
+				{
+					name:                         "11 gcsfuse persistent volumes",
+					totalPersistentVolumeCount:   11,
+					gcsFusePersistentVolumeCount: 11,
+					expectCollectorRegistered:    flagOpt.enableSchema,
+				},
+				{
+					name:                         "mix of 11 gcsfuse volumes",
+					totalEphemeralVolumeCount:    6,
+					totalPersistentVolumeCount:   5,
+					gcsFuseEphemeralVolumeCount:  6,
+					gcsFusePersistentVolumeCount: 5,
+					expectCollectorRegistered:    flagOpt.enableSchema,
+				},
+				{
+					name:                         "should register collector with other non gcsfuse volumes",
+					totalEphemeralVolumeCount:    5,
+					totalPersistentVolumeCount:   5,
+					gcsFuseEphemeralVolumeCount:  2,
+					gcsFusePersistentVolumeCount: 2,
+					expectCollectorRegistered:    true,
+				},
+				{
+					name:                         "mix with non gcsfuse volumes when total volume count is 11 or higher but gcsfuse volume count is 11",
+					totalEphemeralVolumeCount:    15,
+					totalPersistentVolumeCount:   15,
+					gcsFuseEphemeralVolumeCount:  6,
+					gcsFusePersistentVolumeCount: 5,
+					expectCollectorRegistered:    flagOpt.enableSchema,
+				},
 			}
-			ns.driver.config.Name = csiDriverName
 
-			// Setup metrics manager
-			mm := metrics.NewFakeMetricsManager()
-			ns.driver.config.MetricsManager = mm
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					fakeClientSet := clientset.NewFakeClientset()
+					if pod, err := fakeClientSet.GetPod("", ""); err == nil && pod != nil {
+						pod.Labels = map[string]string{
+							"jobset.sigs.k8s.io/jobset-name": "my-test-jobset",
+						}
+					}
+					volumes := createVolumesTestCase(fakeClientSet, volumeTestCase{
+						totalEphemeralVolumeCount:    tc.totalEphemeralVolumeCount,
+						totalPersistentVolumeCount:   tc.totalPersistentVolumeCount,
+						gcsFuseEphemeralVolumeCount:  tc.gcsFuseEphemeralVolumeCount,
+						gcsFusePersistentVolumeCount: tc.gcsFusePersistentVolumeCount,
+					})
 
-			// Update request
-			req := proto.Clone(baseReq).(*csi.NodePublishVolumeRequest)
+					fakeClientSet.AddPodVolumes(volumes)
+					testEnv := initTestNodeServerWithCustomClientset(t, fakeClientSet, false)
+					ns, ok := testEnv.ns.(*nodeServer)
+					if !ok {
+						t.Fatalf("Failed to cast NodeServer to *nodeServer")
+					}
+					ns.driver.config.Name = csiDriverName
+					ns.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema = flagOpt.enableSchema
 
-			// Call NodePublishVolume
-			_, err := ns.NodePublishVolume(context.Background(), req)
-			if err != nil {
-				// The fake clientset does not have the pod annotations,
-				// which will cause the sidecar check to fail.
-				if !strings.Contains(err.Error(), "failed to find the sidecar container in Pod spec") {
-					t.Fatalf("NodePublishVolume() failed: %v", err)
-				}
-			}
+					mm := metrics.NewFakeMetricsManager()
+					ns.driver.config.MetricsManager = mm
 
-			// Assertions
-			collectors := mm.GetCollectors()
-			_, collectorRegistered := collectors[testTargetPath]
-			if tc.expectCollectorRegistered && !collectorRegistered {
-				t.Error("expected metrics collector to be registered, but it was not")
-			}
-			if !tc.expectCollectorRegistered && collectorRegistered {
-				t.Error("expected metrics collector not to be registered, but it was")
+					req := proto.Clone(baseReq).(*csi.NodePublishVolumeRequest)
+
+					_, err := ns.NodePublishVolume(context.Background(), req)
+					if err != nil {
+						if !strings.Contains(err.Error(), "failed to find the sidecar container in Pod spec") {
+							t.Fatalf("NodePublishVolume() failed: %v", err)
+						}
+					}
+
+					collectors := mm.GetCollectors()
+					_, collectorRegistered := collectors[testTargetPath]
+					if tc.expectCollectorRegistered && !collectorRegistered {
+						t.Errorf("expected metrics collector to be registered, but it was not")
+					}
+					if !tc.expectCollectorRegistered && collectorRegistered {
+						t.Errorf("expected metrics collector not to be registered, but it was")
+					}
+					if tc.expectCollectorRegistered {
+						details := mm.GetCollectorDetails()[testTargetPath]
+						expectedType, expectedName := "", ""
+						if flagOpt.enableSchema {
+							expectedType, expectedName = "jobset", "my-test-jobset"
+						}
+						if details.ControllerType != expectedType || details.ControllerName != expectedName {
+							t.Errorf("expected controller (%q, %q), got (%q, %q)", expectedType, expectedName, details.ControllerType, details.ControllerName)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -3172,6 +3203,8 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
 				return filepath.Join(tempDir, uid)
 			}
+			mm := metrics.NewFakeMetricsManager()
+			ns.driver.config.MetricsManager = mm
 
 			// Create error file if specified
 			if tc.errorFileContent != "" {
@@ -3206,6 +3239,9 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("Got error %q, expected error nil", err)
+				}
+				if _, ok := mm.GetCollectors()[testStagingPath]; !ok {
+					t.Errorf("Expected metrics collector to be registered on staging path %q", testStagingPath)
 				}
 
 				// Verify actual flags captured on the fake mounter match expectations
