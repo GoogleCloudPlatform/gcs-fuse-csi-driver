@@ -99,7 +99,7 @@ var (
 
 	// GCSFuse volume metrics schema flag
 	// TODO(alleaditya): Deprecate --enable-gcsfuse-volume-metrics-schema and remove legacy k8s_pod fallback once k8s_gcs_fuse_volume rollout reaches 100%.
-	enableGcsFuseVolumeMetricsSchema = flag.Bool("enable-gcsfuse-volume-metrics-schema", true, "Enable k8s_gcs_fuse_volume Monitored Resource metrics schema for GCSFuse metrics.")
+	enableGcsFuseVolumeMetricsSchema = flag.Bool("enable-gcsfuse-volume-metrics-schema", false, "Enable k8s_gcs_fuse_volume Monitored Resource metrics schema for GCSFuse metrics.")
 
 	// Leader election flags.
 	leaderElection                   = flag.Bool("leader-election", false, "Enables leader election for stateful driver.")

@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1118,46 +1119,43 @@ func (t *TestPod) GetMachineType(ctx context.Context) (string, error) {
 	return node.ObjectMeta.Labels["node.kubernetes.io/instance-type"], nil
 }
 
-func (t *TestPod) GetCSIDriverNodePodIP(ctx context.Context) string {
-	node := t.GetNode()
-	daemonSetLabelSelector := "k8s-app=gcs-fuse-csi-driver"
-
+func (t *TestPod) getCSIDriverNodePod(ctx context.Context) corev1.Pod {
 	pods, err := t.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-		FieldSelector: "spec.nodeName=" + node,
-		LabelSelector: daemonSetLabelSelector,
+		FieldSelector: "spec.nodeName=" + t.GetNode(),
+		LabelSelector: "k8s-app=gcs-fuse-csi-driver",
 	})
 	framework.ExpectNoError(err)
 	gomega.Expect(pods.Items).To(gomega.HaveLen(1))
 
-	pod := pods.Items[0]
+	return pods.Items[0]
+}
+
+func (t *TestPod) GetCSIDriverNodePodIP(ctx context.Context) string {
+	pod := t.getCSIDriverNodePod(ctx)
 	gomega.Expect(pod.Status).ToNot(gomega.BeNil())
 
 	return pod.Status.PodIP
 }
 
 func (t *TestPod) IsCSIDriverVolumeMetricsSchemaEnabled(ctx context.Context) bool {
-	node := t.GetNode()
-	daemonSetLabelSelector := "k8s-app=gcs-fuse-csi-driver"
-
-	pods, err := t.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-		FieldSelector: "spec.nodeName=" + node,
-		LabelSelector: daemonSetLabelSelector,
-	})
-	framework.ExpectNoError(err)
-	gomega.Expect(pods.Items).To(gomega.HaveLen(1))
-
-	for _, container := range pods.Items[0].Spec.Containers {
+	pod := t.getCSIDriverNodePod(ctx)
+	for _, container := range pod.Spec.Containers {
 		for _, arg := range container.Args {
-			if arg == "--enable-gcsfuse-volume-metrics-schema" || arg == "--enable-gcsfuse-volume-metrics-schema=true" {
+			trimmed := strings.TrimPrefix(arg, "-")
+			trimmed = strings.TrimPrefix(trimmed, "-")
+			if trimmed == "enable-gcsfuse-volume-metrics-schema" {
 				return true
 			}
-			if arg == "--enable-gcsfuse-volume-metrics-schema=false" {
-				return false
+			if strings.HasPrefix(trimmed, "enable-gcsfuse-volume-metrics-schema=") {
+				val := strings.TrimPrefix(trimmed, "enable-gcsfuse-volume-metrics-schema=")
+				if enabled, err := strconv.ParseBool(val); err == nil {
+					return enabled
+				}
 			}
 		}
 	}
 
-	return os.Getenv(IsOSSEnvVar) == "true"
+	return false
 }
 
 func (t *TestPod) SetNodeAffinity(nodeName string, sameNode bool) {
