@@ -50,7 +50,6 @@ func initTestDriver(t *testing.T, fm *mount.FakeMounter, clientset clientset.Int
 				FuseSocketDir:   "/tmp/fuse-sockets",
 				DriverNamespace: "gcs-fuse-csi-driver",
 			},
-			EnableGcsFuseVolumeMetricsSchema: true,
 		},
 	}
 	driver, err := NewGCSDriver(config, nil)
@@ -87,7 +86,6 @@ func initTestDriverWithCustomNodeServer(t *testing.T, fm *mount.FakeMounter, cli
 				FuseSocketDir:   "/tmp/fuse-sockets",
 				DriverNamespace: "gcs-fuse-csi-driver",
 			},
-			EnableGcsFuseVolumeMetricsSchema: true,
 		},
 		AssumeGoodSidecarVersion: true,
 	}
@@ -305,5 +303,14 @@ func TestDriverValidateVolumeCapabilities(t *testing.T) {
 		if err != nil && (test.expectErr == nil || err.Error() != test.expectErr.Error()) {
 			t.Errorf("test %q failed:\nexpected error %q,\ngot error %q", test.name, test.expectErr, err)
 		}
+	}
+}
+
+func TestDriverEnableGcsFuseVolumeMetricsSchema(t *testing.T) {
+	t.Parallel()
+
+	defaultDriver := initTestDriver(t, nil, clientset.NewFakeClientset())
+	if defaultDriver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema {
+		t.Errorf("expected EnableGcsFuseVolumeMetricsSchema to default to false, got true")
 	}
 }
