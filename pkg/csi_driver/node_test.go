@@ -2193,14 +2193,29 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 	}
 
 	flagOptions := []struct {
-		enableSchema bool
+		name         string
+		enableSchema *bool
+		expectSchema bool
 	}{
-		{enableSchema: true},
-		{enableSchema: false},
+		{
+			name:         "default (EnableGcsFuseVolumeMetricsSchema not set, defaults to false)",
+			enableSchema: nil,
+			expectSchema: false,
+		},
+		{
+			name:         "EnableGcsFuseVolumeMetricsSchema=true",
+			enableSchema: ptr.To(true),
+			expectSchema: true,
+		},
+		{
+			name:         "EnableGcsFuseVolumeMetricsSchema=false",
+			enableSchema: ptr.To(false),
+			expectSchema: false,
+		},
 	}
 
 	for _, flagOpt := range flagOptions {
-		t.Run(fmt.Sprintf("EnableGcsFuseVolumeMetricsSchema=%v", flagOpt.enableSchema), func(t *testing.T) {
+		t.Run(flagOpt.name, func(t *testing.T) {
 			testCases := []struct {
 				name                         string
 				totalEphemeralVolumeCount    int
@@ -2253,13 +2268,13 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 					name:                        "11 gcsfuse ephemeral volumes",
 					totalEphemeralVolumeCount:   11,
 					gcsFuseEphemeralVolumeCount: 11,
-					expectCollectorRegistered:   flagOpt.enableSchema,
+					expectCollectorRegistered:   flagOpt.expectSchema,
 				},
 				{
 					name:                         "11 gcsfuse persistent volumes",
 					totalPersistentVolumeCount:   11,
 					gcsFusePersistentVolumeCount: 11,
-					expectCollectorRegistered:    flagOpt.enableSchema,
+					expectCollectorRegistered:    flagOpt.expectSchema,
 				},
 				{
 					name:                         "mix of 11 gcsfuse volumes",
@@ -2267,7 +2282,7 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 					totalPersistentVolumeCount:   5,
 					gcsFuseEphemeralVolumeCount:  6,
 					gcsFusePersistentVolumeCount: 5,
-					expectCollectorRegistered:    flagOpt.enableSchema,
+					expectCollectorRegistered:    flagOpt.expectSchema,
 				},
 				{
 					name:                         "should register collector with other non gcsfuse volumes",
@@ -2283,7 +2298,7 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 					totalPersistentVolumeCount:   15,
 					gcsFuseEphemeralVolumeCount:  6,
 					gcsFusePersistentVolumeCount: 5,
-					expectCollectorRegistered:    flagOpt.enableSchema,
+					expectCollectorRegistered:    flagOpt.expectSchema,
 				},
 			}
 
@@ -2309,7 +2324,9 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 						t.Fatalf("Failed to cast NodeServer to *nodeServer")
 					}
 					ns.driver.config.Name = csiDriverName
-					ns.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema = flagOpt.enableSchema
+					if flagOpt.enableSchema != nil {
+						ns.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema = *flagOpt.enableSchema
+					}
 
 					mm := metrics.NewFakeMetricsManager()
 					ns.driver.config.MetricsManager = mm
@@ -2334,7 +2351,7 @@ func TestNodePublishVolumeAssertMetricsCollectorRegistration(t *testing.T) {
 					if tc.expectCollectorRegistered {
 						details := mm.GetCollectorDetails()[testTargetPath]
 						expectedType, expectedName := "", ""
-						if flagOpt.enableSchema {
+						if flagOpt.expectSchema {
 							expectedType, expectedName = "jobset", "my-test-jobset"
 						}
 						if details.ControllerType != expectedType || details.ControllerName != expectedName {
@@ -2436,13 +2453,14 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 	podUID := types.UID(podName)
 
 	cases := []struct {
-		name              string
-		reqBuilder        func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest
-		setupClient       func() *clientset.FakeClientset
-		errorFileContent  string
-		targetPathMounted bool
-		expectErrCode     codes.Code
-		expectedBindOpts  []string
+		name                             string
+		reqBuilder                       func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest
+		setupClient                      func() *clientset.FakeClientset
+		enableGcsFuseVolumeMetricsSchema bool
+		errorFileContent                 string
+		targetPathMounted                bool
+		expectErrCode                    codes.Code
+		expectedBindOpts                 []string
 	}{
 		{
 			name: "invalid volume capability - should return InvalidArgument error",
@@ -2540,6 +2558,37 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 				return fc
 			},
 			expectErrCode: codes.OK,
+		},
+		{
+			name: "valid request with EnableGcsFuseVolumeMetricsSchema=true - should succeed",
+			reqBuilder: func(t *testing.T, targetPath, stagingPath string) *csi.NodePublishVolumeRequest {
+				return &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID,
+					VolumeCapability:  testVolumeCapability,
+					TargetPath:        targetPath,
+					StagingTargetPath: stagingPath,
+					VolumeContext: map[string]string{
+						VolumeContextSharedNodeMount: "true",
+					},
+					PublishContext: map[string]string{
+						PublishContextKeyMounterPodName:      podName,
+						PublishContextKeyMounterPodNamespace: podNamespace,
+					},
+				}
+			},
+			setupClient: func() *clientset.FakeClientset {
+				fc := clientset.NewFakeClientset()
+				fc.CreatePod(clientset.FakePodConfig{
+					Name:         podName,
+					Namespace:    podNamespace,
+					UID:          podUID,
+					PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+					IsMounterPod: true,
+				})
+				return fc
+			},
+			enableGcsFuseVolumeMetricsSchema: true,
+			expectErrCode:                    codes.OK,
 		},
 		{
 			name: "missing staging path - should return InvalidArgument error",
@@ -3203,6 +3252,7 @@ func TestNodePublishVolumeForSharedMount(t *testing.T) {
 			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
 				return filepath.Join(tempDir, uid)
 			}
+			ns.driver.config.FeatureOptions.EnableGcsFuseVolumeMetricsSchema = tc.enableGcsFuseVolumeMetricsSchema
 			mm := metrics.NewFakeMetricsManager()
 			ns.driver.config.MetricsManager = mm
 
