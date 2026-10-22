@@ -144,8 +144,29 @@ func GetNativeSidecarContainerSpec(c *Config, credentialConfig *SidecarContainer
 	container := GetSidecarContainerSpec(c, credentialConfig)
 	container.Env = append(container.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
 	container.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+	container.StartupProbe = GetSidecarStartupProbe()
 
 	return container
+}
+
+// GetSidecarStartupProbe returns the probe that keeps the kubelet from creating the workload
+// containers until gcsfuse has mounted every volume. Its output explains what the mount is
+// waiting on, so a failing mount shows up in the Pod events instead of as a container creation timeout.
+//
+// The budget is one hour. The kubelet restarts the sidecar when it runs out, and a restarted sidecar
+// cannot recover the mount because the CSI driver hands out the FUSE fd only once, so the budget has to
+// outlast every mount that would still succeed on its own, e.g. the bucket access check retries.
+func GetSidecarStartupProbe() *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{"/gcs-fuse-csi-driver-sidecar-mounter", "--startup-probe"},
+			},
+		},
+		PeriodSeconds:    1,
+		TimeoutSeconds:   5,
+		FailureThreshold: 3600,
+	}
 }
 
 func GetSidecarContainerSpec(c *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {

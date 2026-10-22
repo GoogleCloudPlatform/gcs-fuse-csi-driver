@@ -109,17 +109,20 @@ func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *cor
 	config.PodHostNetworkSetting = pod.Spec.HostNetwork
 
 	// Extract user provided metadata prefetch sidecar image.
-	if userProvidedSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, containerName); err == nil {
-		if userProvidedSidecarImage != "" {
-			config.ContainerImage = userProvidedSidecarImage
-		}
-	} else {
+	userProvidedSidecarImage, err := ExtractImageAndDeleteContainer(&pod.Spec, containerName)
+	if err != nil {
 		return err
+	}
+	if userProvidedSidecarImage != "" {
+		config.ContainerImage = userProvidedSidecarImage
 	}
 
 	// Retrieve container spec and index to inject sidecar for either init containers or regular based on native sidecar support.
 	if injectAsNativeSidecar {
 		containerSpec = si.getNativeContainerSpec(containerName, pod, config, credentialConfig)
+		if userProvidedSidecarImage != "" {
+			containerSpec.StartupProbe = nil
+		}
 		index = getInjectIndexAfterContainer(pod.Spec.InitContainers, containerIndexOrderMap[containerName])
 	} else {
 		containerSpec = si.getContainerSpec(containerName, pod, config, credentialConfig)
@@ -152,6 +155,9 @@ func (si *SidecarInjector) injectSidecarContainer(containerName string, pod *cor
 }
 
 func (si *SidecarInjector) getNativeContainerSpec(containerName string, pod *corev1.Pod, config *Config, credentialConfig *SidecarContainerCredentialConfiguration) corev1.Container {
+	if containerName == GcsFuseSidecarName {
+		return GetNativeSidecarContainerSpec(config, credentialConfig)
+	}
 	containerSpec := si.getContainerSpec(containerName, pod, config, credentialConfig)
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "NATIVE_SIDECAR", Value: "TRUE"})
 	containerSpec.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)

@@ -536,6 +536,7 @@ func TestInjectSidecarMounter(t *testing.T) {
 			Env:           []v1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 			Resources:     v1.ResourceRequirements{Limits: v1.ResourceList{}, Requests: v1.ResourceList{}},
 			RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways),
+			StartupProbe:  GetSidecarStartupProbe(),
 			VolumeMounts: []v1.VolumeMount{
 				{Name: "gke-gcsfuse-tmp", MountPath: "/gcsfuse-tmp"},
 				{Name: "gke-gcsfuse-buffer", MountPath: "/gcsfuse-buffer"},
@@ -545,6 +546,7 @@ func TestInjectSidecarMounter(t *testing.T) {
 		}
 		if custom.Image != "" {
 			container.Image = custom.Image
+			container.StartupProbe = nil
 		}
 		if custom.SecurityContext != nil {
 			if custom.SecurityContext.Capabilities != nil {

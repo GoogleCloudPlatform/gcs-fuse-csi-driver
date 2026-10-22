@@ -47,6 +47,7 @@ var (
 	storageServiceAndBucketAccessJitter   = flag.Float64("storage-service-check-retry-jitter", 0.1, "storage service creation and bucket access check exponential retry jitter")
 	storageServiceAndBucketAccessDuration = flag.Duration("storage-service-check-retry-duration", 5*time.Second, "storage service creation and bucket access check exponential retry initial duration")
 	enableSharedMount                     = flag.Bool("enable-shared-mount", false, "whether to run gcsfuse in a mounter pod")
+	startupProbe                          = flag.Bool("startup-probe", false, "run the startupProbe check of the gke-gcsfuse-sidecar container and exit")
 
 	// This is set at compile time.
 	version = "unknown"
@@ -91,6 +92,15 @@ func runNodeMounter(ctx context.Context, cancel context.CancelFunc, mounter *sid
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
+
+	if *startupProbe {
+		if err := sidecarmounter.CheckStartupProbe(*volumeBasePath); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		return
+	}
 
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 
