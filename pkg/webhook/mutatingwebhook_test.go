@@ -2406,13 +2406,30 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name           string
-		objects        []runtime.Object
-		requestObj     runtime.Object
-		requestKind    string
-		wantResponse   admission.Response
-		enableProfiles bool
+		name                   string
+		objects                []runtime.Object
+		requestObj             runtime.Object
+		requestKind            string
+		wantResponse           admission.Response
+		enableProfiles         bool
+		disableSharedNodeMount bool
 	}{
+		{
+			name:                   "PersistentVolume using shared node mount is rejected when EnableSharedNodeMount is false.",
+			objects:                []runtime.Object{sharedPV},
+			requestObj:             sharedPV,
+			requestKind:            "PersistentVolume",
+			disableSharedNodeMount: true,
+			wantResponse:           admission.Errored(http.StatusBadRequest, fmt.Errorf("shared node mount is not supported or enabled on this cluster")),
+		},
+		{
+			name:                   "Pod using shared node mount is rejected when EnableSharedNodeMount is false.",
+			objects:                []runtime.Object{sharedPV, sharedPVCWithAnnotation, podTemplateNoFSGroup},
+			requestObj:             sharedOnlyPod,
+			requestKind:            "Pod",
+			disableSharedNodeMount: true,
+			wantResponse:           admission.Errored(http.StatusBadRequest, fmt.Errorf("volume %q uses shared node mount, which is not supported or enabled on this cluster", "shared-vol")),
+		},
 		{
 			name:         "PersistentVolume using shared node mount is labeled with the shared-mount label.",
 			objects:      []runtime.Object{sharedPV},
@@ -2547,7 +2564,7 @@ func TestSharedNodeMountWebhook(t *testing.T) {
 			if tc.enableProfiles {
 				si.Config.EnableGcsfuseProfiles = true
 			}
-			si.Config.EnableSharedNodeMount = true
+			si.Config.EnableSharedNodeMount = !tc.disableSharedNodeMount
 
 			stopCh := make(chan struct{})
 			defer close(stopCh)
