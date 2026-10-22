@@ -228,7 +228,7 @@ func (s *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 			// override the mounter pod's image.
 			// Validate that the image is trustworthy (either it is an official GKE-managed image,
 			// or the cluster administrator has explicitly allowed custom mounter images).
-			imageOverrideAllowed := s.features.SharedMountOptions.AllowCustomMounterImages || isStrictManagedSidecarImage(container.Image)
+			imageOverrideAllowed := s.features.SharedMountOptions.AllowCustomMounterImages || util.IsStrictManagedSidecarImage(container.Image)
 			if !imageOverrideAllowed {
 				return nil, status.Errorf(codes.InvalidArgument, "image %q is not allowed. Only GKE managed images are allowed", container.Image)
 			}

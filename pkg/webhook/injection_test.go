@@ -536,6 +536,7 @@ func TestInjectSidecarMounter(t *testing.T) {
 			Env:           []v1.EnvVar{{Name: "NATIVE_SIDECAR", Value: "TRUE"}},
 			Resources:     v1.ResourceRequirements{Limits: v1.ResourceList{}, Requests: v1.ResourceList{}},
 			RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways),
+			StartupProbe:  GetSidecarStartupProbe(),
 			VolumeMounts: []v1.VolumeMount{
 				{Name: "gke-gcsfuse-tmp", MountPath: "/gcsfuse-tmp"},
 				{Name: "gke-gcsfuse-buffer", MountPath: "/gcsfuse-buffer"},
@@ -545,6 +546,9 @@ func TestInjectSidecarMounter(t *testing.T) {
 		}
 		if custom.Image != "" {
 			container.Image = custom.Image
+			if custom.StartupProbe == nil {
+				container.StartupProbe = nil
+			}
 		}
 		if custom.SecurityContext != nil {
 			if custom.SecurityContext.Capabilities != nil {
@@ -616,6 +620,104 @@ func TestInjectSidecarMounter(t *testing.T) {
 					InitContainers: []corev1.Container{
 						extendSidecarContainer(corev1.Container{
 							Image: "override",
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "managed image new enough keeps the startup probe",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:  "gke-gcsfuse-sidecar",
+							Image: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Image:        "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.99.0-gke.0",
+							StartupProbe: GetSidecarStartupProbe(),
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "prow boskos image keeps the startup probe",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:  "gke-gcsfuse-sidecar",
+							Image: "gcr.io/prow-gob-internal-boskos-447/gcs-fuse-csi-driver/gcs-fuse-csi-driver-sidecar-mounter:v1.15.1-gke.0-14-gf752039e_linux_amd64",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Image:        "gcr.io/prow-gob-internal-boskos-447/gcs-fuse-csi-driver/gcs-fuse-csi-driver-sidecar-mounter:v1.15.1-gke.0-14-gf752039e_linux_amd64",
+							StartupProbe: GetSidecarStartupProbe(),
+						}),
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "old managed image drops the startup probe",
+			pod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:  "gke-gcsfuse-sidecar",
+							Image: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0",
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name: "workload",
+						},
+					},
+				},
+			},
+			expectedPod: &corev1.Pod{
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						extendSidecarContainer(corev1.Container{
+							Image: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0",
 						}),
 					},
 					Containers: []corev1.Container{

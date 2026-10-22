@@ -449,6 +449,34 @@ func (t *TestPod) WaitForFailedContainerError(ctx context.Context, msg string) {
 	framework.ExpectNoError(err)
 }
 
+// HasSidecarStartupProbe reports whether the injected gke-gcsfuse-sidecar has a startup probe.
+func (t *TestPod) HasSidecarStartupProbe() bool {
+	for _, ic := range t.pod.Spec.InitContainers {
+		if ic.Name == webhook.GcsFuseSidecarName {
+			return ic.StartupProbe != nil
+		}
+	}
+	return false
+}
+
+// WaitForUnhealthyContainerError waits for an Unhealthy event whose message contains msg.
+func (t *TestPod) WaitForUnhealthyContainerError(ctx context.Context, msg string) {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, pollTimeoutSlow, true, func(context.Context) (bool, error) {
+		if eventErr := e2eevents.WaitTimeoutForEvent(
+			ctx,
+			t.client,
+			t.namespace.Name,
+			fields.Set{"reason": events.ContainerUnhealthy}.AsSelector().String(),
+			msg,
+			pollTimeoutSlow); eventErr != nil {
+			framework.Logf("Error fetching event, retrying: %v", eventErr)
+			return false, nil
+		}
+		return true, nil
+	})
+	framework.ExpectNoError(err)
+}
+
 func (t *TestPod) WaitForPodNotFoundInNamespace(ctx context.Context) {
 	err := e2epod.WaitForPodNotFoundInNamespace(ctx, t.client, t.pod.Name, t.namespace.Name, pollTimeout)
 	framework.ExpectNoError(err)
