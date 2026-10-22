@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -62,6 +63,7 @@ const (
 	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
 	GCSFuseKernelParamsFileName         = "kernel-params.json"
 	ErrorFileName                       = "error"
+	ReadyFileName                       = "ready"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"
@@ -121,6 +123,11 @@ var (
 
 	readAheadKBMountFlagRegex               = regexp.MustCompile(readAheadKBMountFlagRegexPattern)
 	nodeFuseMaxRequestLimitKBMountFlagRegex = regexp.MustCompile(nodeFuseMaxRequestLimitKBMountFlagRegexPattern)
+
+	managedSidecarRegexAR       = regexp.MustCompile(`.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+\.*`)
+	managedSidecarRegexGCR      = regexp.MustCompile(`^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+.*`)
+	strictManagedSidecarRegexAR = regexp.MustCompile(`^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+.*`)
+	customerVersionRegex        = regexp.MustCompile(`^(v\d+\.\d+\.\d+)(?:-[a-zA-Z0-9]+)+(-gke\.\d+.*)$`)
 )
 
 // ConvertLabelsStringToMap converts the labels from string to map
@@ -591,4 +598,46 @@ func ApplySysfsConfig(targetMountPath string, sysfsBDI map[string]int64, mountOp
 			}
 		}()
 	}
+}
+
+// IsManagedSidecarImage reports whether imageName is a GKE managed sidecar image.
+func IsManagedSidecarImage(imageName string) bool {
+	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
+}
+
+// IsStrictManagedSidecarImage is like IsManagedSidecarImage, but only accepts Google owned registries for AR images.
+func IsStrictManagedSidecarImage(imageName string) bool {
+	return strictManagedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
+}
+
+// IsSidecarVersionSupportedForGivenFeature reports whether the sidecar image supports a feature that needs at least sidecarMinSupportedVersion.
+func IsSidecarVersionSupportedForGivenFeature(imageName, sidecarMinSupportedVersion string, assumeGoodSidecarVersion bool) bool {
+	if imageName == "" {
+		return false
+	}
+
+	if assumeGoodSidecarVersion {
+		klog.V(4).Infof("Assuming good sidecar version from flag")
+		return true
+	}
+
+	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
+	// since it's built off latest code in main
+	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
+	if strings.Contains(imageName, "prow-gob-internal-boskos") || strings.Contains(imageName, "oss-gcp-community") {
+		return true
+	}
+
+	if !IsManagedSidecarImage(imageName) {
+		klog.Warningf("sidecarMinSupportedVersion check skipped since this %q is not a GKE managed image", imageName)
+		return false
+	}
+	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
+	imageVersion = customerVersionRegex.ReplaceAllString(imageVersion, "$1$2")
+	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
+		klog.Infof("managed sidecar version satisfies the minimum required version %q", sidecarMinSupportedVersion)
+		return true
+	}
+
+	return false
 }

@@ -298,7 +298,7 @@ func (s *nodeServer) populateDriverFlagsForDefaulting(node *corev1.Node, mounter
 	if node == nil {
 		return fmt.Errorf("node cannot be nil")
 	}
-	if !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, MachineTypeAutoConfigSidecarMinVersion) {
+	if !util.IsSidecarVersionSupportedForGivenFeature(mounterImage, MachineTypeAutoConfigSidecarMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return nil
 	}
 
@@ -535,7 +535,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
-	canUseMultiNIC := !isManagedSidecarImage(gcsFuseSidecarImage) || s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MultiNICMinVersion)
+	canUseMultiNIC := !util.IsManagedSidecarImage(gcsFuseSidecarImage) || util.IsSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, MultiNICMinVersion, s.driver.config.AssumeGoodSidecarVersion)
 	if err := s.setupMultiNIC(&args, pod, canUseMultiNIC); err != nil {
 		return nil, err
 	}
@@ -564,7 +564,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
 
 	// Pass the universe-aware storage endpoint if the sidecar version supports it.
-	if s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, StorageEndpointInternalMinVersion) {
+	if util.IsSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, StorageEndpointInternalMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		args.fuseMountOptions = overrideStorageEndpointInternal(args.fuseMountOptions, storageEndpoint)
 	}
 
@@ -605,7 +605,7 @@ func (s *nodeServer) isGcsFuseKernelParamsFeatureSupported(gcsFuseContainerImage
 	return bucketName != "_" &&
 		s.driver.config.FeatureOptions != nil &&
 		s.driver.config.FeatureOptions.EnableGCSFuseKernelParams &&
-		s.driver.isSidecarVersionSupportedForGivenFeature(gcsFuseContainerImage, GCSFuseKernelParamsMinVersion)
+		util.IsSidecarVersionSupportedForGivenFeature(gcsFuseContainerImage, GCSFuseKernelParamsMinVersion, s.driver.config.AssumeGoodSidecarVersion)
 }
 
 func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -800,14 +800,14 @@ func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA
 
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == webhook.GcsFuseSidecarName {
-			sidecarVersionSupported = s.driver.isSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion)
+			sidecarVersionSupported = util.IsSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion, s.driver.config.AssumeGoodSidecarVersion)
 
 			break
 		}
 	}
 	for _, container := range pod.Spec.Containers {
 		if strings.HasPrefix(container.Name, util.MounterPodNamePrefix) {
-			sidecarVersionSupported = s.driver.isSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion)
+			sidecarVersionSupported = util.IsSidecarVersionSupportedForGivenFeature(container.Image, TokenServerSidecarMinVersion, s.driver.config.AssumeGoodSidecarVersion)
 
 			break
 		}
@@ -822,7 +822,7 @@ func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, i
 	sidecarCheckVal := getInternalMountOptionValue(args.fuseMountOptions, util.EnableSidecarBucketAccessCheckConst)
 	userExplicitlyEnabled := sidecarCheckVal == util.TrueStr
 	userExplicitlyDisabled := sidecarCheckVal == util.FalseStr
-	enableBucketAccessCheckForVersion := s.driver.isSidecarVersionSupportedForGivenFeature(image, SidecarBucketAccessCheckMinVersion) &&
+	enableBucketAccessCheckForVersion := util.IsSidecarVersionSupportedForGivenFeature(image, SidecarBucketAccessCheckMinVersion, s.driver.config.AssumeGoodSidecarVersion) &&
 		(userExplicitlyEnabled || (s.driver.config.EnableSidecarBucketAccessCheck && !userExplicitlyDisabled))
 	identityProvider := ""
 	userSpecifiedIDP := args.userSpecifiedIdentityProvider
@@ -860,7 +860,7 @@ func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, i
 // appendCloudProfilerOptions evaluates and appends enable-cloud-profiler-for-sidecar, pod-name, and pod-uid
 // mount options if enabled in driver options and supported by the container image.
 func (s *nodeServer) appendCloudProfilerOptions(mounterImage string, enableCloudProfiler bool, podName string, podUID string, mountOptions []string) []string {
-	if !enableCloudProfiler || !s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarCloudProfilerMinVersion) {
+	if !enableCloudProfiler || !util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarCloudProfilerMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return mountOptions
 	}
 	if podName == "" {
@@ -898,7 +898,7 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 	// We evaluate the ratio independently so users who manually opt-in via
 	// mountOptions without specifying a ratio still receive the driver's
 	// default.
-	if s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarAutoGoMemLimitMinVersion) {
+	if util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarAutoGoMemLimitMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		var extraOpts []string
 		enableAutoGoMemLimit := s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions != nil && s.driver.config.FeatureOptions.GoMemLimitOptions.EnableAutoGoMemLimit
 		if enableAutoGoMemLimit && !userProvidedAutoMemLimit {
@@ -925,7 +925,7 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 func (s *nodeServer) appendGrpcByDefaultOptions(mounterImage string, mountOptions []string) []string {
 	if s.driver.config.FeatureOptions == nil ||
 		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
-		!s.driver.isSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion) {
+		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return mountOptions
 	}
 
@@ -1146,7 +1146,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
-	canUseMultiNIC := !isManagedSidecarImage(podImage) || s.driver.isSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion)
+	canUseMultiNIC := !util.IsManagedSidecarImage(podImage) || util.IsSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion, s.driver.config.AssumeGoodSidecarVersion)
 	if err := s.setupMultiNIC(&args, pod, canUseMultiNIC); err != nil {
 		return nil, err
 	}

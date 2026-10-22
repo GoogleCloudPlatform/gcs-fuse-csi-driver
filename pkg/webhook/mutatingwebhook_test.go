@@ -1154,7 +1154,11 @@ func modifySpec(newPod corev1.Pod, customImage bool, nativeCustomImage, native b
 	}
 
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{GetNativeSidecarContainerSpec(config, nil)}, newPod.Spec.InitContainers...)
+		spec := GetNativeSidecarContainerSpec(config, nil)
+		if customImage {
+			spec.StartupProbe = nil
+		}
+		newPod.Spec.InitContainers = append([]corev1.Container{spec}, newPod.Spec.InitContainers...)
 	} else {
 		newPod.Spec.Containers = append([]corev1.Container{GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
 	}
@@ -1187,7 +1191,11 @@ func wantResponseWithIstio(t *testing.T, customImage bool, nativeCustomImage, na
 	}
 
 	if native {
-		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, GetNativeSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.InitContainers...)
+		spec := GetNativeSidecarContainerSpec(config, nil /*credentialConfig*/)
+		if customImage {
+			spec.StartupProbe = nil
+		}
+		newPod.Spec.InitContainers = append([]corev1.Container{istioContainer, spec}, newPod.Spec.InitContainers...)
 	} else {
 		newPod.Spec.Containers = append([]corev1.Container{istioContainer, GetSidecarContainerSpec(config, nil /*credentialConfig*/)}, newPod.Spec.Containers...)
 	}

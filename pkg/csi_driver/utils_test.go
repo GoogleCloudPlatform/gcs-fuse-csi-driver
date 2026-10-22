@@ -501,8 +501,7 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 		}
 		for _, tc := range testCases {
 			t.Logf("test case: %s", tc.name)
-			d := &GCSDriver{config: &GCSDriverConfig{}}
-			actual := d.isSidecarVersionSupportedForGivenFeature(tc.imageName, tc.minFeatureVersionSupported)
+			actual := util.IsSidecarVersionSupportedForGivenFeature(tc.imageName, tc.minFeatureVersionSupported, false)
 			if actual != tc.expectedSupported {
 				t.Errorf("Got supported %v, but expected %v", actual, tc.expectedSupported)
 			}
@@ -582,9 +581,9 @@ func TestIsStrictManagedSidecarImage(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := isStrictManagedSidecarImage(tc.imageName)
+			got := util.IsStrictManagedSidecarImage(tc.imageName)
 			if got != tc.want {
-				t.Errorf("isStrictManagedSidecarImage(%q) = %v; want %v", tc.imageName, got, tc.want)
+				t.Errorf("IsStrictManagedSidecarImage(%q) = %v; want %v", tc.imageName, got, tc.want)
 			}
 		})
 	}

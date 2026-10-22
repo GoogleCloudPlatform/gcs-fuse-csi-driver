@@ -41,6 +41,9 @@ import (
 	admissionapi "k8s.io/pod-security-admission/api"
 )
 
+// objectsListAccessDeniedMsg is part of the error that GCS returns when the service account cannot list objects in the bucket.
+const objectsListAccessDeniedMsg = "does not have storage.objects.list access to the Google Cloud Storage bucket"
+
 type gcsFuseCSIFailedMountTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
 }
@@ -155,7 +158,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		v, err := version.ParseSemantic(GCSFuseVersionStr)
 
 		if enableSidecarBucketAccessCheck && configPrefix == specs.SkipCSIBucketAccessCheckAndFakeVolumePrefix {
-			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+			if tPod.HasSidecarStartupProbe() {
+				tPod.WaitForUnhealthyContainerError(ctx, codes.NotFound.String())
+			} else {
+				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+			}
 		} else {
 			tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
 		}
@@ -207,7 +214,11 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		v, err := version.ParseSemantic(GCSFuseVersionStr)
 		if configPrefix == specs.SkipCSIBucketAccessCheckAndInvalidVolumePrefix && (err != nil || v.AtLeast(version.MustParseSemantic("v2.9.0-gke.0"))) {
 			if enableSidecarBucketAccessCheck {
-				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+				if tPod.HasSidecarStartupProbe() {
+					tPod.WaitForUnhealthyContainerError(ctx, codes.NotFound.String())
+				} else {
+					tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+				}
 				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, codes.NotFound.String())
 			} else {
 				tPod.WaitForFailedMountError(ctx, codes.NotFound.String())
@@ -265,13 +276,17 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		// For invalid SA testcase, The Unauthenticated error spawns from prepareStorageClient() in CSI NodePublish. When CSI skips bucket access check, this step is skipped and access is checked in sidecar checkBucketAccessWithRetry() .
 		if enableSidecarBucketAccessCheck {
 			if slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
-				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
-				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
+				if tPod.HasSidecarStartupProbe() {
+					tPod.WaitForUnhealthyContainerError(ctx, objectsListAccessDeniedMsg)
+				} else {
+					tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+				}
+				tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, objectsListAccessDeniedMsg)
 				return
 			}
 		}
 		tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
-		tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
+		tPod.WaitForFailedMountError(ctx, objectsListAccessDeniedMsg)
 
 		ginkgo.By("Deleting the Kubernetes service account")
 		testK8sSA.Cleanup(ctx)
@@ -344,11 +359,15 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
 		if enableSidecarBucketAccessCheck && slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
-			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
-			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
+			if tPod.HasSidecarStartupProbe() {
+				tPod.WaitForUnhealthyContainerError(ctx, objectsListAccessDeniedMsg)
+			} else {
+				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+			}
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, objectsListAccessDeniedMsg)
 		} else {
 			tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
-			tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
+			tPod.WaitForFailedMountError(ctx, objectsListAccessDeniedMsg)
 		}
 
 		ginkgo.By("Setting up SA IAM policy")
@@ -466,8 +485,12 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 		defer tPod.Cleanup(ctx)
 
 		ginkgo.By("Checking that the pod has failed mount error")
-		tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
-		tPod.WaitForFailedMountError(ctx, msg)
+		if tPod.HasSidecarStartupProbe() {
+			tPod.WaitForUnhealthyContainerError(ctx, msg)
+		} else {
+			tPod.WaitForFailedMountError(ctx, codes.InvalidArgument.String())
+			tPod.WaitForFailedMountError(ctx, msg)
+		}
 	}
 
 	ginkgo.It("should fail when invalid mount options are passed", func() {
@@ -551,11 +574,15 @@ func (t *gcsFuseCSIFailedMountTestSuite) DefineTests(driver storageframework.Tes
 
 		ginkgo.By("Checking that the pod has failed mount error PermissionDenied")
 		if enableSidecarBucketAccessCheck && slices.Contains(configPrefix, specs.SkipCSIBucketAccessCheckPrefix) {
-			tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
-			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, "does not have storage.objects.list access to the Google Cloud Storage bucket")
+			if tPod.HasSidecarStartupProbe() {
+				tPod.WaitForUnhealthyContainerError(ctx, objectsListAccessDeniedMsg)
+			} else {
+				tPod.WaitForFailedContainerError(ctx, "Error: failed to reserve container name")
+			}
+			tPod.WaitForLog(ctx, webhook.GcsFuseSidecarName, objectsListAccessDeniedMsg)
 		} else {
 			tPod.WaitForFailedMountError(ctx, codes.PermissionDenied.String())
-			tPod.WaitForFailedMountError(ctx, "does not have storage.objects.list access to the Google Cloud Storage bucket.")
+			tPod.WaitForFailedMountError(ctx, objectsListAccessDeniedMsg)
 		}
 
 		ginkgo.By("Setting up SA IAM policy")

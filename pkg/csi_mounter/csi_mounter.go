@@ -127,7 +127,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return err
 	}
 
-	// Clean up stale /error and /kernel-params.json file. We clean up the stale error file and the kernel-params.json file when the CSI driver is
+	// Clean up stale /error, /ready and /kernel-params.json file. We clean up these files when the CSI driver is
 	// about to set up the mountpoint within NodePublishVolume call, and it is done just before the sidecar container and gcsfuse
 	// attempt to start up. Since gcsfuse cant start up without file descriptor, we ensure cleanup is done before we make the file descriptor available.
 	// We put this cleanup step here because:
@@ -136,19 +136,16 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 	// 3. File gets cleaned up before sidecar starts to prevent false positives. These are cases where we report NodePublishVolume (NPV)
 	//    failures (due to stale error file) in scenarios where sidecar takes a while to start up after first NPV suceeded.
 	// 4. We don't end up applying stale kernel parameter configurations to new mount points.
+	// 5. A stale ready file would let the sidecar startup probe pass before the new gcsfuse process has mounted.
 	emptyDirBasePath, err := util.PrepareEmptyDir(target, false /* m.createSocket creates emptydir */)
 	if err != nil {
 		klog.Errorf("failed to get emptyDir path: %v", err)
 	}
 
-	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.ErrorFileName)
-	if err != nil {
-		klog.Errorf("failed to check and delete stale %s file: %v", util.ErrorFileName, err)
-	}
-
-	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.GCSFuseKernelParamsFileName)
-	if err != nil {
-		klog.Errorf("failed to check and delete stale %s file: %v", util.GCSFuseKernelParamsFileName, err)
+	for _, staleFile := range []string{util.ErrorFileName, util.ReadyFileName, util.GCSFuseKernelParamsFileName} {
+		if err := util.CheckAndDeleteStaleFile(emptyDirBasePath, staleFile); err != nil {
+			klog.Errorf("failed to check and delete stale %s file: %v", staleFile, err)
+		}
 	}
 
 	// Close the listener and fd after 1 hour timeout

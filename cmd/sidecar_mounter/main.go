@@ -47,6 +47,7 @@ var (
 	storageServiceAndBucketAccessJitter   = flag.Float64("storage-service-check-retry-jitter", 0.1, "storage service creation and bucket access check exponential retry jitter")
 	storageServiceAndBucketAccessDuration = flag.Duration("storage-service-check-retry-duration", 5*time.Second, "storage service creation and bucket access check exponential retry initial duration")
 	enableSharedMount                     = flag.Bool("enable-shared-mount", false, "whether to run gcsfuse in a mounter pod")
+	startupProbe                          = flag.Bool("startup-probe", false, "run the startupProbe check of the gke-gcsfuse-sidecar container and exit")
 
 	// This is set at compile time.
 	version = "unknown"
@@ -92,6 +93,15 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	if *startupProbe {
+		if err := sidecarmounter.CheckStartupProbe(*volumeBasePath); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		return
+	}
+
 	klog.Infof("Running Google Cloud Storage FUSE CSI driver sidecar mounter version %v", version)
 
 	mounter := sidecarmounter.New(*gcsfusePath)
@@ -101,6 +111,8 @@ func main() {
 		runNodeMounter(ctx, cancel, mounter)
 		return
 	}
+
+	sidecarmounter.RemoveStaleReadyFiles(*volumeBasePath)
 
 	socketPathPattern := *volumeBasePath + "/*/socket"
 	socketPaths, err := filepath.Glob(socketPathPattern)
@@ -113,12 +125,16 @@ func main() {
 	if err != nil {
 		klog.Fatalf("failed to read defaulting-flag file: %v", err)
 	}
-	for _, sp := range socketPaths {
+	for i, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
-		time.Sleep(1500 * time.Millisecond)
+		// TODO(yaozile): Pods with many volumes can still log startup probe warnings because of this sleep.
+		// Try starting the next gcsfuse as soon as the previous one has mounted, instead of a fixed sleep.
+		if i > 0 {
+			time.Sleep(1500 * time.Millisecond)
+		}
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
 			mc.EnsureErrWriter()
