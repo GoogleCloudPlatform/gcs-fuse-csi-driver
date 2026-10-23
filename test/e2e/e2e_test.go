@@ -18,6 +18,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -27,6 +28,7 @@ import (
 
 	"local/test/e2e/specs"
 	"local/test/e2e/testsuites"
+	"local/test/e2e/utils"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
@@ -92,6 +94,13 @@ var _ = func() bool {
 
 	testsuites.LustreStorageClass = *lustreStorageClass
 	testsuites.GCSFuseVersionStr = specs.GetGCSFuseVersion()
+	if specs.GetNodeImageType() == "" {
+		if nodeImageType, err := utils.FetchNodeImageType(context.Background(), c.K8sClient()); err != nil {
+			klog.Warningf("Failed to fetch node image type from cluster nodes: %v", err)
+		} else if err := os.Setenv(utils.NodeImageTypeVarName, nodeImageType); err != nil {
+			klog.Warningf("Failed to set %s env var: %v", utils.NodeImageTypeVarName, err)
+		}
+	}
 	return true
 }()
 

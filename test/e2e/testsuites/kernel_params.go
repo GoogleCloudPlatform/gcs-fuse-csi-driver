@@ -162,6 +162,12 @@ func skipIfFuseMaxRequestSizeNotSupported() {
 	if !specs.GKEClusterVersionAtLeast("1.34.0-gke.0") {
 		e2eskipper.Skipf("skip fuse max request size test for unsupported GKE cluster version %s (requires GKE >= 1.34)", specs.GetGKEClusterVersion())
 	}
+
+	// Ubuntu 24.04 LTS GKE node images use Linux kernel 6.8, which lacks /proc/sys/fs/fuse/max_pages_limit
+	// (introduced in Linux 6.13 and backported to COS 125+), so the driver falls back to 1MiB FUSE I/O.
+	if specs.IsUbuntuNodeImage() {
+		e2eskipper.Skipf("skip fuse max request size test on Ubuntu node image %q (kernel lacks /proc/sys/fs/fuse/max_pages_limit)", specs.GetNodeImageType())
+	}
 }
 
 func kernelParamValueFromConfigFile(f *framework.Framework, tPod *specs.TestPod, volumeName string, paramName ParamName) string {

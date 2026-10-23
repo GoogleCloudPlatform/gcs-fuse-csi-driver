@@ -17,11 +17,15 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // TODO(amacaskill): Add test to presubmit by adding to make unit-test target.
@@ -195,4 +199,79 @@ func TestParseConfigFlags(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestFetchNodeImageType(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name      string
+		nodes     []corev1.Node
+		nilClient bool
+		want      string
+		wantErr   bool
+	}{
+		{
+			name: "returns gke-os-distribution label when present",
+			nodes: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   "node-1",
+						Labels: map[string]string{"cloud.google.com/gke-os-distribution": "ubuntu"},
+					},
+					Status: corev1.NodeStatus{
+						NodeInfo: corev1.NodeSystemInfo{OSImage: "Ubuntu 24.04.1 LTS"},
+					},
+				},
+			},
+			want: "ubuntu",
+		},
+		{
+			name: "falls back to NodeInfo.OSImage when label is absent",
+			nodes: []corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+					Status: corev1.NodeStatus{
+						NodeInfo: corev1.NodeSystemInfo{OSImage: "Ubuntu 24.04.1 LTS"},
+					},
+				},
+			},
+			want: "Ubuntu 24.04.1 LTS",
+		},
+		{
+			name:    "returns error when cluster has no nodes",
+			wantErr: true,
+		},
+		{
+			name:      "returns error when clientset is nil",
+			nilClient: true,
+			wantErr:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var cl *fake.Clientset
+			var got string
+			var err error
+			if tc.nilClient {
+				got, err = FetchNodeImageType(context.Background(), nil)
+			} else {
+				cl = fake.NewSimpleClientset()
+				for i := range tc.nodes {
+					if _, createErr := cl.CoreV1().Nodes().Create(context.Background(), &tc.nodes[i], metav1.CreateOptions{}); createErr != nil {
+						t.Fatalf("failed to create fake node: %v", createErr)
+					}
+				}
+				got, err = FetchNodeImageType(context.Background(), cl)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("FetchNodeImageType() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("FetchNodeImageType() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

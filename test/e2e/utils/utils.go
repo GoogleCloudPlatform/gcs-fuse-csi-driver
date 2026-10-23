@@ -54,6 +54,7 @@ const (
 
 	GcsfuseVersionVarName    = "gcsfuse-version"
 	GkeClusterVersionVarName = "gke-cluster-version"
+	NodeImageTypeVarName     = "node-image-type"
 
 	testConfigUrlFormat                  = "https://raw.githubusercontent.com/GoogleCloudPlatform/gcsfuse/%s/tools/integration_tests/test_config.yaml"
 	flagFileCacheCapacity                = "file-cache-max-size-mb"
@@ -555,6 +556,26 @@ func FetchGKEClusterVersion(cl clientset.Interface) (string, error) {
 		return "", fmt.Errorf("failed to fetch server version from cluster: serverVersion is nil")
 	}
 	return serverVersion.GitVersion, nil
+}
+
+// FetchNodeImageType retrieves the node OS distribution or OS image directly from the cluster nodes.
+func FetchNodeImageType(ctx context.Context, cl clientset.Interface) (string, error) {
+	if cl == nil {
+		return "", fmt.Errorf("clientset interface is nil")
+	}
+	nodes, err := cl.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list cluster nodes: %w", err)
+	}
+	for _, node := range nodes.Items {
+		if osDist := node.Labels["cloud.google.com/gke-os-distribution"]; osDist != "" {
+			return osDist, nil
+		}
+		if node.Status.NodeInfo.OSImage != "" {
+			return node.Status.NodeInfo.OSImage, nil
+		}
+	}
+	return "", fmt.Errorf("no nodes with OS image info found in cluster (found %d nodes)", len(nodes.Items))
 }
 
 // ExpandFlagVariables allows for the expansion of custom parameterized fields
