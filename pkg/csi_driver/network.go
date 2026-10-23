@@ -17,6 +17,7 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -26,10 +27,15 @@ import (
 
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 )
 
 const (
+	// cosDefaultNIC is the default network interface name on Container-Optimized OS (COS) nodes.
+	cosDefaultNIC    = "eth0"
+	rxGroHWFeature   = "rx-gro-hw"
+	rxLROFeature     = "rx-lro"
 	gcsFuseTableName = "gcsfusecsi"
 	iprouteTableName = "/etc/iproute2/rt_tables"
 	sysDevTemplate   = "/sys/class/net/%s/device/numa_node"
@@ -37,6 +43,12 @@ const (
 	maxTableId       = 252 // default, main and local table ids are 253-255.
 	rulePriority     = 10000
 )
+
+// ethtoolClient abstracts github.com/safchain/ethtool for unit testing.
+type ethtoolClient interface {
+	Features(intf string) (map[string]bool, error)
+	Change(intf string, config map[string]bool) error
+}
 
 // LinkDevice is information for a particular interface like eth0.
 type LinkDevice struct {
@@ -82,6 +94,7 @@ type NetworkManager interface {
 	ListRoutesForTable(table int) ([]Route, error)
 	AddRule(table int, sourceIP string) error
 	AddRoute(table int, gatewayIP, device string) error
+	EnableHWgroOnDefaultNIC() error
 }
 
 // GetDeviceForNumaNode returns a device name for the node, if one exists. If there are
@@ -561,4 +574,40 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 		return fmt.Errorf("AddRoute (%+v/%+v): %w", route, link, err)
 	}
 	return nil
+}
+
+// enableHWgroOnNIC enables hardware GRO (rx-gro-hw) and Large Receive Offload
+// (rx-lro) together on the specified NIC using ethtool ioctls if not already enabled.
+func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
+	features, err := eth.Features(nic)
+	if err != nil {
+		if errors.Is(err, unix.ENODEV) {
+			klog.Infof("Skipping rx-gro-hw and rx-lro enablement: NIC %q is not present on host", nic)
+			return nil
+		}
+		return fmt.Errorf("failed to get ethtool features for NIC %q: %w", nic, err)
+	}
+	if features[rxGroHWFeature] || features[rxLROFeature] {
+		klog.Infof("rx-gro-hw or rx-lro is already enabled on NIC %q", nic)
+		return nil
+	}
+
+	if err := eth.Change(nic, map[string]bool{rxGroHWFeature: true, rxLROFeature: true}); err != nil {
+		return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
+	}
+
+	klog.Infof("Successfully enabled rx-gro-hw and rx-lro on NIC %q", nic)
+	return nil
+}
+
+// EnableHWgroOnDefaultNIC idempotently enables hardware GRO (rx-gro-hw) and Large Receive Offload (LRO)
+// on the host's COS default NIC (eth0).
+func (mgr *realNetworkManager) EnableHWgroOnDefaultNIC() error {
+	eth, err := ethtool.NewEthtool()
+	if err != nil {
+		return fmt.Errorf("failed to create ethtool client for NIC %q: %w", cosDefaultNIC, err)
+	}
+	defer eth.Close()
+
+	return enableHWgroOnNIC(eth, cosDefaultNIC)
 }

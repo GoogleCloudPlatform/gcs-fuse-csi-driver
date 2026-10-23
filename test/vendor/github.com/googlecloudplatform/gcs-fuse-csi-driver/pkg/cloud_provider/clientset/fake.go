@@ -36,6 +36,7 @@ import (
 type FakeNodeConfig struct {
 	IsWorkloadIdentityEnabled bool
 	MachineType               string
+	KubeletVersion            string
 	Status                    corev1.NodeStatus
 }
 
@@ -238,6 +239,9 @@ func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 		c.fakeNode.Labels[MachineTypeKey] = "e2-medium"
 	}
 	c.fakeNode.Status = nodeConfig.Status
+	if nodeConfig.KubeletVersion != "" {
+		c.fakeNode.Status.NodeInfo.KubeletVersion = nodeConfig.KubeletVersion
+	}
 }
 
 func (c *FakeClientset) CreatePV(pvConfig FakePVConfig) {
