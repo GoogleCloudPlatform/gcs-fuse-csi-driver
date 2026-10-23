@@ -62,6 +62,7 @@ const (
 	EnableGCSFuseKernelParams           = "enable-gcsfuse-kernel-params"
 	GCSFuseKernelParamsFileName         = "kernel-params.json"
 	ErrorFileName                       = "error"
+	ReadyFileName                       = "ready"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"

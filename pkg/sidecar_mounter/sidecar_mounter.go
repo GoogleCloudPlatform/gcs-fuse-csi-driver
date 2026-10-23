@@ -118,7 +118,14 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
 	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
-	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")}
+
+	// gcsfuse writes to this pipe once the mount succeeds or fails. See pkg/sidecar_mounter/startup_probe.go.
+	statusR, statusW, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("failed to create the mount status pipe: %w", err)
+	}
+	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse"), statusW}
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("%s=%d", daemonizeStatusFDEnv, statusPipeFD))
 
 	// when the ctx.Done() is closed,
 	// the main workload containers have exited,
@@ -138,7 +145,11 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	m.WaitGroup.Add(1)
 	go func() {
 		defer m.WaitGroup.Done()
-		if err := cmd.Start(); err != nil {
+		err := cmd.Start()
+		// Close our copy of the write end, so that the status pipe reaches EOF when gcsfuse exits.
+		statusW.Close()
+		if err != nil {
+			statusR.Close()
 			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
 
 			return
@@ -146,6 +157,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
 
+		go watchMountOutcome(statusR, mc)
 		startVolumeMonitoring(ctx, mc, cmd.Process.Pid)
 
 		// Since the gcsfuse has taken over the file descriptor,
