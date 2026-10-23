@@ -65,6 +65,7 @@ spec:
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
             - --enable-grpc-by-default=false
+            - --enable-hw-gro=true
             - --enable-gcsfuse-volume-metrics-schema=true
             - --universe-domain=$(UNIVERSE_DOMAIN)
           ports:
@@ -116,7 +117,6 @@ spec:
               mountPath: /etc/iproute2
             - name: host-proc-sys-fs
               mountPath: /host-proc-sys-fs
-
             - name: tmp
               mountPath: /tmp
         - name: csi-driver-registrar
