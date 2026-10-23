@@ -363,6 +363,23 @@ func Handle(testParams *TestParameters) error {
 		}
 	}
 
+	if testParams.NodeImageType != "" {
+		if err := os.Setenv(NodeImageTypeVarName, testParams.NodeImageType); err != nil {
+			return fmt.Errorf("failed to set %s env var: %w", NodeImageTypeVarName, err)
+		}
+	} else {
+		nodeImageType, err := FetchNodeImageType(context.Background(), k8sclientset)
+		if err != nil {
+			klog.Warningf("Failed to fetch node image type from cluster nodes: %v", err)
+		} else {
+			testParams.NodeImageType = nodeImageType
+			klog.Infof("Fetched node image type from cluster nodes: %s", nodeImageType)
+			if err := os.Setenv(NodeImageTypeVarName, nodeImageType); err != nil {
+				return fmt.Errorf("failed to set %s env var: %w", NodeImageTypeVarName, err)
+			}
+		}
+	}
+
 	testBucketLocation := testParams.GkeClusterRegion
 	if testParams.EnableZB {
 		zones := zbSupportedZones[testParams.GkeClusterRegion]

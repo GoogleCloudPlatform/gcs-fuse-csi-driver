@@ -1684,6 +1684,17 @@ func GetGKEClusterVersion() string {
 	return os.Getenv(utils.GkeClusterVersionVarName)
 }
 
+// GetNodeImageType returns the node OS image type or distribution being tested.
+// The env var is set by handler.go before running the tests.
+func GetNodeImageType() string {
+	return os.Getenv(utils.NodeImageTypeVarName)
+}
+
+// IsUbuntuNodeImage returns true if the cluster nodes use an Ubuntu OS image.
+func IsUbuntuNodeImage() bool {
+	return strings.Contains(strings.ToLower(GetNodeImageType()), "ubuntu")
+}
+
 // GKEClusterVersion returns the parsed semantic version of the GKE cluster.
 func GKEClusterVersion() *version.Version {
 	vStr := GetGKEClusterVersion()

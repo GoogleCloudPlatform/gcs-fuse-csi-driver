@@ -39,7 +39,7 @@ var (
 	numNodes                       = flag.Int("number-nodes", 9, "number of nodes in the test cluster")
 	useGKEAutopilot                = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
 	apiEndpointOverride            = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
-	nodeImageType                  = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
+	nodeImageType                  = flag.String("node-image-type", "", "image type to use for the cluster (defaults to cos_containerd when managing cluster lifecycle; auto-detected from cluster nodes otherwise)")
 	istioVersion                   = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
 	gcsfuseEnableZB                = flag.Bool("gcsfuse-enable-zb", false, "use GCS Zonal Buckets for the tests")
 	gkeGcloudCommand               = flag.String("gke-gcloud-command", "gcloud", "(gke only) gcloud command used to create a cluster. Modify if you need to pass custom gcloud to create cluster.")
@@ -104,6 +104,9 @@ func main() {
 		utils.EnsureVariable(gkeClusterRegion, true, "'gke-cluster-region' must be set when managing cluster lifecycle")
 		if *gkeClusterVersion == "" {
 			*gkeClusterVersion = "latest"
+		}
+		if *nodeImageType == "" {
+			*nodeImageType = "cos_containerd"
 		}
 		utils.EnsureVariable(gkeReleaseChannel, true, "'gke-release-channel' must be set when managing cluster lifecycle")
 	}
