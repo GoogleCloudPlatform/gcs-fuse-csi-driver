@@ -103,6 +103,7 @@ You can control the test through the following make parameters, eg `make e2e-tes
 - `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE`: default value is `false`. Change it to `true` if you want the test runner to create and destroy the GKE cluster for the test.
 - `USE_CAPACITY_ADVISOR`: default value is `false` (defaults to `true` in Prow CI). Whether to use GCE Capacity Advisor to select node locations and fallback regions. Only used when `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE=true`; ignored when running on an existing cluster. Requires IAM access to the internal `prow-gob-internal-boskos-01` project while `STANDARD` capacity advice is in preview, so external users should leave this set to `false`.
 - `E2E_TEST_GKE_CLUSTER_VERSION`: It denotes the GKE cluster master and node version. If `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is `true`, it specifies the version of the cluster to be created (defaults to `latest` if not provided). If `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is `false`, it auto-detects the version of the existing cluster (can be overridden by setting this parameter). The version is used by the test framework to check for feature compatibility.
+- `IMAGE_TYPE`: default value is `cos_containerd`. GKE node OS image type used when creating a Standard cluster (e.g., `ubuntu_containerd`).
 - `E2E_TEST_USE_BOSKOS`: default value is `false`. Change it to `true` if you want to use Boskos to acquire a project. Useful for debugging Boskos infrastructure locally.
 - `E2E_TEST_PROJECT_ID`: default value is empty. GCP project ID to run E2E tests. Required when managing cluster lifecycle without Boskos.
 ```bash
@@ -137,7 +138,7 @@ When `E2E_TEST_MANAGE_CLUSTER_LIFECYCLE` is set to `true`, the test runner provi
 - **Node Pool Configuration** (Standard cluster only):
   - **Node Count**: 9 nodes (can be overridden by `E2E_TEST_NUM_NODES` or `NUMBER_NODES` env var).
   - **Machine Type**: `n2-standard-8` (can be overridden by `MACHINE_TYPE` env var).
-  - **Image Type**: `cos_containerd` (Container-Optimized OS with containerd).
+  - **Image Type**: `cos_containerd` (can be overridden by `IMAGE_TYPE` env var, e.g. `ubuntu_containerd`).
 - **Workload Identity**: Enabled by default using the GCP project's workload pool (`<project-id>.svc.id.goog`).
 - **CSI Driver**: Installs the GKE-managed GCS FUSE CSI Driver addon by default (can be disabled by setting `E2E_TEST_USE_GKE_MANAGED_DRIVER=false`).
 
