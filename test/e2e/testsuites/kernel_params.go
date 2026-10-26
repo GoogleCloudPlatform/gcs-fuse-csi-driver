@@ -651,7 +651,7 @@ func countReadSizes(stdout string, targetSize int64, bucketName string) int {
 }
 
 func isFuseMaxPagesLimitSupported(f *framework.Framework, tPod *specs.TestPod) bool {
-	out := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "if [ -e /proc/sys/fs/fuse/max_pages_limit ]; then echo true; else echo false; fi")
+	out := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "if [ -e /proc/sys/fs/fuse/max_pages_limit ] || [ -e /host-proc-sys-fs/fuse/max_pages_limit ]; then echo true; else echo false; fi")
 	return strings.TrimSpace(out) == "true"
 }
 
