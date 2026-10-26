@@ -26,6 +26,7 @@ readonly gke_cluster_region=${GKE_CLUSTER_REGION:-us-central1}
 gke_cluster_version_detected=$(kubectl version 2>/dev/null | grep 'Server Version:' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+(-gke\.[0-9]+)?$' || echo "")
 readonly gke_cluster_version=${E2E_TEST_GKE_CLUSTER_VERSION:-${gke_cluster_version_detected}}
 readonly gke_release_channel=${GKE_RELEASE_CHANNEL:-rapid}
+readonly node_image_type=${IMAGE_TYPE:-cos_containerd}
 readonly use_gke_autopilot=${E2E_TEST_USE_GKE_AUTOPILOT:-false}
 readonly cloudsdk_api_endpoint_overrides_container=${CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER:-https://container.googleapis.com/}
 
@@ -110,6 +111,7 @@ base_cmd="${PKGDIR}/bin/e2e-test-ci \
             --skip-csi-driver-install=${skip_csi_driver_install} \
             --gke-cluster-version=${gke_cluster_version} \
             --gke-release-channel=${gke_release_channel} \
+            --node-image-type=${node_image_type} \
             --ginkgo-focus=\"${ginkgo_focus}\" \
             --ginkgo-skip=\"${ginkgo_skip}\" \
             --ginkgo-procs=${ginkgo_procs} \

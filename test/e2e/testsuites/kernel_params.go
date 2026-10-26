@@ -453,8 +453,13 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		ginkgo.By("Verifying write I/O is present in sidecar logs in 1MiB blocks")
 		assertFuseIO(tPod, "write", chunkSize1MiBBytes, expectedChunkCount, bucketName)
 
-		ginkgo.By("Verifying read I/O is present in sidecar logs in a single 16MiB block")
-		assertFuseIO(tPod, "read", targetSize, 1, bucketName)
+		if isFuseMaxPagesLimitSupported(f, tPod) {
+			ginkgo.By("Verifying read I/O is present in sidecar logs in a single 16MiB block")
+			assertFuseIO(tPod, "read", targetSize, 1, bucketName)
+		} else {
+			ginkgo.By("Verifying read I/O falls back to 1MiB blocks when /proc/sys/fs/fuse/max_pages_limit is unsupported")
+			assertFuseIO(tPod, "read", chunkSize1MiBBytes, expectedChunkCount, bucketName)
+		}
 	})
 
 	ginkgo.It("should verify enabling kernel reader with non-default setting results in 32MiB read and write file I/O", func() {
@@ -487,8 +492,13 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		ginkgo.By("Verifying write I/O is present in sidecar logs in 1MiB blocks")
 		assertFuseIO(tPod, "write", chunkSize1MiBBytes, testFileSize32MiB, bucketName)
 
-		ginkgo.By("Verifying read I/O is present in sidecar logs in a single 32MiB block")
-		assertFuseIO(tPod, "read", targetSize, 1, bucketName)
+		if isFuseMaxPagesLimitSupported(f, tPod) {
+			ginkgo.By("Verifying read I/O is present in sidecar logs in a single 32MiB block")
+			assertFuseIO(tPod, "read", targetSize, 1, bucketName)
+		} else {
+			ginkgo.By("Verifying read I/O falls back to 1MiB blocks when /proc/sys/fs/fuse/max_pages_limit is unsupported")
+			assertFuseIO(tPod, "read", chunkSize1MiBBytes, testFileSize32MiB, bucketName)
+		}
 	})
 
 	ginkgo.It("should verify enabling kernel reader on multiple volumes inside a single pod yields independent 16MiB and 32MiB block file I/O", func() {
@@ -536,14 +546,23 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 
 		bucketName16 := l.volumeResource.VolSource.CSI.VolumeAttributes["bucketName"]
 		bucketName32 := volumeResource2.VolSource.CSI.VolumeAttributes["bucketName"]
+		maxPagesSupported := isFuseMaxPagesLimitSupported(f, tPod)
 
 		ginkgo.By("Verifying Volume 1 (16MiB) I/O traces in sidecar logs")
 		assertFuseIO(tPod, "write", chunkSize1MiBBytes, expectedChunkCount, bucketName16)
-		assertFuseIO(tPod, "read", targetSize16, 1, bucketName16)
+		if maxPagesSupported {
+			assertFuseIO(tPod, "read", targetSize16, 1, bucketName16)
+		} else {
+			assertFuseIO(tPod, "read", chunkSize1MiBBytes, expectedChunkCount, bucketName16)
+		}
 
 		ginkgo.By("Verifying Volume 2 (32MiB) I/O traces in sidecar logs")
 		assertFuseIO(tPod, "write", chunkSize1MiBBytes, testFileSize32MiB, bucketName32)
-		assertFuseIO(tPod, "read", targetSize32, 1, bucketName32)
+		if maxPagesSupported {
+			assertFuseIO(tPod, "read", targetSize32, 1, bucketName32)
+		} else {
+			assertFuseIO(tPod, "read", chunkSize1MiBBytes, testFileSize32MiB, bucketName32)
+		}
 	})
 
 	ginkgo.It("should verify that once the GCSFuse mount is done the FUSE max_pages_limit on the host is reverted back to its original default value", func() {
@@ -587,6 +606,10 @@ func (t *gcsFuseCSIKernelParamsTestSuite) DefineTests(driver storageframework.Te
 		defer helperPod.Cleanup(ctx)
 		helperPod.WaitForRunning(ctx)
 
+		if !isFuseMaxPagesLimitSupported(f, helperPod) {
+			e2eskipper.Skipf("skip max_pages_limit revert check because /proc/sys/fs/fuse/max_pages_limit is not supported on node %s", nodeName)
+		}
+
 		ginkgo.By("Reading the initial FUSE max_pages_limit on the host via the helper pod")
 		limitStr := helperPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "cat /host-proc-sys-fs/fuse/max_pages_limit")
 		initialLimit, err := strconv.ParseInt(strings.TrimSpace(limitStr), 10, 64)
@@ -625,6 +648,11 @@ func countReadSizes(stdout string, targetSize int64, bucketName string) int {
 	re := regexp.MustCompile(fmt.Sprintf(`<- ReadFile \([^)]*?, (%d) bytes\).*?"mount-id":"%s-`, targetSize, regexp.QuoteMeta(bucketName)))
 	matches := re.FindAllStringSubmatch(stdout, -1)
 	return len(matches)
+}
+
+func isFuseMaxPagesLimitSupported(f *framework.Framework, tPod *specs.TestPod) bool {
+	out := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, "if [ -e /proc/sys/fs/fuse/max_pages_limit ] || [ -e /host-proc-sys-fs/fuse/max_pages_limit ]; then echo true; else echo false; fi")
+	return strings.TrimSpace(out) == "true"
 }
 
 func assertFuseIO(tPod *specs.TestPod, opType string, targetSize int64, expectedCount int, bucketName string) {
