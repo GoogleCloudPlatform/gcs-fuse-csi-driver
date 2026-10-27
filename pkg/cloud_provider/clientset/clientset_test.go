@@ -146,3 +146,53 @@ func TestConfigurePVLister(t *testing.T) {
 		t.Errorf("c.pvLister.List PV names mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestConfigureNodeLister(t *testing.T) {
+	t.Parallel()
+
+	wantMachineType := "ct6e-standard-4t"
+	wantKubeletVersion := "v1.37.1-gke.1552000"
+
+	testNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+			Labels: map[string]string{
+				GkeMetaDataServerKey: "true",
+				MachineTypeKey:       wantMachineType,
+				"unneeded-label":     "should-be-trimmed",
+			},
+		},
+		Status: corev1.NodeStatus{
+			NodeInfo: corev1.NodeSystemInfo{
+				KubeletVersion: wantKubeletVersion,
+				OSImage:        "Container-Optimized OS from Google",
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(testNode)
+	c := &Clientset{
+		k8sClients:    fakeClient,
+		runController: false,
+	}
+
+	c.ConfigureNodeLister(t.Context(), "test-node")
+
+	gotNode, err := c.GetNode("test-node")
+	if err != nil {
+		t.Fatalf("c.GetNode unexpected error: %v", err)
+	}
+
+	if got := gotNode.Labels[MachineTypeKey]; got != wantMachineType {
+		t.Errorf("got MachineType label %q, want %q", got, wantMachineType)
+	}
+	if _, exists := gotNode.Labels["unneeded-label"]; exists {
+		t.Errorf("expected unneeded-label to be trimmed from Node labels, got %v", gotNode.Labels)
+	}
+	if got := gotNode.Status.NodeInfo.KubeletVersion; got != wantKubeletVersion {
+		t.Errorf("got KubeletVersion %q, want %q", got, wantKubeletVersion)
+	}
+	if got := gotNode.Status.NodeInfo.OSImage; got != "" {
+		t.Errorf("expected OSImage to be trimmed from NodeInfo, got %q", got)
+	}
+}
