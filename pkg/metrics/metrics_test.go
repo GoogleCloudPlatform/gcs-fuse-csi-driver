@@ -624,6 +624,22 @@ func TestExtractK8sController(t *testing.T) {
 			expectedName: "my-statefulset",
 		},
 		{
+			name: "owner reference controller (DaemonSet)",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "DaemonSet",
+							Name:       "my-daemonset",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: "daemonset",
+			expectedName: "my-daemonset",
+		},
+		{
 			name: "standalone ReplicaSet without pod-template-hash label",
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -638,6 +654,54 @@ func TestExtractK8sController(t *testing.T) {
 			},
 			expectedType: "replicaset",
 			expectedName: "my-replicaset-123",
+		},
+		{
+			name: "Job controller owner reference without jobset label is unsupported and left blank (could be CronJob child)",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "Job",
+							Name:       "my-cronjob-28839120",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: "",
+			expectedName: "",
+		},
+		{
+			name: "unsupported controller kind is left blank",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "CustomController",
+							Name:       "my-custom-controller",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: "",
+			expectedName: "",
+		},
+		{
+			name: "supported controller kind with empty name is left blank",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "StatefulSet",
+							Name:       "",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: "",
+			expectedName: "",
 		},
 		{
 			name: "non-controller owner reference is ignored",

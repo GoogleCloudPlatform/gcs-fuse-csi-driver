@@ -577,12 +577,26 @@ func GetErrorCode(err error) string {
 }
 
 func resolveControllerKindAndName(kind, name string, labels map[string]string) (string, string) {
-	if strings.EqualFold(kind, "ReplicaSet") && labels != nil {
-		if hash, ok := labels["pod-template-hash"]; ok && hash != "" && len(name) > len(hash)+1 && strings.HasSuffix(name, "-"+hash) {
-			return "deployment", strings.TrimSuffix(name, "-"+hash)
-		}
+	if name == "" {
+		return "", ""
 	}
-	return strings.ToLower(kind), name
+	switch strings.ToLower(kind) {
+	case "replicaset":
+		if labels != nil {
+			if hash, ok := labels["pod-template-hash"]; ok && hash != "" && len(name) > len(hash)+1 && strings.HasSuffix(name, "-"+hash) {
+				return "deployment", strings.TrimSuffix(name, "-"+hash)
+			}
+		}
+		return "replicaset", name
+	case "statefulset":
+		return "statefulset", name
+	case "daemonset":
+		return "daemonset", name
+	default:
+		// Unsupported or ambiguous controller types (such as Job, which may be owned by a
+		// CronJob without a standard pod label) are left blank.
+		return "", ""
+	}
 }
 
 func ExtractK8sController(pod *corev1.Pod) (string, string) {
