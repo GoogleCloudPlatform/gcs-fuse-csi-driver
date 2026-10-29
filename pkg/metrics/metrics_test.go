@@ -204,7 +204,7 @@ fs_ops_latency_count{fs_op="Read"} 5
 					Namespace: "test-namespace",
 					UID:       types.UID(podUID),
 					Labels: map[string]string{
-						"jobset.sigs.k8s.io/jobset-name": "test-jobset-name",
+						jobSetNameLabel: "test-jobset-name",
 					},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
@@ -214,7 +214,7 @@ fs_ops_latency_count{fs_op="Read"} 5
 				"namespace_name":      "test-namespace",
 				"volume_name":         volumeName,
 				"bucket_name":         "test-bucket-name",
-				"k8s_controller_type": "jobset",
+				"k8s_controller_type": controllerTypeJobSet,
 				"k8s_controller_name": "test-jobset-name",
 			},
 			forbiddenLabelKeys: []string{"pod_uid"},
@@ -231,7 +231,7 @@ fs_ops_latency_count{fs_op="Read"} 5
 					Namespace: "test-namespace",
 					UID:       types.UID(podUID),
 					Labels: map[string]string{
-						"pod-template-hash": "7b98f6d9c5",
+						podTemplateHashLabel: "7b98f6d9c5",
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -248,7 +248,7 @@ fs_ops_latency_count{fs_op="Read"} 5
 				"namespace_name":      "test-namespace",
 				"volume_name":         volumeName,
 				"bucket_name":         "test-bucket-name",
-				"k8s_controller_type": "deployment",
+				"k8s_controller_type": controllerTypeDeployment,
 				"k8s_controller_name": "my-deployment",
 			},
 			forbiddenLabelKeys: []string{"pod_uid"},
@@ -279,7 +279,7 @@ fs_ops_latency_count{fs_op="Read"} 5
 				"namespace_name":      "test-namespace",
 				"volume_name":         volumeName,
 				"bucket_name":         "test-bucket-name",
-				"k8s_controller_type": "statefulset",
+				"k8s_controller_type": controllerTypeStatefulSet,
 				"k8s_controller_name": "test-ss-name",
 			},
 			forbiddenLabelKeys: []string{"pod_uid"},
@@ -369,7 +369,7 @@ grpc_client_attempt_started{grpc_method="google.storage.v2.Storage/ReadObject",g
 					Namespace: "test-namespace",
 					UID:       types.UID(podUID),
 					Labels: map[string]string{
-						"jobset.sigs.k8s.io/jobset-name": "test-jobset-name",
+						jobSetNameLabel: "test-jobset-name",
 					},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
@@ -516,11 +516,11 @@ func TestExtractK8sController(t *testing.T) {
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"jobset.sigs.k8s.io/jobset-name": "my-jobset",
+						jobSetNameLabel: "my-jobset",
 					},
 				},
 			},
-			expectedType: "jobset",
+			expectedType: controllerTypeJobSet,
 			expectedName: "my-jobset",
 		},
 		{
@@ -528,7 +528,7 @@ func TestExtractK8sController(t *testing.T) {
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"jobset.sigs.k8s.io/jobset-name": "my-jobset",
+						jobSetNameLabel: "my-jobset",
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -539,8 +539,39 @@ func TestExtractK8sController(t *testing.T) {
 					},
 				},
 			},
-			expectedType: "jobset",
+			expectedType: controllerTypeJobSet,
 			expectedName: "my-jobset",
+		},
+		{
+			name: "leaderworkerset label leaderworkerset.sigs.k8s.io/name",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						leaderWorkerSetNameLabel: "my-lws",
+					},
+				},
+			},
+			expectedType: controllerTypeLeaderWorkerSet,
+			expectedName: "my-lws",
+		},
+		{
+			name: "leaderworkerset label takes precedence over child worker StatefulSet controller OwnerReference",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						leaderWorkerSetNameLabel: "deepseek",
+					},
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "StatefulSet",
+							Name:       "deepseek-0",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: controllerTypeLeaderWorkerSet,
+			expectedName: "deepseek",
 		},
 		{
 			name: "non-standard jobset_name label does not spoof jobset controller",
@@ -559,7 +590,7 @@ func TestExtractK8sController(t *testing.T) {
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"pod-template-hash": "7b98f6d9c5",
+						podTemplateHashLabel: "7b98f6d9c5",
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -570,7 +601,7 @@ func TestExtractK8sController(t *testing.T) {
 					},
 				},
 			},
-			expectedType: "deployment",
+			expectedType: controllerTypeDeployment,
 			expectedName: "my-app",
 		},
 		{
@@ -578,7 +609,7 @@ func TestExtractK8sController(t *testing.T) {
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"pod-template-hash": "7b98f6d9c5",
+						podTemplateHashLabel: "7b98f6d9c5",
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -589,8 +620,27 @@ func TestExtractK8sController(t *testing.T) {
 					},
 				},
 			},
-			expectedType: "replicaset",
+			expectedType: controllerTypeReplicaSet,
 			expectedName: "-7b98f6d9c5",
+		},
+		{
+			name: "Argo Rollout ReplicaSet with rollouts-pod-template-hash label is left blank instead of mislabeling as replicaset",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						rolloutsPodTemplateHashLabel: "6c8f7d9b54",
+					},
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							Kind:       "ReplicaSet",
+							Name:       "my-rollout-6c8f7d9b54",
+							Controller: &isController,
+						},
+					},
+				},
+			},
+			expectedType: "",
+			expectedName: "",
 		},
 		{
 			name: "owner reference with nil Controller pointer is ignored",
@@ -621,7 +671,7 @@ func TestExtractK8sController(t *testing.T) {
 					},
 				},
 			},
-			expectedType: "statefulset",
+			expectedType: controllerTypeStatefulSet,
 			expectedName: "my-statefulset",
 		},
 		{
@@ -637,7 +687,7 @@ func TestExtractK8sController(t *testing.T) {
 					},
 				},
 			},
-			expectedType: "daemonset",
+			expectedType: controllerTypeDaemonSet,
 			expectedName: "my-daemonset",
 		},
 		{
@@ -653,7 +703,7 @@ func TestExtractK8sController(t *testing.T) {
 					},
 				},
 			},
-			expectedType: "replicaset",
+			expectedType: controllerTypeReplicaSet,
 			expectedName: "my-replicaset-123",
 		},
 		{
