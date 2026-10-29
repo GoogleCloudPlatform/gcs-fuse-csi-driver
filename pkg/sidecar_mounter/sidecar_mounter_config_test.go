@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"syscall"
 	"testing"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -624,6 +625,15 @@ func TestMountErrorFileCleanup(t *testing.T) {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
 	defer w.Close()
+	defer r.Close()
+
+	// Why: Mount takes ownership of the descriptor and closes it. Hand it a duplicate so that r's
+	// own Close (and finalizer) does not close a descriptor number that may have been reused by a
+	// test running in parallel, which would make that test fail with EBADF.
+	fuseFD, err := syscall.Dup(int(r.Fd()))
+	if err != nil {
+		t.Fatalf("failed to dup pipe descriptor: %v", err)
+	}
 
 	mc := &MountConfig{
 		BucketName:     "test-bucket",
@@ -632,7 +642,7 @@ func TestMountErrorFileCleanup(t *testing.T) {
 		BufferDir:      filepath.Join(tempDir, "buffer"),
 		CacheDir:       filepath.Join(tempDir, "cache"),
 		ErrWriter:      NewErrorWriter(errFilePath),
-		FileDescriptor: int(r.Fd()),
+		FileDescriptor: fuseFD,
 	}
 
 	mounter := New("true")

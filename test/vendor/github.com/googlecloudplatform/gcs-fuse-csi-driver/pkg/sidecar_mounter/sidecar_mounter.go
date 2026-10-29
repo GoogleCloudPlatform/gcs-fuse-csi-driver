@@ -118,14 +118,22 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
 	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
+	// Why: fuseFile owns mc.FileDescriptor from here on. It must be closed through fuseFile.Close()
+	// rather than syscall.Close(mc.FileDescriptor): os.NewFile registers a finalizer that closes the
+	// descriptor when fuseFile is garbage collected, so closing the raw descriptor would leave the
+	// finalizer to close whatever descriptor has been assigned that number since (e.g. a socket),
+	// whereas fuseFile.Close() also clears the finalizer.
+	fuseFile := os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse")
 
 	// gcsfuse reports the mount status on this pipe. See pkg/sidecar_mounter/startup_probe.go.
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
-		syscall.Close(mc.FileDescriptor)
+		if closeErr := fuseFile.Close(); closeErr != nil {
+			klog.Warningf("failed to close the fuse file descriptor %d: %v", mc.FileDescriptor, closeErr)
+		}
 		return fmt.Errorf("failed to create the mount status pipe: %w", err)
 	}
-	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse"), statusW}
+	cmd.ExtraFiles = []*os.File{fuseFile, statusW}
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("%s=%d", gcsfuseStatusFDEnv, statusPipeFD))
 
 	// when the ctx.Done() is closed,
@@ -167,7 +175,9 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 
 		// Since the gcsfuse has taken over the file descriptor,
 		// closing the file descriptor to avoid other process forking it.
-		syscall.Close(mc.FileDescriptor)
+		if err := fuseFile.Close(); err != nil {
+			klog.Warningf("failed to close the fuse file descriptor %d: %v", mc.FileDescriptor, err)
+		}
 		waitForGcsfuseExit(cmd, mc, outcomeDone)
 	}()
 
