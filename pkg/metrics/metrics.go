@@ -49,6 +49,18 @@ const (
 
 	metricsPath = "/metrics"
 	unixURL     = "http://unix/"
+
+	controllerTypeJobSet          = "jobset"
+	controllerTypeLeaderWorkerSet = "leaderworkerset"
+	controllerTypeDeployment      = "deployment"
+	controllerTypeReplicaSet      = "replicaset"
+	controllerTypeStatefulSet     = "statefulset"
+	controllerTypeDaemonSet       = "daemonset"
+
+	podTemplateHashLabel         = "pod-template-hash"
+	rolloutsPodTemplateHashLabel = "rollouts-pod-template-hash"
+	jobSetNameLabel              = "jobset.sigs.k8s.io/jobset-name"
+	leaderWorkerSetNameLabel     = "leaderworkerset.sigs.k8s.io/name"
 )
 
 type Manager interface {
@@ -577,22 +589,44 @@ func GetErrorCode(err error) string {
 }
 
 func resolveControllerKindAndName(kind, name string, labels map[string]string) (string, string) {
-	if strings.EqualFold(kind, "ReplicaSet") && labels != nil {
-		if hash, ok := labels["pod-template-hash"]; ok && hash != "" && len(name) > len(hash)+1 && strings.HasSuffix(name, "-"+hash) {
-			return "deployment", strings.TrimSuffix(name, "-"+hash)
-		}
+	if name == "" {
+		return "", ""
 	}
-	return strings.ToLower(kind), name
+	switch strings.ToLower(kind) {
+	case controllerTypeReplicaSet:
+		if hash := labels[podTemplateHashLabel]; hash != "" && len(name) > len(hash)+1 && strings.HasSuffix(name, "-"+hash) {
+			return controllerTypeDeployment, strings.TrimSuffix(name, "-"+hash)
+		}
+		if labels[rolloutsPodTemplateHashLabel] != "" {
+			return "", ""
+		}
+		return controllerTypeReplicaSet, name
+	case controllerTypeStatefulSet:
+		return controllerTypeStatefulSet, name
+	case controllerTypeDaemonSet:
+		return controllerTypeDaemonSet, name
+	default:
+		// Unsupported or ambiguous controller types (such as Job, which may be owned by a
+		// CronJob without a standard pod label) are left blank.
+		return "", ""
+	}
 }
 
+// ExtractK8sController resolves a pod's top-level workload controller type and name
+// strictly from node-local Pod metadata (labels and controller OwnerReferences) without
+// making cluster-scoped API calls. Supported controller types are jobset, leaderworkerset,
+// deployment, replicaset, statefulset, and daemonset. Returns ("", "") if the pod is
+// unmanaged or its top-level controller cannot be unambiguously determined from the Pod
+// object (e.g., Job/CronJob or Argo Rollout ReplicaSet).
 func ExtractK8sController(pod *corev1.Pod) (string, string) {
 	if pod == nil {
 		return "", ""
 	}
-	if pod.Labels != nil {
-		if js, ok := pod.Labels["jobset.sigs.k8s.io/jobset-name"]; ok && js != "" {
-			return "jobset", js
-		}
+	if js := pod.Labels[jobSetNameLabel]; js != "" {
+		return controllerTypeJobSet, js
+	}
+	if lws := pod.Labels[leaderWorkerSetNameLabel]; lws != "" {
+		return controllerTypeLeaderWorkerSet, lws
 	}
 	for _, ref := range pod.OwnerReferences {
 		if ref.Controller != nil && *ref.Controller {
