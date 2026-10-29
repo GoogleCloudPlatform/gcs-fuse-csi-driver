@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -118,6 +119,10 @@ func TestWaitForGcsfuseExit(t *testing.T) {
 				TempDir:    t.TempDir(),
 			}
 			mc.EnsureErrWriter()
+			readyFile := filepath.Join(mc.TempDir, util.ReadyFileName)
+			if err := os.WriteFile(readyFile, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
 
 			cmd := exec.Command(tc.cmd, tc.args...)
 			if err := cmd.Start(); err != nil {
@@ -127,7 +132,10 @@ func TestWaitForGcsfuseExit(t *testing.T) {
 				_ = cmd.Process.Signal(syscall.SIGTERM)
 			}
 
-			waitForGcsfuseExit(cmd, mc)
+			waitForGcsfuseExit(cmd, mc, nil)
+			if _, err := os.Stat(readyFile); !os.IsNotExist(err) {
+				t.Errorf("expected the ready file to be removed after gcsfuse exits, but it still exists (stat error: %v)", err)
+			}
 		})
 	}
 }
