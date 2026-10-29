@@ -97,6 +97,9 @@ var (
 	// Stream metrics export
 	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Stream metrics export instead of downloading the entire content")
 
+	// Sequential metrics export
+	sequentialMetricsExport = flag.Bool("sequential-metrics-export", false, "Scrape and export the metrics of each mount sequentially, one mount at a time, to bound the memory usage of metrics export. In the Prometheus text format, each metric family's HELP/TYPE lines are emitted once and its samples are written as one group per mount, so samples of a family are not contiguous.")
+
 	// GCSFuse volume metrics schema flag
 	// TODO(alleaditya): Deprecate --enable-gcsfuse-volume-metrics-schema and remove legacy k8s_pod fallback once k8s_gcs_fuse_volume rollout reaches 100%.
 	enableGcsFuseVolumeMetricsSchema = flag.Bool("enable-gcsfuse-volume-metrics-schema", false, "Enable k8s_gcs_fuse_volume Monitored Resource metrics schema for GCSFuse metrics.")
@@ -290,7 +293,7 @@ func main() {
 		}
 
 		if addr != "" {
-			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport, *enableGcsFuseVolumeMetricsSchema)
+			mm = metrics.NewMetricsManager(addr, *fuseSocketDir, *maximumNumberOfCollectors, clientset, *streamMetricsExport, *sequentialMetricsExport, *enableGcsFuseVolumeMetricsSchema)
 			mm.InitializeHTTPHandler()
 		}
 	} else if *runController {

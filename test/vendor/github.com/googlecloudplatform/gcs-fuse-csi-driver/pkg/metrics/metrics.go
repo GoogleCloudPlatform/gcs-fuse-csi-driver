@@ -18,14 +18,20 @@ limitations under the License.
 package metrics
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +46,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
@@ -47,8 +54,11 @@ import (
 const (
 	SocketName = "metrics.sock"
 
-	metricsPath = "/metrics"
-	unixURL     = "http://unix/"
+	metricsPath           = "/metrics"
+	unixURL               = "http://unix/"
+	contentTypeHeader     = "Content-Type"
+	contentEncodingHeader = "Content-Encoding"
+	acceptEncodingHeader  = "Accept-Encoding"
 
 	controllerTypeJobSet          = "jobset"
 	controllerTypeLeaderWorkerSet = "leaderworkerset"
@@ -61,7 +71,35 @@ const (
 	rolloutsPodTemplateHashLabel = "rollouts-pod-template-hash"
 	jobSetNameLabel              = "jobset.sigs.k8s.io/jobset-name"
 	leaderWorkerSetNameLabel     = "leaderworkerset.sigs.k8s.io/name"
+
+	// scrapeTimeoutHeader is set by Prometheus scrapers to the configured scrape_timeout in seconds.
+	scrapeTimeoutHeader = "X-Prometheus-Scrape-Timeout-Seconds"
+
+	// metricsServerWriteTimeout is the WriteTimeout of the node driver metrics HTTP server.
+	metricsServerWriteTimeout = 10 * time.Second
+
+	// defaultStreamMetricsBudget is the default overall time budget for scraping all mounts when
+	// streaming metrics and the scraper does not advertise its timeout via scrapeTimeoutHeader.
+	// Why: Mounts are scraped sequentially, so the total latency grows with the number of mounts. The
+	// GKE metrics collector scrapes this endpoint every 60s with a 45s timeout (3/4 of the interval) and
+	// does not send scrapeTimeoutHeader, so the budget is kept below 45s. Prometheus scrapers send
+	// scrapeTimeoutHeader, which lowers the budget to fit their scrape_timeout. The per-request write
+	// deadline is extended to match, overriding metricsServerWriteTimeout.
+	defaultStreamMetricsBudget = 30 * time.Second
+
+	// streamMetricsWriteSlack is the extra time, beyond the streaming budget, allowed for flushing
+	// the encoder and gzip writer after the last mount has been scraped.
+	streamMetricsWriteSlack = 2 * time.Second
+
+	// mountScrapeTimeout is the maximum time allowed for scraping the metrics of a single mount.
+	mountScrapeTimeout = 5 * time.Second
 )
+
+var gzipPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(nil)
+	},
+}
 
 type Manager interface {
 	InitializeHTTPHandler()
@@ -76,13 +114,30 @@ type manager struct {
 	clientset                        clientset.Interface
 	streamMetrics                    bool
 	enableGcsFuseVolumeMetricsSchema bool
+	// sequentialMetrics (--sequential-metrics-export) enables sequentialMetricsHandler, which scrapes and
+	// encodes mounts sequentially instead of using prometheus.Registry.Gather().
+	sequentialMetrics bool
+	// streamMetricsBudget is the overall time budget for scraping all mounts in sequentialMetricsHandler.
+	streamMetricsBudget time.Duration
+	// streamMountScrapeTimeout is the maximum time allowed for scraping a single mount in
+	// sequentialMetricsHandler. Defaults to mountScrapeTimeout.
+	streamMountScrapeTimeout time.Duration
+	// streamStartIndex returns the index of the mount at which a sequentialMetricsHandler request starts
+	// scraping, given the number of mounts. Defaults to rand.IntN; overridden in tests.
+	streamStartIndex func(n int) int
+	// streamScrapeSlot allows only one sequentialMetricsHandler request to scrape mounts at a time.
+	// Why: Each in-flight request holds up to one mount's parsed metrics, so concurrent requests (e.g.
+	// from several scrapers) would multiply the peak memory that streaming is meant to bound.
+	streamScrapeSlot chan struct{}
 
 	maximumNumberOfCollectors int
 	volumeMountPathRegistered sets.Set[string]
+	collectors                map[string]*metricsCollector
+	collectorOrder            []string
 	mutex                     sync.Mutex
 }
 
-func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) Manager {
+func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCollectors int, clientset clientset.Interface, streamMetrics, sequentialMetrics, enableGcsFuseVolumeMetricsSchema bool) Manager {
 	mm := &manager{
 		registry:                         prometheus.NewRegistry(),
 		metricsEndpoint:                  metricsEndpoint,
@@ -90,7 +145,13 @@ func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCol
 		clientset:                        clientset,
 		streamMetrics:                    streamMetrics,
 		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
+		sequentialMetrics:                sequentialMetrics,
+		streamMetricsBudget:              defaultStreamMetricsBudget,
+		streamMountScrapeTimeout:         mountScrapeTimeout,
+		streamStartIndex:                 rand.IntN,
+		streamScrapeSlot:                 make(chan struct{}, 1),
 		volumeMountPathRegistered:        sets.Set[string]{},
+		collectors:                       make(map[string]*metricsCollector),
 		maximumNumberOfCollectors:        maximumNumberOfCollectors,
 		mutex:                            sync.Mutex{},
 	}
@@ -98,17 +159,268 @@ func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCol
 	return mm
 }
 
+func collectorKey(podUID, volumeName string) string {
+	return fmt.Sprintf("%d:%s/%s", len(podUID), podUID, volumeName)
+}
+
+// snapshotCollectors returns the registered collectors in registration order.
+func (mm *manager) snapshotCollectors() []*metricsCollector {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
+	snapshot := make([]*metricsCollector, 0, len(mm.collectorOrder))
+	for _, key := range mm.collectorOrder {
+		if c, ok := mm.collectors[key]; ok {
+			snapshot = append(snapshot, c)
+		}
+	}
+	return snapshot
+}
+
+func (mm *manager) metricsHandler() http.Handler {
+	// Why: When sequentialMetrics (--sequential-metrics-export) is enabled, promhttp.HandlerFor(mm.registry, ...)
+	// is not used, because prometheus.Registry.Gather() runs all registered mount collectors concurrently and
+	// holds every mount's *dto.MetricFamily objects in memory before writing the HTTP response, so its peak
+	// memory grows with the number of mounts. Instead, sequentialMetricsHandler scrapes and encodes mounts one
+	// at a time, and only one such request runs at a time, bounding peak memory to roughly one mount's parsed
+	// metrics.
+	if mm.sequentialMetrics {
+		return http.HandlerFunc(mm.sequentialMetricsHandler)
+	}
+	return promhttp.HandlerFor(mm.registry, promhttp.HandlerOpts{})
+}
+
+// streamMetricsBudgetFor returns the overall time budget for scraping all mounts for the given request.
+// The configured budget is further capped by the scraper's own timeout, if advertised.
+func (mm *manager) streamMetricsBudgetFor(header http.Header) time.Duration {
+	budget := mm.streamMetricsBudget
+	if budget <= 0 {
+		budget = defaultStreamMetricsBudget
+	}
+	if v := header.Get(scrapeTimeoutHeader); v != "" {
+		if seconds, err := strconv.ParseFloat(v, 64); err == nil && seconds > 0 {
+			// Leave 10% of the scraper's timeout for encoding and network transfer.
+			if scraperBudget := time.Duration(seconds * 0.9 * float64(time.Second)); scraperBudget < budget {
+				budget = scraperBudget
+			}
+		}
+	}
+	return budget
+}
+
+func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	// Why: Mounts are scraped one after another, so the total latency is the sum of all mounts' latencies.
+	// Bound the whole scrape by an overall budget that fits inside the scraper's timeout, and extend this
+	// request's write deadline to the budget plus streamMetricsWriteSlack, overriding the server-wide
+	// WriteTimeout (metricsServerWriteTimeout), which is shorter than the default budget. Once the budget
+	// is used up, the remaining mounts are skipped so that a partial but well-formed response is
+	// delivered instead of a truncated body or a dropped connection. The server
+	// WriteTimeout does not cancel r.Context(), so the budget is enforced through a derived context.
+	budget := mm.streamMetricsBudgetFor(r.Header)
+	deadline := time.Now().Add(budget)
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline.Add(streamMetricsWriteSlack)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		klog.V(4).Infof("failed to set write deadline for streaming metrics response: %v", err)
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), deadline)
+	defer cancel()
+
+	// Wait for any other streaming request to finish. The wait counts against this request's budget.
+	if mm.streamScrapeSlot != nil {
+		select {
+		case mm.streamScrapeSlot <- struct{}{}:
+			defer func() { <-mm.streamScrapeSlot }()
+		case <-ctx.Done():
+			if r.Context().Err() == nil {
+				klog.Warningf("streaming metrics budget %v exhausted while waiting for another metrics request to finish", budget)
+				http.Error(w, "timed out waiting for another metrics request to finish", http.StatusServiceUnavailable)
+			}
+			return
+		}
+	}
+
+	contentType := expfmt.Negotiate(r.Header)
+	w.Header().Set(contentTypeHeader, string(contentType))
+
+	var out io.Writer = w
+	if acceptsGzip(r.Header) {
+		w.Header().Set(contentEncodingHeader, "gzip")
+		gz := gzipPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		defer func() {
+			_ = gz.Close()
+			gz.Reset(io.Discard)
+			gzipPool.Put(gz)
+		}()
+		out = gz
+	}
+
+	enc := expfmt.NewEncoder(out, contentType)
+	defer func() {
+		if closer, ok := enc.(expfmt.Closer); ok {
+			_ = closer.Close()
+		}
+	}()
+
+	isTextFormat := contentType.FormatType() == expfmt.TypeTextPlain
+	escapingScheme := contentType.ToEscapingScheme()
+	seenFamilies := make(map[string]dto.MetricType)
+
+	collectors := mm.snapshotCollectors()
+	n := len(collectors)
+	if n == 0 {
+		return
+	}
+	// Why: Start at a random mount on every request. When the budget is exhausted (e.g. by many mounts or
+	// hung sidecars), the remaining mounts are skipped. With a fixed starting mount, the same tail mounts
+	// would be skipped on every scrape and their metrics would never be exported. A random start gives
+	// every mount the same chance of being scraped, without any state shared across requests, and a hung
+	// sidecar cannot repeatedly use up the budget ahead of the same mounts.
+	startIndex := mm.streamStartIndex
+	if startIndex == nil {
+		startIndex = rand.IntN
+	}
+	start := startIndex(n)
+	perMountTimeout := mm.perMountScrapeTimeout()
+	for i := range n {
+		c := collectors[(start+i)%n]
+		writeErr := false
+		// The per-mount scrape timeout is derived from ctx, so it is also capped at the remaining budget.
+		completed := c.scrapeMetricFamilies(ctx, streamMountScrapeTimeout(perMountTimeout, time.Until(deadline)), true, func(mf *dto.MetricFamily) bool {
+			if !c.transformMetricFamily(mf) {
+				return true
+			}
+			if err := encodeMetricFamily(out, enc, mf, isTextFormat, escapingScheme, seenFamilies); err != nil {
+				klog.Errorf("failed to encode metric family %q: %v", mf.GetName(), err)
+				writeErr = true
+				return false
+			}
+			return true
+		})
+		if writeErr || r.Context().Err() != nil {
+			return
+		}
+		if ctx.Err() != nil {
+			// The budget ran out while (or right after) scraping this mount. If its scrape did not
+			// complete, its metrics were dropped, so report it as skipped as well.
+			skipped := n - i - 1
+			if !completed {
+				skipped++
+			}
+			if skipped > 0 {
+				klog.Warningf("streaming metrics budget %v exhausted, skipping metrics of %d out of %d mounts", budget, skipped, n)
+			}
+			return
+		}
+	}
+}
+
+// perMountScrapeTimeout returns the maximum time allowed for scraping a single mount when streaming.
+func (mm *manager) perMountScrapeTimeout() time.Duration {
+	if mm.streamMountScrapeTimeout <= 0 {
+		return mountScrapeTimeout
+	}
+	return mm.streamMountScrapeTimeout
+}
+
+// streamMountScrapeTimeout returns the scrape timeout for the next mount given the per-mount timeout
+// and the remaining budget. Each mount gets the per-mount timeout (by default the same
+// mountScrapeTimeout as the non-streaming path), capped at the remaining budget.
+// Why: Splitting the remaining budget evenly across the remaining mounts would give early mounts only a
+// tiny slice on nodes with many mounts, so healthy but slightly slower sidecars would be canceled and
+// dropped even though fast mounts leave most of the budget unused. Hung sidecars are instead bounded by
+// the per-mount timeout and the overall budget, and the random starting mount in sequentialMetricsHandler
+// ensures that the mounts skipped after the budget is exhausted vary across requests.
+func streamMountScrapeTimeout(perMount, remaining time.Duration) time.Duration {
+	return min(perMount, remaining)
+}
+
+// acceptsGzip reports whether the Accept-Encoding header accepts gzip. Like older promhttp versions, it
+// ignores q-values, so "gzip;q=0" is treated as accepting gzip; real scrapers do not send it.
+func acceptsGzip(header http.Header) bool {
+	for _, part := range strings.Split(header.Get(acceptEncodingHeader), ",") {
+		part = strings.TrimSpace(part)
+		if part == "gzip" || strings.HasPrefix(part, "gzip;") {
+			return true
+		}
+	}
+	return false
+}
+
+// skipFirstLineWriter wraps an io.Writer and discards bytes up to and including the first newline.
+type skipFirstLineWriter struct {
+	w       io.Writer
+	skipped bool
+}
+
+func (s *skipFirstLineWriter) Write(p []byte) (int, error) {
+	if s.skipped {
+		return s.w.Write(p)
+	}
+	idx := bytes.IndexByte(p, '\n')
+	if idx == -1 {
+		return len(p), nil
+	}
+	s.skipped = true
+	rest := p[idx+1:]
+	if len(rest) == 0 {
+		return len(p), nil
+	}
+	n, err := s.w.Write(rest)
+	if err != nil {
+		return idx + 1 + n, err
+	}
+	return len(p), nil
+}
+
+func encodeMetricFamily(
+	out io.Writer,
+	enc expfmt.Encoder,
+	mf *dto.MetricFamily,
+	isTextFormat bool,
+	escapingScheme model.EscapingScheme,
+	seenFamilies map[string]dto.MetricType,
+) error {
+	name := mf.GetName()
+	metricType := mf.GetType()
+	if prevType, seen := seenFamilies[name]; seen {
+		if prevType != metricType {
+			klog.Errorf("metric family %q has conflicting type %v (already emitted as %v), skipping", name, metricType, prevType)
+			return nil
+		}
+		if isTextFormat {
+			// Why: Standard Prometheus text parsers (expfmt.TextParser) reject repeated
+			// "# HELP" or "# TYPE" lines for the same metric family name within a single
+			// scrape payload, whereas sample lines for an already-declared metric family
+			// are merged into that family. Clear Help and skip the single "# TYPE" header
+			// line so subsequent mounts emit only sample lines.
+			// Note: Because mounts are streamed one at a time, the text output repeats a sample
+			// group per mount for each metric family, with other families in between, i.e. the
+			// samples of a family are not contiguous. expfmt.TextParser and Prometheus' text
+			// parser accept this, but stricter consumers may not. The protobuf delimited format,
+			// where repeated MetricFamily messages are well-defined, is preferred for such consumers.
+			savedHelp := mf.Help
+			mf.Help = nil
+			_, err := expfmt.MetricFamilyToText(&skipFirstLineWriter{w: out}, model.EscapeMetricFamily(mf, escapingScheme))
+			mf.Help = savedHelp
+			return err
+		}
+	} else {
+		seenFamilies[name] = metricType
+	}
+	return enc.Encode(mf)
+}
+
 // InitializeHTTPHandler sets up a server and creates a handler for metrics.
 func (mm *manager) InitializeHTTPHandler() {
 	mux := http.NewServeMux()
-	mux.HandleFunc(metricsPath, promhttp.HandlerFor(mm.registry, promhttp.HandlerOpts{}).ServeHTTP)
+	mux.HandleFunc(metricsPath, mm.metricsHandler().ServeHTTP)
 
 	// Configure the http server and start it.
 	metricServer := &http.Server{
 		Addr:           mm.metricsEndpoint,
 		Handler:        mux,
 		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
+		WriteTimeout:   metricsServerWriteTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
 
@@ -227,6 +539,11 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 		}
 	} else {
 		mm.volumeMountPathRegistered.Insert(mountPath)
+		if mc, ok := c.(*metricsCollector); ok {
+			key := collectorKey(podUID, volumeName)
+			mm.collectors[key] = mc
+			mm.collectorOrder = append(mm.collectorOrder, key)
+		}
 		klog.Infof("successfully registered a new metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
 	}
 }
@@ -246,6 +563,16 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volum
 		klog.Infof("Unregister metrics collector for mount path %q is not needed since the collector is not registered.", mountPath)
 	} else {
 		mm.volumeMountPathRegistered.Delete(mountPath)
+		key := collectorKey(podUID, volumeName)
+		if existing, exists := mm.collectors[key]; exists {
+			if existing.httpClient != nil {
+				existing.httpClient.CloseIdleConnections()
+			}
+			delete(mm.collectors, key)
+		}
+		mm.collectorOrder = slices.DeleteFunc(mm.collectorOrder, func(k string) bool {
+			return k == key
+		})
 		klog.Infof("successfully unregistered a metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
 	}
 }
@@ -281,8 +608,9 @@ func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, p
 	c.httpClient = &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", filepath.Join(socketBasePath, SocketName))
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", filepath.Join(socketBasePath, SocketName))
 			},
 		},
 	}
@@ -302,57 +630,104 @@ func (c *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect scrapes metrics from the sidecar and emits metrics.
 func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
+	_ = c.scrapeMetricFamilies(context.Background(), mountScrapeTimeout, false, func(mf *dto.MetricFamily) bool {
+		c.emitMetricFamily(mf, ch)
+		return true
+	})
+}
+
+// scrapeMetricFamilies scrapes the sidecar metrics endpoint, bounded by timeout and parentCtx, and calls
+// handleFamily for each parsed MetricFamily until it returns false. It returns true only if the response
+// was received and fully parsed, and every family was passed to handleFamily without early termination.
+// If parseWholeBody is true, the whole response is parsed before any family is handled, families are
+// handled in name order, and nothing is handled if the response cannot be parsed. Otherwise, the
+// response is parsed as a stream if streamMetrics (--stream-metrics-export) is enabled.
+func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeout time.Duration, parseWholeBody bool, handleFamily func(*dto.MetricFamily) bool) bool {
+	if parentCtx.Err() != nil || c.clientset == nil {
+		return false
+	}
+
 	pod, err := c.clientset.GetPod(c.namespace, c.podName)
 	if err != nil || pod == nil || pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
 		klog.V(6).Infof("pod %v/%v does not exist, skip metrics scraping", c.namespace, c.podName)
 
-		return
+		return false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, unixURL, nil)
 	if err != nil {
 		klog.Errorf("failed to create scrape metrics request: %v", err)
 
-		return
+		return false
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		klog.Errorf("failed to scrape metrics: %v", err)
 
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		klog.Errorf("unexpected HTTP status: %v", resp.Status)
 
-		return
+		return false
 	}
 
-	if c.streamMetrics {
+	if parseWholeBody {
+		// Why: Do not use ProcessMetricsDataAsStream here. The underlying expfmt text decoder yields the
+		// partially parsed families before reporting a parse error, e.g. when the per-mount scrape timeout
+		// cuts the body off mid-family, which would emit truncated families (such as histograms with
+		// missing buckets). Parse the whole body first and drop the mount on any error. Peak memory is the
+		// same, since the text decoder also builds the full per-mount map before yielding anything.
+		families, err := ProcessMetricsData(resp.Body)
+		if err != nil {
+			klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
+
+			return false
+		}
+
+		names := make([]string, 0, len(families))
+		for name := range families {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			if !handleFamily(families[name]) {
+				return false
+			}
+		}
+	} else if c.streamMetrics {
 		for mf, err := range ProcessMetricsDataAsStream(resp.Body) {
 			if err != nil {
 				klog.Errorf("failed to decode metrics data: %v", err)
-				return
+
+				return false
 			}
-			c.emitMetricFamily(mf, ch)
+			if !handleFamily(mf) {
+				return false
+			}
 		}
 	} else {
 		families, err := ProcessMetricsData(resp.Body)
 		if err != nil {
 			klog.Errorf("failed to process metrics data: %v", err)
 
-			return
+			return false
 		}
 
 		for _, mf := range families {
-			c.emitMetricFamily(mf, ch)
+			if !handleFamily(mf) {
+				return false
+			}
 		}
 	}
+
+	return true
 }
 
 // ProcessMetricsDataAsStream processes metrics that follow Prometheus text format,
@@ -389,18 +764,13 @@ func ProcessMetricsData(metricsReader io.Reader) (map[string]*dto.MetricFamily, 
 	return metricFamilies, nil
 }
 
-// emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
-func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
-	name := metricFamily.GetName()
-	help := metricFamily.GetHelp()
-	metricType := metricFamily.GetType()
-
+func (c *metricsCollector) resolveMetricFamilySchema(name string) (string, map[string]string) {
 	// Normalize metric names bidirectionally based on enableGcsFuseVolumeMetricsSchema to support
 	// live DaemonSet rollbacks (requiresRepublish) without restarting workload mounter sidecar containers.
 	// gRPC metrics remain on the legacy k8s_pod schema (unprefixed, with pod_uid="").
 	effectiveSchemaEnabled := c.enableGcsFuseVolumeMetricsSchema && !isGrpcMetric(name)
 	policy := newMetricSchemaPolicy(effectiveSchemaEnabled)
-	name = policy.NormalizeMetricName(name)
+	normalizedName := policy.NormalizeMetricName(name)
 	constLabels := c.constLabels
 	if !effectiveSchemaEnabled && c.enableGcsFuseVolumeMetricsSchema && c.constLabels != nil {
 		constLabels = policy.BuildConstLabels(
@@ -412,6 +782,97 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 			"",
 		)
 	}
+	return normalizedName, constLabels
+}
+
+func hasValidMetricValue(metricType dto.MetricType, metric *dto.Metric) bool {
+	switch metricType {
+	case dto.MetricType_COUNTER:
+		return metric.GetCounter() != nil
+	case dto.MetricType_GAUGE:
+		return metric.GetGauge() != nil
+	case dto.MetricType_UNTYPED:
+		return metric.GetUntyped() != nil
+	case dto.MetricType_SUMMARY:
+		return metric.GetSummary() != nil
+	case dto.MetricType_HISTOGRAM, dto.MetricType_GAUGE_HISTOGRAM:
+		return metric.GetHistogram() != nil
+	default:
+		return false
+	}
+}
+
+// transformMetricFamily normalizes the MetricFamily name and injects constLabels directly in-place
+// without allocating intermediate prometheus.Metric or prometheus.Desc wrappers.
+func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily) bool {
+	if metricFamily == nil || metricFamily.Type == nil || metricFamily.GetName() == "" || len(metricFamily.GetMetric()) == 0 {
+		return false
+	}
+
+	metricType := metricFamily.GetType()
+	switch metricType {
+	case dto.MetricType_COUNTER, dto.MetricType_GAUGE, dto.MetricType_UNTYPED, dto.MetricType_SUMMARY, dto.MetricType_HISTOGRAM:
+	case dto.MetricType_GAUGE_HISTOGRAM:
+		histType := dto.MetricType_HISTOGRAM
+		metricFamily.Type = &histType
+		metricType = histType
+	default:
+		klog.Errorf("unknown metric type: %v", metricType)
+		return false
+	}
+
+	name, constLabels := c.resolveMetricFamilySchema(metricFamily.GetName())
+	metricFamily.Name = &name
+
+	var constLabelPairs []*dto.LabelPair
+	if len(constLabels) > 0 {
+		constKeys := make([]string, 0, len(constLabels))
+		for k := range constLabels {
+			constKeys = append(constKeys, k)
+		}
+		slices.Sort(constKeys)
+		constLabelPairs = make([]*dto.LabelPair, len(constKeys))
+		for i, k := range constKeys {
+			keyCopy := k
+			valCopy := constLabels[k]
+			constLabelPairs[i] = &dto.LabelPair{
+				Name:  &keyCopy,
+				Value: &valCopy,
+			}
+		}
+	}
+
+	validMetrics := metricFamily.GetMetric()[:0]
+	for _, metric := range metricFamily.GetMetric() {
+		if metric == nil || !hasValidMetricValue(metricType, metric) {
+			continue
+		}
+		rawLabels := metric.GetLabel()
+		labels := make([]*dto.LabelPair, 0, len(rawLabels)+len(constLabelPairs))
+		for _, label := range rawLabels {
+			if label == nil {
+				continue
+			}
+			if _, exists := constLabels[label.GetName()]; !exists {
+				labels = append(labels, label)
+			}
+		}
+		labels = append(labels, constLabelPairs...)
+		metric.Label = labels
+		// Drop sidecar-provided timestamps to match the non-streaming path (emitMetricFamily), which
+		// never exports timestamps.
+		metric.TimestampMs = nil
+		validMetrics = append(validMetrics, metric)
+	}
+	metricFamily.Metric = validMetrics
+	return len(metricFamily.Metric) > 0
+}
+
+// emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
+func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
+	help := metricFamily.GetHelp()
+	metricType := metricFamily.GetType()
+	name, constLabels := c.resolveMetricFamilySchema(metricFamily.GetName())
 
 	var cachedDesc *prometheus.Desc
 
