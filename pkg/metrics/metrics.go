@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -46,7 +47,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
-	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
@@ -132,8 +132,7 @@ type manager struct {
 
 	maximumNumberOfCollectors int
 	volumeMountPathRegistered sets.Set[string]
-	collectors                map[string]*metricsCollector
-	collectorOrder            []string
+	collectors                []*metricsCollector
 	mutex                     sync.Mutex
 }
 
@@ -151,7 +150,6 @@ func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCol
 		streamStartIndex:                 rand.IntN,
 		streamScrapeSlot:                 make(chan struct{}, 1),
 		volumeMountPathRegistered:        sets.Set[string]{},
-		collectors:                       make(map[string]*metricsCollector),
 		maximumNumberOfCollectors:        maximumNumberOfCollectors,
 		mutex:                            sync.Mutex{},
 	}
@@ -159,22 +157,12 @@ func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCol
 	return mm
 }
 
-func collectorKey(podUID, volumeName string) string {
-	return fmt.Sprintf("%d:%s/%s", len(podUID), podUID, volumeName)
-}
-
 // snapshotCollectors returns the registered collectors in registration order.
 func (mm *manager) snapshotCollectors() []*metricsCollector {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
-	snapshot := make([]*metricsCollector, 0, len(mm.collectorOrder))
-	for _, key := range mm.collectorOrder {
-		if c, ok := mm.collectors[key]; ok {
-			snapshot = append(snapshot, c)
-		}
-	}
-	return snapshot
+	return slices.Clone(mm.collectors)
 }
 
 func (mm *manager) metricsHandler() http.Handler {
@@ -254,7 +242,8 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 		out = gz
 	}
 
-	enc := expfmt.NewEncoder(out, contentType)
+	sw := &skipFirstLineWriter{w: out, skipped: true}
+	enc := expfmt.NewEncoder(sw, contentType)
 	defer func() {
 		if closer, ok := enc.(expfmt.Closer); ok {
 			_ = closer.Close()
@@ -262,7 +251,6 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 	}()
 
 	isTextFormat := contentType.FormatType() == expfmt.TypeTextPlain
-	escapingScheme := contentType.ToEscapingScheme()
 	seenFamilies := make(map[string]dto.MetricType)
 
 	collectors := mm.snapshotCollectors()
@@ -285,11 +273,11 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 		c := collectors[(start+i)%n]
 		writeErr := false
 		// The per-mount scrape timeout is derived from ctx, so it is also capped at the remaining budget.
-		completed := c.scrapeMetricFamilies(ctx, streamMountScrapeTimeout(perMountTimeout, time.Until(deadline)), true, func(mf *dto.MetricFamily) bool {
+		completed := c.scrapeMetricFamilies(ctx, perMountTimeout, true, func(mf *dto.MetricFamily) bool {
 			if !c.transformMetricFamily(mf) {
 				return true
 			}
-			if err := encodeMetricFamily(out, enc, mf, isTextFormat, escapingScheme, seenFamilies); err != nil {
+			if err := encodeMetricFamily(enc, sw, mf, isTextFormat, seenFamilies); err != nil {
 				klog.Errorf("failed to encode metric family %q: %v", mf.GetName(), err)
 				writeErr = true
 				return false
@@ -315,23 +303,18 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // perMountScrapeTimeout returns the maximum time allowed for scraping a single mount when streaming.
-func (mm *manager) perMountScrapeTimeout() time.Duration {
-	if mm.streamMountScrapeTimeout <= 0 {
-		return mountScrapeTimeout
-	}
-	return mm.streamMountScrapeTimeout
-}
-
-// streamMountScrapeTimeout returns the scrape timeout for the next mount given the per-mount timeout
-// and the remaining budget. Each mount gets the per-mount timeout (by default the same
-// mountScrapeTimeout as the non-streaming path), capped at the remaining budget.
+// Each mount gets the per-mount timeout (by default the same mountScrapeTimeout as the non-streaming
+// path), capped at the remaining budget via the request context.
 // Why: Splitting the remaining budget evenly across the remaining mounts would give early mounts only a
 // tiny slice on nodes with many mounts, so healthy but slightly slower sidecars would be canceled and
 // dropped even though fast mounts leave most of the budget unused. Hung sidecars are instead bounded by
 // the per-mount timeout and the overall budget, and the random starting mount in sequentialMetricsHandler
 // ensures that the mounts skipped after the budget is exhausted vary across requests.
-func streamMountScrapeTimeout(perMount, remaining time.Duration) time.Duration {
-	return min(perMount, remaining)
+func (mm *manager) perMountScrapeTimeout() time.Duration {
+	if mm.streamMountScrapeTimeout <= 0 {
+		return mountScrapeTimeout
+	}
+	return mm.streamMountScrapeTimeout
 }
 
 // acceptsGzip reports whether the Accept-Encoding header accepts gzip. Like older promhttp versions, it
@@ -373,11 +356,10 @@ func (s *skipFirstLineWriter) Write(p []byte) (int, error) {
 }
 
 func encodeMetricFamily(
-	out io.Writer,
 	enc expfmt.Encoder,
+	sw *skipFirstLineWriter,
 	mf *dto.MetricFamily,
 	isTextFormat bool,
-	escapingScheme model.EscapingScheme,
 	seenFamilies map[string]dto.MetricType,
 ) error {
 	name := mf.GetName()
@@ -398,11 +380,9 @@ func encodeMetricFamily(
 			// samples of a family are not contiguous. expfmt.TextParser and Prometheus' text
 			// parser accept this, but stricter consumers may not. The protobuf delimited format,
 			// where repeated MetricFamily messages are well-defined, is preferred for such consumers.
-			savedHelp := mf.Help
 			mf.Help = nil
-			_, err := expfmt.MetricFamilyToText(&skipFirstLineWriter{w: out}, model.EscapeMetricFamily(mf, escapingScheme))
-			mf.Help = savedHelp
-			return err
+			sw.skipped = false
+			defer func() { sw.skipped = true }()
 		}
 	} else {
 		seenFamilies[name] = metricType
@@ -540,9 +520,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 	} else {
 		mm.volumeMountPathRegistered.Insert(mountPath)
 		if mc, ok := c.(*metricsCollector); ok {
-			key := collectorKey(podUID, volumeName)
-			mm.collectors[key] = mc
-			mm.collectorOrder = append(mm.collectorOrder, key)
+			mm.collectors = append(mm.collectors, mc)
 		}
 		klog.Infof("successfully registered a new metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
 	}
@@ -563,15 +541,14 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volum
 		klog.Infof("Unregister metrics collector for mount path %q is not needed since the collector is not registered.", mountPath)
 	} else {
 		mm.volumeMountPathRegistered.Delete(mountPath)
-		key := collectorKey(podUID, volumeName)
-		if existing, exists := mm.collectors[key]; exists {
-			if existing.httpClient != nil {
-				existing.httpClient.CloseIdleConnections()
+		mm.collectors = slices.DeleteFunc(mm.collectors, func(mc *metricsCollector) bool {
+			if mc.podUID == podUID && mc.volumeName == volumeName {
+				if mc.httpClient != nil {
+					mc.httpClient.CloseIdleConnections()
+				}
+				return true
 			}
-			delete(mm.collectors, key)
-		}
-		mm.collectorOrder = slices.DeleteFunc(mm.collectorOrder, func(k string) bool {
-			return k == key
+			return false
 		})
 		klog.Infof("successfully unregistered a metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
 	}
@@ -678,30 +655,7 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 		return false
 	}
 
-	if parseWholeBody {
-		// Why: Do not use ProcessMetricsDataAsStream here. The underlying expfmt text decoder yields the
-		// partially parsed families before reporting a parse error, e.g. when the per-mount scrape timeout
-		// cuts the body off mid-family, which would emit truncated families (such as histograms with
-		// missing buckets). Parse the whole body first and drop the mount on any error. Peak memory is the
-		// same, since the text decoder also builds the full per-mount map before yielding anything.
-		families, err := ProcessMetricsData(resp.Body)
-		if err != nil {
-			klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
-
-			return false
-		}
-
-		names := make([]string, 0, len(families))
-		for name := range families {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		for _, name := range names {
-			if !handleFamily(families[name]) {
-				return false
-			}
-		}
-	} else if c.streamMetrics {
+	if !parseWholeBody && c.streamMetrics {
 		for mf, err := range ProcessMetricsDataAsStream(resp.Body) {
 			if err != nil {
 				klog.Errorf("failed to decode metrics data: %v", err)
@@ -712,18 +666,28 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 				return false
 			}
 		}
-	} else {
-		families, err := ProcessMetricsData(resp.Body)
-		if err != nil {
-			klog.Errorf("failed to process metrics data: %v", err)
+		return true
+	}
 
-			return false
+	// Why: Do not use ProcessMetricsDataAsStream here. The underlying expfmt text decoder yields the
+	// partially parsed families before reporting a parse error, e.g. when the per-mount scrape timeout
+	// cuts the body off mid-family, which would emit truncated families (such as histograms with
+	// missing buckets). Parse the whole body first and drop the mount on any error. Peak memory is the
+	// same, since the text decoder also builds the full per-mount map before yielding anything.
+	families, err := ProcessMetricsData(resp.Body)
+	if err != nil {
+		if parseWholeBody {
+			klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
+		} else {
+			klog.Errorf("failed to process metrics data: %v", err)
 		}
 
-		for _, mf := range families {
-			if !handleFamily(mf) {
-				return false
-			}
+		return false
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(families)) {
+		if !handleFamily(families[name]) {
+			return false
 		}
 	}
 
@@ -824,47 +788,29 @@ func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily)
 	name, constLabels := c.resolveMetricFamilySchema(metricFamily.GetName())
 	metricFamily.Name = &name
 
-	var constLabelPairs []*dto.LabelPair
-	if len(constLabels) > 0 {
-		constKeys := make([]string, 0, len(constLabels))
-		for k := range constLabels {
-			constKeys = append(constKeys, k)
-		}
-		slices.Sort(constKeys)
-		constLabelPairs = make([]*dto.LabelPair, len(constKeys))
-		for i, k := range constKeys {
-			keyCopy := k
-			valCopy := constLabels[k]
-			constLabelPairs[i] = &dto.LabelPair{
-				Name:  &keyCopy,
-				Value: &valCopy,
-			}
-		}
+	constLabelPairs := make([]*dto.LabelPair, 0, len(constLabels))
+	for _, k := range slices.Sorted(maps.Keys(constLabels)) {
+		v := constLabels[k]
+		constLabelPairs = append(constLabelPairs, &dto.LabelPair{Name: &k, Value: &v})
 	}
 
-	validMetrics := metricFamily.GetMetric()[:0]
-	for _, metric := range metricFamily.GetMetric() {
+	metricFamily.Metric = slices.DeleteFunc(metricFamily.GetMetric(), func(metric *dto.Metric) bool {
 		if metric == nil || !hasValidMetricValue(metricType, metric) {
-			continue
+			return true
 		}
-		rawLabels := metric.GetLabel()
-		labels := make([]*dto.LabelPair, 0, len(rawLabels)+len(constLabelPairs))
-		for _, label := range rawLabels {
+		metric.Label = slices.DeleteFunc(metric.GetLabel(), func(label *dto.LabelPair) bool {
 			if label == nil {
-				continue
+				return true
 			}
-			if _, exists := constLabels[label.GetName()]; !exists {
-				labels = append(labels, label)
-			}
-		}
-		labels = append(labels, constLabelPairs...)
-		metric.Label = labels
+			_, exists := constLabels[label.GetName()]
+			return exists
+		})
+		metric.Label = append(metric.Label, constLabelPairs...)
 		// Drop sidecar-provided timestamps to match the non-streaming path (emitMetricFamily), which
 		// never exports timestamps.
 		metric.TimestampMs = nil
-		validMetrics = append(validMetrics, metric)
-	}
-	metricFamily.Metric = validMetrics
+		return false
+	})
 	return len(metricFamily.Metric) > 0
 }
 

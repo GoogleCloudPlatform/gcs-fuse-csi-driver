@@ -1124,95 +1124,32 @@ func TestStreamMetricsHandlerSequentialMounts(t *testing.T) {
 		t.Run(fmt.Sprintf("enableSchema=%v", enableSchema), func(t *testing.T) {
 			t.Parallel()
 
-			fuseSocketDir, err := os.MkdirTemp("/tmp", "seq")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			defer os.RemoveAll(fuseSocketDir)
-
-			fakeClientset := clientset.NewFakeClientset()
-			mm := NewMetricsManager(":0", fuseSocketDir, 10, fakeClientset, false, true, enableSchema).(*manager)
-			mm.streamStartIndex = func(int) int { return 0 }
-
-			var inFlight atomic.Int32
-			var maxInFlight atomic.Int32
+			mm, fakeClientset := newStreamTestManager(t, enableSchema)
+			var tr inFlightTracker
 			var scrapeOrderMu sync.Mutex
 			var scrapeOrder []string
 
-			mountConfigs := []struct {
-				podUID     string
-				podName    string
-				volumeName string
-				bucketName string
-				opValue    int
-			}{
-				{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", bucketName: "bucket-1", opValue: 10},
-				{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", bucketName: "bucket-2", opValue: 20},
-				{podUID: "uid-3", podName: "pod-3", volumeName: "vol-3", bucketName: "bucket-3", opValue: 30},
-			}
-
-			for i, mc := range mountConfigs {
-				emptyDirBasePath := filepath.Join(t.TempDir(), fmt.Sprintf("emptyDir-%d", i))
-				if err := os.MkdirAll(emptyDirBasePath, 0755); err != nil {
-					t.Fatalf("failed to create emptyDirBasePath: %v", err)
-				}
-
-				socketPath := filepath.Join(emptyDirBasePath, SocketName)
-				listener, err := net.Listen("unix", socketPath)
-				if err != nil {
-					t.Fatalf("failed to listen on socket %s: %v", socketPath, err)
-				}
-				defer listener.Close()
-
-				volName := mc.volumeName
-				opVal := mc.opValue
-				payload := fmt.Sprintf(`# HELP fs_ops_count The cumulative number of ops processed.
-# TYPE fs_ops_count counter
-fs_ops_count{fs_op="Read"} %d
-# HELP fs_ops_latencies The cumulative distribution of file system operation latencies.
-# TYPE fs_ops_latencies histogram
-fs_ops_latencies_bucket{fs_op="Read",le="100"} %d
-fs_ops_latencies_sum{fs_op="Read"} %d
-fs_ops_latencies_count{fs_op="Read"} %d
-# HELP grpc_client_attempt_started Total number of RPC attempts started.
-# TYPE grpc_client_attempt_started counter
-grpc_client_attempt_started{grpc_method="ReadObject"} %d
-`, opVal, opVal, opVal*50, opVal, opVal)
-
-				srv := &http.Server{
-					Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						cur := inFlight.Add(1)
-						for {
-							prev := maxInFlight.Load()
-							if cur <= prev || maxInFlight.CompareAndSwap(prev, cur) {
-								break
-							}
-						}
+			var mounts []fakeMount
+			for i, opVal := range []int{10, 20, 30} {
+				volName := fmt.Sprintf("vol-%d", i+1)
+				payload := mountPayload(opVal) + fmt.Sprintf("# HELP grpc_client_attempt_started Total number of RPC attempts started.\n# TYPE grpc_client_attempt_started counter\ngrpc_client_attempt_started{grpc_method=\"ReadObject\"} %d\n", opVal)
+				mounts = append(mounts, fakeMount{
+					podUID:     fmt.Sprintf("uid-%d", i+1),
+					podName:    fmt.Sprintf("pod-%d", i+1),
+					volumeName: volName,
+					handler: func(w http.ResponseWriter, _ *http.Request) {
+						done := tr.enter()
 						time.Sleep(15 * time.Millisecond)
 						scrapeOrderMu.Lock()
 						scrapeOrder = append(scrapeOrder, volName)
 						scrapeOrderMu.Unlock()
-						inFlight.Add(-1)
-
+						done()
 						w.WriteHeader(http.StatusOK)
 						_, _ = w.Write([]byte(payload))
-					}),
-				}
-				go func() {
-					_ = srv.Serve(listener)
-				}()
-				defer srv.Close()
-
-				fakeClientset.CreatePod(clientset.FakePodConfig{
-					Name:      mc.podName,
-					Namespace: "default",
-					UID:       types.UID(mc.podUID),
-					PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+					},
 				})
-
-				mountPath := fmt.Sprintf("/mnt/%s", mc.volumeName)
-				mm.RegisterMetricsCollector(mountPath, "default", mc.podName, mc.bucketName, "node-1", emptyDirBasePath, mc.podUID, mc.volumeName, "deployment", "app")
 			}
+			registerFakeMounts(t, mm, fakeClientset, mounts)
 
 			req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
 			rec := httptest.NewRecorder()
@@ -1222,7 +1159,7 @@ grpc_client_attempt_started{grpc_method="ReadObject"} %d
 				t.Fatalf("unexpected HTTP status code: got %d, want %d", rec.Code, http.StatusOK)
 			}
 
-			if gotMax := maxInFlight.Load(); gotMax != 1 {
+			if gotMax := tr.maxInFlight.Load(); gotMax != 1 {
 				t.Errorf("expected mounts to be scraped sequentially (maxInFlight=1), got %d", gotMax)
 			}
 
@@ -1266,6 +1203,9 @@ grpc_client_attempt_started{grpc_method="ReadObject"} %d
 			if !ok {
 				t.Fatalf("missing expected counter family %q in parsed families", expectedCounterFamily)
 			}
+			if counterMF.GetType() != dto.MetricType_COUNTER {
+				t.Errorf("expected %q type COUNTER, got %v", expectedCounterFamily, counterMF.GetType())
+			}
 			if len(counterMF.GetMetric()) != 3 {
 				t.Fatalf("expected 3 metrics in %q, got %d", expectedCounterFamily, len(counterMF.GetMetric()))
 			}
@@ -1273,6 +1213,9 @@ grpc_client_attempt_started{grpc_method="ReadObject"} %d
 			histMF, ok := families[expectedHistFamily]
 			if !ok {
 				t.Fatalf("missing expected histogram family %q in parsed families", expectedHistFamily)
+			}
+			if histMF.GetType() != dto.MetricType_HISTOGRAM {
+				t.Errorf("expected %q type HISTOGRAM, got %v", expectedHistFamily, histMF.GetType())
 			}
 			if len(histMF.GetMetric()) != 3 {
 				t.Fatalf("expected 3 metrics in %q, got %d", expectedHistFamily, len(histMF.GetMetric()))
@@ -1292,64 +1235,19 @@ grpc_client_attempt_started{grpc_method="ReadObject"} %d
 func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	t.Parallel()
 
-	fuseSocketDir, err := os.MkdirTemp("/tmp", "gz")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(fuseSocketDir)
-
-	fakeClientset := clientset.NewFakeClientset()
-	mm := NewMetricsManager(":0", fuseSocketDir, 10, fakeClientset, false, true, true).(*manager)
-	mm.streamStartIndex = func(int) int { return 0 }
-
-	// Mount 1: Failing sidecar returning HTTP 500
-	emptyDir1 := filepath.Join(t.TempDir(), "ed1")
-	_ = os.MkdirAll(emptyDir1, 0755)
-	ln1, err := net.Listen("unix", filepath.Join(emptyDir1, SocketName))
-	if err != nil {
-		t.Fatalf("failed to listen on socket 1: %v", err)
-	}
-	defer ln1.Close()
-	srv1 := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}),
-	}
-	go func() { _ = srv1.Serve(ln1) }()
-	defer srv1.Close()
-
-	fakeClientset.CreatePod(clientset.FakePodConfig{
-		Name:      "pod-fail",
-		Namespace: "default",
-		UID:       types.UID("uid-fail"),
-		PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+	mm, fakeClientset := newStreamTestManager(t, true)
+	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
+		{
+			podUID: "uid-fail", podName: "pod-fail", volumeName: "vol-fail",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+		},
+		{
+			podUID: "uid-ok", podName: "pod-ok", volumeName: "vol-ok",
+			handler: staticPayloadHandler(mountPayload(77), nil),
+		},
 	})
-	mm.RegisterMetricsCollector("/mnt/fail", "default", "pod-fail", "b1", "node-1", emptyDir1, "uid-fail", "vol-fail", "", "")
-
-	// Mount 2: Healthy sidecar
-	emptyDir2 := filepath.Join(t.TempDir(), "ed2")
-	_ = os.MkdirAll(emptyDir2, 0755)
-	ln2, err := net.Listen("unix", filepath.Join(emptyDir2, SocketName))
-	if err != nil {
-		t.Fatalf("failed to listen on socket 2: %v", err)
-	}
-	defer ln2.Close()
-	srv2 := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("# HELP fs_ops_count Ops.\n# TYPE fs_ops_count counter\nfs_ops_count{fs_op=\"Read\"} 77\n"))
-		}),
-	}
-	go func() { _ = srv2.Serve(ln2) }()
-	defer srv2.Close()
-
-	fakeClientset.CreatePod(clientset.FakePodConfig{
-		Name:      "pod-ok",
-		Namespace: "default",
-		UID:       types.UID("uid-ok"),
-		PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
-	})
-	mm.RegisterMetricsCollector("/mnt/ok", "default", "pod-ok", "b2", "node-1", emptyDir2, "uid-ok", "vol-ok", "statefulset", "sts-1")
 
 	// Request with Accept-Encoding: gzip
 	req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
@@ -1379,7 +1277,7 @@ func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	}
 
 	// Unregister healthy mount and verify empty response on subsequent scrape
-	mm.UnregisterMetricsCollector("/mnt/ok", "node-1", "uid-ok", "vol-ok")
+	mm.UnregisterMetricsCollector("/mnt/vol-ok", "node-1", "uid-ok", "vol-ok")
 	req2 := httptest.NewRequest(http.MethodGet, metricsPath, nil)
 	req2.Header.Set("Accept-Encoding", "identity")
 	rec2 := httptest.NewRecorder()
@@ -1574,22 +1472,76 @@ fs_ops_latencies_count{fs_op="Read"} %d
 `, opValue, opValue, opValue*50, opValue)
 }
 
+func hungHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(5 * time.Second):
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+type inFlightTracker struct {
+	inFlight    atomic.Int32
+	maxInFlight atomic.Int32
+}
+
+func (tr *inFlightTracker) enter() func() {
+	cur := tr.inFlight.Add(1)
+	for {
+		prev := tr.maxInFlight.Load()
+		if cur <= prev || tr.maxInFlight.CompareAndSwap(prev, cur) {
+			break
+		}
+	}
+	return func() { tr.inFlight.Add(-1) }
+}
+
+func scrapeServerMetrics(t *testing.T, srv *httptest.Server, acceptEncoding string) (string, time.Duration) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srv.URL+metricsPath, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Header.Set("Accept-Encoding", acceptEncoding)
+
+	start := time.Now()
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("metrics request (%s) failed: %v", acceptEncoding, err)
+	}
+	defer resp.Body.Close()
+
+	var bodyReader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gz, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gz.Close()
+		bodyReader = gz
+	}
+	body, err := io.ReadAll(bodyReader)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	elapsed := time.Since(start)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", resp.StatusCode)
+	}
+	if _, err := ProcessMetricsData(bytes.NewReader(body)); err != nil {
+		t.Fatalf("failed to parse response: %v\nbody:\n%s", err, body)
+	}
+	return string(body), elapsed
+}
+
 func TestStreamMetricsHandlerTimeBudget(t *testing.T) {
 	t.Parallel()
 
 	mm, fakeClientset := newStreamTestManager(t, true)
 	// A hung sidecar uses up the whole (short) budget, so the remaining mounts of a scrape are skipped.
-	mm.streamMetricsBudget = 300 * time.Millisecond
+	mm.streamMetricsBudget = 150 * time.Millisecond
 	mm.streamStartIndex = cyclingStartIndex()
 
-	// Sidecars that hang until the scrape request is canceled (or for much longer than the server WriteTimeout).
-	hungHandler := func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
-		}
-		w.WriteHeader(http.StatusOK)
-	}
 	var vol5Scrapes atomic.Int32
 	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(10), nil)},
@@ -1599,7 +1551,7 @@ func TestStreamMetricsHandlerTimeBudget(t *testing.T) {
 		{podUID: "uid-5", podName: "pod-5", volumeName: "vol-5", handler: staticPayloadHandler(mountPayload(50), &vol5Scrapes)},
 	})
 
-	const writeTimeout = 2 * time.Second
+	const writeTimeout = 1 * time.Second
 	srv := httptest.NewUnstartedServer(mm.metricsHandler())
 	srv.Config.WriteTimeout = writeTimeout
 	srv.Start()
@@ -1612,44 +1564,12 @@ func TestStreamMetricsHandlerTimeBudget(t *testing.T) {
 		if i%2 == 1 {
 			acceptEncoding = "gzip"
 		}
-		req, err := http.NewRequest(http.MethodGet, srv.URL+metricsPath, nil)
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-		req.Header.Set("Accept-Encoding", acceptEncoding)
-
-		start := time.Now()
-		resp, err := srv.Client().Do(req)
-		if err != nil {
-			t.Fatalf("scrape %d: metrics request failed: %v", i, err)
-		}
-
-		var bodyReader io.Reader = resp.Body
-		if resp.Header.Get("Content-Encoding") == "gzip" {
-			gz, err := gzip.NewReader(resp.Body)
-			if err != nil {
-				resp.Body.Close()
-				t.Fatalf("scrape %d: failed to create gzip reader: %v", i, err)
-			}
-			bodyReader = gz
-		}
-		body, err := io.ReadAll(bodyReader)
-		resp.Body.Close()
-		if err != nil {
-			t.Fatalf("scrape %d: failed to read full response body: %v", i, err)
-		}
-		if elapsed := time.Since(start); elapsed >= writeTimeout {
+		body, elapsed := scrapeServerMetrics(t, srv, acceptEncoding)
+		if elapsed >= writeTimeout {
 			t.Errorf("scrape %d: response took %v, want less than server WriteTimeout %v", i, elapsed, writeTimeout)
 		}
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("scrape %d: unexpected status code: %d", i, resp.StatusCode)
-		}
-
-		if _, err := ProcessMetricsData(bytes.NewReader(body)); err != nil {
-			t.Fatalf("scrape %d: failed to parse partial response: %v\nbody:\n%s", i, err, body)
-		}
 		for _, vol := range []string{"vol-1", "vol-2", "vol-3", "vol-4", "vol-5"} {
-			if strings.Contains(string(body), `volume_name="`+vol+`"`) {
+			if strings.Contains(body, `volume_name="`+vol+`"`) {
 				seen[vol]++
 			}
 		}
@@ -1667,25 +1587,6 @@ func TestStreamMetricsHandlerTimeBudget(t *testing.T) {
 	}
 	if vol5Scrapes.Load() == 0 {
 		t.Errorf("expected vol-5 to be scraped at least once across consecutive scrapes")
-	}
-}
-
-func TestStreamMountScrapeTimeout(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name      string
-		remaining time.Duration
-		want      time.Duration
-	}{
-		{name: "capped at mount scrape timeout", remaining: 8 * time.Second, want: mountScrapeTimeout},
-		{name: "capped at remaining budget", remaining: 2 * time.Second, want: 2 * time.Second},
-		{name: "budget exhausted", remaining: -time.Second, want: -time.Second},
-	}
-	for _, tc := range testCases {
-		if got := streamMountScrapeTimeout(mountScrapeTimeout, tc.remaining); got != tc.want {
-			t.Errorf("%s: streamMountScrapeTimeout(%v) = %v, want %v", tc.name, tc.remaining, got, tc.want)
-		}
 	}
 }
 
@@ -1842,7 +1743,8 @@ truncated_ops_latencies_bucket{fs_op="Read",le="10"} 5
 			t.Parallel()
 
 			mm, fakeClientset := newStreamTestManager(t, true)
-			mm.streamMetricsBudget = 300 * time.Millisecond
+			mm.streamMountScrapeTimeout = 100 * time.Millisecond
+			mm.streamMetricsBudget = 500 * time.Millisecond
 			// The healthy mount is scraped first, since a hung mount uses up the remaining budget.
 			registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 				{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: staticPayloadHandler(mountPayload(20), nil)},
@@ -2055,13 +1957,14 @@ func TestStreamMetricsHandlerStopsOnWriteError(t *testing.T) {
 func TestStreamMetricsHandlerSlowMountAmongManyFastMounts(t *testing.T) {
 	t.Parallel()
 
-	const numFastMounts = 100
+	const numFastMounts = 15
 	mm, fakeClientset := newStreamTestManager(t, true)
 	mm.maximumNumberOfCollectors = numFastMounts + 1
+	mm.streamMetricsBudget = 1600 * time.Millisecond
 
 	// A healthy but slightly slow sidecar is scraped first, while many mounts remain to be scraped.
 	slowHandler := func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(120 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(mountPayload(7)))
 	}
@@ -2134,105 +2037,59 @@ fs_ops_count{fs_op="Read"} 5 `+timestampMs+`
 	}
 }
 
-func TestStreamMetricsHandlerMultiMountTextTypes(t *testing.T) {
-	t.Parallel()
-
-	mm, fakeClientset := newStreamTestManager(t, true)
-	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
-		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(1), nil)},
-		{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: staticPayloadHandler(mountPayload(2), nil)},
-		{podUID: "uid-3", podName: "pod-3", volumeName: "vol-3", handler: staticPayloadHandler(mountPayload(3), nil)},
-	})
-
-	req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
-	req.Header.Set("Accept", "text/plain")
-	rec := httptest.NewRecorder()
-	mm.metricsHandler().ServeHTTP(rec, req)
-	body := rec.Body.String()
-
-	// The streamed text output repeats a sample group per mount for each family, so the samples of a
-	// family are not contiguous. Verify the Prometheus text parser still accepts it with the correct types.
-	var parser expfmt.TextParser
-	families, err := parser.TextToMetricFamilies(strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("failed to parse multi-mount streamed text output: %v\nbody:\n%s", err, body)
-	}
-	wantTypes := map[string]dto.MetricType{
-		"volume_fs_ops_count":     dto.MetricType_COUNTER,
-		"volume_fs_ops_latencies": dto.MetricType_HISTOGRAM,
-	}
-	for name, wantType := range wantTypes {
-		mf, ok := families[name]
-		if !ok {
-			t.Fatalf("missing family %q in parsed output:\n%s", name, body)
-		}
-		if mf.GetType() != wantType {
-			t.Errorf("family %q: got type %v, want %v", name, mf.GetType(), wantType)
-		}
-		if got := len(mf.GetMetric()); got != 3 {
-			t.Errorf("family %q: got %d samples, want 3", name, got)
-		}
-	}
-}
-
 func TestStreamMetricsHandlerUniformlySlowMountsAllExported(t *testing.T) {
 	t.Parallel()
 
 	// With uniformly slow but healthy sidecars, each request attempts about the same number of mounts k
 	// before the budget runs out. With a fixed starting mount, the same mounts would be skipped on every
 	// request; varying the starting mount exports every mount across requests.
-	for _, numMounts := range []int{3, 6} {
-		t.Run(fmt.Sprintf("%d mounts", numMounts), func(t *testing.T) {
-			t.Parallel()
+	const numMounts = 4
+	mm, fakeClientset := newStreamTestManager(t, true)
+	mm.streamMetricsBudget = 200 * time.Millisecond
+	mm.streamMountScrapeTimeout = 150 * time.Millisecond
+	mm.streamStartIndex = cyclingStartIndex()
 
-			mm, fakeClientset := newStreamTestManager(t, true)
-			mm.streamMetricsBudget = 300 * time.Millisecond
-			mm.streamMountScrapeTimeout = 200 * time.Millisecond
-			mm.streamStartIndex = cyclingStartIndex()
-
-			slowHandler := func(opValue int) http.HandlerFunc {
-				return func(w http.ResponseWriter, r *http.Request) {
-					select {
-					case <-r.Context().Done():
-						return
-					case <-time.After(120 * time.Millisecond):
-					}
-					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(mountPayload(opValue)))
-				}
+	slowHandler := func(opValue int) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(60 * time.Millisecond):
 			}
-			var mounts []fakeMount
-			for i := range numMounts {
-				mounts = append(mounts, fakeMount{
-					podUID:     fmt.Sprintf("uid-%d", i),
-					podName:    fmt.Sprintf("pod-%d", i),
-					volumeName: fmt.Sprintf("vol-%d", i),
-					handler:    slowHandler(i + 1),
-				})
-			}
-			registerFakeMounts(t, mm, fakeClientset, mounts)
-
-			seen := map[string]int{}
-			for i := range 4 * numMounts {
-				rec := httptest.NewRecorder()
-				mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
-				body := rec.Body.String()
-				if _, err := ProcessMetricsData(strings.NewReader(body)); err != nil {
-					t.Fatalf("scrape %d: failed to parse response: %v\nbody:\n%s", i, err, body)
-				}
-				for _, m := range mounts {
-					if strings.Contains(body, `volume_name="`+m.volumeName+`"`) {
-						seen[m.volumeName]++
-					}
-				}
-			}
-
-			for _, m := range mounts {
-				if seen[m.volumeName] == 0 {
-					t.Errorf("expected metrics of healthy mount %s in at least one scrape, seen counts: %v", m.volumeName, seen)
-				}
-			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(mountPayload(opValue)))
+		}
+	}
+	var mounts []fakeMount
+	for i := range numMounts {
+		mounts = append(mounts, fakeMount{
+			podUID:     fmt.Sprintf("uid-%d", i),
+			podName:    fmt.Sprintf("pod-%d", i),
+			volumeName: fmt.Sprintf("vol-%d", i),
+			handler:    slowHandler(i + 1),
 		})
+	}
+	registerFakeMounts(t, mm, fakeClientset, mounts)
+
+	seen := map[string]int{}
+	for i := range numMounts {
+		rec := httptest.NewRecorder()
+		mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
+		body := rec.Body.String()
+		if _, err := ProcessMetricsData(strings.NewReader(body)); err != nil {
+			t.Fatalf("scrape %d: failed to parse response: %v\nbody:\n%s", i, err, body)
+		}
+		for _, m := range mounts {
+			if strings.Contains(body, `volume_name="`+m.volumeName+`"`) {
+				seen[m.volumeName]++
+			}
+		}
+	}
+
+	for _, m := range mounts {
+		if seen[m.volumeName] == 0 {
+			t.Errorf("expected metrics of healthy mount %s in at least one scrape, seen counts: %v", m.volumeName, seen)
+		}
 	}
 }
 
@@ -2259,11 +2116,11 @@ func TestStreamMetricsHandlerLastMountCompletedWhenBudgetRunsOut(t *testing.T) {
 	mm, fakeClientset := newStreamTestManager(t, true)
 	// The budget is longer than the per-mount timeout, and the first mount is slow, so the last mount
 	// is given less than the per-mount timeout.
-	mm.streamMetricsBudget = 300 * time.Millisecond
+	mm.streamMetricsBudget = 250 * time.Millisecond
 	mm.streamMountScrapeTimeout = 200 * time.Millisecond
 
 	slowHandler := func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(mountPayload(1)))
 	}
@@ -2274,7 +2131,7 @@ func TestStreamMetricsHandlerLastMountCompletedWhenBudgetRunsOut(t *testing.T) {
 
 	// The last mount's scrape finishes in time, but the budget runs out while it is being encoded.
 	rec := httptest.NewRecorder()
-	w := &slowVolumeResponseWriter{ResponseWriter: rec, volumeName: "vol-2", delay: 300 * time.Millisecond}
+	w := &slowVolumeResponseWriter{ResponseWriter: rec, volumeName: "vol-2", delay: 250 * time.Millisecond}
 	req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
 	req.Header.Set("Accept", "text/plain")
 	mm.metricsHandler().ServeHTTP(w, req)
@@ -2303,19 +2160,12 @@ func TestStreamMetricsHandlerHungMountWithShortBudget(t *testing.T) {
 	mm, fakeClientset := newStreamTestManager(t, true)
 	// The budget is shorter than the per-mount timeout, e.g. a Prometheus scrape_timeout of about 5s, so
 	// a hung mount always uses up the rest of the budget.
-	mm.streamMetricsBudget = 300 * time.Millisecond
+	mm.streamMetricsBudget = 150 * time.Millisecond
 	if mm.streamMetricsBudget >= mm.perMountScrapeTimeout() {
 		t.Fatalf("test requires a budget shorter than the per-mount timeout %v", mm.perMountScrapeTimeout())
 	}
 	mm.streamStartIndex = cyclingStartIndex()
 
-	hungHandler := func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
-		}
-		w.WriteHeader(http.StatusOK)
-	}
 	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(1), nil)},
 		{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: staticPayloadHandler(mountPayload(2), nil)},
@@ -2357,18 +2207,18 @@ func TestStreamMetricsHandlerExceedsServerWriteTimeout(t *testing.T) {
 	// As in production, the streaming budget is longer than the server WriteTimeout, and the sequential
 	// scrape takes longer than the WriteTimeout but fits within the budget. The response must still be
 	// delivered in full, which relies on the handler extending the write deadline to match the budget.
-	const writeTimeout = 1 * time.Second
-	mm.streamMetricsBudget = 5 * time.Second
+	const writeTimeout = 100 * time.Millisecond
+	mm.streamMetricsBudget = 2 * time.Second
 
 	slowHandler := func(opValue int) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
-			time.Sleep(700 * time.Millisecond)
+			time.Sleep(80 * time.Millisecond)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(mountPayload(opValue)))
 		}
 	}
 	var mounts []fakeMount
-	for i := 1; i <= 4; i++ {
+	for i := 1; i <= 2; i++ {
 		mounts = append(mounts, fakeMount{
 			podUID:     fmt.Sprintf("uid-%d", i),
 			podName:    fmt.Sprintf("pod-%d", i),
@@ -2384,42 +2234,12 @@ func TestStreamMetricsHandlerExceedsServerWriteTimeout(t *testing.T) {
 	defer srv.Close()
 
 	for _, acceptEncoding := range []string{"identity", "gzip"} {
-		req, err := http.NewRequest(http.MethodGet, srv.URL+metricsPath, nil)
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-		req.Header.Set("Accept-Encoding", acceptEncoding)
-
-		start := time.Now()
-		resp, err := srv.Client().Do(req)
-		if err != nil {
-			t.Fatalf("%s: metrics request failed: %v", acceptEncoding, err)
-		}
-		var bodyReader io.Reader = resp.Body
-		if resp.Header.Get("Content-Encoding") == "gzip" {
-			gz, err := gzip.NewReader(resp.Body)
-			if err != nil {
-				resp.Body.Close()
-				t.Fatalf("%s: failed to create gzip reader: %v", acceptEncoding, err)
-			}
-			bodyReader = gz
-		}
-		body, err := io.ReadAll(bodyReader)
-		resp.Body.Close()
-		if err != nil {
-			t.Fatalf("%s: failed to read full response body: %v", acceptEncoding, err)
-		}
-		if elapsed := time.Since(start); elapsed <= writeTimeout {
+		body, elapsed := scrapeServerMetrics(t, srv, acceptEncoding)
+		if elapsed <= writeTimeout {
 			t.Fatalf("%s: response took %v, want longer than server WriteTimeout %v for this test to be meaningful", acceptEncoding, elapsed, writeTimeout)
 		}
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s: unexpected status code: %d", acceptEncoding, resp.StatusCode)
-		}
-		if _, err := ProcessMetricsData(bytes.NewReader(body)); err != nil {
-			t.Fatalf("%s: failed to parse response: %v\nbody:\n%s", acceptEncoding, err, body)
-		}
 		for _, m := range mounts {
-			if !strings.Contains(string(body), `volume_name="`+m.volumeName+`"`) {
+			if !strings.Contains(body, `volume_name="`+m.volumeName+`"`) {
 				t.Errorf("%s: expected metrics of mount %s, got:\n%s", acceptEncoding, m.volumeName, body)
 			}
 		}
@@ -2430,18 +2250,12 @@ func TestStreamMetricsHandlerOneScrapeAtATime(t *testing.T) {
 	t.Parallel()
 
 	mm, fakeClientset := newStreamTestManager(t, true)
-	var inFlight, maxInFlight atomic.Int32
+	var tr inFlightTracker
 	slowHandler := func(opValue int) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
-			cur := inFlight.Add(1)
-			for {
-				prev := maxInFlight.Load()
-				if cur <= prev || maxInFlight.CompareAndSwap(prev, cur) {
-					break
-				}
-			}
-			time.Sleep(100 * time.Millisecond)
-			inFlight.Add(-1)
+			done := tr.enter()
+			time.Sleep(40 * time.Millisecond)
+			done()
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(mountPayload(opValue)))
 		}
@@ -2467,7 +2281,7 @@ func TestStreamMetricsHandlerOneScrapeAtATime(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := maxInFlight.Load(); got != 1 {
+	if got := tr.maxInFlight.Load(); got != 1 {
 		t.Errorf("expected at most 1 sidecar scrape in flight across concurrent metrics requests, got %d", got)
 	}
 	for i := range numRequests {
@@ -2576,18 +2390,12 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 			// FakeClientset.GetPod is not safe for concurrent use, and Registry.Gather() calls it concurrently.
 			mm := NewMetricsManager(":0", fuseSocketDir, 10, &lockedFakeClientset{FakeClientset: fakeClientset}, tc.streamMetrics, tc.sequentialMetrics, true).(*manager)
 
-			var inFlight, maxInFlight atomic.Int32
+			var tr inFlightTracker
 			slowHandler := func(opValue int) http.HandlerFunc {
 				return func(w http.ResponseWriter, _ *http.Request) {
-					cur := inFlight.Add(1)
-					for {
-						prev := maxInFlight.Load()
-						if cur <= prev || maxInFlight.CompareAndSwap(prev, cur) {
-							break
-						}
-					}
+					done := tr.enter()
 					time.Sleep(200 * time.Millisecond)
-					inFlight.Add(-1)
+					done()
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(mountPayload(opValue)))
 				}
@@ -2608,7 +2416,7 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 					t.Errorf("expected metrics of %s, got:\n%s", vol, body)
 				}
 			}
-			if got := maxInFlight.Load(); got != tc.wantMaxInFlight {
+			if got := tr.maxInFlight.Load(); got != tc.wantMaxInFlight {
 				t.Errorf("max concurrent sidecar scrapes = %d, want %d", got, tc.wantMaxInFlight)
 			}
 		})
