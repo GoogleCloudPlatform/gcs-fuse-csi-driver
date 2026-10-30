@@ -1115,3 +1115,83 @@ func TestCheckForKernelReader(t *testing.T) {
 		})
 	}
 }
+
+func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
+	t.Parallel()
+
+	const minVersion = "v1.24.17-gke.0"
+	testCases := []struct {
+		name                     string
+		imageName                string
+		assumeGoodSidecarVersion bool
+		expected                 bool
+	}{
+		{
+			name:      "empty image",
+			imageName: "",
+			expected:  false,
+		},
+		{
+			name:                     "empty image with assume good sidecar version",
+			imageName:                "",
+			assumeGoodSidecarVersion: true,
+			expected:                 false,
+		},
+		{
+			name:                     "assume good sidecar version",
+			imageName:                "us-docker.pkg.dev/my-project/my-repo/gcs-fuse-csi-driver-sidecar-mounter:v1.0.0",
+			assumeGoodSidecarVersion: true,
+			expected:                 true,
+		},
+		{
+			name:      "prow boskos image",
+			imageName: "gcr.io/prow-gob-internal-boskos-447/gcs-fuse-csi-driver/gcs-fuse-csi-driver-sidecar-mounter:v1.15.1-gke.0-14-gf752039e_linux_amd64",
+			expected:  true,
+		},
+		{
+			name:      "oss-gcp-community image",
+			imageName: "gcr.io/oss-gcp-community/gcs-fuse-csi-driver-sidecar-mounter:v1.15.1-gke.0-14-gf752039e",
+			expected:  true,
+		},
+		{
+			name:      "same version as the minimum",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.17-gke.0",
+			expected:  true,
+		},
+		{
+			name:      "older version",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.16-gke.3",
+			expected:  false,
+		},
+		{
+			name:      "newer gke build with digest",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.17-gke.1@sha256:c8f4f9e2b6a0d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1",
+			expected:  true,
+		},
+		{
+			name:      "customer name in the tag",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.17-magellan-gke.0",
+			expected:  true,
+		},
+		{
+			name:      "gke.gcr.io image",
+			imageName: "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.25.0-gke.2",
+			expected:  true,
+		},
+		{
+			name:      "custom image with a newer version",
+			imageName: "us-docker.pkg.dev/my-project/my-repo/gcs-fuse-csi-driver-sidecar-mounter:v1.30.0",
+			expected:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := IsSidecarVersionSupportedForGivenFeature(tc.imageName, minVersion, tc.assumeGoodSidecarVersion)
+			if got != tc.expected {
+				t.Errorf("IsSidecarVersionSupportedForGivenFeature(%q, %q, %v) = %v, expected %v", tc.imageName, minVersion, tc.assumeGoodSidecarVersion, got, tc.expected)
+			}
+		})
+	}
+}

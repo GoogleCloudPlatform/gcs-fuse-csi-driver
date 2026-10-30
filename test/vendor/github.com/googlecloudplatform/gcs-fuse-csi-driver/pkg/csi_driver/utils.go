@@ -33,7 +33,6 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	pbSanitizer "github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
-	"golang.org/x/mod/semver"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -99,16 +98,6 @@ const (
 )
 
 var (
-	managedSidecarPatternAR  = `.*/gke-release(-staging)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+\.*`
-	managedSidecarRegexAR    = regexp.MustCompile(managedSidecarPatternAR)
-	managedSidecarPatternGCR = `^(gke|staging-gke|master-gke)\.gcr\.io/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+.*`
-	managedSidecarRegexGCR   = regexp.MustCompile(managedSidecarPatternGCR)
-
-	strictManagedSidecarPatternAR = `^(gcr\.io|[^/]*\.gcr\.io|[^/]*-docker\.pkg\.dev)/gke-release(-staging)?(/gke-release)?/gcs-fuse-csi-driver-sidecar-mounter:v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*-gke\.\d+.*`
-	strictManagedSidecarRegexAR   = regexp.MustCompile(strictManagedSidecarPatternAR)
-
-	customerVersionRegex = regexp.MustCompile(`^(v\d+\.\d+\.\d+)(?:-[a-zA-Z0-9]+)+(-gke\.\d+.*)$`)
-
 	// Regex to detect deprecated flag error messages from gcsfuse. Should match the flags using .MarkDeprecated() in https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/cfg/config.go
 	deprecatedFlagPatterns = regexp.MustCompile(`Flag .*? has been deprecated`)
 	// Regex to detect invalid argument error messages from gcsfuse. Should match the flags using InvalidValueError in https://github.com/spf13/pflag/blob/b85eb9e15911a41cd7c05d955503542e9befadf4/errors.go#L116,
@@ -670,44 +659,6 @@ func getSidecarContainerStatus(isInitContainer bool, pod *corev1.Pod) (*corev1.C
 	return nil, errors.New("the sidecar container was not found")
 }
 
-func isManagedSidecarImage(imageName string) bool {
-	return managedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
-}
-
-func isStrictManagedSidecarImage(imageName string) bool {
-	return strictManagedSidecarRegexAR.MatchString(imageName) || managedSidecarRegexGCR.MatchString(imageName)
-}
-
-func (d *GCSDriver) isSidecarVersionSupportedForGivenFeature(imageName string, sidecarMinSupportedVersion string) bool {
-	if imageName == "" {
-		return false
-	}
-
-	if d.config.AssumeGoodSidecarVersion {
-		klog.V(4).Infof("Assuming good sidecar version from flag")
-		return true
-	}
-
-	// If the image is from our non-managed testgrid, just assume the sidecar version is supported
-	// since it's built off latest code in main
-	klog.V(4).Infof("Doing version check to enable managed sidecar features for sidecar image %s, need minimum supported version %s", imageName, sidecarMinSupportedVersion)
-	if strings.Contains(imageName, "prow-gob-internal-boskos") || strings.Contains(imageName, "oss-gcp-community") {
-		return true
-	}
-
-	if !isManagedSidecarImage(imageName) {
-		klog.Warningf("sidecarMinSupportedVersion check skipped since this %q is not a GKE managed image", imageName)
-		return false
-	}
-	imageVersion := strings.Split(strings.Split(imageName, ":")[1], "@")[0]
-	imageVersion = customerVersionRegex.ReplaceAllString(imageVersion, "$1$2")
-	if semver.Compare(imageVersion, sidecarMinSupportedVersion) >= 0 {
-		klog.Infof("managed sidecar version satisfies the minimum required version %q", sidecarMinSupportedVersion)
-		return true
-	}
-	return false
-}
-
 func writeDriverFlagsFile(flagMap map[string]string, emptyDirBasePath string) error {
 	if err := os.MkdirAll(emptyDirBasePath, 0750); err != nil {
 		return fmt.Errorf("failed to create directory %q: %w", emptyDirBasePath, err)
@@ -791,12 +742,12 @@ func (driver *GCSDriver) generateDisallowedFlagsMap(gcsFuseSidecarImage string) 
 		return disallowedFlags
 	}
 
-	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion)
+	shouldPassProfilesFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableGcsfuseProfilesInternal && util.IsSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseProfilesMinVersion, driver.config.AssumeGoodSidecarVersion)
 	if !shouldPassProfilesFlag {
 		disallowedFlags[GCSFuseProfileFlag] = true
 	}
 
-	shouldPassFileCacheMediumFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled && driver.isSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseFileCacheMediumMinVersion)
+	shouldPassFileCacheMediumFlag := driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled && util.IsSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, GCSFuseFileCacheMediumMinVersion, driver.config.AssumeGoodSidecarVersion)
 	if !shouldPassFileCacheMediumFlag {
 		disallowedFlags[util.FileCacheMediumConst] = true
 	}
