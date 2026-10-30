@@ -72,7 +72,6 @@ spec:
               name: metrics
           resources:
             limits:
-              cpu: 200m
               memory: 200Mi
             requests:
               cpu: 5m
@@ -99,6 +98,8 @@ spec:
                 configMapKeyRef:
                   name: gcsfusecsi-node-config
                   key: universe-domain
+            - name: GOMAXPROCS
+              value: "2"
           volumeMounts:
             - name: kubelet-pods-dir
               mountPath: /var/lib/kubelet/pods
@@ -134,7 +135,6 @@ spec:
             - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
           resources:
             limits:
-              cpu: 50m
               memory: 100Mi
             requests:
               cpu: 10m
@@ -142,6 +142,8 @@ spec:
           env:
             - name: DRIVER_REG_SOCK_PATH
               value: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/csi.sock
+            - name: GOMAXPROCS
+              value: "2"
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
