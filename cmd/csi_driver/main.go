@@ -95,7 +95,7 @@ var (
 	projectNumber                 = flag.String("project-number", "", "The GKE Project Number for which the cluster is deployed")
 
 	// Stream metrics export
-	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Currently has no effect: the text metrics response of each mount is always parsed as a whole, so that a response that is cut off never exports partial metric families.")
+	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Decode and export the metrics of each mount one metric family at a time, instead of decoding the mount's entire metrics response into memory first. The driver asks the sidecar for the Prometheus protobuf delimited format, which is decoded one metric family per message; the metrics of sidecars that reply with the text format are parsed as a whole. Combined with --sequential-metrics-export, this bounds the memory usage of metrics export to roughly one metric family.")
 
 	// Sequential metrics export
 	sequentialMetricsExport = flag.Bool("sequential-metrics-export", false, "Scrape and export the metrics of each mount sequentially, one mount at a time, to bound the memory usage of metrics export. In the Prometheus text format, each metric family's HELP/TYPE lines are emitted once and its samples are written as one group per mount, so samples of a family are not contiguous.")

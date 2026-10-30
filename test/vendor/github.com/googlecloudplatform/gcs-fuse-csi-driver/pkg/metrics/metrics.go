@@ -18,6 +18,7 @@ limitations under the License.
 package metrics
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -39,6 +40,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protodelim"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
@@ -59,6 +61,7 @@ const (
 	contentTypeHeader     = "Content-Type"
 	contentEncodingHeader = "Content-Encoding"
 	acceptEncodingHeader  = "Accept-Encoding"
+	acceptHeader          = "Accept"
 
 	controllerTypeJobSet          = "jobset"
 	controllerTypeLeaderWorkerSet = "leaderworkerset"
@@ -93,6 +96,10 @@ const (
 
 	// mountScrapeTimeout is the maximum time allowed for scraping the metrics of a single mount.
 	mountScrapeTimeout = 5 * time.Second
+
+	// maxMetricFamilyBytes is the maximum wire size of a single delimited protobuf MetricFamily message
+	// accepted from a sidecar metrics endpoint.
+	maxMetricFamilyBytes = 512 << 10 // 512 KiB
 )
 
 var gzipPool = sync.Pool{
@@ -100,6 +107,14 @@ var gzipPool = sync.Pool{
 		return gzip.NewWriter(nil)
 	},
 }
+
+// metricsAcceptHeader is the Accept header sent to the sidecar when scraping a mount's metrics.
+// Why: The protobuf delimited format is preferred because it can be decoded one MetricFamily message
+// at a time (see decodeMetricFamilies), so a mount's metrics can be processed without an
+// application-level text parser and without holding the whole response in memory. The text format is
+// accepted as a fallback, e.g. for sidecars that do not forward the Accept header to gcsfuse (promhttp),
+// which then reply with text.
+var metricsAcceptHeader = string(expfmt.NewFormat(expfmt.TypeProtoDelim)) + ";q=1.0, " + string(expfmt.NewFormat(expfmt.TypeTextPlain)) + ";q=0.5"
 
 type Manager interface {
 	InitializeHTTPHandler()
@@ -126,8 +141,9 @@ type manager struct {
 	// scraping, given the number of mounts. Defaults to rand.IntN; overridden in tests.
 	sequentialStartIndex func(n int) int
 	// sequentialScrapeSlot allows only one sequentialMetricsHandler request to scrape mounts at a time.
-	// Why: Each in-flight request holds up to one mount's parsed metrics, so concurrent requests (e.g.
-	// from several scrapers) would multiply the peak memory that sequential scraping is meant to bound.
+	// Why: Each in-flight request holds up to one mount's parsed metrics (or one metric family when
+	// streamMetrics is enabled), so concurrent requests (e.g. from several scrapers) would multiply
+	// the peak memory that sequential scraping is meant to bound.
 	sequentialScrapeSlot chan struct{}
 
 	maximumNumberOfCollectors int
@@ -171,7 +187,8 @@ func (mm *manager) metricsHandler() http.Handler {
 	// holds every mount's *dto.MetricFamily objects in memory before writing the HTTP response, so its peak
 	// memory grows with the number of mounts. Instead, sequentialMetricsHandler scrapes and encodes mounts one
 	// at a time, and only one such request runs at a time, bounding peak memory to roughly one mount's parsed
-	// metrics.
+	// metrics, or to roughly one metric family when streamMetrics (--stream-metrics-export) is also enabled,
+	// since then each mount's response is parsed and encoded one family at a time.
 	if mm.sequentialMetrics {
 		return http.HandlerFunc(mm.sequentialMetricsHandler)
 	}
@@ -579,7 +596,7 @@ type metricsCollector struct {
 	volumeName                       string
 	httpClient                       *http.Client
 	clientset                        clientset.Interface
-	streamMetrics                    bool // --stream-metrics-export; unused until metrics are decoded one family at a time.
+	streamMetrics                    bool
 	enableGcsFuseVolumeMetricsSchema bool
 }
 
@@ -654,9 +671,18 @@ func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // scrapeMetricFamilies scrapes the sidecar metrics endpoint, bounded by timeout and parentCtx, and calls
-// handleFamily for each parsed MetricFamily, in name order, until it returns false. It returns true only
-// if the response was received and fully parsed, and every family was passed to handleFamily without
-// early termination.
+// handleFamily for each parsed MetricFamily until it returns false. It returns true only if the response
+// was received and fully parsed, and every family was passed to handleFamily without early termination.
+//
+// The request asks for the protobuf delimited exposition format (see metricsAcceptHeader), which
+// decodeMetricFamilies reads one MetricFamily message at a time. With streamMetrics (--stream-metrics-export)
+// enabled, each decoded family is handled, in response order, before the next one is decoded, so that only
+// one family is held in memory at a time; a message that is cut off or cannot be decoded ends the scrape,
+// but the families handled before it stay handled.
+//
+// Otherwise, i.e. for text format responses or with streamMetrics disabled, the whole response is parsed
+// before any family is handled, families are handled in name order, and nothing is handled if the response
+// cannot be parsed.
 func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeout time.Duration, handleFamily func(*dto.MetricFamily) bool) bool {
 	if parentCtx.Err() != nil || c.clientset == nil {
 		return false
@@ -678,6 +704,7 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 
 		return false
 	}
+	req.Header.Set(acceptHeader, metricsAcceptHeader)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -693,12 +720,37 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 		return false
 	}
 
-	// Why: Do not use ProcessMetricsDataAsStream here. The underlying expfmt text decoder yields the
-	// partially parsed families before reporting a parse error, e.g. when the per-mount scrape timeout
-	// cuts the body off mid-family, which would emit truncated families (such as histograms with
-	// missing buckets). Parse the whole body first and drop the mount on any error. Peak memory is the
-	// same, since the text decoder also builds the full per-mount map before yielding anything.
-	families, err := ProcessMetricsData(resp.Body)
+	// Why: The Content-Type decides the decoder, so that a sidecar that ignores the Accept header and
+	// replies with text is still scraped correctly.
+	format := expfmt.ResponseFormat(resp.Header)
+	isProto := format.FormatType() == expfmt.TypeProtoDelim
+
+	if isProto && c.streamMetrics {
+		for mf, err := range decodeMetricFamilies(resp.Body) {
+			if err != nil {
+				klog.Errorf("failed to decode metrics data, dropping the remaining metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
+
+				return false
+			}
+			if !handleFamily(mf) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Why: The whole body is parsed before any family is handled, so a mount whose body cannot be
+	// parsed, e.g. because the per-mount scrape timeout cut it off mid-family, is dropped entirely,
+	// at the cost of holding all of the mount's families in memory at once. For the text format this
+	// is the only option: expfmt's text decoder parses the whole body into a map of all families
+	// before yielding anything, and yields the family that was cut off (e.g. a histogram with
+	// missing buckets) before reporting the error, so it must not be used to emit families early.
+	var families map[string]*dto.MetricFamily
+	if isProto {
+		families, err = collectMetricFamilies(decodeMetricFamilies(resp.Body))
+	} else {
+		families, err = ProcessMetricsData(resp.Body)
+	}
 	if err != nil {
 		klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
 
@@ -714,26 +766,53 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 	return true
 }
 
-// ProcessMetricsDataAsStream processes metrics that follow Prometheus text format,
-// returning an iterator of MetricFamily.
-func ProcessMetricsDataAsStream(metricsReader io.Reader) iter.Seq2[*dto.MetricFamily, error] {
+// decodeMetricFamilies yields the MetricFamily messages read from r in the protobuf delimited
+// exposition format, one message at a time, bounding each message to maxMetricFamilyBytes. A message
+// that is cut off, exceeds maxMetricFamilyBytes, or cannot be decoded yields a non-nil error, which
+// ends the iteration.
+// Why: expfmt.NewDecoder is not used because it reads protobuf delimited messages with
+// protodelim.UnmarshalOptions{MaxSize: -1}, i.e. without any bound on the size of a single message.
+func decodeMetricFamilies(r io.Reader) iter.Seq2[*dto.MetricFamily, error] {
 	return func(yield func(*dto.MetricFamily, error) bool) {
-		decoder := expfmt.NewDecoder(metricsReader, expfmt.FmtText)
+		br := bufio.NewReader(r)
+		unmarshalOpts := protodelim.UnmarshalOptions{MaxSize: maxMetricFamilyBytes}
 		for {
-			var mf dto.MetricFamily
-			err := decoder.Decode(&mf)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				yield(nil, err)
+			mf := &dto.MetricFamily{}
+			err := unmarshalOpts.UnmarshalFrom(br, mf)
+			if errors.Is(err, io.EOF) {
 				return
 			}
-			if !yield(&mf, nil) {
+			if err != nil {
+				yield(nil, fmt.Errorf("failed to decode metric family: %w", err))
+				return
+			}
+			if !yield(mf, nil) {
 				return
 			}
 		}
 	}
+}
+
+// collectMetricFamilies drains families into a map by name, returning the first error encountered.
+// Repeated families are merged; a family whose type conflicts with an earlier one is skipped.
+func collectMetricFamilies(families iter.Seq2[*dto.MetricFamily, error]) (map[string]*dto.MetricFamily, error) {
+	collected := map[string]*dto.MetricFamily{}
+	for mf, err := range families {
+		if err != nil {
+			return nil, err
+		}
+		prev, ok := collected[mf.GetName()]
+		if !ok {
+			collected[mf.GetName()] = mf
+			continue
+		}
+		if prev.GetType() != mf.GetType() {
+			klog.Errorf("metric family %q has conflicting type %v (already decoded as %v), skipping", mf.GetName(), mf.GetType(), prev.GetType())
+			continue
+		}
+		prev.Metric = append(prev.Metric, mf.GetMetric()...)
+	}
+	return collected, nil
 }
 
 // ProcessMetricsData processes metrics that follow Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,

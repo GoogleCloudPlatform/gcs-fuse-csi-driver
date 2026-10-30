@@ -467,12 +467,9 @@ func scrapeGCSFuseMetrics(ctx context.Context, f *framework.Framework, d *specs.
 	}
 	defer metricsFile.Close()
 
-	families := map[string]*dto.MetricFamily{}
-	for mf, err := range metricspkg.ProcessMetricsDataAsStream(metricsFile) {
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse metrics stream: %w", err)
-		}
-		families[mf.GetName()] = mf
+	families, err := metricspkg.ProcessMetricsData(metricsFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse metrics: %w", err)
 	}
 
 	return families, nil

@@ -20,8 +20,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +45,8 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protodelim"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -915,33 +919,6 @@ func validatePrometheusMetric(t *testing.T, metric prometheus.Counter, expectedC
 	}
 }
 
-func TestProcessMetricsDataAsStream(t *testing.T) {
-	metricsData := `
-# HELP fs_ops_count The cumulative number of ops processed by the file system.
-# TYPE fs_ops_count counter
-fs_ops_count{fs_op="GetInodeAttributes"} 26
-fs_ops_count{fs_op="LookUpInode"} 6
-# HELP gcs_request_count The cumulative number of GCS requests processed along with the GCS method.
-# TYPE gcs_request_count counter
-gcs_request_count{gcs_method="ListObjects"} 32
-gcs_request_count{gcs_method="StatObject"} 6
-`
-	reader := strings.NewReader(metricsData)
-	count := 0
-	for mf, err := range ProcessMetricsDataAsStream(reader) {
-		if err != nil {
-			t.Fatalf("unexpected error parsing stream: %v", err)
-		}
-		if *mf.Name != "fs_ops_count" && *mf.Name != "gcs_request_count" {
-			t.Errorf("unexpected metric name: %s", *mf.Name)
-		}
-		count++
-	}
-	if count != 2 {
-		t.Errorf("expected 2 metric families, got %d", count)
-	}
-}
-
 func TestEmitMetricFamily(t *testing.T) {
 	t.Parallel()
 
@@ -1167,114 +1144,119 @@ func TestStreamMetricsHandlerSequentialMounts(t *testing.T) {
 	t.Parallel()
 
 	for _, enableSchema := range []bool{false, true} {
-		t.Run(fmt.Sprintf("enableSchema=%v", enableSchema), func(t *testing.T) {
-			t.Parallel()
+		for _, protoSidecar := range []bool{false, true} {
+			t.Run(fmt.Sprintf("enableSchema=%v/protoSidecar=%v", enableSchema, protoSidecar), func(t *testing.T) {
+				t.Parallel()
 
-			mm, fakeClientset := newStreamTestManager(t, enableSchema)
-			var tr inFlightTracker
-			var scrapeOrderMu sync.Mutex
-			var scrapeOrder []string
+				mm, fakeClientset := newStreamTestManager(t, enableSchema)
+				var tr inFlightTracker
+				var scrapeOrderMu sync.Mutex
+				var scrapeOrder []string
 
-			var mounts []fakeMount
-			for i, opVal := range []int{10, 20, 30} {
-				volName := fmt.Sprintf("vol-%d", i+1)
-				payload := mountPayload(opVal) + fmt.Sprintf("# HELP grpc_client_attempt_started Total number of RPC attempts started.\n# TYPE grpc_client_attempt_started counter\ngrpc_client_attempt_started{grpc_method=\"ReadObject\"} %d\n", opVal)
-				mounts = append(mounts, fakeMount{
-					podUID:     fmt.Sprintf("uid-%d", i+1),
-					podName:    fmt.Sprintf("pod-%d", i+1),
-					volumeName: volName,
-					handler: func(w http.ResponseWriter, _ *http.Request) {
-						done := tr.enter()
-						time.Sleep(15 * time.Millisecond)
-						scrapeOrderMu.Lock()
-						scrapeOrder = append(scrapeOrder, volName)
-						scrapeOrderMu.Unlock()
-						done()
-						w.WriteHeader(http.StatusOK)
-						_, _ = w.Write([]byte(payload))
-					},
-				})
-			}
-			registerFakeMounts(t, mm, fakeClientset, mounts)
-
-			req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
-			rec := httptest.NewRecorder()
-			mm.metricsHandler().ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("unexpected HTTP status code: got %d, want %d", rec.Code, http.StatusOK)
-			}
-
-			if gotMax := tr.maxInFlight.Load(); gotMax != 1 {
-				t.Errorf("expected mounts to be scraped sequentially (maxInFlight=1), got %d", gotMax)
-			}
-
-			wantOrder := []string{"vol-1", "vol-2", "vol-3"}
-			scrapeOrderMu.Lock()
-			gotOrder := slices.Clone(scrapeOrder)
-			scrapeOrderMu.Unlock()
-			if diff := cmp.Diff(wantOrder, gotOrder); diff != "" {
-				t.Errorf("scrape order mismatch (-want +got):\n%s", diff)
-			}
-
-			body := rec.Body.String()
-			expectedCounterFamily := "fs_ops_count"
-			expectedHistFamily := "fs_ops_latencies"
-			if enableSchema {
-				expectedCounterFamily = "volume_fs_ops_count"
-				expectedHistFamily = "volume_fs_ops_latencies"
-			} else {
-				expectedHistFamily = "fs_ops_latency"
-			}
-
-			// Verify that # HELP and # TYPE appear exactly once per metric family across all 3 mounts.
-			for _, famName := range []string{expectedCounterFamily, expectedHistFamily, "grpc_client_attempt_started"} {
-				helpPrefix := "# HELP " + famName + " "
-				typePrefix := "# TYPE " + famName + " "
-				if c := strings.Count(body, helpPrefix); c != 1 {
-					t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", helpPrefix, c, body)
+				var mounts []fakeMount
+				for i, opVal := range []int{10, 20, 30} {
+					volName := fmt.Sprintf("vol-%d", i+1)
+					payload := mountPayload(opVal) + fmt.Sprintf("# HELP grpc_client_attempt_started Total number of RPC attempts started.\n# TYPE grpc_client_attempt_started counter\ngrpc_client_attempt_started{grpc_method=\"ReadObject\"} %d\n", opVal)
+					serve := staticPayloadHandler(payload, nil)
+					if protoSidecar {
+						serve = negotiatingPayloadHandler(t, payload)
+					}
+					mounts = append(mounts, fakeMount{
+						podUID:     fmt.Sprintf("uid-%d", i+1),
+						podName:    fmt.Sprintf("pod-%d", i+1),
+						volumeName: volName,
+						handler: func(w http.ResponseWriter, r *http.Request) {
+							done := tr.enter()
+							time.Sleep(15 * time.Millisecond)
+							scrapeOrderMu.Lock()
+							scrapeOrder = append(scrapeOrder, volName)
+							scrapeOrderMu.Unlock()
+							done()
+							serve(w, r)
+						},
+					})
 				}
-				if c := strings.Count(body, typePrefix); c != 1 {
-					t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", typePrefix, c, body)
+				registerFakeMounts(t, mm, fakeClientset, mounts)
+
+				req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
+				rec := httptest.NewRecorder()
+				mm.metricsHandler().ServeHTTP(rec, req)
+
+				if rec.Code != http.StatusOK {
+					t.Fatalf("unexpected HTTP status code: got %d, want %d", rec.Code, http.StatusOK)
 				}
-			}
 
-			// Verify standard Prometheus TextParser (ProcessMetricsData) parses the multi-mount output without error.
-			families, err := ProcessMetricsData(strings.NewReader(body))
-			if err != nil {
-				t.Fatalf("ProcessMetricsData failed on multi-mount streamed output: %v\nbody:\n%s", err, body)
-			}
+				if gotMax := tr.maxInFlight.Load(); gotMax != 1 {
+					t.Errorf("expected mounts to be scraped sequentially (maxInFlight=1), got %d", gotMax)
+				}
 
-			counterMF, ok := families[expectedCounterFamily]
-			if !ok {
-				t.Fatalf("missing expected counter family %q in parsed families", expectedCounterFamily)
-			}
-			if counterMF.GetType() != dto.MetricType_COUNTER {
-				t.Errorf("expected %q type COUNTER, got %v", expectedCounterFamily, counterMF.GetType())
-			}
-			if len(counterMF.GetMetric()) != 3 {
-				t.Fatalf("expected 3 metrics in %q, got %d", expectedCounterFamily, len(counterMF.GetMetric()))
-			}
+				wantOrder := []string{"vol-1", "vol-2", "vol-3"}
+				scrapeOrderMu.Lock()
+				gotOrder := slices.Clone(scrapeOrder)
+				scrapeOrderMu.Unlock()
+				if diff := cmp.Diff(wantOrder, gotOrder); diff != "" {
+					t.Errorf("scrape order mismatch (-want +got):\n%s", diff)
+				}
 
-			histMF, ok := families[expectedHistFamily]
-			if !ok {
-				t.Fatalf("missing expected histogram family %q in parsed families", expectedHistFamily)
-			}
-			if histMF.GetType() != dto.MetricType_HISTOGRAM {
-				t.Errorf("expected %q type HISTOGRAM, got %v", expectedHistFamily, histMF.GetType())
-			}
-			if len(histMF.GetMetric()) != 3 {
-				t.Fatalf("expected 3 metrics in %q, got %d", expectedHistFamily, len(histMF.GetMetric()))
-			}
+				body := rec.Body.String()
+				expectedCounterFamily := "fs_ops_count"
+				expectedHistFamily := "fs_ops_latencies"
+				if enableSchema {
+					expectedCounterFamily = "volume_fs_ops_count"
+					expectedHistFamily = "volume_fs_ops_latencies"
+				} else {
+					expectedHistFamily = "fs_ops_latency"
+				}
 
-			grpcMF, ok := families["grpc_client_attempt_started"]
-			if !ok {
-				t.Fatalf("missing expected gRPC family grpc_client_attempt_started in parsed families")
-			}
-			if len(grpcMF.GetMetric()) != 3 {
-				t.Fatalf("expected 3 metrics in grpc_client_attempt_started, got %d", len(grpcMF.GetMetric()))
-			}
-		})
+				// Verify that # HELP and # TYPE appear exactly once per metric family across all 3 mounts.
+				for _, famName := range []string{expectedCounterFamily, expectedHistFamily, "grpc_client_attempt_started"} {
+					helpPrefix := "# HELP " + famName + " "
+					typePrefix := "# TYPE " + famName + " "
+					if c := strings.Count(body, helpPrefix); c != 1 {
+						t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", helpPrefix, c, body)
+					}
+					if c := strings.Count(body, typePrefix); c != 1 {
+						t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", typePrefix, c, body)
+					}
+				}
+
+				// Verify standard Prometheus TextParser (ProcessMetricsData) parses the multi-mount output without error.
+				families, err := ProcessMetricsData(strings.NewReader(body))
+				if err != nil {
+					t.Fatalf("ProcessMetricsData failed on multi-mount streamed output: %v\nbody:\n%s", err, body)
+				}
+
+				counterMF, ok := families[expectedCounterFamily]
+				if !ok {
+					t.Fatalf("missing expected counter family %q in parsed families", expectedCounterFamily)
+				}
+				if counterMF.GetType() != dto.MetricType_COUNTER {
+					t.Errorf("expected %q type COUNTER, got %v", expectedCounterFamily, counterMF.GetType())
+				}
+				if len(counterMF.GetMetric()) != 3 {
+					t.Fatalf("expected 3 metrics in %q, got %d", expectedCounterFamily, len(counterMF.GetMetric()))
+				}
+
+				histMF, ok := families[expectedHistFamily]
+				if !ok {
+					t.Fatalf("missing expected histogram family %q in parsed families", expectedHistFamily)
+				}
+				if histMF.GetType() != dto.MetricType_HISTOGRAM {
+					t.Errorf("expected %q type HISTOGRAM, got %v", expectedHistFamily, histMF.GetType())
+				}
+				if len(histMF.GetMetric()) != 3 {
+					t.Fatalf("expected 3 metrics in %q, got %d", expectedHistFamily, len(histMF.GetMetric()))
+				}
+
+				grpcMF, ok := families["grpc_client_attempt_started"]
+				if !ok {
+					t.Fatalf("missing expected gRPC family grpc_client_attempt_started in parsed families")
+				}
+				if len(grpcMF.GetMetric()) != 3 {
+					t.Fatalf("expected 3 metrics in grpc_client_attempt_started, got %d", len(grpcMF.GetMetric()))
+				}
+			})
+		}
 	}
 }
 
@@ -1491,11 +1473,21 @@ func newSocketTempDir(t *testing.T) string {
 	return dir
 }
 
+// newStreamTestManager returns a manager with sequential metrics export and per-family streaming
+// (--sequential-metrics-export and --stream-metrics-export) enabled, as deployed by default.
 func newStreamTestManager(t *testing.T, enableSchema bool) (*manager, *clientset.FakeClientset) {
 	t.Helper()
 
+	return newStreamTestManagerWithOptions(t, enableSchema, true)
+}
+
+// newStreamTestManagerWithOptions returns a manager with sequential metrics export enabled, and
+// per-family streaming (--stream-metrics-export) enabled according to streamMetrics.
+func newStreamTestManagerWithOptions(t *testing.T, enableSchema, streamMetrics bool) (*manager, *clientset.FakeClientset) {
+	t.Helper()
+
 	fakeClientset := clientset.NewFakeClientset()
-	mm := NewMetricsManager(":0", newSocketTempDir(t), 10, fakeClientset, false, true, enableSchema).(*manager)
+	mm := NewMetricsManager(":0", newSocketTempDir(t), 10, fakeClientset, streamMetrics, true, enableSchema).(*manager)
 	// Scrape mounts in registration order by default, so that tests are deterministic.
 	mm.sequentialStartIndex = func(int) int { return 0 }
 	return mm, fakeClientset
@@ -1518,6 +1510,53 @@ func staticPayloadHandler(payload string, scrapes *atomic.Int32) http.HandlerFun
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(payload))
 	}
+}
+
+// encodeFamilies encodes the families of the text-format payload, in name order, in the given format.
+func encodeFamilies(t *testing.T, textPayload string, format expfmt.Format) []byte {
+	t.Helper()
+	families, err := ProcessMetricsData(strings.NewReader(textPayload))
+	if err != nil {
+		t.Fatalf("failed to parse payload: %v", err)
+	}
+	var buf bytes.Buffer
+	enc := expfmt.NewEncoder(&buf, format)
+	for _, name := range slices.Sorted(maps.Keys(families)) {
+		if err := enc.Encode(families[name]); err != nil {
+			t.Fatalf("failed to encode family %q: %v", name, err)
+		}
+	}
+	if closer, ok := enc.(expfmt.Closer); ok {
+		_ = closer.Close()
+	}
+	return buf.Bytes()
+}
+
+// negotiatingPayloadHandler mimics a sidecar that forwards the driver's Accept header to gcsfuse
+// (promhttp) and gcsfuse's Content-Type back: the text-format payload is served in the protobuf
+// delimited format if the Accept header negotiates it, and in the text format otherwise. The payload
+// is encoded up front, so that encoding errors fail the test on the test goroutine.
+func negotiatingPayloadHandler(t *testing.T, payload string) http.HandlerFunc {
+	t.Helper()
+	textFormat, protoFormat := expfmt.NewFormat(expfmt.TypeTextPlain), protoDelimFormat()
+	textBody, protoBody := encodeFamilies(t, payload, textFormat), encodeFamilies(t, payload, protoFormat)
+	return func(w http.ResponseWriter, r *http.Request) {
+		format, body := textFormat, textBody
+		if expfmt.Negotiate(r.Header).FormatType() == expfmt.TypeProtoDelim {
+			format, body = protoFormat, protoBody
+		}
+		w.Header().Set(contentTypeHeader, string(format))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}
+}
+
+// protoDelimFormat is the format a promhttp-backed sidecar replies with when the driver asks for the
+// protobuf delimited format.
+func protoDelimFormat() expfmt.Format {
+	h := http.Header{}
+	h.Set(acceptHeader, metricsAcceptHeader)
+	return expfmt.Negotiate(h)
 }
 
 func mountPayload(opValue int) string {
@@ -1693,74 +1732,234 @@ func registerRecordingMounts(t *testing.T, mm *manager, fakeClientset *clientset
 	}, mounts
 }
 
-func TestStreamMetricsHandlerDropsTruncatedMount(t *testing.T) {
+// TestTruncatedMountScrape verifies that a mount whose response is cut off, by the sidecar aborting
+// the connection or by the per-mount scrape timeout, never exports the family that was cut off, on
+// both the sequential and the prometheus.Registry path, while the other mounts are still exported.
+// Why: A text body and, without --stream-metrics-export, a protobuf body are parsed as a whole, so the
+// whole mount is dropped. With --stream-metrics-export, the complete protobuf families decoded before
+// the cut-off are exported. expfmt's text decoder, which the removed ProcessMetricsDataAsStream was
+// built on, yielded the cut-off family (e.g. a histogram with missing buckets) before the error.
+func TestTruncatedMountScrape(t *testing.T) {
 	t.Parallel()
 
-	// The body is cut off in the middle of a histogram, after the complete counter family.
-	const partialPayload = `# HELP truncated_ops_count The cumulative number of ops processed.
+	const payload = `# HELP truncated_ops_count The cumulative number of ops processed.
 # TYPE truncated_ops_count counter
 truncated_ops_count{fs_op="Read"} 7
 # HELP truncated_ops_latencies The cumulative distribution of file system operation latencies.
 # TYPE truncated_ops_latencies histogram
 truncated_ops_latencies_bucket{fs_op="Read",le="1"} 3
-truncated_ops_latencies_bucket{fs_op="Read",le="10"} 5
+truncated_ops_latencies_bucket{fs_op="Read",le="+Inf"} 5
+truncated_ops_latencies_sum{fs_op="Read"} 10
+truncated_ops_latencies_count{fs_op="Read"} 5
 `
-	writePartial := func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	// The text body is cut off in the middle of the histogram, after the complete counter family.
+	textFormat := expfmt.NewFormat(expfmt.TypeTextPlain)
+	textPartial := []byte(payload[:strings.Index(payload, `truncated_ops_latencies_bucket{fs_op="Read",le="+Inf"}`)])
+	// The protobuf body is cut off in the middle of the second MetricFamily message.
+	protoFormat := protoDelimFormat()
+	first := encodeFamilies(t, payload[:strings.Index(payload, "# HELP truncated_ops_latencies")], protoFormat)
+	full := encodeFamilies(t, payload, protoFormat)
+	if !bytes.HasPrefix(full, first) || len(full) <= len(first)+8 {
+		t.Fatalf("unexpected encoding: first message is not a prefix of the full payload")
+	}
+	protoPartial := full[:len(first)+(len(full)-len(first))/2]
+
+	writePartial := func(w http.ResponseWriter, format expfmt.Format, body []byte) {
+		w.Header().Set(contentTypeHeader, string(format))
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(partialPayload))
+		_, _ = w.Write(body)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
+	abortAfter := func(format expfmt.Format, body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			writePartial(w, format, body)
+			panic(http.ErrAbortHandler)
+		}
+	}
+	hangAfter := func(format expfmt.Format, body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			writePartial(w, format, body)
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
 
 	testCases := []struct {
-		name    string
-		handler http.HandlerFunc
+		name          string
+		handler       http.HandlerFunc
+		streamMetrics bool
+		// sequentialOnly is set for cases that rely on the configurable per-mount scrape timeout of the
+		// sequential path; the registry path always waits for the fixed mountScrapeTimeout.
+		sequentialOnly bool
+		// wantCounter reports whether the complete counter family before the cut-off is exported.
+		wantCounter bool
 	}{
-		{
-			name: "connection aborted mid-body",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				writePartial(w)
-				panic(http.ErrAbortHandler)
-			},
-		},
-		{
-			name: "per-mount timeout mid-body",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				writePartial(w)
-				select {
-				case <-r.Context().Done():
-				case <-time.After(5 * time.Second):
-				}
-			},
-		},
+		{name: "text aborted", handler: abortAfter(textFormat, textPartial), streamMetrics: true},
+		{name: "text per-mount timeout", handler: hangAfter(textFormat, textPartial), streamMetrics: true, sequentialOnly: true},
+		{name: "proto aborted without streaming", handler: abortAfter(protoFormat, protoPartial)},
+		{name: "proto aborted with streaming", handler: abortAfter(protoFormat, protoPartial), streamMetrics: true, wantCounter: true},
 	}
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+		for _, sequential := range []bool{true, false} {
+			if tc.sequentialOnly && !sequential {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/sequential=%v", tc.name, sequential), func(t *testing.T) {
+				t.Parallel()
+
+				fakeClientset := clientset.NewFakeClientset()
+				// FakeClientset.GetPod is not safe for concurrent use, and Registry.Gather() calls it concurrently.
+				mm := NewMetricsManager(":0", newSocketTempDir(t), 10, &lockedFakeClientset{FakeClientset: fakeClientset}, tc.streamMetrics, sequential, true).(*manager)
+				// The healthy mount is scraped first, since a hung mount uses up the remaining budget.
+				mm.sequentialStartIndex = func(int) int { return 0 }
+				mm.sequentialMountScrapeTimeout = 100 * time.Millisecond
+				registerFakeMounts(t, mm, fakeClientset, []fakeMount{
+					{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: negotiatingPayloadHandler(t, mountPayload(20))},
+					{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: tc.handler},
+				})
+
+				families := map[string]*dto.MetricFamily{}
+				if sequential {
+					rec := httptest.NewRecorder()
+					mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
+					var err error
+					if families, err = ProcessMetricsData(strings.NewReader(rec.Body.String())); err != nil {
+						t.Fatalf("failed to parse response: %v\nbody:\n%s", err, rec.Body.String())
+					}
+				} else {
+					gathered, err := mm.registry.Gather()
+					if err != nil {
+						t.Fatalf("Gather failed: %v", err)
+					}
+					for _, mf := range gathered {
+						families[mf.GetName()] = mf
+					}
+				}
+
+				volumes := func(name string) []string {
+					var vols []string
+					for _, m := range families[name].GetMetric() {
+						for _, lp := range m.GetLabel() {
+							if lp.GetName() == "volume_name" {
+								vols = append(vols, lp.GetValue())
+							}
+						}
+					}
+					return vols
+				}
+				if got := volumes("volume_fs_ops_count"); !slices.Equal(got, []string{"vol-2"}) {
+					t.Errorf("expected metrics of healthy mount vol-2 only, got volumes %v", got)
+				}
+				if _, ok := families["volume_truncated_ops_latencies"]; ok {
+					t.Errorf("expected the cut-off histogram family of mount vol-1 not to be exported, got %v", families["volume_truncated_ops_latencies"])
+				}
+				counter, ok := families["volume_truncated_ops_count"]
+				if tc.wantCounter {
+					if !ok || len(counter.GetMetric()) != 1 || counter.GetMetric()[0].GetCounter().GetValue() != 7 {
+						t.Errorf("expected the complete counter family of mount vol-1 to be exported, got %v", counter)
+					}
+				} else if ok {
+					t.Errorf("expected no families of the truncated mount vol-1, got %v", counter)
+				}
+			})
+		}
+	}
+}
+
+func TestCollectMetricFamiliesSkipsConflictingType(t *testing.T) {
+	t.Parallel()
+
+	family := func(metricType dto.MetricType, value float64) *dto.MetricFamily {
+		return &dto.MetricFamily{
+			Name:   proto.String("ops"),
+			Type:   metricType.Enum(),
+			Metric: []*dto.Metric{{Counter: &dto.Counter{Value: proto.Float64(value)}, Gauge: &dto.Gauge{Value: proto.Float64(value)}}},
+		}
+	}
+	families := func(yield func(*dto.MetricFamily, error) bool) {
+		for _, mf := range []*dto.MetricFamily{
+			family(dto.MetricType_COUNTER, 1),
+			family(dto.MetricType_GAUGE, 2),
+			family(dto.MetricType_COUNTER, 3),
+		} {
+			if !yield(mf, nil) {
+				return
+			}
+		}
+	}
+
+	collected, err := collectMetricFamilies(families)
+	if err != nil {
+		t.Fatalf("collectMetricFamilies failed: %v", err)
+	}
+	ops := collected["ops"]
+	if ops.GetType() != dto.MetricType_COUNTER || len(ops.GetMetric()) != 2 {
+		t.Fatalf("expected the 2 counter samples to be merged and the gauge skipped, got %v", ops)
+	}
+	if got := []float64{ops.GetMetric()[0].GetCounter().GetValue(), ops.GetMetric()[1].GetCounter().GetValue()}; !slices.Equal(got, []float64{1, 3}) {
+		t.Errorf("expected counter values [1 3], got %v", got)
+	}
+}
+
+// TestScrapeNegotiatesProtobuf verifies that the driver asks the sidecar for the protobuf delimited
+// format, decodes it, and exports the same metrics as from a sidecar that only serves the text format.
+func TestScrapeNegotiatesProtobuf(t *testing.T) {
+	t.Parallel()
+
+	payload := mountPayload(10) + "# HELP grpc_client_attempt_started Total number of RPC attempts started.\n# TYPE grpc_client_attempt_started counter\ngrpc_client_attempt_started{grpc_method=\"ReadObject\"} 10\n"
+
+	for _, streamMetrics := range []bool{true, false} {
+		t.Run(fmt.Sprintf("streamMetrics=%v", streamMetrics), func(t *testing.T) {
 			t.Parallel()
 
-			mm, fakeClientset := newStreamTestManager(t, true)
-			mm.sequentialMountScrapeTimeout = 100 * time.Millisecond
-			mm.sequentialMetricsBudget = 500 * time.Millisecond
-			// The healthy mount is scraped first, since a hung mount uses up the remaining budget.
-			registerFakeMounts(t, mm, fakeClientset, []fakeMount{
-				{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: staticPayloadHandler(mountPayload(20), nil)},
-				{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: tc.handler},
-			})
-
-			rec := httptest.NewRecorder()
-			mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
-			body := rec.Body.String()
-
-			if _, err := ProcessMetricsData(strings.NewReader(body)); err != nil {
-				t.Fatalf("failed to parse response: %v\nbody:\n%s", err, body)
+			var gotAccept atomic.Pointer[string]
+			var gotProto atomic.Int32
+			negotiate := negotiatingPayloadHandler(t, payload)
+			protoHandler := func(w http.ResponseWriter, r *http.Request) {
+				accept := r.Header.Get(acceptHeader)
+				gotAccept.Store(&accept)
+				if expfmt.Negotiate(r.Header).FormatType() == expfmt.TypeProtoDelim {
+					gotProto.Add(1)
+				}
+				negotiate(w, r)
 			}
-			if strings.Contains(body, "truncated_ops") || strings.Contains(body, `volume_name="vol-1"`) {
-				t.Errorf("expected no families of the truncated mount vol-1, got:\n%s", body)
+
+			scrape := func(t *testing.T, handler http.HandlerFunc) map[string]*dto.MetricFamily {
+				t.Helper()
+				mm, fakeClientset := newStreamTestManagerWithOptions(t, true, streamMetrics)
+				registerFakeMounts(t, mm, fakeClientset, []fakeMount{
+					{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: handler},
+				})
+				rec := httptest.NewRecorder()
+				mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
+				families, err := ProcessMetricsData(strings.NewReader(rec.Body.String()))
+				if err != nil {
+					t.Fatalf("failed to parse response: %v\nbody:\n%s", err, rec.Body.String())
+				}
+				return families
 			}
-			if !strings.Contains(body, `volume_name="vol-2"`) {
-				t.Errorf("expected metrics of healthy mount vol-2, got:\n%s", body)
+
+			// A sidecar that ignores the Accept header replies with the text format.
+			want := scrape(t, staticPayloadHandler(payload, nil))
+			got := scrape(t, protoHandler)
+
+			if accept := gotAccept.Load(); accept == nil || *accept != metricsAcceptHeader {
+				t.Errorf("expected the sidecar to receive Accept %q, got %v", metricsAcceptHeader, accept)
+			}
+			if gotProto.Load() == 0 {
+				t.Errorf("expected the Accept header to negotiate the protobuf delimited format")
+			}
+			if len(want) == 0 || len(got) != len(want) {
+				t.Fatalf("expected %d families, got %d", len(want), len(got))
+			}
+			for name, wantMF := range want {
+				if !proto.Equal(wantMF, got[name]) {
+					t.Errorf("family %q mismatch:\nwant: %v\ngot:  %v", name, wantMF, got[name])
+				}
 			}
 		})
 	}
@@ -2340,5 +2539,38 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 				t.Errorf("max concurrent sidecar scrapes = %d, want %d", got, tc.wantMaxInFlight)
 			}
 		})
+	}
+}
+
+func TestDecodeMetricFamiliesMaxSize(t *testing.T) {
+	t.Parallel()
+
+	largeHelp := strings.Repeat("a", maxMetricFamilyBytes+1024)
+	mf := &dto.MetricFamily{
+		Name: proto.String("fs_ops_count"),
+		Help: proto.String(largeHelp),
+		Type: dto.MetricType_COUNTER.Enum(),
+		Metric: []*dto.Metric{
+			{Counter: &dto.Counter{Value: proto.Float64(1)}},
+		},
+	}
+	var buf bytes.Buffer
+	if _, err := protodelim.MarshalTo(&buf, mf); err != nil {
+		t.Fatalf("MarshalTo failed: %v", err)
+	}
+
+	var gotErr error
+	for _, err := range decodeMetricFamilies(&buf) {
+		if err != nil {
+			gotErr = err
+			break
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("expected oversized MetricFamily to fail decoding, got nil error")
+	}
+	var sizeErr *protodelim.SizeTooLargeError
+	if !errors.As(gotErr, &sizeErr) {
+		t.Errorf("expected *protodelim.SizeTooLargeError, got %v", gotErr)
 	}
 }
