@@ -185,6 +185,8 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
 #### Failed to reserve container name
 
+> Note: Starting in CSI driver `v1.24.17`, `gke-gcsfuse-sidecar` includes a startup probe that waits for every volume to finish mounting before the kubelet creates the workload containers. Slow or failing mounts surface as [Sidecar startup probe failures](#sidecar-startup-probe-failures) instead of `failed to reserve container name`.
+
 - Pod event warning examples:
 
   - First:
@@ -205,6 +207,24 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
   **Recovery:**
   This issue can recover naturally without manual intervention. Once the original hanging mount operation completes or times out at the FUSE layer, the container runtime will finish its operation, clean up the stuck container attempt, and release the name reservation. Subsequent Kubelet retries will then succeed, and the pod will transition to the `Running` state.
+
+### Sidecar startup probe failures
+
+> Note: The sidecar startup probe is enabled starting in CSI driver `v1.24.17`.
+
+- Pod event warning examples:
+
+  - > Startup probe failed: gcsfuse mount not ready: volume "xxx": mount in progress
+
+  - > Startup probe failed: gcsfuse mount not ready: volume "xxx": sidecar bucket access check error: failed to get GCS bucket "xxx": ...
+
+- Solutions:
+
+  The `gke-gcsfuse-sidecar` startup probe prevents the kubelet from creating workload containers until `gcsfuse` finishes mounting every volume. While the probe is failing, the Pod stays in the `Init` state:
+
+  - `mount in progress` means `gcsfuse` is still mounting the bucket. Once the mount finishes, the probe passes and the workload containers start automatically.
+  - If the event includes a mount error (such as `PermissionDenied`, `NotFound`, or an invalid mount flag), fix the underlying bucket access or mount configuration following [MountVolume.SetUp failures](#mountvolumesetup-failures). Bucket access errors recover automatically once IAM permissions propagate, whereas invalid mount options or bucket names require updating and recreating the Pod.
+  - If the mount does not succeed within 1 hour, the startup probe times out and the kubelet restarts the sidecar container. A restarted sidecar cannot recover the FUSE mount, so delete and recreate the Pod after fixing the issue.
 
 ### File cache issues
 

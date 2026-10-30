@@ -64,7 +64,7 @@ const (
 	tokenExpiryDuration = 3600
 
 	// SidecarStartupProbeMinVersion is the first managed sidecar version that supports --startup-probe.
-	SidecarStartupProbeMinVersion = "v1.24.16-gke.0"
+	SidecarStartupProbeMinVersion = "v1.24.17-gke.0"
 )
 
 var (
