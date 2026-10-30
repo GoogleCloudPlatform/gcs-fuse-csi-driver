@@ -54,7 +54,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const metricEndpointFmt = "http://localhost:%v/metrics"
+const (
+	metricEndpointFmt = "http://localhost:%v/metrics"
+	acceptHeader      = "Accept"
+	contentTypeHeader = "Content-Type"
+)
 
 var gracefulKillGracePeriod = 5 * time.Second
 
@@ -75,6 +79,23 @@ func New(mounterPath string) *Mounter {
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+	if mc == nil {
+		return fmt.Errorf("mount config cannot be nil")
+	}
+
+	// Why: Mount owns the fuse file from here on, and closes the sidecar's copy when it returns:
+	// on every error path, and once cmd.Start has passed it to gcsfuse, so that no other child
+	// process inherits it.
+	fuseFile := mc.fuseFile
+	mc.fuseFile = nil
+	if fuseFile != nil {
+		defer func() {
+			if err := fuseFile.Close(); err != nil {
+				klog.Warningf("failed to close the fuse file for volume %q: %v", mc.VolumeName, err)
+			}
+		}()
+	}
+
 	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
@@ -118,45 +139,39 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
 	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
-
 	// gcsfuse reports the mount status on this pipe. See pkg/sidecar_mounter/startup_probe.go.
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
-		syscall.Close(mc.FileDescriptor)
 		return fmt.Errorf("failed to create the mount status pipe: %w", err)
 	}
-	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse"), statusW}
+	// fuseFile stays at index 0 even when it is nil, so that statusW is always FD 4 in gcsfuse.
+	cmd.ExtraFiles = []*os.File{fuseFile, statusW}
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("%s=%d", gcsfuseStatusFDEnv, statusPipeFD))
 
-	// when the ctx.Done() is closed,
-	// the main workload containers have exited,
-	// so it is safe to force kill the gcsfuse process.
-	go func(cmd *exec.Cmd) {
-		<-ctx.Done()
-		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
-		time.Sleep(time.Second * 5)
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
-			if err := cmd.Process.Kill(); err != nil {
-				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
-			}
-		}
-	}(cmd)
+	err = cmd.Start()
+	// Close our copy of the write end, so that the status pipe reaches EOF when gcsfuse exits.
+	statusW.Close()
+	if err != nil {
+		statusR.Close()
+		return fmt.Errorf("failed to start gcsfuse with error: %w", err)
+	}
 
+	klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
+
+	cmdDone := make(chan struct{})
 	m.WaitGroup.Add(1)
 	go func() {
 		defer m.WaitGroup.Done()
-		err := cmd.Start()
-		// Close our copy of the write end, so that the status pipe reaches EOF when gcsfuse exits.
-		statusW.Close()
-		if err != nil {
-			statusR.Close()
-			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
-
-			return
-		}
-
-		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
+		// When ctx is done, the main workload containers have exited,
+		// so it is safe to force kill the gcsfuse process.
+		stopKill := context.AfterFunc(ctx, func() {
+			klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
+			forceKillCmd(cmd, cmdDone)
+		})
+		defer stopKill()
+		// Why: deferred last so that it runs first: forceKillCmd must see cmdDone closed as soon as
+		// gcsfuse has been reaped, so that it never kills a recycled PID.
+		defer close(cmdDone)
 
 		outcomeDone := make(chan struct{})
 		go func() {
@@ -164,10 +179,6 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			watchMountOutcome(statusR, mc)
 		}()
 		startVolumeMonitoring(ctx, mc, cmd.Process.Pid)
-
-		// Since the gcsfuse has taken over the file descriptor,
-		// closing the file descriptor to avoid other process forking it.
-		syscall.Close(mc.FileDescriptor)
 		waitForGcsfuseExit(cmd, mc, outcomeDone)
 	}()
 
@@ -538,49 +549,83 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 		return
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		if err := scrapeMetrics(timeoutCtx, metricEndpoint, w); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
 	server := http.Server{
-		Handler:      mux,
+		Handler:      newMetricsProxyHandler(metricEndpoint, metricsHTTPClient),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+		// Scrapes in flight are canceled when the volume's context is done.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-	if err := server.Serve(socket); err != nil {
+	stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+	defer stop()
+	if err := server.Serve(socket); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		klog.Errorf("failed to start the metrics server for %q: %v", socketPath, err)
 	}
 }
 
-// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
-// The response is written to a new http.ResponseWriter.
-func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWriter) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
-	}
+// metricsHTTPClient scrapes the gcsfuse metrics endpoint over loopback.
+// Why: compression is disabled because the body is streamed through to the CSI driver unchanged,
+// so gzip-encoding and decoding every scrape over loopback would only cost CPU.
+var metricsHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DisableCompression:  true,
+		MaxIdleConnsPerHost: 1,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make HTTP request to %q: %w", metricEndpoint, err)
-	}
-	defer resp.Body.Close()
+// newMetricsProxyHandler returns a handler that scrapes the latest metrics sample from the gcsfuse
+// metricEndpoint and streams it back.
+// Why: The CSI driver's Accept header is forwarded to gcsfuse, and the Content-Type of gcsfuse's
+// response is forwarded back, so that the driver can negotiate the exposition format with gcsfuse
+// (promhttp), e.g. the protobuf delimited format, which the driver decodes one metric family at a
+// time. Older drivers send no Accept header and keep receiving the text format.
+// Like httputil.ReverseProxy, errors before the response starts are reported as HTTP 500, whereas
+// an error while streaming the body aborts the connection, so that the driver sees a truncated
+// response instead of error text spliced into the metrics.
+func newMetricsProxyHandler(metricEndpoint string, client *http.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected HTTP status: %v", resp.Status)
-	}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
+		if err != nil {
+			scrapeError(w, fmt.Sprintf("failed to scrape metrics from %q: %v", metricEndpoint, err))
+			return
+		}
+		if accept := r.Header.Get(acceptHeader); accept != "" {
+			req.Header.Set(acceptHeader, accept)
+		}
 
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return fmt.Errorf("failed to copy response: %w", err)
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			scrapeError(w, fmt.Sprintf("failed to scrape metrics from %q: %v", metricEndpoint, err))
+			return
+		}
+		defer resp.Body.Close()
 
-	return nil
+		if resp.StatusCode != http.StatusOK {
+			// Drain a bounded amount of the body, so that the connection can be reused.
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+			scrapeError(w, fmt.Sprintf("failed to scrape metrics from %q: unexpected HTTP status: %v", metricEndpoint, resp.Status))
+			return
+		}
+
+		if contentType := resp.Header.Get(contentTypeHeader); contentType != "" {
+			w.Header().Set(contentTypeHeader, contentType)
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			klog.Errorf("failed to copy the metrics response from %q, aborting the response: %v", metricEndpoint, err)
+			panic(http.ErrAbortHandler)
+		}
+	}
+}
+
+// scrapeError logs msg and reports it to the CSI driver as HTTP 500.
+func scrapeError(w http.ResponseWriter, msg string) {
+	klog.Error(msg)
+	http.Error(w, msg, http.StatusInternalServerError)
 }
 
 func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, identityProvider string) {

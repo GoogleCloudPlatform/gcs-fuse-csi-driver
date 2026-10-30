@@ -19,11 +19,13 @@ package sidecarmounter
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
@@ -626,13 +628,13 @@ func TestMountErrorFileCleanup(t *testing.T) {
 	defer w.Close()
 
 	mc := &MountConfig{
-		BucketName:     "test-bucket",
-		VolumeName:     "test-volume",
-		TempDir:        tempDir,
-		BufferDir:      filepath.Join(tempDir, "buffer"),
-		CacheDir:       filepath.Join(tempDir, "cache"),
-		ErrWriter:      NewErrorWriter(errFilePath),
-		FileDescriptor: int(r.Fd()),
+		BucketName: "test-bucket",
+		VolumeName: "test-volume",
+		TempDir:    tempDir,
+		BufferDir:  filepath.Join(tempDir, "buffer"),
+		CacheDir:   filepath.Join(tempDir, "cache"),
+		ErrWriter:  NewErrorWriter(errFilePath),
+		fuseFile:   r,
 	}
 
 	mounter := New("true")
@@ -641,6 +643,84 @@ func TestMountErrorFileCleanup(t *testing.T) {
 
 	if _, err := os.Stat(errFilePath); !os.IsNotExist(err) {
 		t.Fatalf("expected error file to be deleted, but it still exists (or another error occurred: %v)", err)
+	}
+}
+
+func TestNewMountConfigClosesFuseFileOnError(t *testing.T) {
+	// Do not parallelize [e.g t.Parallel()] because NewMountConfig advances the shared prometheusPort.
+
+	testCases := []struct {
+		name              string
+		msg               string
+		flagMapFromDriver map[string]string
+		wantErr           string
+	}{
+		{
+			name:    "invalid mount config",
+			msg:     "{",
+			wantErr: "failed to unmarshal the mount config",
+		},
+		{
+			name:    "empty bucket name",
+			msg:     `{"volumeName":"test-volume"}`,
+			wantErr: "failed to fetch bucket name from CSI driver",
+		},
+		{
+			name: "config file error",
+			msg:  `{"bucketName":"test-bucket"}`,
+			// "a" cannot be both a value and a section.
+			flagMapFromDriver: map[string]string{"a": "x", "a:b": "y"},
+			wantErr:           "failed to create config file",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Keep the directory path short so the Unix domain socket path stays well below sun_path limits.
+			tempDir, err := os.MkdirTemp("/tmp", "nmc-")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+			socketPath := filepath.Join(tempDir, "socket")
+			listener, err := net.Listen("unix", socketPath)
+			if err != nil {
+				t.Fatalf("failed to listen on %q: %v", socketPath, err)
+			}
+			defer listener.Close()
+
+			// Send the write end of a pipe as the fuse descriptor, as the CSI driver sends /dev/fuse.
+			// Reading the pipe then reaches io.EOF only once the received descriptor is closed.
+			pipe, fuseFile, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create pipe: %v", err)
+			}
+			defer pipe.Close()
+			sent := make(chan error, 1)
+			go func() {
+				defer fuseFile.Close()
+				conn, err := listener.Accept()
+				if err != nil {
+					sent <- err
+					return
+				}
+				defer conn.Close()
+				sent <- util.SendMsg(conn, int(fuseFile.Fd()), []byte(tc.msg))
+			}()
+
+			if mc := NewMountConfig(socketPath, tc.flagMapFromDriver); mc != nil {
+				t.Fatalf("NewMountConfig returned %+v, want nil", mc)
+			}
+			if err := <-sent; err != nil {
+				t.Fatalf("failed to send the fuse descriptor: %v", err)
+			}
+			assertPipeEOF(t, pipe)
+
+			errMsg, err := os.ReadFile(filepath.Join(tempDir, util.ErrorFileName))
+			if err != nil || !strings.Contains(string(errMsg), tc.wantErr) {
+				t.Errorf("got error file %q (%v), want it to contain %q", errMsg, err, tc.wantErr)
+			}
+		})
 	}
 }
 
