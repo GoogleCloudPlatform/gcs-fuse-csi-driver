@@ -1119,7 +1119,7 @@ func TestCheckForKernelReader(t *testing.T) {
 func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 	t.Parallel()
 
-	const minVersion = "v1.24.16-gke.0"
+	const minVersion = "v1.24.17-gke.0"
 	testCases := []struct {
 		name                     string
 		imageName                string
@@ -1155,22 +1155,22 @@ func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 		},
 		{
 			name:      "same version as the minimum",
-			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.16-gke.0",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.17-gke.0",
 			expected:  true,
 		},
 		{
 			name:      "older version",
-			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.15-gke.3",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.16-gke.3",
 			expected:  false,
 		},
 		{
 			name:      "newer gke build with digest",
-			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.16-gke.1@sha256:c8f4f9e2b6a0d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.17-gke.1@sha256:c8f4f9e2b6a0d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1",
 			expected:  true,
 		},
 		{
 			name:      "customer name in the tag",
-			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.16-magellan-gke.0",
+			imageName: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.24.17-magellan-gke.0",
 			expected:  true,
 		},
 		{
