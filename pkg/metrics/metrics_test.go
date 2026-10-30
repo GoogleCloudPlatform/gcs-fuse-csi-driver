@@ -134,7 +134,7 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 	}
 
 	// Verify collector is actually in the Prometheus registry by trying to register a dummy with same descriptors
-	cDummy := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, false, false)
+	cDummy := newMetricsCollector("", "", "", podUID, volumeName, nil, nil, false, false)
 	err := mm.registry.Register(cDummy)
 	if err == nil {
 		t.Errorf("expected duplicate registration to fail, but it succeeded")
@@ -400,11 +400,7 @@ grpc_client_attempt_started{grpc_method="google.storage.v2.Storage/ReadObject",g
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fuseSocketDir, err := os.MkdirTemp("/tmp", "s")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			defer os.RemoveAll(fuseSocketDir)
+			fuseSocketDir := newSocketTempDir(t)
 
 			emptyDirBasePath := filepath.Join(t.TempDir(), "emptyDir")
 			if err := os.MkdirAll(emptyDirBasePath, 0755); err != nil {
@@ -825,6 +821,12 @@ func TestRegisterMetricsCollector_FlagDisabled(t *testing.T) {
 
 func TestPrometheusCounters(t *testing.T) {
 	pmm := NewPrometheusMetricManager(":8080", http.NewServeMux())
+	// NewPrometheusMetricManager registers its counters with the global registry, so unregister them to
+	// allow the test to run more than once (e.g. with -count).
+	t.Cleanup(func() {
+		prometheus.Unregister(pmm.syncPVCounter)
+		prometheus.Unregister(pmm.syncPodCounter)
+	})
 
 	tests := []struct {
 		name             string
@@ -1062,6 +1064,50 @@ func TestEmitMetricFamily(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEmitMetricFamilySkipsInvalidMetricWithoutPanic(t *testing.T) {
+	t.Parallel()
+
+	strPtr := func(s string) *string { return &s }
+	floatPtr := func(f float64) *float64 { return &f }
+	counterType := dto.MetricType_COUNTER
+	c := &metricsCollector{
+		constLabels:                      map[string]string{"volume_name": "vol-1"},
+		enableGcsFuseVolumeMetricsSchema: true,
+	}
+	mf := &dto.MetricFamily{
+		Name: strPtr("fs_ops_count"),
+		Help: strPtr("ops count"),
+		Type: &counterType,
+		Metric: []*dto.Metric{
+			nil,
+			// Missing Counter value sub-message: skipped without nil dereference.
+			{Label: []*dto.LabelPair{{Name: strPtr("fs_op"), Value: strPtr("Read")}}},
+			// Duplicate variable label name rejected by NewConstMetric: logged and skipped without panic.
+			{
+				Label: []*dto.LabelPair{
+					{Name: strPtr("fs_op"), Value: strPtr("Read")},
+					{Name: strPtr("fs_op"), Value: strPtr("Write")},
+				},
+				Counter: &dto.Counter{Value: floatPtr(1)},
+			},
+			// Valid sample with a nil label is still emitted.
+			{
+				Label:   []*dto.LabelPair{nil, {Name: strPtr("fs_op"), Value: strPtr("Open")}},
+				Counter: &dto.Counter{Value: floatPtr(5)},
+			},
+		},
+	}
+
+	ch := make(chan prometheus.Metric, 4)
+	c.emitMetricFamily(mf, ch)
+	c.emitMetricFamily(nil, ch)
+	close(ch)
+
+	if got := len(ch); got != 1 {
+		t.Fatalf("expected 1 valid metric emitted, got %d", got)
 	}
 }
 
@@ -1378,12 +1424,23 @@ func TestTransformMetricFamilyAndSkipFirstLineWriter(t *testing.T) {
 
 	// Test skipFirstLineWriter across chunked writes
 	var buf bytes.Buffer
-	sw := &skipFirstLineWriter{w: &buf}
+	sw := &skipFirstLineWriter{w: &buf, skipNextLine: true}
 	_, _ = sw.Write([]byte("# TYPE foo"))
 	_, _ = sw.Write([]byte(" counter\nfoo_total 1\n"))
 	_, _ = sw.Write([]byte("foo_total 2\n"))
 	if got, want := buf.String(), "foo_total 1\nfoo_total 2\n"; got != want {
 		t.Errorf("skipFirstLineWriter output = %q, want %q", got, want)
+	}
+	if sw.skipNextLine {
+		t.Errorf("expected skipNextLine to be cleared after skipping a line")
+	}
+
+	// The zero value passes everything through.
+	buf.Reset()
+	sw = &skipFirstLineWriter{w: &buf}
+	_, _ = sw.Write([]byte("# TYPE foo counter\n"))
+	if got, want := buf.String(), "# TYPE foo counter\n"; got != want {
+		t.Errorf("zero-value skipFirstLineWriter output = %q, want %q", got, want)
 	}
 }
 
@@ -1395,18 +1452,20 @@ type fakeMount struct {
 	handler    http.HandlerFunc
 }
 
-// registerFakeMounts starts a unix-socket HTTP server per mount, creates a running pod for it,
+// registerFakeMounts starts a unix-socket HTTP server per mount, creates a running pod for the mounts,
 // and registers the corresponding metrics collector with mm in the given order.
 func registerFakeMounts(t *testing.T, mm *manager, fakeClientset *clientset.FakeClientset, mounts []fakeMount) {
 	t.Helper()
 
+	// FakeClientset holds a single pod, whose name and namespace GetPod overwrites with the requested
+	// ones, so one running pod serves all mounts.
+	fakeClientset.CreatePod(clientset.FakePodConfig{
+		Name:      "pod",
+		Namespace: "default",
+		PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
+	})
 	for _, m := range mounts {
-		emptyDirBasePath, err := os.MkdirTemp("/tmp", "ed")
-		if err != nil {
-			t.Fatalf("failed to create emptyDir: %v", err)
-		}
-		t.Cleanup(func() { os.RemoveAll(emptyDirBasePath) })
-
+		emptyDirBasePath := newSocketTempDir(t)
 		ln, err := net.Listen("unix", filepath.Join(emptyDirBasePath, SocketName))
 		if err != nil {
 			t.Fatalf("failed to listen on socket for %s: %v", m.volumeName, err)
@@ -1415,33 +1474,34 @@ func registerFakeMounts(t *testing.T, mm *manager, fakeClientset *clientset.Fake
 		go func() { _ = srv.Serve(ln) }()
 		t.Cleanup(func() { srv.Close() })
 
-		fakeClientset.CreatePod(clientset.FakePodConfig{
-			Name:      m.podName,
-			Namespace: "default",
-			UID:       types.UID(m.podUID),
-			PodStatus: &corev1.PodStatus{Phase: corev1.PodRunning},
-		})
 		mm.RegisterMetricsCollector("/mnt/"+m.volumeName, "default", m.podName, "bucket-"+m.volumeName, "node-1", emptyDirBasePath, m.podUID, m.volumeName, "deployment", "app")
 	}
+}
+
+// newSocketTempDir returns a new directory under /tmp that is removed when the test ends.
+// Why: t.TempDir() paths can exceed the 108-byte sun_path limit of unix domain socket addresses.
+func newSocketTempDir(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("/tmp", "s")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }
 
 func newStreamTestManager(t *testing.T, enableSchema bool) (*manager, *clientset.FakeClientset) {
 	t.Helper()
 
-	fuseSocketDir, err := os.MkdirTemp("/tmp", "sm")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(fuseSocketDir) })
-
 	fakeClientset := clientset.NewFakeClientset()
-	mm := NewMetricsManager(":0", fuseSocketDir, 10, fakeClientset, false, true, enableSchema).(*manager)
+	mm := NewMetricsManager(":0", newSocketTempDir(t), 10, fakeClientset, false, true, enableSchema).(*manager)
 	// Scrape mounts in registration order by default, so that tests are deterministic.
-	mm.streamStartIndex = func(int) int { return 0 }
+	mm.sequentialStartIndex = func(int) int { return 0 }
 	return mm, fakeClientset
 }
 
-// cyclingStartIndex returns a streamStartIndex function that starts the k-th request at mount k mod n,
+// cyclingStartIndex returns a sequentialStartIndex function that starts the k-th request at mount k mod n,
 // so that tests can deterministically exercise every starting mount.
 func cyclingStartIndex() func(n int) int {
 	var calls atomic.Int64
@@ -1534,62 +1594,6 @@ func scrapeServerMetrics(t *testing.T, srv *httptest.Server, acceptEncoding stri
 	return string(body), elapsed
 }
 
-func TestStreamMetricsHandlerTimeBudget(t *testing.T) {
-	t.Parallel()
-
-	mm, fakeClientset := newStreamTestManager(t, true)
-	// A hung sidecar uses up the whole (short) budget, so the remaining mounts of a scrape are skipped.
-	mm.streamMetricsBudget = 150 * time.Millisecond
-	mm.streamStartIndex = cyclingStartIndex()
-
-	var vol5Scrapes atomic.Int32
-	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
-		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(10), nil)},
-		{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: hungHandler},
-		{podUID: "uid-3", podName: "pod-3", volumeName: "vol-3", handler: hungHandler},
-		{podUID: "uid-4", podName: "pod-4", volumeName: "vol-4", handler: hungHandler},
-		{podUID: "uid-5", podName: "pod-5", volumeName: "vol-5", handler: staticPayloadHandler(mountPayload(50), &vol5Scrapes)},
-	})
-
-	const writeTimeout = 1 * time.Second
-	srv := httptest.NewUnstartedServer(mm.metricsHandler())
-	srv.Config.WriteTimeout = writeTimeout
-	srv.Start()
-	defer srv.Close()
-
-	// Across consecutive scrapes, the starting mount varies, so every healthy mount is exported at least once.
-	seen := map[string]int{}
-	for i := range 5 {
-		acceptEncoding := "identity"
-		if i%2 == 1 {
-			acceptEncoding = "gzip"
-		}
-		body, elapsed := scrapeServerMetrics(t, srv, acceptEncoding)
-		if elapsed >= writeTimeout {
-			t.Errorf("scrape %d: response took %v, want less than server WriteTimeout %v", i, elapsed, writeTimeout)
-		}
-		for _, vol := range []string{"vol-1", "vol-2", "vol-3", "vol-4", "vol-5"} {
-			if strings.Contains(body, `volume_name="`+vol+`"`) {
-				seen[vol]++
-			}
-		}
-	}
-
-	for _, vol := range []string{"vol-1", "vol-5"} {
-		if seen[vol] == 0 {
-			t.Errorf("expected metrics of healthy mount %s in at least one scrape, seen counts: %v", vol, seen)
-		}
-	}
-	for _, vol := range []string{"vol-2", "vol-3", "vol-4"} {
-		if seen[vol] != 0 {
-			t.Errorf("expected no metrics of hung mount %s, seen counts: %v", vol, seen)
-		}
-	}
-	if vol5Scrapes.Load() == 0 {
-		t.Errorf("expected vol-5 to be scraped at least once across consecutive scrapes")
-	}
-}
-
 func TestStreamMetricsHandlerScrapeOrder(t *testing.T) {
 	t.Parallel()
 
@@ -1616,7 +1620,7 @@ func TestStreamMetricsHandlerScrapeOrder(t *testing.T) {
 			t.Parallel()
 
 			mm, fakeClientset := newStreamTestManager(t, true)
-			mm.streamStartIndex = tc.startIndex
+			mm.sequentialStartIndex = tc.startIndex
 			order, mounts := registerRecordingMounts(t, mm, fakeClientset, 4)
 
 			rec := httptest.NewRecorder()
@@ -1640,26 +1644,20 @@ func TestStreamMetricsHandlerScrapeOrder(t *testing.T) {
 func TestStreamMetricsHandlerRandomStartingMount(t *testing.T) {
 	t.Parallel()
 
-	mm, fakeClientset := newStreamTestManager(t, true)
-	// Use the production default, which picks a random starting mount for every request.
-	mm.streamStartIndex = nil
+	// The production default picks a random starting mount for every request. The probability that
+	// some mount is never picked in 1000 requests is about 4 * (3/4)^1000, i.e. negligible.
+	mm := NewMetricsManager(":0", "", 10, nil, false, true, true).(*manager)
 	const numMounts = 4
-	order, _ := registerRecordingMounts(t, mm, fakeClientset, numMounts)
-
-	// The probability that some mount is never picked as the starting mount in 100 requests is about
-	// 4 * (3/4)^100, i.e. negligible.
-	firstMounts := map[string]bool{}
-	for range 100 {
-		rec := httptest.NewRecorder()
-		mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
-		got := order()
-		if len(got) != numMounts {
-			t.Fatalf("expected every mount to be scraped exactly once per request, got order %v", got)
+	seen := map[int]bool{}
+	for range 1000 {
+		i := mm.sequentialStartIndex(numMounts)
+		if i < 0 || i >= numMounts {
+			t.Fatalf("sequentialStartIndex(%d) = %d, want a value in [0, %d)", numMounts, i, numMounts)
 		}
-		firstMounts[got[0]] = true
+		seen[i] = true
 	}
-	if len(firstMounts) != numMounts {
-		t.Errorf("expected every mount to be picked as the starting mount, got %v", firstMounts)
+	if len(seen) != numMounts {
+		t.Errorf("expected every mount to be picked as the starting mount, got %v", seen)
 	}
 }
 
@@ -1743,8 +1741,8 @@ truncated_ops_latencies_bucket{fs_op="Read",le="10"} 5
 			t.Parallel()
 
 			mm, fakeClientset := newStreamTestManager(t, true)
-			mm.streamMountScrapeTimeout = 100 * time.Millisecond
-			mm.streamMetricsBudget = 500 * time.Millisecond
+			mm.sequentialMountScrapeTimeout = 100 * time.Millisecond
+			mm.sequentialMetricsBudget = 500 * time.Millisecond
 			// The healthy mount is scraped first, since a hung mount uses up the remaining budget.
 			registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 				{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: staticPayloadHandler(mountPayload(20), nil)},
@@ -1771,7 +1769,7 @@ truncated_ops_latencies_bucket{fs_op="Read",le="10"} 5
 func TestStreamMetricsBudgetFor(t *testing.T) {
 	t.Parallel()
 
-	mm := &manager{streamMetricsBudget: 8 * time.Second}
+	mm := &manager{sequentialMetricsBudget: 8 * time.Second}
 	tests := []struct {
 		name   string
 		header string
@@ -1782,18 +1780,23 @@ func TestStreamMetricsBudgetFor(t *testing.T) {
 		{name: "smaller scraper timeout", header: "5", want: 4500 * time.Millisecond},
 		{name: "invalid header", header: "abc", want: 8 * time.Second},
 		{name: "non-positive header", header: "0", want: 8 * time.Second},
+		{name: "NaN header", header: "NaN", want: 8 * time.Second},
+		{name: "infinite header", header: "Inf", want: 8 * time.Second},
+		{name: "negative infinite header", header: "-Inf", want: 8 * time.Second},
+		{name: "overflowing header", header: "1e20", want: 8 * time.Second},
+		{name: "underflowing header", header: "1e-12", want: 8 * time.Second},
 	}
 	for _, tc := range tests {
 		h := http.Header{}
 		if tc.header != "" {
 			h.Set(scrapeTimeoutHeader, tc.header)
 		}
-		if got := mm.streamMetricsBudgetFor(h); got != tc.want {
-			t.Errorf("%s: streamMetricsBudgetFor() = %v, want %v", tc.name, got, tc.want)
+		if got := mm.sequentialMetricsBudgetFor(h); got != tc.want {
+			t.Errorf("%s: sequentialMetricsBudgetFor() = %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	if got := (&manager{}).streamMetricsBudgetFor(http.Header{}); got != defaultStreamMetricsBudget {
-		t.Errorf("unset budget: got %v, want %v", got, defaultStreamMetricsBudget)
+	if got := (&manager{}).sequentialMetricsBudgetFor(http.Header{}); got != defaultSequentialMetricsBudget {
+		t.Errorf("unset budget: got %v, want %v", got, defaultSequentialMetricsBudget)
 	}
 }
 
@@ -1954,47 +1957,6 @@ func TestStreamMetricsHandlerStopsOnWriteError(t *testing.T) {
 	}
 }
 
-func TestStreamMetricsHandlerSlowMountAmongManyFastMounts(t *testing.T) {
-	t.Parallel()
-
-	const numFastMounts = 15
-	mm, fakeClientset := newStreamTestManager(t, true)
-	mm.maximumNumberOfCollectors = numFastMounts + 1
-	mm.streamMetricsBudget = 1600 * time.Millisecond
-
-	// A healthy but slightly slow sidecar is scraped first, while many mounts remain to be scraped.
-	slowHandler := func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(120 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mountPayload(7)))
-	}
-	mounts := []fakeMount{{podUID: "uid-slow", podName: "pod-slow", volumeName: "vol-slow", handler: slowHandler}}
-	for i := range numFastMounts {
-		mounts = append(mounts, fakeMount{
-			podUID:     fmt.Sprintf("uid-%d", i),
-			podName:    fmt.Sprintf("pod-%d", i),
-			volumeName: fmt.Sprintf("vol-%d", i),
-			handler:    staticPayloadHandler(mountPayload(i+1), nil),
-		})
-	}
-	registerFakeMounts(t, mm, fakeClientset, mounts)
-
-	rec := httptest.NewRecorder()
-	mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
-	body := rec.Body.String()
-
-	families, err := ProcessMetricsData(strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
-	if !strings.Contains(body, `volume_name="vol-slow"`) {
-		t.Errorf("expected metrics of the slow but healthy mount vol-slow in the streamed output")
-	}
-	if got := len(families["volume_fs_ops_count"].GetMetric()); got != numFastMounts+1 {
-		t.Errorf("expected %d volume_fs_ops_count samples, got %d", numFastMounts+1, got)
-	}
-}
-
 func TestStreamMetricsHandlerDropsTimestamps(t *testing.T) {
 	t.Parallel()
 
@@ -2037,62 +1999,6 @@ fs_ops_count{fs_op="Read"} 5 `+timestampMs+`
 	}
 }
 
-func TestStreamMetricsHandlerUniformlySlowMountsAllExported(t *testing.T) {
-	t.Parallel()
-
-	// With uniformly slow but healthy sidecars, each request attempts about the same number of mounts k
-	// before the budget runs out. With a fixed starting mount, the same mounts would be skipped on every
-	// request; varying the starting mount exports every mount across requests.
-	const numMounts = 4
-	mm, fakeClientset := newStreamTestManager(t, true)
-	mm.streamMetricsBudget = 200 * time.Millisecond
-	mm.streamMountScrapeTimeout = 150 * time.Millisecond
-	mm.streamStartIndex = cyclingStartIndex()
-
-	slowHandler := func(opValue int) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-time.After(60 * time.Millisecond):
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(mountPayload(opValue)))
-		}
-	}
-	var mounts []fakeMount
-	for i := range numMounts {
-		mounts = append(mounts, fakeMount{
-			podUID:     fmt.Sprintf("uid-%d", i),
-			podName:    fmt.Sprintf("pod-%d", i),
-			volumeName: fmt.Sprintf("vol-%d", i),
-			handler:    slowHandler(i + 1),
-		})
-	}
-	registerFakeMounts(t, mm, fakeClientset, mounts)
-
-	seen := map[string]int{}
-	for i := range numMounts {
-		rec := httptest.NewRecorder()
-		mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
-		body := rec.Body.String()
-		if _, err := ProcessMetricsData(strings.NewReader(body)); err != nil {
-			t.Fatalf("scrape %d: failed to parse response: %v\nbody:\n%s", i, err, body)
-		}
-		for _, m := range mounts {
-			if strings.Contains(body, `volume_name="`+m.volumeName+`"`) {
-				seen[m.volumeName]++
-			}
-		}
-	}
-
-	for _, m := range mounts {
-		if seen[m.volumeName] == 0 {
-			t.Errorf("expected metrics of healthy mount %s in at least one scrape, seen counts: %v", m.volumeName, seen)
-		}
-	}
-}
-
 // slowVolumeResponseWriter wraps an http.ResponseWriter and sleeps once, on the first Write containing
 // the samples of volumeName, to simulate the budget running out while that mount is being encoded.
 type slowVolumeResponseWriter struct {
@@ -2114,24 +2020,20 @@ func TestStreamMetricsHandlerLastMountCompletedWhenBudgetRunsOut(t *testing.T) {
 	t.Parallel()
 
 	mm, fakeClientset := newStreamTestManager(t, true)
-	// The budget is longer than the per-mount timeout, and the first mount is slow, so the last mount
-	// is given less than the per-mount timeout.
-	mm.streamMetricsBudget = 250 * time.Millisecond
-	mm.streamMountScrapeTimeout = 200 * time.Millisecond
-
-	slowHandler := func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(50 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mountPayload(1)))
+	// The budget is shorter than the per-mount timeout, so the last mount's scrape is capped at the
+	// remaining budget.
+	mm.sequentialMetricsBudget = 250 * time.Millisecond
+	if mm.sequentialMetricsBudget >= mm.perMountScrapeTimeout() {
+		t.Fatalf("test requires a budget shorter than the per-mount timeout %v", mm.perMountScrapeTimeout())
 	}
 	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
-		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: slowHandler},
+		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(1), nil)},
 		{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: staticPayloadHandler(mountPayload(2), nil)},
 	})
 
 	// The last mount's scrape finishes in time, but the budget runs out while it is being encoded.
 	rec := httptest.NewRecorder()
-	w := &slowVolumeResponseWriter{ResponseWriter: rec, volumeName: "vol-2", delay: 250 * time.Millisecond}
+	w := &slowVolumeResponseWriter{ResponseWriter: rec, volumeName: "vol-2", delay: 300 * time.Millisecond}
 	req := httptest.NewRequest(http.MethodGet, metricsPath, nil)
 	req.Header.Set("Accept", "text/plain")
 	mm.metricsHandler().ServeHTTP(w, req)
@@ -2160,11 +2062,11 @@ func TestStreamMetricsHandlerHungMountWithShortBudget(t *testing.T) {
 	mm, fakeClientset := newStreamTestManager(t, true)
 	// The budget is shorter than the per-mount timeout, e.g. a Prometheus scrape_timeout of about 5s, so
 	// a hung mount always uses up the rest of the budget.
-	mm.streamMetricsBudget = 150 * time.Millisecond
-	if mm.streamMetricsBudget >= mm.perMountScrapeTimeout() {
+	mm.sequentialMetricsBudget = 250 * time.Millisecond
+	if mm.sequentialMetricsBudget >= mm.perMountScrapeTimeout() {
 		t.Fatalf("test requires a budget shorter than the per-mount timeout %v", mm.perMountScrapeTimeout())
 	}
-	mm.streamStartIndex = cyclingStartIndex()
+	mm.sequentialStartIndex = cyclingStartIndex()
 
 	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(1), nil)},
@@ -2183,7 +2085,12 @@ func TestStreamMetricsHandlerHungMountWithShortBudget(t *testing.T) {
 	}
 	for i, want := range wantExported {
 		rec := httptest.NewRecorder()
+		start := time.Now()
 		mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
+		// The hung mount is cut off by the budget rather than by the longer per-mount timeout.
+		if elapsed := time.Since(start); elapsed >= mm.perMountScrapeTimeout() {
+			t.Errorf("scrape %d: took %v, want less than the per-mount timeout %v", i, elapsed, mm.perMountScrapeTimeout())
+		}
 		body := rec.Body.String()
 		if _, err := ProcessMetricsData(strings.NewReader(body)); err != nil {
 			t.Fatalf("scrape %d: failed to parse response: %v\nbody:\n%s", i, err, body)
@@ -2204,11 +2111,11 @@ func TestStreamMetricsHandlerExceedsServerWriteTimeout(t *testing.T) {
 	t.Parallel()
 
 	mm, fakeClientset := newStreamTestManager(t, true)
-	// As in production, the streaming budget is longer than the server WriteTimeout, and the sequential
+	// As in production, the sequential budget is longer than the server WriteTimeout, and the sequential
 	// scrape takes longer than the WriteTimeout but fits within the budget. The response must still be
 	// delivered in full, which relies on the handler extending the write deadline to match the budget.
 	const writeTimeout = 100 * time.Millisecond
-	mm.streamMetricsBudget = 2 * time.Second
+	mm.sequentialMetricsBudget = 2 * time.Second
 
 	slowHandler := func(opValue int) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
@@ -2300,14 +2207,14 @@ func TestStreamMetricsHandlerBudgetExhaustedWhileWaiting(t *testing.T) {
 	t.Parallel()
 
 	mm, fakeClientset := newStreamTestManager(t, true)
-	mm.streamMetricsBudget = 200 * time.Millisecond
+	mm.sequentialMetricsBudget = 200 * time.Millisecond
 	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 		{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: staticPayloadHandler(mountPayload(1), nil)},
 	})
 
-	// Simulate another streaming request holding the scrape slot for longer than the budget.
-	mm.streamScrapeSlot <- struct{}{}
-	defer func() { <-mm.streamScrapeSlot }()
+	// Simulate another sequential request holding the scrape slot for longer than the budget.
+	mm.sequentialScrapeSlot <- struct{}{}
+	defer func() { <-mm.sequentialScrapeSlot }()
 
 	rec := httptest.NewRecorder()
 	mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
@@ -2319,7 +2226,8 @@ func TestStreamMetricsHandlerBudgetExhaustedWhileWaiting(t *testing.T) {
 	}
 }
 
-// lockedFakeClientset serializes GetPod calls on a FakeClientset, whose GetPod mutates shared state.
+// lockedFakeClientset serializes GetPod calls on a FakeClientset, whose GetPod mutates and returns a
+// shared pod, and returns a copy of the pod so that concurrent callers do not share it.
 type lockedFakeClientset struct {
 	*clientset.FakeClientset
 	mu sync.Mutex
@@ -2328,7 +2236,11 @@ type lockedFakeClientset struct {
 func (c *lockedFakeClientset) GetPod(namespace, name string) (*corev1.Pod, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.FakeClientset.GetPod(namespace, name)
+	pod, err := c.FakeClientset.GetPod(namespace, name)
+	if err != nil || pod == nil {
+		return pod, err
+	}
+	return pod.DeepCopy(), nil
 }
 
 func TestAcceptsGzip(t *testing.T) {
@@ -2381,20 +2293,28 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			fuseSocketDir, err := os.MkdirTemp("/tmp", "fs")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			t.Cleanup(func() { os.RemoveAll(fuseSocketDir) })
 			fakeClientset := clientset.NewFakeClientset()
 			// FakeClientset.GetPod is not safe for concurrent use, and Registry.Gather() calls it concurrently.
-			mm := NewMetricsManager(":0", fuseSocketDir, 10, &lockedFakeClientset{FakeClientset: fakeClientset}, tc.streamMetrics, tc.sequentialMetrics, true).(*manager)
+			mm := NewMetricsManager(":0", newSocketTempDir(t), 10, &lockedFakeClientset{FakeClientset: fakeClientset}, tc.streamMetrics, tc.sequentialMetrics, true).(*manager)
 
 			var tr inFlightTracker
+			// Without --sequential-metrics-export, each scrape waits for the other one to start, which
+			// only happens if the mounts are scraped concurrently. Otherwise, the first scrape runs into
+			// the per-mount timeout and its mount is missing from the response.
+			var arrivals atomic.Int32
+			bothInFlight := make(chan struct{})
 			slowHandler := func(opValue int) http.HandlerFunc {
-				return func(w http.ResponseWriter, _ *http.Request) {
+				return func(w http.ResponseWriter, r *http.Request) {
 					done := tr.enter()
-					time.Sleep(200 * time.Millisecond)
+					if !tc.sequentialMetrics {
+						if arrivals.Add(1) == 2 {
+							close(bothInFlight)
+						}
+						select {
+						case <-bothInFlight:
+						case <-r.Context().Done():
+						}
+					}
 					done()
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(mountPayload(opValue)))

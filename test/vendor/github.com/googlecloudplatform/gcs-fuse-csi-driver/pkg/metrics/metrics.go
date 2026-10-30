@@ -78,18 +78,18 @@ const (
 	// metricsServerWriteTimeout is the WriteTimeout of the node driver metrics HTTP server.
 	metricsServerWriteTimeout = 10 * time.Second
 
-	// defaultStreamMetricsBudget is the default overall time budget for scraping all mounts when
-	// streaming metrics and the scraper does not advertise its timeout via scrapeTimeoutHeader.
+	// defaultSequentialMetricsBudget is the default overall time budget for scraping all mounts
+	// sequentially when the scraper does not advertise its timeout via scrapeTimeoutHeader.
 	// Why: Mounts are scraped sequentially, so the total latency grows with the number of mounts. The
 	// GKE metrics collector scrapes this endpoint every 60s with a 45s timeout (3/4 of the interval) and
 	// does not send scrapeTimeoutHeader, so the budget is kept below 45s. Prometheus scrapers send
 	// scrapeTimeoutHeader, which lowers the budget to fit their scrape_timeout. The per-request write
 	// deadline is extended to match, overriding metricsServerWriteTimeout.
-	defaultStreamMetricsBudget = 30 * time.Second
+	defaultSequentialMetricsBudget = 30 * time.Second
 
-	// streamMetricsWriteSlack is the extra time, beyond the streaming budget, allowed for flushing
+	// sequentialMetricsWriteSlack is the extra time, beyond the sequential budget, allowed for flushing
 	// the encoder and gzip writer after the last mount has been scraped.
-	streamMetricsWriteSlack = 2 * time.Second
+	sequentialMetricsWriteSlack = 2 * time.Second
 
 	// mountScrapeTimeout is the maximum time allowed for scraping the metrics of a single mount.
 	mountScrapeTimeout = 5 * time.Second
@@ -117,18 +117,18 @@ type manager struct {
 	// sequentialMetrics (--sequential-metrics-export) enables sequentialMetricsHandler, which scrapes and
 	// encodes mounts sequentially instead of using prometheus.Registry.Gather().
 	sequentialMetrics bool
-	// streamMetricsBudget is the overall time budget for scraping all mounts in sequentialMetricsHandler.
-	streamMetricsBudget time.Duration
-	// streamMountScrapeTimeout is the maximum time allowed for scraping a single mount in
+	// sequentialMetricsBudget is the overall time budget for scraping all mounts in sequentialMetricsHandler.
+	sequentialMetricsBudget time.Duration
+	// sequentialMountScrapeTimeout is the maximum time allowed for scraping a single mount in
 	// sequentialMetricsHandler. Defaults to mountScrapeTimeout.
-	streamMountScrapeTimeout time.Duration
-	// streamStartIndex returns the index of the mount at which a sequentialMetricsHandler request starts
+	sequentialMountScrapeTimeout time.Duration
+	// sequentialStartIndex returns the index of the mount at which a sequentialMetricsHandler request starts
 	// scraping, given the number of mounts. Defaults to rand.IntN; overridden in tests.
-	streamStartIndex func(n int) int
-	// streamScrapeSlot allows only one sequentialMetricsHandler request to scrape mounts at a time.
+	sequentialStartIndex func(n int) int
+	// sequentialScrapeSlot allows only one sequentialMetricsHandler request to scrape mounts at a time.
 	// Why: Each in-flight request holds up to one mount's parsed metrics, so concurrent requests (e.g.
-	// from several scrapers) would multiply the peak memory that streaming is meant to bound.
-	streamScrapeSlot chan struct{}
+	// from several scrapers) would multiply the peak memory that sequential scraping is meant to bound.
+	sequentialScrapeSlot chan struct{}
 
 	maximumNumberOfCollectors int
 	volumeMountPathRegistered sets.Set[string]
@@ -145,10 +145,10 @@ func NewMetricsManager(metricsEndpoint, fuseSocketDir string, maximumNumberOfCol
 		streamMetrics:                    streamMetrics,
 		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
 		sequentialMetrics:                sequentialMetrics,
-		streamMetricsBudget:              defaultStreamMetricsBudget,
-		streamMountScrapeTimeout:         mountScrapeTimeout,
-		streamStartIndex:                 rand.IntN,
-		streamScrapeSlot:                 make(chan struct{}, 1),
+		sequentialMetricsBudget:          defaultSequentialMetricsBudget,
+		sequentialMountScrapeTimeout:     mountScrapeTimeout,
+		sequentialStartIndex:             rand.IntN,
+		sequentialScrapeSlot:             make(chan struct{}, 1),
 		volumeMountPathRegistered:        sets.Set[string]{},
 		maximumNumberOfCollectors:        maximumNumberOfCollectors,
 		mutex:                            sync.Mutex{},
@@ -178,18 +178,22 @@ func (mm *manager) metricsHandler() http.Handler {
 	return promhttp.HandlerFor(mm.registry, promhttp.HandlerOpts{})
 }
 
-// streamMetricsBudgetFor returns the overall time budget for scraping all mounts for the given request.
+// sequentialMetricsBudgetFor returns the overall time budget for scraping all mounts for the given request.
 // The configured budget is further capped by the scraper's own timeout, if advertised.
-func (mm *manager) streamMetricsBudgetFor(header http.Header) time.Duration {
-	budget := mm.streamMetricsBudget
+func (mm *manager) sequentialMetricsBudgetFor(header http.Header) time.Duration {
+	budget := mm.sequentialMetricsBudget
 	if budget <= 0 {
-		budget = defaultStreamMetricsBudget
+		budget = defaultSequentialMetricsBudget
 	}
 	if v := header.Get(scrapeTimeoutHeader); v != "" {
-		if seconds, err := strconv.ParseFloat(v, 64); err == nil && seconds > 0 {
+		if seconds, err := strconv.ParseFloat(v, 64); err == nil {
 			// Leave 10% of the scraper's timeout for encoding and network transfer.
-			if scraperBudget := time.Duration(seconds * 0.9 * float64(time.Second)); scraperBudget < budget {
-				budget = scraperBudget
+			// The comparisons are false for NaN and reject non-positive, infinite, and too large values,
+			// which would overflow time.Duration; values that truncate to zero are rejected as well.
+			if scaled := seconds * 0.9 * float64(time.Second); scaled > 0 && scaled < float64(budget) {
+				if d := time.Duration(scaled); d > 0 {
+					budget = d
+				}
 			}
 		}
 	}
@@ -199,27 +203,27 @@ func (mm *manager) streamMetricsBudgetFor(header http.Header) time.Duration {
 func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	// Why: Mounts are scraped one after another, so the total latency is the sum of all mounts' latencies.
 	// Bound the whole scrape by an overall budget that fits inside the scraper's timeout, and extend this
-	// request's write deadline to the budget plus streamMetricsWriteSlack, overriding the server-wide
+	// request's write deadline to the budget plus sequentialMetricsWriteSlack, overriding the server-wide
 	// WriteTimeout (metricsServerWriteTimeout), which is shorter than the default budget. Once the budget
 	// is used up, the remaining mounts are skipped so that a partial but well-formed response is
 	// delivered instead of a truncated body or a dropped connection. The server
 	// WriteTimeout does not cancel r.Context(), so the budget is enforced through a derived context.
-	budget := mm.streamMetricsBudgetFor(r.Header)
+	budget := mm.sequentialMetricsBudgetFor(r.Header)
 	deadline := time.Now().Add(budget)
-	if err := http.NewResponseController(w).SetWriteDeadline(deadline.Add(streamMetricsWriteSlack)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		klog.V(4).Infof("failed to set write deadline for streaming metrics response: %v", err)
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline.Add(sequentialMetricsWriteSlack)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		klog.V(4).Infof("failed to set write deadline for sequential metrics response: %v", err)
 	}
 	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
 
-	// Wait for any other streaming request to finish. The wait counts against this request's budget.
-	if mm.streamScrapeSlot != nil {
+	// Wait for any other sequential request to finish. The wait counts against this request's budget.
+	if mm.sequentialScrapeSlot != nil {
 		select {
-		case mm.streamScrapeSlot <- struct{}{}:
-			defer func() { <-mm.streamScrapeSlot }()
+		case mm.sequentialScrapeSlot <- struct{}{}:
+			defer func() { <-mm.sequentialScrapeSlot }()
 		case <-ctx.Done():
 			if r.Context().Err() == nil {
-				klog.Warningf("streaming metrics budget %v exhausted while waiting for another metrics request to finish", budget)
+				klog.Warningf("sequential metrics budget %v exhausted while waiting for another metrics request to finish", budget)
 				http.Error(w, "timed out waiting for another metrics request to finish", http.StatusServiceUnavailable)
 			}
 			return
@@ -242,16 +246,8 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 		out = gz
 	}
 
-	sw := &skipFirstLineWriter{w: out, skipped: true}
-	enc := expfmt.NewEncoder(sw, contentType)
-	defer func() {
-		if closer, ok := enc.(expfmt.Closer); ok {
-			_ = closer.Close()
-		}
-	}()
-
-	isTextFormat := contentType.FormatType() == expfmt.TypeTextPlain
-	seenFamilies := make(map[string]dto.MetricType)
+	fe := newFamilyEncoder(out, contentType)
+	defer func() { _ = fe.close() }()
 
 	collectors := mm.snapshotCollectors()
 	n := len(collectors)
@@ -263,21 +259,17 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 	// would be skipped on every scrape and their metrics would never be exported. A random start gives
 	// every mount the same chance of being scraped, without any state shared across requests, and a hung
 	// sidecar cannot repeatedly use up the budget ahead of the same mounts.
-	startIndex := mm.streamStartIndex
-	if startIndex == nil {
-		startIndex = rand.IntN
-	}
-	start := startIndex(n)
+	start := mm.sequentialStartIndex(n)
 	perMountTimeout := mm.perMountScrapeTimeout()
 	for i := range n {
 		c := collectors[(start+i)%n]
 		writeErr := false
 		// The per-mount scrape timeout is derived from ctx, so it is also capped at the remaining budget.
-		completed := c.scrapeMetricFamilies(ctx, perMountTimeout, true, func(mf *dto.MetricFamily) bool {
+		completed := c.scrapeMetricFamilies(ctx, perMountTimeout, func(mf *dto.MetricFamily) bool {
 			if !c.transformMetricFamily(mf) {
 				return true
 			}
-			if err := encodeMetricFamily(enc, sw, mf, isTextFormat, seenFamilies); err != nil {
+			if err := fe.encode(mf); err != nil {
 				klog.Errorf("failed to encode metric family %q: %v", mf.GetName(), err)
 				writeErr = true
 				return false
@@ -295,15 +287,15 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 				skipped++
 			}
 			if skipped > 0 {
-				klog.Warningf("streaming metrics budget %v exhausted, skipping metrics of %d out of %d mounts", budget, skipped, n)
+				klog.Warningf("sequential metrics budget %v exhausted, skipping metrics of %d out of %d mounts", budget, skipped, n)
 			}
 			return
 		}
 	}
 }
 
-// perMountScrapeTimeout returns the maximum time allowed for scraping a single mount when streaming.
-// Each mount gets the per-mount timeout (by default the same mountScrapeTimeout as the non-streaming
+// perMountScrapeTimeout returns the maximum time allowed for scraping a single mount sequentially.
+// Each mount gets the per-mount timeout (by default the same mountScrapeTimeout as the Gather()/registry
 // path), capped at the remaining budget via the request context.
 // Why: Splitting the remaining budget evenly across the remaining mounts would give early mounts only a
 // tiny slice on nodes with many mounts, so healthy but slightly slower sidecars would be canceled and
@@ -311,39 +303,42 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 // the per-mount timeout and the overall budget, and the random starting mount in sequentialMetricsHandler
 // ensures that the mounts skipped after the budget is exhausted vary across requests.
 func (mm *manager) perMountScrapeTimeout() time.Duration {
-	if mm.streamMountScrapeTimeout <= 0 {
+	if mm.sequentialMountScrapeTimeout <= 0 {
 		return mountScrapeTimeout
 	}
-	return mm.streamMountScrapeTimeout
+	return mm.sequentialMountScrapeTimeout
 }
 
 // acceptsGzip reports whether the Accept-Encoding header accepts gzip. Like older promhttp versions, it
 // ignores q-values, so "gzip;q=0" is treated as accepting gzip; real scrapers do not send it.
 func acceptsGzip(header http.Header) bool {
-	for _, part := range strings.Split(header.Get(acceptEncodingHeader), ",") {
-		part = strings.TrimSpace(part)
-		if part == "gzip" || strings.HasPrefix(part, "gzip;") {
-			return true
+	for _, v := range header.Values(acceptEncodingHeader) {
+		for part := range strings.SplitSeq(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "gzip" || strings.HasPrefix(part, "gzip;") {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// skipFirstLineWriter wraps an io.Writer and discards bytes up to and including the first newline.
+// skipFirstLineWriter wraps an io.Writer and, while skipNextLine is set, discards bytes up to and
+// including the next newline, then clears skipNextLine.
 type skipFirstLineWriter struct {
-	w       io.Writer
-	skipped bool
+	w            io.Writer
+	skipNextLine bool
 }
 
 func (s *skipFirstLineWriter) Write(p []byte) (int, error) {
-	if s.skipped {
+	if !s.skipNextLine {
 		return s.w.Write(p)
 	}
 	idx := bytes.IndexByte(p, '\n')
 	if idx == -1 {
 		return len(p), nil
 	}
-	s.skipped = true
+	s.skipNextLine = false
 	rest := p[idx+1:]
 	if len(rest) == 0 {
 		return len(p), nil
@@ -355,21 +350,35 @@ func (s *skipFirstLineWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func encodeMetricFamily(
-	enc expfmt.Encoder,
-	sw *skipFirstLineWriter,
-	mf *dto.MetricFamily,
-	isTextFormat bool,
-	seenFamilies map[string]dto.MetricType,
-) error {
+// familyEncoder encodes the metric families of all mounts into a single response, writing the
+// metadata of each family only once.
+type familyEncoder struct {
+	enc expfmt.Encoder
+	// sw strips the "# TYPE" line of families that were already emitted. It is nil unless the format
+	// is text.
+	sw           *skipFirstLineWriter
+	seenFamilies map[string]dto.MetricType
+}
+
+func newFamilyEncoder(out io.Writer, contentType expfmt.Format) *familyEncoder {
+	fe := &familyEncoder{seenFamilies: make(map[string]dto.MetricType)}
+	if contentType.FormatType() == expfmt.TypeTextPlain {
+		fe.sw = &skipFirstLineWriter{w: out}
+		out = fe.sw
+	}
+	fe.enc = expfmt.NewEncoder(out, contentType)
+	return fe
+}
+
+func (fe *familyEncoder) encode(mf *dto.MetricFamily) error {
 	name := mf.GetName()
 	metricType := mf.GetType()
-	if prevType, seen := seenFamilies[name]; seen {
+	if prevType, seen := fe.seenFamilies[name]; seen {
 		if prevType != metricType {
 			klog.Errorf("metric family %q has conflicting type %v (already emitted as %v), skipping", name, metricType, prevType)
 			return nil
 		}
-		if isTextFormat {
+		if fe.sw != nil {
 			// Why: Standard Prometheus text parsers (expfmt.TextParser) reject repeated
 			// "# HELP" or "# TYPE" lines for the same metric family name within a single
 			// scrape payload, whereas sample lines for an already-declared metric family
@@ -381,13 +390,20 @@ func encodeMetricFamily(
 			// parser accept this, but stricter consumers may not. The protobuf delimited format,
 			// where repeated MetricFamily messages are well-defined, is preferred for such consumers.
 			mf.Help = nil
-			sw.skipped = false
-			defer func() { sw.skipped = true }()
+			fe.sw.skipNextLine = true
+			defer func() { fe.sw.skipNextLine = false }()
 		}
 	} else {
-		seenFamilies[name] = metricType
+		fe.seenFamilies[name] = metricType
 	}
-	return enc.Encode(mf)
+	return fe.enc.Encode(mf)
+}
+
+func (fe *familyEncoder) close() error {
+	if closer, ok := fe.enc.(expfmt.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 // InitializeHTTPHandler sets up a server and creates a handler for metrics.
@@ -426,30 +442,37 @@ func isGrpcMetric(name string) bool {
 
 func newMetricSchemaPolicy(enableGcsFuseVolumeMetricsSchema bool) MetricSchemaPolicy {
 	if enableGcsFuseVolumeMetricsSchema {
-		return MetricSchemaPolicy{
-			NormalizeMetricName: func(name string) string {
-				name = strings.TrimPrefix(name, "volume_")
-				if isGrpcMetric(name) {
-					return name
-				}
-				if name == "fs_ops_latency" {
-					name = "fs_ops_latencies"
-				}
-				return "volume_" + name
-			},
-			BuildConstLabels: func(podName, podNamespace, volumeName, bucketName, controllerType, controllerName string) map[string]string {
-				return map[string]string{
-					"pod_name":            podName,
-					"namespace_name":      podNamespace,
-					"volume_name":         volumeName,
-					"bucket_name":         bucketName,
-					"k8s_controller_type": controllerType,
-					"k8s_controller_name": controllerName,
-				}
-			},
-		}
+		return volumeSchemaPolicy
 	}
-	return MetricSchemaPolicy{
+	return podSchemaPolicy
+}
+
+// volumeSchemaPolicy and podSchemaPolicy are stateless, so they are shared instead of being allocated
+// for every metric family.
+var (
+	volumeSchemaPolicy = MetricSchemaPolicy{
+		NormalizeMetricName: func(name string) string {
+			name = strings.TrimPrefix(name, "volume_")
+			if isGrpcMetric(name) {
+				return name
+			}
+			if name == "fs_ops_latency" {
+				name = "fs_ops_latencies"
+			}
+			return "volume_" + name
+		},
+		BuildConstLabels: func(podName, podNamespace, volumeName, bucketName, controllerType, controllerName string) map[string]string {
+			return map[string]string{
+				"pod_name":            podName,
+				"namespace_name":      podNamespace,
+				"volume_name":         volumeName,
+				"bucket_name":         bucketName,
+				"k8s_controller_type": controllerType,
+				"k8s_controller_name": controllerName,
+			}
+		},
+	}
+	podSchemaPolicy = MetricSchemaPolicy{
 		NormalizeMetricName: func(name string) string {
 			name = strings.TrimPrefix(name, "volume_")
 			if name == "fs_ops_latencies" {
@@ -471,7 +494,7 @@ func newMetricSchemaPolicy(enableGcsFuseVolumeMetricsSchema bool) MetricSchemaPo
 			}
 		},
 	}
-}
+)
 
 // RegisterMetricsCollector registers the metrics collector. It is idempotent to register the same collector.
 func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, podUID, volumeName, k8sControllerType, k8sControllerName string) {
@@ -480,11 +503,6 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 		klog.Errorf("failed to create symbolic link to path %q: %v", socketBasePath, err)
 		return
 	}
-
-	policy := newMetricSchemaPolicy(mm.enableGcsFuseVolumeMetricsSchema)
-	constLabels := policy.BuildConstLabels(podName, podNamespace, volumeName, bucketName, k8sControllerType, k8sControllerName)
-
-	c := NewMetricsCollector(socketBasePath, emptyDirBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
 
 	// Lock the number of registered collectors while we attempt to register a new collector.
 	mm.mutex.Lock()
@@ -498,80 +516,78 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 	// Check if we need to register collector. We register a collector when the following are met:
 	// 1. There is space on the metrics pipeline for the collector to be registered.
 	// 2. The metrics collector has not previously been registered.
-	if mm.maximumNumberOfCollectors > 0 {
-		// If volume is already registered, do not register again. This flow can get triggered
-		//  since CSI driver has republishVolume capability.
-		if mm.volumeMountPathRegistered.Has(mountPath) {
-			return
-		}
-		// If collector hasn't been registered and there's no space left, log a warning.
-		if mm.volumeMountPathRegistered.Len() >= mm.maximumNumberOfCollectors {
-			klog.V(4).Infof("could not register a metrics collector for mount path %q. There's already %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
-			return
-		}
+	// If volume is already registered, do not register again. This flow can get triggered
+	//  since CSI driver has republishVolume capability.
+	if mm.volumeMountPathRegistered.Has(mountPath) {
+		return
+	}
+	// If collector hasn't been registered and there's no space left, log a warning.
+	if mm.maximumNumberOfCollectors > 0 && mm.volumeMountPathRegistered.Len() >= mm.maximumNumberOfCollectors {
+		klog.V(4).Infof("could not register a metrics collector for mount path %q. There's already %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
+		return
 	}
 
+	policy := newMetricSchemaPolicy(mm.enableGcsFuseVolumeMetricsSchema)
+	constLabels := policy.BuildConstLabels(podName, podNamespace, volumeName, bucketName, k8sControllerType, k8sControllerName)
+	c := newMetricsCollector(socketBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
+
 	// Attempt to register new metrics collector and record success.
-	err := mm.registry.Register(c)
-	if err != nil {
-		if !strings.Contains(err.Error(), prometheus.AlreadyRegisteredError{}.Error()) {
+	if err := mm.registry.Register(c); err != nil {
+		var are prometheus.AlreadyRegisteredError
+		if !errors.As(err, &are) {
 			klog.Errorf("failed to register metrics collector for mount path %q, bucket %q: %v", mountPath, bucketName, err)
 		}
-	} else {
-		mm.volumeMountPathRegistered.Insert(mountPath)
-		if mc, ok := c.(*metricsCollector); ok {
-			mm.collectors = append(mm.collectors, mc)
-		}
-		klog.Infof("successfully registered a new metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
+		return
 	}
+	mm.volumeMountPathRegistered.Insert(mountPath)
+	mm.collectors = append(mm.collectors, c)
+	klog.Infof("successfully registered a new metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
 }
 
 // UnregisterMetricsCollector unregisters the metrics collector. It is idempotent to unregister the same collector.
 func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName string) {
-	// Why: UnregisterMetricsCollector constructs a dummy collector with constLabels = nil.
-	// Prometheus Registry.Unregister matches collectors solely by hashing the descriptor emitted by Describe().
-	// Therefore, Describe() MUST remain pinned to {pod_uid, volume_name} independent of c.constLabels.
-	c := NewMetricsCollector("", "", "", "", podUID, volumeName, nil, nil, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
-
 	// Lock the number of registered collectors while we attempt to unregister a collector.
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
-	if ok := mm.registry.Unregister(c); !ok {
+	i := slices.IndexFunc(mm.collectors, func(mc *metricsCollector) bool {
+		return mc.podUID == podUID && mc.volumeName == volumeName
+	})
+	if i < 0 {
 		klog.Infof("Unregister metrics collector for mount path %q is not needed since the collector is not registered.", mountPath)
-	} else {
-		mm.volumeMountPathRegistered.Delete(mountPath)
-		mm.collectors = slices.DeleteFunc(mm.collectors, func(mc *metricsCollector) bool {
-			if mc.podUID == podUID && mc.volumeName == volumeName {
-				if mc.httpClient != nil {
-					mc.httpClient.CloseIdleConnections()
-				}
-				return true
-			}
-			return false
-		})
-		klog.Infof("successfully unregistered a metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
+		return
 	}
+	mc := mm.collectors[i]
+	mm.registry.Unregister(mc)
+	mm.collectors = slices.Delete(mm.collectors, i, i+1)
+	mm.volumeMountPathRegistered.Delete(mountPath)
+	klog.Infof("successfully unregistered a metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
 }
 
 type metricsCollector struct {
-	emptyDirBasePath                 string
-	constLabels                      map[string]string
+	constLabels map[string]string
+	// constLabelPairs holds constLabels as label pairs sorted by name. grpcConstLabels and
+	// grpcConstLabelPairs hold the constant labels of gRPC metric families, which remain on the legacy
+	// k8s_pod schema when enableGcsFuseVolumeMetricsSchema is set. They are immutable and computed once
+	// in newMetricsCollector, so that they are not allocated for every metric family.
+	constLabelPairs                  []*dto.LabelPair
+	grpcConstLabels                  map[string]string
+	grpcConstLabelPairs              []*dto.LabelPair
 	namespace                        string
 	podName                          string
 	podUID                           string
 	volumeName                       string
 	httpClient                       *http.Client
 	clientset                        clientset.Interface
-	streamMetrics                    bool
+	streamMetrics                    bool // --stream-metrics-export; unused until metrics are decoded one family at a time.
 	enableGcsFuseVolumeMetricsSchema bool
 }
 
-// NewMetricsCollector returns a new Collector exposing metrics read from the give path.
-func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) prometheus.Collector {
+// newMetricsCollector returns a new Collector exposing metrics read from the give path.
+func newMetricsCollector(socketBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) *metricsCollector {
 	c := &metricsCollector{
-		emptyDirBasePath:                 emptyDirBasePath,
 		constLabels:                      labels,
+		constLabelPairs:                  sortedLabelPairs(labels),
 		namespace:                        namespace,
 		podName:                          podName,
 		podUID:                           podUID,
@@ -580,11 +596,18 @@ func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, p
 		streamMetrics:                    streamMetrics,
 		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
 	}
+	if enableGcsFuseVolumeMetricsSchema && labels != nil {
+		c.grpcConstLabels = grpcConstLabels(labels)
+		c.grpcConstLabelPairs = sortedLabelPairs(c.grpcConstLabels)
+	}
 
 	// Creating a new HTTP client that is configured to make HTTP requests over a unix domain socket.
+	// Why: Each mount is scraped once per scrape interval, so keep-alive connections would only keep an
+	// idle connection, its goroutines and buffers, and a socket open per mount between scrapes. The
+	// scrape timeout is enforced through the request context in scrapeMetricFamilies.
 	c.httpClient = &http.Client{
-		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
+			DisableKeepAlives: true,
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", filepath.Join(socketBasePath, SocketName))
@@ -595,31 +618,46 @@ func NewMetricsCollector(socketBasePath, emptyDirBasePath, namespace, podName, p
 	return c
 }
 
+// grpcConstLabels returns the constant labels of gRPC metric families given the constant labels of the
+// k8s_gcs_fuse_volume schema.
+func grpcConstLabels(labels map[string]string) map[string]string {
+	return podSchemaPolicy.BuildConstLabels(labels["pod_name"], labels["namespace_name"], labels["volume_name"], labels["bucket_name"], "", "")
+}
+
+// sortedLabelPairs returns labels as label pairs sorted by name.
+func sortedLabelPairs(labels map[string]string) []*dto.LabelPair {
+	pairs := make([]*dto.LabelPair, 0, len(labels))
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		v := labels[k]
+		pairs = append(pairs, &dto.LabelPair{Name: &k, Value: &v})
+	}
+	return pairs
+}
+
 // Describe emits the description of metrics.
 // Prometheus Registry relies on this func to identify collectors.
 func (c *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	// Why: Collector identity in prometheus.Registry.Register/Unregister is computed by hashing
 	// the fqName and ConstLabels emitted by Describe(). This MUST remain pinned to {pod_uid: c.podUID, volume_name: c.volumeName}
-	// and MUST NOT use c.constLabels (which omits pod_uid in k8s_gcs_fuse_volume mode), otherwise UnregisterMetricsCollector
-	// (which passes nil constLabels) will fail to match the descriptor hash and leak collectors on volume unmount.
+	// and MUST NOT use c.constLabels (which omits pod_uid in k8s_gcs_fuse_volume mode), otherwise collectors of
+	// different volumes could collide, and a collector registered again for the same volume would not be
+	// detected as already registered.
 	ch <- prometheus.NewDesc("gke_gcsfuse_csi_metric", "GKE GCSFuse CSI metric.", nil, map[string]string{"pod_uid": c.podUID, "volume_name": c.volumeName})
 }
 
 // Collect scrapes metrics from the sidecar and emits metrics.
 func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
-	_ = c.scrapeMetricFamilies(context.Background(), mountScrapeTimeout, false, func(mf *dto.MetricFamily) bool {
+	_ = c.scrapeMetricFamilies(context.Background(), mountScrapeTimeout, func(mf *dto.MetricFamily) bool {
 		c.emitMetricFamily(mf, ch)
 		return true
 	})
 }
 
 // scrapeMetricFamilies scrapes the sidecar metrics endpoint, bounded by timeout and parentCtx, and calls
-// handleFamily for each parsed MetricFamily until it returns false. It returns true only if the response
-// was received and fully parsed, and every family was passed to handleFamily without early termination.
-// If parseWholeBody is true, the whole response is parsed before any family is handled, families are
-// handled in name order, and nothing is handled if the response cannot be parsed. Otherwise, the
-// response is parsed as a stream if streamMetrics (--stream-metrics-export) is enabled.
-func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeout time.Duration, parseWholeBody bool, handleFamily func(*dto.MetricFamily) bool) bool {
+// handleFamily for each parsed MetricFamily, in name order, until it returns false. It returns true only
+// if the response was received and fully parsed, and every family was passed to handleFamily without
+// early termination.
+func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeout time.Duration, handleFamily func(*dto.MetricFamily) bool) bool {
 	if parentCtx.Err() != nil || c.clientset == nil {
 		return false
 	}
@@ -655,20 +693,6 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 		return false
 	}
 
-	if !parseWholeBody && c.streamMetrics {
-		for mf, err := range ProcessMetricsDataAsStream(resp.Body) {
-			if err != nil {
-				klog.Errorf("failed to decode metrics data: %v", err)
-
-				return false
-			}
-			if !handleFamily(mf) {
-				return false
-			}
-		}
-		return true
-	}
-
 	// Why: Do not use ProcessMetricsDataAsStream here. The underlying expfmt text decoder yields the
 	// partially parsed families before reporting a parse error, e.g. when the per-mount scrape timeout
 	// cuts the body off mid-family, which would emit truncated families (such as histograms with
@@ -676,11 +700,7 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 	// same, since the text decoder also builds the full per-mount map before yielding anything.
 	families, err := ProcessMetricsData(resp.Body)
 	if err != nil {
-		if parseWholeBody {
-			klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
-		} else {
-			klog.Errorf("failed to process metrics data: %v", err)
-		}
+		klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
 
 		return false
 	}
@@ -728,25 +748,23 @@ func ProcessMetricsData(metricsReader io.Reader) (map[string]*dto.MetricFamily, 
 	return metricFamilies, nil
 }
 
-func (c *metricsCollector) resolveMetricFamilySchema(name string) (string, map[string]string) {
+// resolveMetricFamilySchema returns the normalized name, and the constant labels both as a map and as
+// label pairs sorted by name, of the metric family with the given name. The label pairs are nil if the
+// collector was not built by newMetricsCollector (e.g. a struct literal in tests).
+func (c *metricsCollector) resolveMetricFamilySchema(name string) (string, map[string]string, []*dto.LabelPair) {
 	// Normalize metric names bidirectionally based on enableGcsFuseVolumeMetricsSchema to support
 	// live DaemonSet rollbacks (requiresRepublish) without restarting workload mounter sidecar containers.
 	// gRPC metrics remain on the legacy k8s_pod schema (unprefixed, with pod_uid="").
 	effectiveSchemaEnabled := c.enableGcsFuseVolumeMetricsSchema && !isGrpcMetric(name)
 	policy := newMetricSchemaPolicy(effectiveSchemaEnabled)
 	normalizedName := policy.NormalizeMetricName(name)
-	constLabels := c.constLabels
 	if !effectiveSchemaEnabled && c.enableGcsFuseVolumeMetricsSchema && c.constLabels != nil {
-		constLabels = policy.BuildConstLabels(
-			c.constLabels["pod_name"],
-			c.constLabels["namespace_name"],
-			c.constLabels["volume_name"],
-			c.constLabels["bucket_name"],
-			"",
-			"",
-		)
+		if c.grpcConstLabels == nil {
+			return normalizedName, grpcConstLabels(c.constLabels), nil
+		}
+		return normalizedName, c.grpcConstLabels, c.grpcConstLabelPairs
 	}
-	return normalizedName, constLabels
+	return normalizedName, c.constLabels, c.constLabelPairs
 }
 
 func hasValidMetricValue(metricType dto.MetricType, metric *dto.Metric) bool {
@@ -785,13 +803,11 @@ func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily)
 		return false
 	}
 
-	name, constLabels := c.resolveMetricFamilySchema(metricFamily.GetName())
+	name, constLabels, constLabelPairs := c.resolveMetricFamilySchema(metricFamily.GetName())
 	metricFamily.Name = &name
-
-	constLabelPairs := make([]*dto.LabelPair, 0, len(constLabels))
-	for _, k := range slices.Sorted(maps.Keys(constLabels)) {
-		v := constLabels[k]
-		constLabelPairs = append(constLabelPairs, &dto.LabelPair{Name: &k, Value: &v})
+	if constLabelPairs == nil {
+		// The collector was not built by newMetricsCollector, so the label pairs were not precomputed.
+		constLabelPairs = sortedLabelPairs(constLabels)
 	}
 
 	metricFamily.Metric = slices.DeleteFunc(metricFamily.GetMetric(), func(metric *dto.Metric) bool {
@@ -806,7 +822,7 @@ func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily)
 			return exists
 		})
 		metric.Label = append(metric.Label, constLabelPairs...)
-		// Drop sidecar-provided timestamps to match the non-streaming path (emitMetricFamily), which
+		// Drop sidecar-provided timestamps to match the Gather()/registry path (emitMetricFamily), which
 		// never exports timestamps.
 		metric.TimestampMs = nil
 		return false
@@ -816,18 +832,27 @@ func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily)
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
 func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
+	if metricFamily == nil || metricFamily.Type == nil || metricFamily.GetName() == "" || len(metricFamily.GetMetric()) == 0 {
+		return
+	}
 	help := metricFamily.GetHelp()
 	metricType := metricFamily.GetType()
-	name, constLabels := c.resolveMetricFamilySchema(metricFamily.GetName())
+	name, constLabels, _ := c.resolveMetricFamilySchema(metricFamily.GetName())
 
 	var cachedDesc *prometheus.Desc
 
 	var cachedLabelNames []string
 
 	for _, metric := range metricFamily.GetMetric() {
+		if metric == nil || !hasValidMetricValue(metricType, metric) {
+			continue
+		}
 		rawLabels := metric.GetLabel()
 		labels := make([]*dto.LabelPair, 0, len(rawLabels))
 		for _, label := range rawLabels {
+			if label == nil {
+				continue
+			}
 			if _, exists := constLabels[label.GetName()]; !exists {
 				labels = append(labels, label)
 			}
@@ -861,21 +886,23 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 			labelValues[i] = label.GetValue()
 		}
 
+		var promMetric prometheus.Metric
+		var err error
 		switch metricType {
 		case dto.MetricType_COUNTER:
-			ch <- prometheus.MustNewConstMetric(
+			promMetric, err = prometheus.NewConstMetric(
 				desc,
 				prometheus.CounterValue, metric.GetCounter().GetValue(), labelValues...,
 			)
 
 		case dto.MetricType_GAUGE:
-			ch <- prometheus.MustNewConstMetric(
+			promMetric, err = prometheus.NewConstMetric(
 				desc,
 				prometheus.GaugeValue, metric.GetGauge().GetValue(), labelValues...,
 			)
 
 		case dto.MetricType_UNTYPED:
-			ch <- prometheus.MustNewConstMetric(
+			promMetric, err = prometheus.NewConstMetric(
 				desc,
 				prometheus.UntypedValue, metric.GetUntyped().GetValue(), labelValues...,
 			)
@@ -883,9 +910,12 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 		case dto.MetricType_SUMMARY:
 			quantiles := make(map[float64]float64, len(metric.GetSummary().GetQuantile()))
 			for _, q := range metric.GetSummary().GetQuantile() {
+				if q == nil {
+					continue
+				}
 				quantiles[q.GetQuantile()] = q.GetValue()
 			}
-			ch <- prometheus.MustNewConstSummary(
+			promMetric, err = prometheus.NewConstSummary(
 				desc,
 				metric.GetSummary().GetSampleCount(),
 				metric.GetSummary().GetSampleSum(),
@@ -895,9 +925,12 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 		case dto.MetricType_HISTOGRAM, dto.MetricType_GAUGE_HISTOGRAM:
 			buckets := make(map[float64]uint64, len(metric.GetHistogram().GetBucket()))
 			for _, b := range metric.GetHistogram().GetBucket() {
+				if b == nil {
+					continue
+				}
 				buckets[b.GetUpperBound()] = b.GetCumulativeCount()
 			}
-			ch <- prometheus.MustNewConstHistogram(
+			promMetric, err = prometheus.NewConstHistogram(
 				desc,
 				metric.GetHistogram().GetSampleCount(),
 				metric.GetHistogram().GetSampleSum(),
@@ -906,7 +939,13 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 
 		default:
 			klog.Errorf("unknown metric type: %v", metricType)
+			continue
 		}
+		if err != nil {
+			klog.Errorf("failed to create const metric for %q: %v", name, err)
+			continue
+		}
+		ch <- promMetric
 	}
 }
 
