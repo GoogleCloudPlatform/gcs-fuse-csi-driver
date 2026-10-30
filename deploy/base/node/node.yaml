@@ -99,6 +99,8 @@ spec:
                 configMapKeyRef:
                   name: gcsfusecsi-node-config
                   key: universe-domain
+            - name: GOMAXPROCS
+              value: "2"
           volumeMounts:
             - name: kubelet-pods-dir
               mountPath: /var/lib/kubelet/pods
@@ -142,6 +144,8 @@ spec:
           env:
             - name: DRIVER_REG_SOCK_PATH
               value: /var/lib/kubelet/plugins/gcsfuse.csi.storage.gke.io/csi.sock
+            - name: GOMAXPROCS
+              value: "2"
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
