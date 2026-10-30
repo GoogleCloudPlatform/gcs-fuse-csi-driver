@@ -54,7 +54,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const metricEndpointFmt = "http://localhost:%v/metrics"
+const (
+	metricEndpointFmt = "http://localhost:%v/metrics"
+	acceptHeader      = "Accept"
+	contentTypeHeader = "Content-Type"
+)
 
 var gracefulKillGracePeriod = 5 * time.Second
 
@@ -549,11 +553,11 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		if err := scrapeMetrics(timeoutCtx, metricEndpoint, w); err != nil {
+		if err := scrapeMetrics(timeoutCtx, metricEndpoint, r.Header.Get(acceptHeader), w); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -570,10 +574,17 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 
 // scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
 // The response is written to a new http.ResponseWriter.
-func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWriter) error {
+// Why: The CSI driver's Accept header is forwarded to gcsfuse, and the Content-Type of gcsfuse's
+// response is forwarded back, so that the driver can negotiate the exposition format with gcsfuse
+// (promhttp), e.g. the protobuf delimited format, which the driver decodes one metric family at a
+// time. Older drivers send no Accept header and keep receiving the text format.
+func scrapeMetrics(ctx context.Context, metricEndpoint, accept string, w http.ResponseWriter) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
+	}
+	if accept != "" {
+		req.Header.Set(acceptHeader, accept)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -584,6 +595,10 @@ func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWr
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected HTTP status: %v", resp.Status)
+	}
+
+	if contentType := resp.Header.Get(contentTypeHeader); contentType != "" {
+		w.Header().Set(contentTypeHeader, contentType)
 	}
 
 	if _, err := io.Copy(w, resp.Body); err != nil {
