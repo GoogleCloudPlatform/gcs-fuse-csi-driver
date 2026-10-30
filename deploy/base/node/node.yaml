@@ -72,7 +72,6 @@ spec:
               name: metrics
           resources:
             limits:
-              cpu: 200m
               memory: 200Mi
             requests:
               cpu: 5m
@@ -136,7 +135,6 @@ spec:
             - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
           resources:
             limits:
-              cpu: 50m
               memory: 100Mi
             requests:
               cpu: 10m
