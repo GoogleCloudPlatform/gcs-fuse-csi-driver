@@ -321,7 +321,12 @@ func NewTestPod(c clientset.Interface, ns *corev1.Namespace) *TestPod {
 				Volumes:                      make([]corev1.Volume, 0),
 				AutomountServiceAccountToken: ptr.To(false),
 				Tolerations: []corev1.Toleration{
-					{Operator: corev1.TolerationOpExists},
+					{
+						Key:      "kubernetes.io/arch",
+						Operator: corev1.TolerationOpEqual,
+						Value:    "arm64",
+						Effect:   corev1.TaintEffectNoSchedule,
+					},
 				},
 			},
 		},
