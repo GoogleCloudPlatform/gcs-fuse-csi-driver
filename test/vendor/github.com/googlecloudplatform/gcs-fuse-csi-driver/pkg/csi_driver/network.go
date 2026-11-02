@@ -576,8 +576,8 @@ func (mgr *realNetworkManager) AddRoute(table int, gatewayIP, device string) err
 	return nil
 }
 
-// enableHWgroOnNIC enables hardware GRO (rx-gro-hw) and Large Receive Offload
-// (rx-lro) together on the specified NIC using ethtool ioctls if not already enabled.
+// enableHWgroOnNIC requests hardware GRO (rx-gro-hw) and Large Receive Offload
+// (rx-lro) on the specified NIC using ethtool ioctls if neither is already enabled.
 func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 	features, err := eth.Features(nic)
 	if err != nil {
@@ -596,7 +596,7 @@ func enableHWgroOnNIC(eth ethtoolClient, nic string) error {
 		return fmt.Errorf("failed to enable rx-gro-hw and rx-lro on NIC %q: %w", nic, err)
 	}
 
-	klog.Infof("Successfully enabled rx-gro-hw and rx-lro on NIC %q", nic)
+	klog.Infof("Successfully requested rx-gro-hw and rx-lro on NIC %q", nic)
 	return nil
 }
 

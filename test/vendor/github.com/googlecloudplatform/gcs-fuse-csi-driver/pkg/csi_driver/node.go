@@ -270,6 +270,14 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		})
 
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirPath, mounterPodUID, volumeName, mounterPodImage, args.bucketName, vs)
+		if !s.enableHWgroDone.Load() && s.driver.config.FeatureOptions != nil &&
+			s.driver.config.FeatureOptions.EnableGrpcByDefault && s.driver.config.FeatureOptions.EnableHWgro {
+			if node, nodeErr := s.k8sClients.GetNode(s.driver.config.NodeID); nodeErr != nil {
+				klog.Warningf("Failed to get node %q for HW GRO/LRO enablement: %v", s.driver.config.NodeID, nodeErr)
+			} else {
+				s.enableHWgroIfApplicable(node, mounterPodImage)
+			}
+		}
 
 		if s.driver.config.MetricsManager != nil && !args.disableMetricsCollection {
 			// Shared mounter pods are node-level system pods managed by the CSI controller rather
@@ -1222,6 +1230,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	if mounted {
+		s.enableHWgroIfApplicable(node, podImage)
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
