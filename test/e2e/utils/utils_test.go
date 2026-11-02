@@ -196,3 +196,47 @@ func TestParseConfigFlags(t *testing.T) {
 		}
 	})
 }
+
+func TestIsStockoutError(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{
+			name: "GKE cluster create stockout",
+			msg:  "ERROR: (gcloud.container.clusters.create) Operation finished with error: Try a different location, or try again later: Google Compute Engine does not have enough resources available to fulfill request: us-central1.",
+			want: true,
+		},
+		{
+			name: "GCE zone resource pool exhausted",
+			msg:  "The zone 'projects/p/zones/us-central1-a' does not have enough resources available to fulfill the request. '(resource type:compute)'. code: ZONE_RESOURCE_POOL_EXHAUSTED",
+			want: true,
+		},
+		{
+			name: "GCE stockout code",
+			msg:  "code: STOCKOUT",
+			want: true,
+		},
+		{
+			name: "quota error is not a stockout",
+			msg:  "Insufficient regional quota to satisfy request: resource \"CPUS\": request requires '72.0' and is short '8.0'.",
+			want: false,
+		},
+		{
+			name: "empty message",
+			msg:  "",
+			want: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isStockoutError(tc.msg); got != tc.want {
+				t.Errorf("isStockoutError(%q) = %t, want %t", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
