@@ -484,7 +484,12 @@ func FetchGCSFuseVersion(ctx context.Context, cl clientset.Interface) (string, e
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
 			Tolerations: []corev1.Toleration{
-				{Operator: corev1.TolerationOpExists},
+				{
+					Key:      "kubernetes.io/arch",
+					Operator: corev1.TolerationOpEqual,
+					Value:    "arm64",
+					Effect:   corev1.TaintEffectNoSchedule,
+				},
 			},
 		},
 	}
