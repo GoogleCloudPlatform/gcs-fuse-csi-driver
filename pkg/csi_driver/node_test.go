@@ -4736,13 +4736,13 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			wantHWgroCalls:      1,
 		},
 		{
-			name:                "already mounted stagingPath skips HWgro on restage",
+			name:                "already mounted stagingPath triggers HWgro on restage when not yet done",
 			enableGrpcByDefault: true,
 			enableHWgro:         true,
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			alreadyMounted:      true,
-			wantHWgroCalls:      0,
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "does not enable HWgro when shared mount fails",
@@ -4802,6 +4802,97 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("NodeStageVolume error = %v, wantErr %v", err, tc.wantErr)
 			}
+			if got := testEnv.nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
+				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
+			}
+		})
+	}
+}
+
+func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
+	t.Parallel()
+
+	nodeID := "test-node"
+	volID := testVolumeID
+	podNamespace := "test-ns"
+	podName := createMounterPodName(nodeID, volID)
+	podUID := types.UID(podName)
+
+	testCases := []struct {
+		name              string
+		targetPathMounted bool
+		wantHWgroCalls    int
+	}{
+		{
+			name:              "enables HWgro on shared mount publish when not yet done",
+			targetPathMounted: false,
+			wantHWgroCalls:    1,
+		},
+		{
+			name:              "enables HWgro on shared mount republish (targetPath already mounted) when not yet done",
+			targetPathMounted: true,
+			wantHWgroCalls:    1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			targetPath, cleanupTarget := setupTestTargetPath(t)
+			t.Cleanup(cleanupTarget)
+			stagingPath, cleanupStaging := setupTestStagingPath(t)
+			t.Cleanup(cleanupStaging)
+
+			fc := clientset.NewFakeClientset()
+			fc.CreateNode(clientset.FakeNodeConfig{
+				IsWorkloadIdentityEnabled: true,
+				MachineType:               "ct6e-standard-4t",
+				KubeletVersion:            "v1.37.1-gke.1552000",
+			})
+			fc.CreatePod(clientset.FakePodConfig{
+				Name:         podName,
+				Namespace:    podNamespace,
+				UID:          podUID,
+				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
+				IsMounterPod: true,
+			})
+
+			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
+			ns := testEnv.ns.(*nodeServer)
+			tempDir := t.TempDir()
+			ns.driver.config.FeatureOptions.SharedMountOptions.EmptyDirBasePath = func(uid string) string {
+				return filepath.Join(tempDir, uid)
+			}
+			ns.driver.config.FeatureOptions.EnableGrpcByDefault = true
+			ns.driver.config.FeatureOptions.EnableHWgro = true
+			ns.driver.config.AssumeGoodSidecarVersion = true
+
+			mountPoints := []mount.MountPoint{{Device: volID, Path: stagingPath, Type: FuseMountType}}
+			if tc.targetPathMounted {
+				mountPoints = append(mountPoints, mount.MountPoint{Device: volID, Path: targetPath, Type: FuseMountType})
+			}
+			testEnv.fm.MountPoints = mountPoints
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:          volID,
+				VolumeCapability:  testVolumeCapability,
+				TargetPath:        targetPath,
+				StagingTargetPath: stagingPath,
+				VolumeContext: map[string]string{
+					VolumeContextSharedNodeMount: "true",
+				},
+				PublishContext: map[string]string{
+					PublishContextKeyMounterPodName:      podName,
+					PublishContextKeyMounterPodNamespace: podNamespace,
+				},
+			}
+
+			if _, err := ns.NodePublishVolume(t.Context(), req); err != nil {
+				t.Fatalf("NodePublishVolume failed: %v", err)
+			}
+			ns.enableHWgroWg.Wait()
+
 			if got := testEnv.nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
 				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
 			}
