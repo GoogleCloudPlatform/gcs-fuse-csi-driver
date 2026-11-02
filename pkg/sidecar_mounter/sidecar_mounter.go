@@ -75,6 +75,23 @@ func New(mounterPath string) *Mounter {
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
+	if mc == nil {
+		return fmt.Errorf("mount config cannot be nil")
+	}
+
+	// Why: Mount owns the fuse file from here on, and closes the sidecar's copy when it returns:
+	// on every error path, and once cmd.Start has passed it to gcsfuse, so that no other child
+	// process inherits it.
+	fuseFile := mc.fuseFile
+	mc.fuseFile = nil
+	if fuseFile != nil {
+		defer func() {
+			if err := fuseFile.Close(); err != nil {
+				klog.Warningf("failed to close the fuse file for volume %q: %v", mc.VolumeName, err)
+			}
+		}()
+	}
+
 	mc.EnsureErrWriter()
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
@@ -118,45 +135,39 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// gcsfuse supports the `/dev/fd/N` syntax
 	// the /dev/fuse is passed as ExtraFiles below, and will always be FD 3
 	cmd := m.prepareMountCommand(ctx, mc, "/dev/fd/3")
-
 	// gcsfuse reports the mount status on this pipe. See pkg/sidecar_mounter/startup_probe.go.
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
-		syscall.Close(mc.FileDescriptor)
 		return fmt.Errorf("failed to create the mount status pipe: %w", err)
 	}
-	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(mc.FileDescriptor), "/dev/fuse"), statusW}
+	// fuseFile stays at index 0 even when it is nil, so that statusW is always FD 4 in gcsfuse.
+	cmd.ExtraFiles = []*os.File{fuseFile, statusW}
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("%s=%d", gcsfuseStatusFDEnv, statusPipeFD))
 
-	// when the ctx.Done() is closed,
-	// the main workload containers have exited,
-	// so it is safe to force kill the gcsfuse process.
-	go func(cmd *exec.Cmd) {
-		<-ctx.Done()
-		klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
-		time.Sleep(time.Second * 5)
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			klog.Warningf("after 5 seconds, process with id %v has not exited, force kill the process", cmd.Process.Pid)
-			if err := cmd.Process.Kill(); err != nil {
-				klog.Warningf("failed to force kill process with id %v", cmd.Process.Pid)
-			}
-		}
-	}(cmd)
+	err = cmd.Start()
+	// Close our copy of the write end, so that the status pipe reaches EOF when gcsfuse exits.
+	statusW.Close()
+	if err != nil {
+		statusR.Close()
+		return fmt.Errorf("failed to start gcsfuse with error: %w", err)
+	}
 
+	klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
+
+	cmdDone := make(chan struct{})
 	m.WaitGroup.Add(1)
 	go func() {
 		defer m.WaitGroup.Done()
-		err := cmd.Start()
-		// Close our copy of the write end, so that the status pipe reaches EOF when gcsfuse exits.
-		statusW.Close()
-		if err != nil {
-			statusR.Close()
-			mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to start gcsfuse with error: %v\n", err))
-
-			return
-		}
-
-		klog.Infof("gcsfuse for bucket %q, volume %q started with process id %v", mc.BucketName, mc.VolumeName, cmd.Process.Pid)
+		// When ctx is done, the main workload containers have exited,
+		// so it is safe to force kill the gcsfuse process.
+		stopKill := context.AfterFunc(ctx, func() {
+			klog.V(4).Infof("context marked as done, sleep for 5 seconds, to evaluate gcsfuse process %d exit state", cmd.Process.Pid)
+			forceKillCmd(cmd, cmdDone)
+		})
+		defer stopKill()
+		// Why: deferred last so that it runs first: forceKillCmd must see cmdDone closed as soon as
+		// gcsfuse has been reaped, so that it never kills a recycled PID.
+		defer close(cmdDone)
 
 		outcomeDone := make(chan struct{})
 		go func() {
@@ -164,10 +175,6 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 			watchMountOutcome(statusR, mc)
 		}()
 		startVolumeMonitoring(ctx, mc, cmd.Process.Pid)
-
-		// Since the gcsfuse has taken over the file descriptor,
-		// closing the file descriptor to avoid other process forking it.
-		syscall.Close(mc.FileDescriptor)
 		waitForGcsfuseExit(cmd, mc, outcomeDone)
 	}()
 

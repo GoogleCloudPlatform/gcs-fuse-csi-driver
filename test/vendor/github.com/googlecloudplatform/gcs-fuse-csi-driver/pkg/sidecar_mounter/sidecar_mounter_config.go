@@ -48,7 +48,6 @@ const (
 
 // MountConfig contains the information gcsfuse needs.
 type MountConfig struct {
-	FileDescriptor                 int                   `json:"-"`
 	VolumeName                     string                `json:"volumeName,omitempty"`
 	BucketName                     string                `json:"bucketName,omitempty"`
 	BufferDir                      string                `json:"-"`
@@ -77,6 +76,10 @@ type MountConfig struct {
 	AutoGoMemLimitRatio            float64               `json:"-"`
 	StorageEndpoint                string                `json:"-"`
 	SharedMountPoint               string                `json:"-"`
+
+	// fuseFile is the /dev/fuse file received from the CSI driver. Mount takes ownership of it,
+	// hands it to gcsfuse as FD 3, and closes the sidecar's copy.
+	fuseFile *os.File
 }
 
 // EnsureErrWriter safely initializes ErrWriter to the correct writer if it is nil.
@@ -167,6 +170,7 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 
 		return nil
 	}
+	mc.fuseFile = newFuseFile(fd)
 	// as we got all the information from the socket, closing the connection and deleting the socket
 	c.Close()
 	if err = syscall.Unlink(sp); err != nil && err != syscall.ENOENT {
@@ -174,29 +178,45 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 		klog.Errorf("failed to unlink socket %q: %v", sp, err)
 	}
 
-	mc.FileDescriptor = fd
-
-	if err := json.Unmarshal(msg, &mc); err != nil {
-		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to unmarshal the mount config: %v", err))
+	// fail reports errMsg and closes the fuse file, so that it does not leak when no MountConfig is returned.
+	fail := func(errMsg string) *MountConfig {
+		mc.ErrWriter.WriteMsg(errMsg)
+		_ = mc.fuseFile.Close()
 
 		return nil
 	}
 
-	if mc.BucketName == "" {
-		mc.ErrWriter.WriteMsg("failed to fetch bucket name from CSI driver")
+	if err := json.Unmarshal(msg, &mc); err != nil {
+		return fail(fmt.Sprintf("failed to unmarshal the mount config: %v", err))
+	}
 
-		return nil
+	if mc.BucketName == "" {
+		return fail("failed to fetch bucket name from CSI driver")
 	}
 
 	mc.prepareMountArgs()
 	mergeFlags(mc.ConfigFileFlagMap, flagMapFromDriver)
 	if err := mc.prepareConfigFile(); err != nil {
-		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to create config file %q: %v", mc.ConfigFile, err))
-
-		return nil
+		return fail(fmt.Sprintf("failed to create config file %q: %v", mc.ConfigFile, err))
 	}
 
 	return &mc
+}
+
+// newFuseFile takes ownership of the /dev/fuse descriptor received from the CSI driver.
+// Why: FD_CLOEXEC is set right away, so that no process started before Mount (e.g. during the
+// token and storage service setup retries) inherits the descriptor; gcsfuse receives it
+// explicitly through exec.Cmd.ExtraFiles. The descriptor must then only be closed through the
+// returned *os.File: os.NewFile registers a finalizer that closes the descriptor when the file is
+// garbage collected, so closing the raw descriptor would let the finalizer later close whatever
+// descriptor has been assigned that number since (e.g. a socket).
+func newFuseFile(fd int) *os.File {
+	if fd < 0 {
+		return nil
+	}
+	syscall.CloseOnExec(fd)
+
+	return os.NewFile(uintptr(fd), "/dev/fuse")
 }
 
 func mergeFlags(mountConfigFlagMap map[string]string, driverFlagMap map[string]string) {
