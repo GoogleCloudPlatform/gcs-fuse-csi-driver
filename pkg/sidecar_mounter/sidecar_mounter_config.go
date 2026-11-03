@@ -181,7 +181,9 @@ func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig
 	// fail reports errMsg and closes the fuse file, so that it does not leak when no MountConfig is returned.
 	fail := func(errMsg string) *MountConfig {
 		mc.ErrWriter.WriteMsg(errMsg)
-		_ = mc.fuseFile.Close()
+		if mc.fuseFile != nil {
+			_ = mc.fuseFile.Close()
+		}
 
 		return nil
 	}
