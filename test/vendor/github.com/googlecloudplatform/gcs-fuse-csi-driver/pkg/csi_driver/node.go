@@ -271,7 +271,7 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirPath, mounterPodUID, volumeName, mounterPodImage, args.bucketName, vs)
 		if !s.enableHWgroDone.Load() && s.driver.config.FeatureOptions != nil &&
-			s.driver.config.FeatureOptions.EnableGrpcByDefault && s.driver.config.FeatureOptions.EnableHWgro {
+			s.driver.config.FeatureOptions.EnableHWgro {
 			if node, nodeErr := s.k8sClients.GetNode(s.driver.config.NodeID); nodeErr != nil {
 				klog.Warningf("Failed to get node %q for HW GRO/LRO enablement: %v", s.driver.config.NodeID, nodeErr)
 			} else {
@@ -955,28 +955,39 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 	return mountOptions
 }
 
-// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default=true
-// mount option if enabled in driver options, supported by the sidecar container image,
-// and supported by the node. If the feature is disabled or unsupported, mount options
-// are returned unmodified.
+// appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default
+// mount option when supported by the sidecar container image:
+//   - If the node does not support gRPC by default (e.g., TPU v6e node running an
+//     unsupported GKE nodepool version, or missing machine-type label), it appends
+//     enable-grpc-by-default=false so GCSFuse uses HTTP/1.
+//   - If EnableGrpcByDefault is true in driver options (new GKE cluster >= 1.38),
+//     it appends enable-grpc-by-default=true so GCSFuse uses gRPC across all VM types.
+//   - Otherwise (existing or OSS cluster with EnableGrpcByDefault=false on a supported node),
+//     it returns mount options unmodified so GCSFuse applies its machine-type optimization.
 func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
-	if !s.isGrpcByDefaultEnabled(node, mounterImage) {
+	if s.driver.config.FeatureOptions == nil ||
+		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return mountOptions
 	}
-	return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+	// 1.2, 2.1, & 3.3 (OSS): Unsupported ct6e-* (or missing label) -> pass enable-grpc-by-default=false
+	if !s.isNodeSupportedForGrpcByDefault(node) {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
+	}
+	// 1.1: New cluster -> pass enable-grpc-by-default=true
+	if s.driver.config.FeatureOptions.EnableGrpcByDefault {
+		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
+	}
+	// 2.2 & 3.4 (OSS): Existing / OSS cluster -> leave unset so GCSFuse runs machine optimization
+	return mountOptions
 }
 
-// isGrpcByDefaultEnabled checks if the enable-grpc-by-default feature is enabled in the driver config,
-// supported by the given sidecar mounter image version, and supported by the node's machine type
-// and GKE nodepool version. It fails closed (returns false) if the node's machine-type label
-// ("node.kubernetes.io/instance-type") is missing or empty. On TPU v6e nodes (machine type prefix
-// "ct6e-standard-"), it checks that the GKE nodepool version meets the minimum supported version
-// per minor release.
-func (s *nodeServer) isGrpcByDefaultEnabled(node *corev1.Node, mounterImage string) bool {
-	if s.driver.config.FeatureOptions == nil ||
-		!s.driver.config.FeatureOptions.EnableGrpcByDefault ||
-		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) ||
-		node == nil {
+// isNodeSupportedForGrpcByDefault checks if the node's machine type and GKE nodepool version
+// support gRPC by default. It fails closed (returns false) if the node is nil or if the node's
+// machine-type label ("node.kubernetes.io/instance-type") is missing or empty. On TPU v6e nodes
+// (machine type prefix "ct6e-standard-"), it checks that the GKE nodepool version meets the
+// minimum supported version per minor release.
+func (s *nodeServer) isNodeSupportedForGrpcByDefault(node *corev1.Node) bool {
+	if node == nil {
 		return false
 	}
 	machineType := node.Labels[clientset.MachineTypeKey]
@@ -1485,12 +1496,15 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 }
 
 // enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
-// on the node's COS default NIC (eth0) when both --enable-grpc-by-default and --enable-hw-gro
-// are enabled, the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e
-// (ct6e-standard-*) machine running a supported GKE nodepool version.
+// on the node's COS default NIC (eth0) when --enable-hw-gro is enabled, the sidecar/mounter
+// image supports gRPC by default, and the node is a TPU v6e (ct6e-standard-*) machine running
+// a supported GKE nodepool version (regardless of whether --enable-grpc-by-default is true or
+// false, since GCSFuse 4.0+ uses gRPC on supported TPU v6e nodes even when the flag is unset).
 func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
 	if s.enableHWgroDone.Load() || s.nwMgr == nil ||
-		!s.isGrpcByDefaultEnabled(node, mounterImage) ||
+		s.driver.config.FeatureOptions == nil ||
+		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) ||
+		!s.isNodeSupportedForGrpcByDefault(node) ||
 		!s.driver.config.FeatureOptions.EnableHWgro ||
 		!strings.HasPrefix(node.Labels[clientset.MachineTypeKey], tpuV6eMachineTypePrefix) {
 		return
