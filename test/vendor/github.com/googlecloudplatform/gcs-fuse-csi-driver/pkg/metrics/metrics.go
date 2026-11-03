@@ -185,19 +185,31 @@ func (mm *manager) sequentialMetricsBudgetFor(header http.Header) time.Duration 
 	if budget <= 0 {
 		budget = defaultSequentialMetricsBudget
 	}
-	if v := header.Get(scrapeTimeoutHeader); v != "" {
-		if seconds, err := strconv.ParseFloat(v, 64); err == nil {
-			// Leave 10% of the scraper's timeout for encoding and network transfer.
-			// The comparisons are false for NaN and reject non-positive, infinite, and too large values,
-			// which would overflow time.Duration; values that truncate to zero are rejected as well.
-			if scaled := seconds * 0.9 * float64(time.Second); scaled > 0 && scaled < float64(budget) {
-				if d := time.Duration(scaled); d > 0 {
-					budget = d
-				}
-			}
-		}
+	seconds, err := strconv.ParseFloat(header.Get(scrapeTimeoutHeader), 64)
+	if err != nil {
+		return budget
+	}
+	// Leave 10% of the scraper's timeout for encoding and network transfer.
+	// The comparisons are false for NaN and reject values below 1ns, infinite, and too large values,
+	// which would overflow time.Duration.
+	if scaled := seconds * 0.9 * float64(time.Second); scaled >= 1 && scaled < float64(budget) {
+		return time.Duration(scaled)
 	}
 	return budget
+}
+
+// acquireSequentialScrapeSlot waits for any other sequential request to finish and returns a function that
+// releases the slot, or nil if ctx expires while waiting.
+func (mm *manager) acquireSequentialScrapeSlot(ctx context.Context) func() {
+	if mm.sequentialScrapeSlot == nil {
+		return func() {}
+	}
+	select {
+	case mm.sequentialScrapeSlot <- struct{}{}:
+		return func() { <-mm.sequentialScrapeSlot }
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -217,18 +229,15 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 
 	// Wait for any other sequential request to finish. The wait counts against this request's budget.
-	if mm.sequentialScrapeSlot != nil {
-		select {
-		case mm.sequentialScrapeSlot <- struct{}{}:
-			defer func() { <-mm.sequentialScrapeSlot }()
-		case <-ctx.Done():
-			if r.Context().Err() == nil {
-				klog.Warningf("sequential metrics budget %v exhausted while waiting for another metrics request to finish", budget)
-				http.Error(w, "timed out waiting for another metrics request to finish", http.StatusServiceUnavailable)
-			}
-			return
+	releaseSlot := mm.acquireSequentialScrapeSlot(ctx)
+	if releaseSlot == nil {
+		if r.Context().Err() == nil {
+			klog.Warningf("sequential metrics budget %v exhausted while waiting for another metrics request to finish", budget)
+			http.Error(w, "timed out waiting for another metrics request to finish", http.StatusServiceUnavailable)
 		}
+		return
 	}
+	defer releaseSlot()
 
 	contentType := expfmt.Negotiate(r.Header)
 	w.Header().Set(contentTypeHeader, string(contentType))
@@ -249,6 +258,10 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 	fe := newFamilyEncoder(out, contentType)
 	defer func() { _ = fe.close() }()
 
+	mm.encodeCollectorsSequentially(ctx, r.Context(), fe, budget)
+}
+
+func (mm *manager) encodeCollectorsSequentially(ctx, reqCtx context.Context, fe *familyEncoder, budget time.Duration) {
 	collectors := mm.snapshotCollectors()
 	n := len(collectors)
 	if n == 0 {
@@ -263,20 +276,9 @@ func (mm *manager) sequentialMetricsHandler(w http.ResponseWriter, r *http.Reque
 	perMountTimeout := mm.perMountScrapeTimeout()
 	for i := range n {
 		c := collectors[(start+i)%n]
-		writeErr := false
 		// The per-mount scrape timeout is derived from ctx, so it is also capped at the remaining budget.
-		completed := c.scrapeMetricFamilies(ctx, perMountTimeout, func(mf *dto.MetricFamily) bool {
-			if !c.transformMetricFamily(mf) {
-				return true
-			}
-			if err := fe.encode(mf); err != nil {
-				klog.Errorf("failed to encode metric family %q: %v", mf.GetName(), err)
-				writeErr = true
-				return false
-			}
-			return true
-		})
-		if writeErr || r.Context().Err() != nil {
+		completed, err := c.encodeMetricFamilies(ctx, perMountTimeout, fe)
+		if err != nil || reqCtx.Err() != nil {
 			return
 		}
 		if ctx.Err() != nil {
@@ -373,28 +375,29 @@ func newFamilyEncoder(out io.Writer, contentType expfmt.Format) *familyEncoder {
 func (fe *familyEncoder) encode(mf *dto.MetricFamily) error {
 	name := mf.GetName()
 	metricType := mf.GetType()
-	if prevType, seen := fe.seenFamilies[name]; seen {
-		if prevType != metricType {
-			klog.Errorf("metric family %q has conflicting type %v (already emitted as %v), skipping", name, metricType, prevType)
-			return nil
-		}
-		if fe.sw != nil {
-			// Why: Standard Prometheus text parsers (expfmt.TextParser) reject repeated
-			// "# HELP" or "# TYPE" lines for the same metric family name within a single
-			// scrape payload, whereas sample lines for an already-declared metric family
-			// are merged into that family. Clear Help and skip the single "# TYPE" header
-			// line so subsequent mounts emit only sample lines.
-			// Note: Because mounts are streamed one at a time, the text output repeats a sample
-			// group per mount for each metric family, with other families in between, i.e. the
-			// samples of a family are not contiguous. expfmt.TextParser and Prometheus' text
-			// parser accept this, but stricter consumers may not. The protobuf delimited format,
-			// where repeated MetricFamily messages are well-defined, is preferred for such consumers.
-			mf.Help = nil
-			fe.sw.skipNextLine = true
-			defer func() { fe.sw.skipNextLine = false }()
-		}
-	} else {
+	prevType, seen := fe.seenFamilies[name]
+	if !seen {
 		fe.seenFamilies[name] = metricType
+		return fe.enc.Encode(mf)
+	}
+	if prevType != metricType {
+		klog.Errorf("metric family %q has conflicting type %v (already emitted as %v), skipping", name, metricType, prevType)
+		return nil
+	}
+	if fe.sw != nil {
+		// Why: Standard Prometheus text parsers (expfmt.TextParser) reject repeated
+		// "# HELP" or "# TYPE" lines for the same metric family name within a single
+		// scrape payload, whereas sample lines for an already-declared metric family
+		// are merged into that family. Clear Help and skip the single "# TYPE" header
+		// line so subsequent mounts emit only sample lines.
+		// Note: Because mounts are streamed one at a time, the text output repeats a sample
+		// group per mount for each metric family, with other families in between, i.e. the
+		// samples of a family are not contiguous. expfmt.TextParser and Prometheus' text
+		// parser accept this, but stricter consumers may not. The protobuf delimited format,
+		// where repeated MetricFamily messages are well-defined, is preferred for such consumers.
+		mf.Help = nil
+		fe.sw.skipNextLine = true
+		defer func() { fe.sw.skipNextLine = false }()
 	}
 	return fe.enc.Encode(mf)
 }
@@ -653,19 +656,42 @@ func (c *metricsCollector) Collect(ch chan<- prometheus.Metric) {
 	})
 }
 
+// encodeMetricFamilies scrapes, transforms, and encodes the collector's metric families into fe.
+// It returns whether the scrape completed and any encoding write error.
+func (c *metricsCollector) encodeMetricFamilies(ctx context.Context, timeout time.Duration, fe *familyEncoder) (bool, error) {
+	var encodeErr error
+	completed := c.scrapeMetricFamilies(ctx, timeout, func(mf *dto.MetricFamily) bool {
+		if !c.transformMetricFamily(mf) {
+			return true
+		}
+		if err := fe.encode(mf); err != nil {
+			klog.Errorf("failed to encode metric family %q: %v", mf.GetName(), err)
+			encodeErr = err
+			return false
+		}
+		return true
+	})
+	return completed, encodeErr
+}
+
+func (c *metricsCollector) isPodRunning() bool {
+	if c.clientset == nil {
+		return false
+	}
+	pod, err := c.clientset.GetPod(c.namespace, c.podName)
+	if err != nil || pod == nil || pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
+		klog.V(6).Infof("pod %v/%v does not exist, skip metrics scraping", c.namespace, c.podName)
+		return false
+	}
+	return true
+}
+
 // scrapeMetricFamilies scrapes the sidecar metrics endpoint, bounded by timeout and parentCtx, and calls
 // handleFamily for each parsed MetricFamily, in name order, until it returns false. It returns true only
 // if the response was received and fully parsed, and every family was passed to handleFamily without
 // early termination.
 func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeout time.Duration, handleFamily func(*dto.MetricFamily) bool) bool {
-	if parentCtx.Err() != nil || c.clientset == nil {
-		return false
-	}
-
-	pod, err := c.clientset.GetPod(c.namespace, c.podName)
-	if err != nil || pod == nil || pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
-		klog.V(6).Infof("pod %v/%v does not exist, skip metrics scraping", c.namespace, c.podName)
-
+	if parentCtx.Err() != nil || !c.isPodRunning() {
 		return false
 	}
 
@@ -767,7 +793,14 @@ func (c *metricsCollector) resolveMetricFamilySchema(name string) (string, map[s
 	return normalizedName, c.constLabels, c.constLabelPairs
 }
 
+func isEmptyMetricFamily(mf *dto.MetricFamily) bool {
+	return mf == nil || mf.Type == nil || mf.GetName() == "" || len(mf.GetMetric()) == 0
+}
+
 func hasValidMetricValue(metricType dto.MetricType, metric *dto.Metric) bool {
+	if metric == nil {
+		return false
+	}
 	switch metricType {
 	case dto.MetricType_COUNTER:
 		return metric.GetCounter() != nil
@@ -787,7 +820,7 @@ func hasValidMetricValue(metricType dto.MetricType, metric *dto.Metric) bool {
 // transformMetricFamily normalizes the MetricFamily name and injects constLabels directly in-place
 // without allocating intermediate prometheus.Metric or prometheus.Desc wrappers.
 func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily) bool {
-	if metricFamily == nil || metricFamily.Type == nil || metricFamily.GetName() == "" || len(metricFamily.GetMetric()) == 0 {
+	if isEmptyMetricFamily(metricFamily) {
 		return false
 	}
 
@@ -811,7 +844,7 @@ func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily)
 	}
 
 	metricFamily.Metric = slices.DeleteFunc(metricFamily.GetMetric(), func(metric *dto.Metric) bool {
-		if metric == nil || !hasValidMetricValue(metricType, metric) {
+		if !hasValidMetricValue(metricType, metric) {
 			return true
 		}
 		metric.Label = slices.DeleteFunc(metric.GetLabel(), func(label *dto.LabelPair) bool {
@@ -827,12 +860,76 @@ func (c *metricsCollector) transformMetricFamily(metricFamily *dto.MetricFamily)
 		metric.TimestampMs = nil
 		return false
 	})
-	return len(metricFamily.Metric) > 0
+	return len(metricFamily.GetMetric()) > 0
+}
+
+func filterVariableLabels(rawLabels []*dto.LabelPair, constLabels map[string]string) []*dto.LabelPair {
+	labels := make([]*dto.LabelPair, 0, len(rawLabels))
+	for _, label := range rawLabels {
+		if label == nil {
+			continue
+		}
+		if _, exists := constLabels[label.GetName()]; !exists {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
+
+func matchesLabelNames(names []string, labels []*dto.LabelPair) bool {
+	if len(names) != len(labels) {
+		return false
+	}
+	for i, label := range labels {
+		if names[i] != label.GetName() {
+			return false
+		}
+	}
+	return true
+}
+
+func summaryQuantiles(s *dto.Summary) map[float64]float64 {
+	quantiles := make(map[float64]float64, len(s.GetQuantile()))
+	for _, q := range s.GetQuantile() {
+		if q != nil {
+			quantiles[q.GetQuantile()] = q.GetValue()
+		}
+	}
+	return quantiles
+}
+
+func histogramBuckets(h *dto.Histogram) map[float64]uint64 {
+	buckets := make(map[float64]uint64, len(h.GetBucket()))
+	for _, b := range h.GetBucket() {
+		if b != nil {
+			buckets[b.GetUpperBound()] = b.GetCumulativeCount()
+		}
+	}
+	return buckets
+}
+
+func newConstPrometheusMetric(desc *prometheus.Desc, metricType dto.MetricType, metric *dto.Metric, labelValues []string) (prometheus.Metric, error) {
+	switch metricType {
+	case dto.MetricType_COUNTER:
+		return prometheus.NewConstMetric(desc, prometheus.CounterValue, metric.GetCounter().GetValue(), labelValues...)
+	case dto.MetricType_GAUGE:
+		return prometheus.NewConstMetric(desc, prometheus.GaugeValue, metric.GetGauge().GetValue(), labelValues...)
+	case dto.MetricType_UNTYPED:
+		return prometheus.NewConstMetric(desc, prometheus.UntypedValue, metric.GetUntyped().GetValue(), labelValues...)
+	case dto.MetricType_SUMMARY:
+		s := metric.GetSummary()
+		return prometheus.NewConstSummary(desc, s.GetSampleCount(), s.GetSampleSum(), summaryQuantiles(s), labelValues...)
+	case dto.MetricType_HISTOGRAM, dto.MetricType_GAUGE_HISTOGRAM:
+		h := metric.GetHistogram()
+		return prometheus.NewConstHistogram(desc, h.GetSampleCount(), h.GetSampleSum(), histogramBuckets(h), labelValues...)
+	default:
+		return nil, fmt.Errorf("unknown metric type: %v", metricType)
+	}
 }
 
 // emitMetricFamily iterates MetricFamily, converts metricFamily.Metric to prometheus.Metric, and emits the metric via the given chan.
 func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch chan<- prometheus.Metric) {
-	if metricFamily == nil || metricFamily.Type == nil || metricFamily.GetName() == "" || len(metricFamily.GetMetric()) == 0 {
+	if isEmptyMetricFamily(metricFamily) {
 		return
 	}
 	help := metricFamily.GetHelp()
@@ -840,44 +937,22 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 	name, constLabels, _ := c.resolveMetricFamilySchema(metricFamily.GetName())
 
 	var cachedDesc *prometheus.Desc
-
 	var cachedLabelNames []string
 
 	for _, metric := range metricFamily.GetMetric() {
-		if metric == nil || !hasValidMetricValue(metricType, metric) {
+		if !hasValidMetricValue(metricType, metric) {
 			continue
 		}
-		rawLabels := metric.GetLabel()
-		labels := make([]*dto.LabelPair, 0, len(rawLabels))
-		for _, label := range rawLabels {
-			if label == nil {
-				continue
-			}
-			if _, exists := constLabels[label.GetName()]; !exists {
-				labels = append(labels, label)
-			}
-		}
+		labels := filterVariableLabels(metric.GetLabel(), constLabels)
 
-		var desc *prometheus.Desc
 		// Reuse cached prometheus.Desc assuming identical label ordering.
-		if cachedDesc != nil && len(cachedLabelNames) == len(labels) {
-			desc = cachedDesc
-			for i, label := range labels {
-				if cachedLabelNames[i] != label.GetName() {
-					// Cache new prometheus.Desc to reduce garbage collection overhead and expensive string formatting.
-					desc = nil
-					break
-				}
-			}
-		}
-
-		if desc == nil {
+		if cachedDesc == nil || !matchesLabelNames(cachedLabelNames, labels) {
+			// Cache new prometheus.Desc to reduce garbage collection overhead and expensive string formatting.
 			labelNames := make([]string, len(labels))
 			for i, label := range labels {
 				labelNames[i] = label.GetName()
 			}
-			desc = prometheus.NewDesc(name, help, labelNames, prometheus.Labels(constLabels))
-			cachedDesc = desc
+			cachedDesc = prometheus.NewDesc(name, help, labelNames, prometheus.Labels(constLabels))
 			cachedLabelNames = labelNames
 		}
 
@@ -886,61 +961,7 @@ func (c *metricsCollector) emitMetricFamily(metricFamily *dto.MetricFamily, ch c
 			labelValues[i] = label.GetValue()
 		}
 
-		var promMetric prometheus.Metric
-		var err error
-		switch metricType {
-		case dto.MetricType_COUNTER:
-			promMetric, err = prometheus.NewConstMetric(
-				desc,
-				prometheus.CounterValue, metric.GetCounter().GetValue(), labelValues...,
-			)
-
-		case dto.MetricType_GAUGE:
-			promMetric, err = prometheus.NewConstMetric(
-				desc,
-				prometheus.GaugeValue, metric.GetGauge().GetValue(), labelValues...,
-			)
-
-		case dto.MetricType_UNTYPED:
-			promMetric, err = prometheus.NewConstMetric(
-				desc,
-				prometheus.UntypedValue, metric.GetUntyped().GetValue(), labelValues...,
-			)
-
-		case dto.MetricType_SUMMARY:
-			quantiles := make(map[float64]float64, len(metric.GetSummary().GetQuantile()))
-			for _, q := range metric.GetSummary().GetQuantile() {
-				if q == nil {
-					continue
-				}
-				quantiles[q.GetQuantile()] = q.GetValue()
-			}
-			promMetric, err = prometheus.NewConstSummary(
-				desc,
-				metric.GetSummary().GetSampleCount(),
-				metric.GetSummary().GetSampleSum(),
-				quantiles, labelValues...,
-			)
-
-		case dto.MetricType_HISTOGRAM, dto.MetricType_GAUGE_HISTOGRAM:
-			buckets := make(map[float64]uint64, len(metric.GetHistogram().GetBucket()))
-			for _, b := range metric.GetHistogram().GetBucket() {
-				if b == nil {
-					continue
-				}
-				buckets[b.GetUpperBound()] = b.GetCumulativeCount()
-			}
-			promMetric, err = prometheus.NewConstHistogram(
-				desc,
-				metric.GetHistogram().GetSampleCount(),
-				metric.GetHistogram().GetSampleSum(),
-				buckets, labelValues...,
-			)
-
-		default:
-			klog.Errorf("unknown metric type: %v", metricType)
-			continue
-		}
+		promMetric, err := newConstPrometheusMetric(cachedDesc, metricType, metric, labelValues)
 		if err != nil {
 			klog.Errorf("failed to create const metric for %q: %v", name, err)
 			continue

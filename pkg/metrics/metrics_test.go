@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -1163,6 +1164,50 @@ func BenchmarkEmitMetricFamily(b *testing.B) {
 	<-done
 }
 
+func verifySequentialMountsOutput(t *testing.T, body string, enableSchema bool) {
+	t.Helper()
+
+	expectedCounterFamily := "fs_ops_count"
+	expectedHistFamily := "fs_ops_latency"
+	if enableSchema {
+		expectedCounterFamily = "volume_fs_ops_count"
+		expectedHistFamily = "volume_fs_ops_latencies"
+	}
+
+	// Verify that # HELP and # TYPE appear exactly once per metric family across all 3 mounts.
+	for _, famName := range []string{expectedCounterFamily, expectedHistFamily, "grpc_client_attempt_started"} {
+		for _, prefix := range []string{"# HELP " + famName + " ", "# TYPE " + famName + " "} {
+			if c := strings.Count(body, prefix); c != 1 {
+				t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", prefix, c, body)
+			}
+		}
+	}
+
+	// Verify standard Prometheus TextParser (ProcessMetricsData) parses the multi-mount output without error.
+	families, err := ProcessMetricsData(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ProcessMetricsData failed on multi-mount streamed output: %v\nbody:\n%s", err, body)
+	}
+
+	wantTypes := map[string]dto.MetricType{
+		expectedCounterFamily:         dto.MetricType_COUNTER,
+		expectedHistFamily:            dto.MetricType_HISTOGRAM,
+		"grpc_client_attempt_started": dto.MetricType_COUNTER,
+	}
+	for famName, wantType := range wantTypes {
+		mf, ok := families[famName]
+		if !ok {
+			t.Fatalf("missing expected family %q in parsed families", famName)
+		}
+		if mf.GetType() != wantType {
+			t.Errorf("expected %q type %v, got %v", famName, wantType, mf.GetType())
+		}
+		if len(mf.GetMetric()) != 3 {
+			t.Fatalf("expected 3 metrics in %q, got %d", famName, len(mf.GetMetric()))
+		}
+	}
+}
+
 func TestStreamMetricsHandlerSequentialMounts(t *testing.T) {
 	t.Parallel()
 
@@ -1204,7 +1249,6 @@ func TestStreamMetricsHandlerSequentialMounts(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("unexpected HTTP status code: got %d, want %d", rec.Code, http.StatusOK)
 			}
-
 			if gotMax := tr.maxInFlight.Load(); gotMax != 1 {
 				t.Errorf("expected mounts to be scraped sequentially (maxInFlight=1), got %d", gotMax)
 			}
@@ -1217,63 +1261,7 @@ func TestStreamMetricsHandlerSequentialMounts(t *testing.T) {
 				t.Errorf("scrape order mismatch (-want +got):\n%s", diff)
 			}
 
-			body := rec.Body.String()
-			expectedCounterFamily := "fs_ops_count"
-			expectedHistFamily := "fs_ops_latencies"
-			if enableSchema {
-				expectedCounterFamily = "volume_fs_ops_count"
-				expectedHistFamily = "volume_fs_ops_latencies"
-			} else {
-				expectedHistFamily = "fs_ops_latency"
-			}
-
-			// Verify that # HELP and # TYPE appear exactly once per metric family across all 3 mounts.
-			for _, famName := range []string{expectedCounterFamily, expectedHistFamily, "grpc_client_attempt_started"} {
-				helpPrefix := "# HELP " + famName + " "
-				typePrefix := "# TYPE " + famName + " "
-				if c := strings.Count(body, helpPrefix); c != 1 {
-					t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", helpPrefix, c, body)
-				}
-				if c := strings.Count(body, typePrefix); c != 1 {
-					t.Errorf("expected exactly 1 %q line across 3 mounts, got %d\nbody:\n%s", typePrefix, c, body)
-				}
-			}
-
-			// Verify standard Prometheus TextParser (ProcessMetricsData) parses the multi-mount output without error.
-			families, err := ProcessMetricsData(strings.NewReader(body))
-			if err != nil {
-				t.Fatalf("ProcessMetricsData failed on multi-mount streamed output: %v\nbody:\n%s", err, body)
-			}
-
-			counterMF, ok := families[expectedCounterFamily]
-			if !ok {
-				t.Fatalf("missing expected counter family %q in parsed families", expectedCounterFamily)
-			}
-			if counterMF.GetType() != dto.MetricType_COUNTER {
-				t.Errorf("expected %q type COUNTER, got %v", expectedCounterFamily, counterMF.GetType())
-			}
-			if len(counterMF.GetMetric()) != 3 {
-				t.Fatalf("expected 3 metrics in %q, got %d", expectedCounterFamily, len(counterMF.GetMetric()))
-			}
-
-			histMF, ok := families[expectedHistFamily]
-			if !ok {
-				t.Fatalf("missing expected histogram family %q in parsed families", expectedHistFamily)
-			}
-			if histMF.GetType() != dto.MetricType_HISTOGRAM {
-				t.Errorf("expected %q type HISTOGRAM, got %v", expectedHistFamily, histMF.GetType())
-			}
-			if len(histMF.GetMetric()) != 3 {
-				t.Fatalf("expected 3 metrics in %q, got %d", expectedHistFamily, len(histMF.GetMetric()))
-			}
-
-			grpcMF, ok := families["grpc_client_attempt_started"]
-			if !ok {
-				t.Fatalf("missing expected gRPC family grpc_client_attempt_started in parsed families")
-			}
-			if len(grpcMF.GetMetric()) != 3 {
-				t.Fatalf("expected 3 metrics in grpc_client_attempt_started, got %d", len(grpcMF.GetMetric()))
-			}
+			verifySequentialMountsOutput(t, rec.Body.String(), enableSchema)
 		})
 	}
 }
@@ -1285,9 +1273,7 @@ func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 		{
 			podUID: "uid-fail", podName: "pod-fail", volumeName: "vol-fail",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusInternalServerError)
-			},
+			handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
 		},
 		{
 			podUID: "uid-ok", podName: "pod-ok", volumeName: "vol-ok",
@@ -1301,11 +1287,8 @@ func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mm.metricsHandler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("unexpected status code: %d", rec.Code)
-	}
-	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
-		t.Fatalf("expected Content-Encoding=gzip, got %q", got)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("unexpected response: status=%d, Content-Encoding=%q", rec.Code, rec.Header().Get("Content-Encoding"))
 	}
 
 	gzReader, err := gzip.NewReader(rec.Body)
@@ -1317,7 +1300,6 @@ func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decompress gzip body: %v", err)
 	}
-
 	if !strings.Contains(string(decompressed), `volume_fs_ops_count{`) || !strings.Contains(string(decompressed), `volume_name="vol-ok"`) {
 		t.Errorf("expected healthy mount metrics in decompressed response, got:\n%s", string(decompressed))
 	}
@@ -1328,7 +1310,6 @@ func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	req2.Header.Set("Accept-Encoding", "identity")
 	rec2 := httptest.NewRecorder()
 	mm.metricsHandler().ServeHTTP(rec2, req2)
-
 	if got := rec2.Header().Get("Content-Encoding"); got != "" {
 		t.Errorf("expected no Content-Encoding when gzip is not accepted, got %q", got)
 	}
@@ -1339,90 +1320,16 @@ func TestStreamMetricsHandlerGzipAndFaultTolerance(t *testing.T) {
 	// Canceled request context should skip scraping immediately
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req3 := httptest.NewRequestWithContext(ctx, http.MethodGet, metricsPath, nil)
 	rec3 := httptest.NewRecorder()
-	mm.metricsHandler().ServeHTTP(rec3, req3)
+	mm.metricsHandler().ServeHTTP(rec3, httptest.NewRequestWithContext(ctx, http.MethodGet, metricsPath, nil))
 	if rec3.Body.Len() != 0 {
 		t.Errorf("expected empty body for canceled context, got %q", rec3.Body.String())
 	}
 }
 
-func TestTransformMetricFamilyAndSkipFirstLineWriter(t *testing.T) {
-	t.Parallel()
+func testSkipFirstLineWriter(t *testing.T) {
+	t.Helper()
 
-	c := &metricsCollector{
-		constLabels: map[string]string{
-			"pod_name":       "pod-a",
-			"namespace_name": "ns-a",
-			"volume_name":    "vol-a",
-			"bucket_name":    "bucket-a",
-			"pod_uid":        "",
-		},
-		enableGcsFuseVolumeMetricsSchema: false,
-	}
-
-	if c.transformMetricFamily(nil) {
-		t.Errorf("expected nil MetricFamily to return false")
-	}
-
-	name := "volume_fs_ops_latencies"
-	gaugeHistType := dto.MetricType_GAUGE_HISTOGRAM
-	sampleCount := uint64(4)
-	sampleSum := float64(12.5)
-	ub := float64(10)
-	cumCount := uint64(4)
-	conflictKey := "pod_name"
-	conflictVal := "spoofed-pod"
-	opKey := "fs_op"
-	opVal := "Open"
-
-	mf := &dto.MetricFamily{
-		Name: &name,
-		Type: &gaugeHistType,
-		Metric: []*dto.Metric{
-			nil,
-			{
-				// Missing Histogram field, should be filtered out by hasValidMetricValue
-				Label: []*dto.LabelPair{{Name: &opKey, Value: &opVal}},
-			},
-			{
-				Label: []*dto.LabelPair{
-					{Name: &conflictKey, Value: &conflictVal},
-					{Name: &opKey, Value: &opVal},
-				},
-				Histogram: &dto.Histogram{
-					SampleCount: &sampleCount,
-					SampleSum:   &sampleSum,
-					Bucket: []*dto.Bucket{
-						{UpperBound: &ub, CumulativeCount: &cumCount},
-					},
-				},
-			},
-		},
-	}
-
-	if !c.transformMetricFamily(mf) {
-		t.Fatalf("expected transformMetricFamily to return true")
-	}
-	if mf.GetName() != "fs_ops_latency" {
-		t.Errorf("expected normalized name fs_ops_latency, got %q", mf.GetName())
-	}
-	if mf.GetType() != dto.MetricType_HISTOGRAM {
-		t.Errorf("expected GAUGE_HISTOGRAM to be normalized to HISTOGRAM, got %v", mf.GetType())
-	}
-	if len(mf.GetMetric()) != 1 {
-		t.Fatalf("expected 1 valid metric after filtering, got %d", len(mf.GetMetric()))
-	}
-
-	gotLabels := make(map[string]string)
-	for _, lp := range mf.GetMetric()[0].GetLabel() {
-		gotLabels[lp.GetName()] = lp.GetValue()
-	}
-	if gotLabels["pod_name"] != "pod-a" {
-		t.Errorf("expected conflicting pod_name to be overwritten with pod-a, got %q", gotLabels["pod_name"])
-	}
-
-	// Test skipFirstLineWriter across chunked writes
 	var buf bytes.Buffer
 	sw := &skipFirstLineWriter{w: &buf, skipNextLine: true}
 	_, _ = sw.Write([]byte("# TYPE foo"))
@@ -1442,6 +1349,63 @@ func TestTransformMetricFamilyAndSkipFirstLineWriter(t *testing.T) {
 	if got, want := buf.String(), "# TYPE foo counter\n"; got != want {
 		t.Errorf("zero-value skipFirstLineWriter output = %q, want %q", got, want)
 	}
+}
+
+func TestTransformMetricFamilyAndSkipFirstLineWriter(t *testing.T) {
+	t.Parallel()
+
+	c := &metricsCollector{
+		constLabels: map[string]string{
+			"pod_name": "pod-a", "namespace_name": "ns-a", "volume_name": "vol-a", "bucket_name": "bucket-a", "pod_uid": "",
+		},
+		enableGcsFuseVolumeMetricsSchema: false,
+	}
+	if c.transformMetricFamily(nil) {
+		t.Errorf("expected nil MetricFamily to return false")
+	}
+
+	strPtr := func(s string) *string { return &s }
+	floatPtr := func(f float64) *float64 { return &f }
+	uint64Ptr := func(u uint64) *uint64 { return &u }
+	gaugeHistType := dto.MetricType_GAUGE_HISTOGRAM
+
+	mf := &dto.MetricFamily{
+		Name: strPtr("volume_fs_ops_latencies"),
+		Type: &gaugeHistType,
+		Metric: []*dto.Metric{
+			nil,
+			// Missing Histogram field, should be filtered out by hasValidMetricValue
+			{Label: []*dto.LabelPair{{Name: strPtr("fs_op"), Value: strPtr("Open")}}},
+			{
+				Label: []*dto.LabelPair{
+					{Name: strPtr("pod_name"), Value: strPtr("spoofed-pod")},
+					{Name: strPtr("fs_op"), Value: strPtr("Open")},
+				},
+				Histogram: &dto.Histogram{
+					SampleCount: uint64Ptr(4),
+					SampleSum:   floatPtr(12.5),
+					Bucket:      []*dto.Bucket{{UpperBound: floatPtr(10), CumulativeCount: uint64Ptr(4)}},
+				},
+			},
+		},
+	}
+
+	if !c.transformMetricFamily(mf) {
+		t.Fatalf("expected transformMetricFamily to return true")
+	}
+	if mf.GetName() != "fs_ops_latency" || mf.GetType() != dto.MetricType_HISTOGRAM || len(mf.GetMetric()) != 1 {
+		t.Fatalf("unexpected transformed family: name=%q type=%v metrics=%d", mf.GetName(), mf.GetType(), len(mf.GetMetric()))
+	}
+
+	gotLabels := make(map[string]string)
+	for _, lp := range mf.GetMetric()[0].GetLabel() {
+		gotLabels[lp.GetName()] = lp.GetValue()
+	}
+	if gotLabels["pod_name"] != "pod-a" {
+		t.Errorf("expected conflicting pod_name to be overwritten with pod-a, got %q", gotLabels["pod_name"])
+	}
+
+	testSkipFirstLineWriter(t)
 }
 
 // fakeMount describes a fake gcsfuse sidecar metrics endpoint registered with the metrics manager.
@@ -1693,9 +1657,7 @@ func registerRecordingMounts(t *testing.T, mm *manager, fakeClientset *clientset
 	}, mounts
 }
 
-func TestStreamMetricsHandlerDropsTruncatedMount(t *testing.T) {
-	t.Parallel()
-
+func writeTruncatedMountPayload(w http.ResponseWriter) {
 	// The body is cut off in the middle of a histogram, after the complete counter family.
 	const partialPayload = `# HELP truncated_ops_count The cumulative number of ops processed.
 # TYPE truncated_ops_count counter
@@ -1705,14 +1667,16 @@ truncated_ops_count{fs_op="Read"} 7
 truncated_ops_latencies_bucket{fs_op="Read",le="1"} 3
 truncated_ops_latencies_bucket{fs_op="Read",le="10"} 5
 `
-	writePartial := func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(partialPayload))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(partialPayload))
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
+}
+
+func TestStreamMetricsHandlerDropsTruncatedMount(t *testing.T) {
+	t.Parallel()
 
 	testCases := []struct {
 		name    string
@@ -1721,14 +1685,14 @@ truncated_ops_latencies_bucket{fs_op="Read",le="10"} 5
 		{
 			name: "connection aborted mid-body",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
-				writePartial(w)
+				writeTruncatedMountPayload(w)
 				panic(http.ErrAbortHandler)
 			},
 		},
 		{
 			name: "per-mount timeout mid-body",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				writePartial(w)
+				writeTruncatedMountPayload(w)
 				select {
 				case <-r.Context().Done():
 				case <-time.After(5 * time.Second):
@@ -1800,6 +1764,28 @@ func TestStreamMetricsBudgetFor(t *testing.T) {
 	}
 }
 
+type protoDelimSample struct {
+	metricType dto.MetricType
+	value      float64
+}
+
+func decodeProtoDelimSample(t *testing.T, mf *dto.MetricFamily, m *dto.Metric) (string, protoDelimSample) {
+	t.Helper()
+
+	labels := map[string]string{}
+	for _, lp := range m.GetLabel() {
+		labels[lp.GetName()] = lp.GetValue()
+	}
+	if labels["fs_op"] != "Read" || labels["pod_name"] == "" || labels["bucket_name"] != "bucket-"+labels["volume_name"] {
+		t.Errorf("unexpected labels for %q: %v", mf.GetName(), labels)
+	}
+	value := m.GetCounter().GetValue()
+	if mf.GetType() == dto.MetricType_HISTOGRAM {
+		value = float64(m.GetHistogram().GetSampleCount())
+	}
+	return labels["volume_name"], protoDelimSample{metricType: mf.GetType(), value: value}
+}
+
 func TestStreamMetricsHandlerProtobufDelimited(t *testing.T) {
 	t.Parallel()
 
@@ -1822,40 +1808,26 @@ func TestStreamMetricsHandlerProtobufDelimited(t *testing.T) {
 		t.Fatalf("expected delimited protobuf Content-Type, got %q", ct)
 	}
 
-	type sample struct {
-		metricType dto.MetricType
-		value      float64
-	}
 	// family name -> volume_name -> sample
-	got := map[string]map[string]sample{}
+	got := map[string]map[string]protoDelimSample{}
 	dec := expfmt.NewDecoder(rec.Body, expfmt.NewFormat(expfmt.TypeProtoDelim))
 	for {
 		var mf dto.MetricFamily
-		if err := dec.Decode(&mf); err == io.EOF {
+		if err := dec.Decode(&mf); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			t.Fatalf("failed to decode delimited protobuf body: %v", err)
 		}
+		if got[mf.GetName()] == nil {
+			got[mf.GetName()] = map[string]protoDelimSample{}
+		}
 		for _, m := range mf.GetMetric() {
-			labels := map[string]string{}
-			for _, lp := range m.GetLabel() {
-				labels[lp.GetName()] = lp.GetValue()
-			}
-			if labels["fs_op"] != "Read" || labels["pod_name"] == "" || labels["bucket_name"] != "bucket-"+labels["volume_name"] {
-				t.Errorf("unexpected labels for %q: %v", mf.GetName(), labels)
-			}
-			value := m.GetCounter().GetValue()
-			if mf.GetType() == dto.MetricType_HISTOGRAM {
-				value = float64(m.GetHistogram().GetSampleCount())
-			}
-			if got[mf.GetName()] == nil {
-				got[mf.GetName()] = map[string]sample{}
-			}
-			got[mf.GetName()][labels["volume_name"]] = sample{metricType: mf.GetType(), value: value}
+			vol, s := decodeProtoDelimSample(t, &mf, m)
+			got[mf.GetName()][vol] = s
 		}
 	}
 
-	want := map[string]map[string]sample{
+	want := map[string]map[string]protoDelimSample{
 		"volume_fs_ops_count": {
 			"vol-1": {metricType: dto.MetricType_COUNTER, value: 10},
 			"vol-2": {metricType: dto.MetricType_COUNTER, value: 20},
@@ -1865,7 +1837,7 @@ func TestStreamMetricsHandlerProtobufDelimited(t *testing.T) {
 			"vol-2": {metricType: dto.MetricType_HISTOGRAM, value: 20},
 		},
 	}
-	if diff := cmp.Diff(want, got, cmp.AllowUnexported(sample{})); diff != "" {
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(protoDelimSample{})); diff != "" {
 		t.Errorf("decoded protobuf samples mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -1981,7 +1953,7 @@ fs_ops_count{fs_op="Read"} 5 `+timestampMs+`
 		for {
 			mf := &dto.MetricFamily{}
 			if err := dec.Decode(mf); err != nil {
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					t.Fatalf("%s: failed to decode response: %v", accept, err)
 				}
 				break
@@ -2271,6 +2243,31 @@ func TestAcceptsGzip(t *testing.T) {
 	}
 }
 
+// newPairBarrierHandler returns a sidecar handler Factory for 2 mounts. When waitForPeer is true, each
+// mount waits for the other mount's scrape to arrive before responding, which only succeeds if the two
+// mounts are scraped concurrently.
+func newPairBarrierHandler(waitForPeer bool, tr *inFlightTracker) func(opValue int) http.HandlerFunc {
+	var arrivals atomic.Int32
+	bothInFlight := make(chan struct{})
+	return func(opValue int) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			done := tr.enter()
+			if waitForPeer {
+				if arrivals.Add(1) == 2 {
+					close(bothInFlight)
+				}
+				select {
+				case <-bothInFlight:
+				case <-r.Context().Done():
+				}
+			}
+			done()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(mountPayload(opValue)))
+		}
+	}
+}
+
 func TestMetricsHandlerFlagSelection(t *testing.T) {
 	t.Parallel()
 
@@ -2298,28 +2295,7 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 			mm := NewMetricsManager(":0", newSocketTempDir(t), 10, &lockedFakeClientset{FakeClientset: fakeClientset}, tc.streamMetrics, tc.sequentialMetrics, true).(*manager)
 
 			var tr inFlightTracker
-			// Without --sequential-metrics-export, each scrape waits for the other one to start, which
-			// only happens if the mounts are scraped concurrently. Otherwise, the first scrape runs into
-			// the per-mount timeout and its mount is missing from the response.
-			var arrivals atomic.Int32
-			bothInFlight := make(chan struct{})
-			slowHandler := func(opValue int) http.HandlerFunc {
-				return func(w http.ResponseWriter, r *http.Request) {
-					done := tr.enter()
-					if !tc.sequentialMetrics {
-						if arrivals.Add(1) == 2 {
-							close(bothInFlight)
-						}
-						select {
-						case <-bothInFlight:
-						case <-r.Context().Done():
-						}
-					}
-					done()
-					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(mountPayload(opValue)))
-				}
-			}
+			slowHandler := newPairBarrierHandler(!tc.sequentialMetrics, &tr)
 			registerFakeMounts(t, mm, fakeClientset, []fakeMount{
 				{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: slowHandler(1)},
 				{podUID: "uid-2", podName: "pod-2", volumeName: "vol-2", handler: slowHandler(2)},
