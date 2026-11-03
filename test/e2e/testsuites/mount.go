@@ -301,6 +301,9 @@ func (t *gcsFuseCSIMountTestSuite) DefineTests(driver storageframework.TestDrive
 	})
 
 	ginkgo.It("[read ahead config] should update read ahead config knobs", func() {
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
 		if pattern.VolType == storageframework.DynamicPV {
 			e2eskipper.Skipf("skip for volume type %v", storageframework.DynamicPV)
 		}

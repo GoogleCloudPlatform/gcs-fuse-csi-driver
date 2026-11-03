@@ -712,6 +712,9 @@ func (t *gcsFuseCSISharedMountTestSuite) DefineTests(driver storageframework.Tes
 	// Verify that the CSI Node driver detects kernel-params.json and updates the host node kernel parameters.
 	// Verify that the workload pod can successfully read and write data to the volume.
 	ginkgo.It("[shared-mount] should verify kernel parameters are applied via mounter pod and host node settings are updated", func() {
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip for zonal bucket")
+		}
 		skipIfKernelParamsNotSupported()
 		init(1, specs.EnableCustomReadAhead)
 		defer cleanup()
