@@ -969,15 +969,15 @@ func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage 
 		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return mountOptions
 	}
-	// 1.2, 2.1, & 3.3 (OSS): Unsupported ct6e-* (or missing label) -> pass enable-grpc-by-default=false
+	// Unsupported ct6e-* node (or missing machine-type label) on any cluster (new, existing, or OSS) -> pass enable-grpc-by-default=false
 	if !s.isNodeSupportedForGrpcByDefault(node) {
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
 	}
-	// 1.1: New cluster -> pass enable-grpc-by-default=true
+	// Supported node on a new cluster (--enable-grpc-by-default=true) -> pass enable-grpc-by-default=true
 	if s.driver.config.FeatureOptions.EnableGrpcByDefault {
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
 	}
-	// 2.2 & 3.4 (OSS): Existing / OSS cluster -> leave unset so GCSFuse runs machine optimization
+	// Supported node on an existing or OSS cluster (--enable-grpc-by-default=false) -> leave unset so GCSFuse runs machine optimization
 	return mountOptions
 }
 
