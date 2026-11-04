@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +66,8 @@ const (
 	capacityAdvisorTargetShape       = "ANY_SINGLE_ZONE"
 	capacityAdvisorInstanceSelection = "instance-selection-1"
 	capacityAdvisorZonePrefix        = "zones/"
+	defaultKCPMachineType            = "e2-standard-2"
+	regionalKCPZones                 = 3
 	capacityAdvisorTimeout           = 30 * time.Second
 	// capacityAdvisorMaxErrorBytes caps how much of an error response is logged.
 	capacityAdvisorMaxErrorBytes = 4096
@@ -183,24 +186,11 @@ func apiErrorMessage(body []byte) string {
 	return strings.Join(strings.Fields(string(body)), " ")
 }
 
-// queryCapacityAdvice calls queryRegionalStandardZones to get standard GKE zones in the given region,
-// and queries Capacity Advisor with the given access token to return the recommended zone and obtainability score.
+// querySingleCapacityAdvice sends one Capacity Advisor request for machineType x size across zones.
 // Note: gcloud does not support the STANDARD provisioning model yet, so call the API directly.
 // See: https://cloud.google.com/compute/docs/reference/rest/beta/advice/capacity
 // TODO(b/570275744): Replace the POST with gcloud command when gcloud supports STANDARD provisioning model.
-func queryCapacityAdvice(testParams *TestParameters, region, token string) (string, float64, error) {
-	// Restrict capacity search to valid target zones in the region (ZB-supported zones for ZB runs,
-	// or standard regional compute zones excluding AI-only zones for non-ZB runs).
-	var zones []string
-	if testParams.EnableZB {
-		zones = zbSupportedZones[region]
-	} else {
-		zones = queryRegionalStandardZones(testParams, region)
-	}
-	if len(zones) == 0 {
-		return "", 0, fmt.Errorf("no valid target zones available in region %q (enableZB=%t)", region, testParams.EnableZB)
-	}
-
+func querySingleCapacityAdvice(region, token, machineType string, size int, zones []string) (string, float64, error) {
 	zoneConfigs := make([]map[string]string, 0, len(zones))
 	for _, zone := range zones {
 		zoneConfigs = append(zoneConfigs, map[string]string{"zone": capacityAdvisorZonePrefix + zone})
@@ -217,11 +207,11 @@ func queryCapacityAdvice(testParams *TestParameters, region, token string) (stri
 		},
 		"instanceFlexibilityPolicy": map[string]any{
 			"instanceSelections": map[string]any{
-				capacityAdvisorInstanceSelection: map[string]any{"machineTypes": []string{testParams.NodeMachineType}},
+				capacityAdvisorInstanceSelection: map[string]any{"machineTypes": []string{machineType}},
 			},
 		},
 		"distributionPolicy": distributionPolicy,
-		"size":               testParams.NumNodes,
+		"size":               size,
 	})
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to marshal capacity advice request: %w", err)
@@ -279,6 +269,56 @@ func queryCapacityAdvice(testParams *TestParameters, region, token string) (stri
 	return path.Base(recs[0].Shards[0].Zone), recs[0].Scores.Obtainability, nil
 }
 
+// queryCapacityAdvice returns the recommended zone and obtainability score for control plane and worker nodes.
+func queryCapacityAdvice(testParams *TestParameters, region, token string) (string, float64, error) {
+	standardZones := queryRegionalStandardZones(testParams, region)
+	if len(standardZones) < regionalKCPZones {
+		return "", 0, fmt.Errorf("fewer than %d standard zones in region %q", regionalKCPZones, region)
+	}
+
+	// Restrict capacity search to valid target zones in the region (ZB-supported zones for ZB runs,
+	// or standard regional compute zones excluding AI-only zones for non-ZB runs).
+	nodeZones := standardZones
+	if testParams.EnableZB {
+		nodeZones = zbSupportedZones[region]
+	}
+	if len(nodeZones) == 0 {
+		return "", 0, fmt.Errorf("no valid target zones available in region %q (enableZB=%t)", region, testParams.EnableZB)
+	}
+
+	// Autopilot picks its own node machine types and zones, so only Standard clusters check worker capacity.
+	bestNodeZone, nodeScore := "", 1.0
+	if !testParams.UseGKEAutopilot {
+		var err error
+		bestNodeZone, nodeScore, err = querySingleCapacityAdvice(region, token, testParams.NodeMachineType, testParams.NumNodes, nodeZones)
+		if err != nil {
+			return "", 0, err
+		}
+	}
+
+	// Control plane picks 3 zones with capacity in 1 region, so require at least 3 such zones
+	// and use the 3rd-highest score.
+	var kcpScores []float64
+	for _, z := range standardZones {
+		_, score, err := querySingleCapacityAdvice(region, token, defaultKCPMachineType, 1, []string{z})
+		if err != nil {
+			klog.Warningf("Control plane (%s) capacity check failed for zone %q in %q: %v", defaultKCPMachineType, z, region, err)
+			continue
+		}
+		kcpScores = append(kcpScores, score)
+	}
+	if len(kcpScores) < regionalKCPZones {
+		return "", 0, fmt.Errorf("only %d of %d zones in %q have control plane (%s) capacity, need %d", len(kcpScores), len(standardZones), region, defaultKCPMachineType, regionalKCPZones)
+	}
+	slices.Sort(kcpScores)
+	kcpScore := kcpScores[len(kcpScores)-regionalKCPZones]
+
+	score := min(nodeScore, kcpScore)
+	klog.Infof("Capacity Advisor for region %q: zone=%q, obtainability=%.2f (worker=%.2f, controlPlane=%.2f)", region, bestNodeZone, score, nodeScore, kcpScore)
+
+	return bestNodeZone, score, nil
+}
+
 func clusterUpGKE(testParams *TestParameters) error {
 	var cmd *exec.Cmd
 
@@ -326,7 +366,6 @@ func clusterUpGKE(testParams *TestParameters) error {
 					klog.Warningf("Capacity Advisor query failed for region %q: %v", region, err)
 					continue
 				}
-				klog.Infof("Capacity Advisor for region %q: zone=%q, obtainability=%.2f", region, zone, score)
 				results = append(results, capacityResult{region: region, zone: zone, score: score})
 			}
 		}
