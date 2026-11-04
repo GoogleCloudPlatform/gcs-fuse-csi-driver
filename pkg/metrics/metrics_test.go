@@ -144,30 +144,51 @@ func TestRegisterUnregisterMetricsCollector(t *testing.T) {
 		t.Errorf("expected AlreadyRegisteredError, but got: %v", err)
 	}
 
-	// 2. Test Unregistration with incorrect identifiers
-	mm.UnregisterMetricsCollector(mountPath, nodeName, "wrong-uid", "wrong-volume")
+	// 2. Test Re-registration at the same mountPath with a new podUID (e.g. recreated shared-mount mounter pod)
+	newPodUID := "test-pod-uid-456"
+	mm.RegisterMetricsCollector(mountPath, podNamespace, podName, bucketName, nodeName, emptyDirBasePath, newPodUID, volumeName, "", "")
 	if !mm.volumeMountPathRegistered.Has(mountPath) {
-		t.Errorf("expected mountPath %q to still be registered after incorrect unregistration identifiers", mountPath)
+		t.Errorf("expected mountPath %q to remain registered after podUID update", mountPath)
+	}
+	if len(mm.collectors) != 1 || mm.collectors[0].podUID != newPodUID {
+		t.Errorf("expected collector podUID to be updated to %q, got collectors=%+v", newPodUID, mm.collectors)
+	}
+	// Old podUID collector should have been unregistered from the Prometheus registry
+	if err := mm.registry.Register(cDummy); err != nil {
+		t.Errorf("expected old podUID collector to be unregistered after podUID update, but register failed: %v", err)
+	} else {
+		mm.registry.Unregister(cDummy)
+	}
+	cNewDummy := newMetricsCollector("", "", "", newPodUID, volumeName, nil, nil, false, false)
+	if err := mm.registry.Register(cNewDummy); err == nil {
+		t.Errorf("expected new podUID collector to be registered, but duplicate registration succeeded")
+		mm.registry.Unregister(cNewDummy)
 	}
 
-	// 3. Test Unregistration with empty identifiers
-	mm.UnregisterMetricsCollector(mountPath, nodeName, "", "")
+	// 3. Test Unregistration with incorrect mountPath
+	mm.UnregisterMetricsCollector("/mnt/wrong-volume", nodeName, newPodUID, volumeName)
 	if !mm.volumeMountPathRegistered.Has(mountPath) {
-		t.Errorf("expected mountPath %q to still be registered after empty unregistration identifiers", mountPath)
+		t.Errorf("expected mountPath %q to still be registered after incorrect unregistration mountPath", mountPath)
 	}
 
-	// 4. Test Unregistration with correct identifiers
+	// 4. Test Unregistration with empty mountPath
+	mm.UnregisterMetricsCollector("", nodeName, "", "")
+	if !mm.volumeMountPathRegistered.Has(mountPath) {
+		t.Errorf("expected mountPath %q to still be registered after empty unregistration mountPath", mountPath)
+	}
+
+	// 5. Test Unregistration with correct mountPath (even if caller passes stale podUID)
 	mm.UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName)
 	if mm.volumeMountPathRegistered.Has(mountPath) {
 		t.Errorf("expected mountPath %q to be unregistered from volumeMountPathRegistered", mountPath)
 	}
 
 	// Verify that the collector is no longer in the registry by attempting to register again
-	err = mm.registry.Register(cDummy)
+	err = mm.registry.Register(cNewDummy)
 	if err != nil {
 		t.Errorf("expected registration of collector to succeed after unregistration, but failed: %v", err)
 	} else {
-		mm.registry.Unregister(cDummy) // Clean up
+		mm.registry.Unregister(cNewDummy) // Clean up
 	}
 }
 
@@ -913,33 +934,6 @@ func validatePrometheusMetric(t *testing.T, metric prometheus.Counter, expectedC
 	}
 	if count != expectedCount {
 		t.Fatalf("failed validating metric count, expected %v, got %v", expectedCount, count)
-	}
-}
-
-func TestProcessMetricsDataAsStream(t *testing.T) {
-	metricsData := `
-# HELP fs_ops_count The cumulative number of ops processed by the file system.
-# TYPE fs_ops_count counter
-fs_ops_count{fs_op="GetInodeAttributes"} 26
-fs_ops_count{fs_op="LookUpInode"} 6
-# HELP gcs_request_count The cumulative number of GCS requests processed along with the GCS method.
-# TYPE gcs_request_count counter
-gcs_request_count{gcs_method="ListObjects"} 32
-gcs_request_count{gcs_method="StatObject"} 6
-`
-	reader := strings.NewReader(metricsData)
-	count := 0
-	for mf, err := range ProcessMetricsDataAsStream(reader) {
-		if err != nil {
-			t.Fatalf("unexpected error parsing stream: %v", err)
-		}
-		if *mf.Name != "fs_ops_count" && *mf.Name != "gcs_request_count" {
-			t.Errorf("unexpected metric name: %s", *mf.Name)
-		}
-		count++
-	}
-	if count != 2 {
-		t.Errorf("expected 2 metric families, got %d", count)
 	}
 }
 

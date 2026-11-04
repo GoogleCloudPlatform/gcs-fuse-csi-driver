@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"maps"
 	"math/rand/v2"
 	"net"
@@ -518,11 +517,24 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 
 	// Check if we need to register collector. We register a collector when the following are met:
 	// 1. There is space on the metrics pipeline for the collector to be registered.
-	// 2. The metrics collector has not previously been registered.
-	// If volume is already registered, do not register again. This flow can get triggered
-	//  since CSI driver has republishVolume capability.
+	// 2. The metrics collector has not previously been registered (or its podUID/volumeName changed,
+	//    e.g. when a shared-mount mounter pod is recreated with a new podUID at the same stagingPath).
+	// If volume is already registered, do not register again unless its podUID or volumeName changed.
+	// This flow can get triggered since CSI driver has republishVolume capability.
 	if mm.volumeMountPathRegistered.Has(mountPath) {
-		return
+		i := slices.IndexFunc(mm.collectors, func(mc *metricsCollector) bool {
+			return mc.mountPath == mountPath
+		})
+		if i < 0 {
+			return
+		}
+		mc := mm.collectors[i]
+		if mc.podUID == podUID && mc.volumeName == volumeName {
+			return
+		}
+		mm.registry.Unregister(mc)
+		mm.collectors = slices.Delete(mm.collectors, i, i+1)
+		mm.volumeMountPathRegistered.Delete(mountPath)
 	}
 	// If collector hasn't been registered and there's no space left, log a warning.
 	if mm.maximumNumberOfCollectors > 0 && mm.volumeMountPathRegistered.Len() >= mm.maximumNumberOfCollectors {
@@ -533,6 +545,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 	policy := newMetricSchemaPolicy(mm.enableGcsFuseVolumeMetricsSchema)
 	constLabels := policy.BuildConstLabels(podName, podNamespace, volumeName, bucketName, k8sControllerType, k8sControllerName)
 	c := newMetricsCollector(socketBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
+	c.mountPath = mountPath
 
 	// Attempt to register new metrics collector and record success.
 	if err := mm.registry.Register(c); err != nil {
@@ -548,13 +561,13 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 }
 
 // UnregisterMetricsCollector unregisters the metrics collector. It is idempotent to unregister the same collector.
-func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volumeName string) {
+func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, _, _ string) {
 	// Lock the number of registered collectors while we attempt to unregister a collector.
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
 	i := slices.IndexFunc(mm.collectors, func(mc *metricsCollector) bool {
-		return mc.podUID == podUID && mc.volumeName == volumeName
+		return mc.mountPath == mountPath
 	})
 	if i < 0 {
 		klog.Infof("Unregister metrics collector for mount path %q is not needed since the collector is not registered.", mountPath)
@@ -568,6 +581,7 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, podUID, volum
 }
 
 type metricsCollector struct {
+	mountPath   string
 	constLabels map[string]string
 	// constLabelPairs holds constLabels as label pairs sorted by name. grpcConstLabels and
 	// grpcConstLabelPairs hold the constant labels of gRPC metric families, which remain on the legacy
@@ -719,11 +733,11 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 		return false
 	}
 
-	// Why: Do not use ProcessMetricsDataAsStream here. The underlying expfmt text decoder yields the
-	// partially parsed families before reporting a parse error, e.g. when the per-mount scrape timeout
-	// cuts the body off mid-family, which would emit truncated families (such as histograms with
-	// missing buckets). Parse the whole body first and drop the mount on any error. Peak memory is the
-	// same, since the text decoder also builds the full per-mount map before yielding anything.
+	// Why: Do not use expfmt.NewDecoder(..., expfmt.FmtText) to stream families one at a time. The
+	// underlying expfmt text decoder parses the whole body into a map of all families before yielding
+	// anything, and yields the family that was cut off (such as a histogram with missing buckets) before
+	// reporting a parse error, e.g. when the per-mount scrape timeout cuts the body off mid-family.
+	// Parse the whole body first and drop the mount on any error.
 	families, err := ProcessMetricsData(resp.Body)
 	if err != nil {
 		klog.Errorf("failed to process metrics data, dropping metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
@@ -738,28 +752,6 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 	}
 
 	return true
-}
-
-// ProcessMetricsDataAsStream processes metrics that follow Prometheus text format,
-// returning an iterator of MetricFamily.
-func ProcessMetricsDataAsStream(metricsReader io.Reader) iter.Seq2[*dto.MetricFamily, error] {
-	return func(yield func(*dto.MetricFamily, error) bool) {
-		decoder := expfmt.NewDecoder(metricsReader, expfmt.FmtText)
-		for {
-			var mf dto.MetricFamily
-			err := decoder.Decode(&mf)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !yield(&mf, nil) {
-				return
-			}
-		}
-	}
 }
 
 // ProcessMetricsData processes metrics that follow Prometheus text format: https://prometheus.io/docs/instrumenting/exposition_formats/,
