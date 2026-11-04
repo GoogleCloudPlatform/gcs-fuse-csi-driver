@@ -98,7 +98,7 @@ var (
 	streamMetricsExport = flag.Bool("stream-metrics-export", false, "Currently has no effect: the text metrics response of each mount is always parsed as a whole, so that a response that is cut off never exports partial metric families.")
 
 	// Sequential metrics export
-	sequentialMetricsExport = flag.Bool("sequential-metrics-export", false, "Scrape and export the metrics of each mount sequentially, one mount at a time, to bound the memory usage of metrics export. In the Prometheus text format, each metric family's HELP/TYPE lines are emitted once and its samples are written as one group per mount, so samples of a family are not contiguous.")
+	sequentialMetricsExport = flag.Bool("sequential-metrics-export", true, "Scrape and export the metrics of each mount sequentially, one mount at a time, to bound the memory usage of metrics export. In the Prometheus text format, each metric family's HELP/TYPE lines are emitted once and its samples are written as one group per mount, so samples of a family are not contiguous.")
 
 	// GCSFuse volume metrics schema flag
 	// TODO(alleaditya): Deprecate --enable-gcsfuse-volume-metrics-schema and remove legacy k8s_pod fallback once k8s_gcs_fuse_volume rollout reaches 100%.
