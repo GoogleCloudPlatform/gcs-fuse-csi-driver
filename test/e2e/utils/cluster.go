@@ -304,16 +304,12 @@ func clusterUpGKE(testParams *TestParameters) error {
 		}
 	}
 
-	var nodeLocations string
+	// By default, create the cluster in testParams.GkeClusterRegion and let GKE allocate nodes across the region's zones.
+	placements := []clusterPlacement{{region: testParams.GkeClusterRegion}}
 
 	// Use Capacity Advisor to select an unconstrained region for both Standard and Autopilot clusters.
 	if testParams.UseCapacityAdvisor {
-		type capacityResult struct {
-			region string
-			zone   string
-			score  float64
-		}
-		var results []capacityResult
+		var results []clusterPlacement
 
 		// The access token is valid for every region, so fetch it once.
 		// TODO(b/570275744): Remove the token fetch when queryCapacityAdvice uses gcloud.
@@ -327,7 +323,7 @@ func clusterUpGKE(testParams *TestParameters) error {
 					continue
 				}
 				klog.Infof("Capacity Advisor for region %q: zone=%q, obtainability=%.2f", region, zone, score)
-				results = append(results, capacityResult{region: region, zone: zone, score: score})
+				results = append(results, clusterPlacement{region: region, zone: zone, score: score})
 			}
 		}
 
@@ -337,29 +333,108 @@ func clusterUpGKE(testParams *TestParameters) error {
 				return results[i].score > results[j].score
 			})
 
-			best := results[0]
 			klog.Infof("Stack-ranked candidate regions:")
 			for idx, r := range results {
 				klog.Infof("  #%d: region=%q zone=%q score=%.2f", idx+1, r.region, r.zone, r.score)
 			}
-			klog.Infof("Selecting highest-scoring region %q (zone: %q, score: %.2f)", best.region, best.zone, best.score)
 
-			// Note: Updating GkeClusterRegion (and GkeClusterZone for ZB) here implicitly updates the
-			// --test-bucket-location passed to Ginkgo. This ensures that the
-			// GCS buckets created during tests are co-located in this fallback
-			// region/zone, preventing cross-region or cross-zone data transfer.
-			testParams.GkeClusterRegion = best.region
-			testParams.GkeClusterZone = best.zone
-			// Autopilot manages node placement dynamically across zones within the region,
-			// so --node-locations is only applied to Standard clusters.
-			if !testParams.UseGKEAutopilot {
-				nodeLocations = best.zone
-			}
+			// An obtainability score is a forecast, not a reservation, so cluster creation can still hit a
+			// stockout in the highest-scoring zone. Keep the whole ranking so the next candidate can be tried.
+			placements = results
 		} else {
 			klog.Warningf("All Capacity Advisor queries failed, falling back to default regional node allocation in %s", testParams.GkeClusterRegion)
 		}
 	}
 
+	for idx, placement := range placements {
+		stockout, err := createGKECluster(testParams, placement)
+		if err == nil {
+			break
+		}
+		if !stockout || idx == len(placements)-1 {
+			return err
+		}
+
+		next := placements[idx+1]
+		klog.Warningf("GCE stockout while creating cluster %q in region %q (zone: %q), falling back to candidate #%d: region=%q zone=%q",
+			testParams.GkeClusterName, placement.region, placement.zone, idx+2, next.region, next.zone)
+
+		// A cluster that fails to create because of a stockout is left behind in the ERROR state, so delete it
+		// before moving on. Failing to delete it should not block the fallback, since each candidate is in a
+		// different region and the cluster name is only reused in the next region.
+		if err := clusterDownGKE(testParams); err != nil {
+			klog.Warningf("Failed to delete cluster %q in region %q after stockout: %v", testParams.GkeClusterName, placement.region, err)
+		}
+	}
+
+	// Call update because --add-maintenance-exclusion is not an available flag during cluster creation.
+	startExclusionTime := time.Now().UTC()
+
+	exclusionDuration, parseErr := time.ParseDuration(testParams.GinkgoTimeout)
+	if parseErr != nil {
+		klog.Warningf("failed to parse ginkgo timeout %q, using default 4h for maintenance exclusion: %v", testParams.GinkgoTimeout, parseErr)
+		exclusionDuration = 4 * time.Hour
+	}
+
+	//nolint:gosec
+	cmd = gcloudCommand(testParams, "container", "clusters", "update", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID,
+		"--add-maintenance-exclusion-name", "no-upgrades-during-test",
+		"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
+		"--add-maintenance-exclusion-end", startExclusionTime.Add(exclusionDuration).Format(time.RFC3339),
+		"--add-maintenance-exclusion-scope", "no_upgrades")
+	if err := runCommand("Updating Cluster with maintenance window", cmd); err != nil {
+		return fmt.Errorf("failed to update cluster with maintenance window: %w", err)
+	}
+
+	return nil
+}
+
+// clusterPlacement is a candidate location for the test cluster. zone is empty when no zone is pinned,
+// in which case GKE allocates nodes across the zones of the region.
+type clusterPlacement struct {
+	region string
+	zone   string
+	score  float64
+}
+
+// stockoutErrorSubstrings are substrings of gcloud errors returned when GCE does not have enough
+// capacity to create the cluster's nodes in the requested location.
+var stockoutErrorSubstrings = []string{
+	"does not have enough resources available",
+	"ZONE_RESOURCE_POOL_EXHAUSTED",
+	"STOCKOUT",
+}
+
+// isStockoutError reports whether a gcloud error message indicates a GCE stockout.
+func isStockoutError(msg string) bool {
+	msg = strings.ToLower(msg)
+	for _, s := range stockoutErrorSubstrings {
+		if strings.Contains(msg, strings.ToLower(s)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// createGKECluster creates the test cluster in the given placement, updating testParams.GkeClusterRegion
+// (and testParams.GkeClusterZone when a zone is pinned) to match. It returns whether a failure was caused
+// by a GCE stockout, in which case the caller can retry in another placement.
+func createGKECluster(testParams *TestParameters, placement clusterPlacement) (bool, error) {
+	// Note: Updating GkeClusterRegion (and GkeClusterZone for ZB) here implicitly updates the
+	// --test-bucket-location passed to Ginkgo. This ensures that the
+	// GCS buckets created during tests are co-located in this fallback
+	// region/zone, preventing cross-region or cross-zone data transfer.
+	testParams.GkeClusterRegion = placement.region
+	var nodeLocations string
+	if placement.zone != "" {
+		testParams.GkeClusterZone = placement.zone
+		// Autopilot manages node placement dynamically across zones within the region,
+		// so --node-locations is only applied to Standard clusters.
+		if !testParams.UseGKEAutopilot {
+			nodeLocations = placement.zone
+		}
+	}
 	// gcloud interprets --num-nodes as a per-zone count. When node-locations pins a
 	// single zone, numNodes is the total count across the cluster. Without pinned node-locations,
 	// GKE defaults to allocating nodes across all zones in the region (typically 3 zones),
@@ -374,12 +449,12 @@ func clusterUpGKE(testParams *TestParameters) error {
 	//nolint:gosec
 	out, listErr := gcloudCommand(testParams, "container", "clusters", "list", "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID, "--verbosity", "none", "--filter", "name="+testParams.GkeClusterName).CombinedOutput()
 	if listErr != nil {
-		return fmt.Errorf("failed to check for previous test cluster: output: %v, err: %w", out, listErr)
+		return false, fmt.Errorf("failed to check for previous test cluster: output: %v, err: %w", out, listErr)
 	}
 	if len(out) > 0 {
 		klog.Infof("Detected previous cluster %s. Deleting it so a new one can be created...", testParams.GkeClusterName)
 		if err := clusterDownGKE(testParams); err != nil {
-			return err
+			return false, err
 		}
 	}
 
@@ -422,31 +497,13 @@ func clusterUpGKE(testParams *TestParameters) error {
 		cmdParams = append(cmdParams, standardClusterFlags...)
 	}
 
-	cmd = gcloudCommand(testParams, cmdParams...)
-	if err := runCommand("Starting e2e Cluster on GKE", cmd); err != nil {
-		return fmt.Errorf("failed to bring up kubernetes e2e cluster on GKE: %w", err)
+	cmd := gcloudCommand(testParams, cmdParams...)
+	stderr, err := runCommandCaptureStderr("Starting e2e Cluster on GKE", cmd)
+	if err != nil {
+		return isStockoutError(stderr), fmt.Errorf("failed to bring up kubernetes e2e cluster on GKE: %w", err)
 	}
 
-	// Call update because --add-maintenance-exclusion is not an available flag during cluster creation.
-	startExclusionTime := time.Now().UTC()
-
-	exclusionDuration, parseErr := time.ParseDuration(testParams.GinkgoTimeout)
-	if parseErr != nil {
-		klog.Warningf("failed to parse ginkgo timeout %q, using default 4h for maintenance exclusion: %v", testParams.GinkgoTimeout, parseErr)
-		exclusionDuration = 4 * time.Hour
-	}
-
-	//nolint:gosec
-	cmd = gcloudCommand(testParams, "container", "clusters", "update", testParams.GkeClusterName, "--region", testParams.GkeClusterRegion, "--project", testParams.ProjectID,
-		"--add-maintenance-exclusion-name", "no-upgrades-during-test",
-		"--add-maintenance-exclusion-start", startExclusionTime.Format(time.RFC3339),
-		"--add-maintenance-exclusion-end", startExclusionTime.Add(exclusionDuration).Format(time.RFC3339),
-		"--add-maintenance-exclusion-scope", "no_upgrades")
-	if err := runCommand("Updating Cluster with maintenance window", cmd); err != nil {
-		return fmt.Errorf("failed to update cluster with maintenance window: %w", err)
-	}
-
-	return nil
+	return false, nil
 }
 
 func ClusterAtLeastMinVersion(clusterVersion, nodeVersion string, minVersion *version.Version) (bool, error) {

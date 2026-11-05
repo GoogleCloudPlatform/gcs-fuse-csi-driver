@@ -118,6 +118,27 @@ func runCommand(action string, cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
+// runCommandCaptureStderr is like runCommand, but also returns the command's stderr
+// so that callers can inspect the error message (e.g. to detect GCE stockouts).
+func runCommandCaptureStderr(action string, cmd *exec.Cmd) (string, error) {
+	var stderr strings.Builder
+	cmd.Stdout = ginkgo.GinkgoWriter
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = io.MultiWriter(ginkgo.GinkgoWriter, &stderr)
+
+	klog.Infof("%s", action)
+	klog.Infof("cmd env=%v", cmd.Env)
+	klog.Infof("cmd path=%v", cmd.Path)
+	klog.Infof("cmd args=%s", cmd.Args)
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	err := cmd.Wait()
+
+	return stderr.String(), err
+}
+
 func GCSFuseBranch(gcsfuseVersionStr string) (*version.Version, string) {
 	v, err := version.ParseSemantic(gcsfuseVersionStr)
 	// When the gcsfuse binary is built using the head commit or has a pre-release tag that does not contain "-gke",
