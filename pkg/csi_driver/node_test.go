@@ -1866,8 +1866,10 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 		enableSidecarBucketAccessCheck bool
 		userMountOptions               string
 		assumeGoodSidecarVersion       bool
+		hostNetworkPodKSA              bool
 		expectedOptions                []string
 		unexpectedOptions              []string
+		expectCSIBucketAccessCheck     bool
 	}{
 		{
 			name:                           "sidecar check enabled globally, user does not specify option, sidecar check should be enabled",
@@ -1875,6 +1877,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			userMountOptions:               "",
 			assumeGoodSidecarVersion:       true,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     false,
 		},
 		{
 			name:                           "sidecar check enabled globally, user specifies false, sidecar check should be disabled",
@@ -1883,6 +1886,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			assumeGoodSidecarVersion:       true,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=false"},
 			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     true,
 		},
 		{
 			name:                           "sidecar check enabled globally, user specifies true, sidecar check should be enabled",
@@ -1890,6 +1894,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			userMountOptions:               "enable-sidecar-bucket-access-check=true",
 			assumeGoodSidecarVersion:       true,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     false,
 		},
 		{
 			name:                           "sidecar check disabled globally, user does not specify option, sidecar check should be disabled (absent)",
@@ -1897,6 +1902,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			userMountOptions:               "",
 			assumeGoodSidecarVersion:       true,
 			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+			expectCSIBucketAccessCheck:     true,
 		},
 		{
 			name:                           "sidecar check disabled globally, user specifies true, sidecar check should be enabled",
@@ -1904,6 +1910,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			userMountOptions:               "enable-sidecar-bucket-access-check=true",
 			assumeGoodSidecarVersion:       true,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     false,
 		},
 		{
 			name:                           "sidecar check disabled globally, user specifies false, sidecar check should be disabled",
@@ -1912,6 +1919,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			assumeGoodSidecarVersion:       true,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=false"},
 			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     true,
 		},
 		{
 			name:                           "sidecar check enabled globally, unsupported sidecar version, user does not specify, sidecar check should be absent",
@@ -1919,6 +1927,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			userMountOptions:               "",
 			assumeGoodSidecarVersion:       false,
 			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true", "enable-sidecar-bucket-access-check=false"},
+			expectCSIBucketAccessCheck:     true,
 		},
 		{
 			name:                           "sidecar check enabled globally, unsupported sidecar version, user specifies true, sidecar check should be enabled",
@@ -1926,6 +1935,7 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			userMountOptions:               "enable-sidecar-bucket-access-check=true",
 			assumeGoodSidecarVersion:       false,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     true,
 		},
 		{
 			name:                           "sidecar check enabled globally, unsupported sidecar version, user specifies false, sidecar check should be disabled",
@@ -1934,6 +1944,26 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			assumeGoodSidecarVersion:       false,
 			expectedOptions:                []string{"enable-sidecar-bucket-access-check=false"},
 			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     true,
+		},
+		{
+			name:                           "hostNetwork KSA opt-in pod without explicit sidecar check, CSI check should run",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "",
+			assumeGoodSidecarVersion:       true,
+			hostNetworkPodKSA:              true,
+			expectedOptions:                []string{"hnw-ksa=true"},
+			unexpectedOptions:              []string{"enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     true,
+		},
+		{
+			name:                           "hostNetwork KSA opt-in pod with explicit sidecar check=true, CSI check should be skipped",
+			enableSidecarBucketAccessCheck: true,
+			userMountOptions:               "enable-sidecar-bucket-access-check=true",
+			assumeGoodSidecarVersion:       true,
+			hostNetworkPodKSA:              true,
+			expectedOptions:                []string{"hnw-ksa=true", "enable-sidecar-bucket-access-check=true"},
+			expectCSIBucketAccessCheck:     false,
 		},
 	}
 
@@ -1950,6 +1980,9 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			if tc.userMountOptions != "" {
 				volumeContext[VolumeContextKeyMountOptions] = tc.userMountOptions
 			}
+			if tc.hostNetworkPodKSA {
+				volumeContext[VolumeContextKeyHostNetworkPodKSA] = util.TrueStr
+			}
 
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
@@ -1959,7 +1992,22 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 			}
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
-			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
+			fc := clientset.NewFakeClientset()
+			if tc.hostNetworkPodKSA {
+				fc.CreatePod(clientset.FakePodConfig{
+					HostNetworkEnabled: true,
+				})
+				if pod, err := fc.GetPod("test-ns", "test-pod"); err == nil && pod != nil {
+					pod.Spec.InitContainers = pod.Spec.Containers
+					pod.Spec.Containers = nil
+					pod.Spec.InitContainers[0].Image = "gke.gcr.io/gcs-fuse-csi-driver-sidecar-mounter:v1.20.0-gke.0_linux_amd64"
+					pod.Status.InitContainerStatuses = pod.Status.ContainerStatuses
+					pod.Status.ContainerStatuses = nil
+					pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{Name: webhook.SidecarContainerSATokenVolumeName})
+				}
+			}
+
+			driver := initTestDriver(t, fakeMounter, fc)
 			s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
 			if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
 				t.Fatalf("failed to create the fake bucket: %v", err)
@@ -1979,6 +2027,18 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 				Opts:   tc.expectedOptions,
 			},
 				tc.unexpectedOptions)
+
+			counter, ok := driver.config.StorageServiceManager.(interface{ CheckBucketExistsCount() int })
+			if !ok {
+				t.Fatalf("expected StorageServiceManager to implement CheckBucketExistsCount()")
+			}
+			wantCalls := 0
+			if tc.expectCSIBucketAccessCheck {
+				wantCalls = 1
+			}
+			if got := counter.CheckBucketExistsCount(); got != wantCalls {
+				t.Errorf("CheckBucketExistsCount() = %d, want %d", got, wantCalls)
+			}
 		})
 	}
 }

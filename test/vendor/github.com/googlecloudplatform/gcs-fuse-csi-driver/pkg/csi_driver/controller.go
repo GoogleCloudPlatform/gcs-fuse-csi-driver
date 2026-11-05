@@ -438,6 +438,7 @@ func (s *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
+	defer storageService.Close()
 
 	// Delete the volume
 	err = storageService.DeleteBucket(ctx, &storage.ServiceBucket{Name: volumeID})

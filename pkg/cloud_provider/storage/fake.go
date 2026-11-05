@@ -19,13 +19,14 @@ package storage
 
 import (
 	"context"
+	"sync"
 
 	"cloud.google.com/go/storage"
 	"golang.org/x/oauth2"
 )
 
 type fakeService struct {
-	sm fakeServiceManager
+	sm *fakeServiceManager
 }
 
 // DownloadGCSObject implements Service.
@@ -39,19 +40,27 @@ func (service *fakeService) UploadGCSObject(ctx context.Context, localPath strin
 }
 
 type fakeServiceManager struct {
-	createdBuckets map[string]*ServiceBucket
+	mu                     sync.Mutex
+	createdBuckets         map[string]*ServiceBucket
+	checkBucketExistsCount int
 }
 
 func (manager *fakeServiceManager) SetupService(_ context.Context, _ oauth2.TokenSource, _ string) (Service, error) {
-	return &fakeService{sm: *manager}, nil
+	return &fakeService{sm: manager}, nil
 }
 
 func (manager *fakeServiceManager) SetupServiceWithDefaultCredential(_ context.Context, _ bool) (Service, error) {
-	return &fakeService{sm: *manager}, nil
+	return &fakeService{sm: manager}, nil
 }
 
 func (manager *fakeServiceManager) SetupStorageServiceForSidecar(_ context.Context, _ oauth2.TokenSource, _ string) (Service, error) {
-	return &fakeService{sm: *manager}, nil
+	return &fakeService{sm: manager}, nil
+}
+
+func (manager *fakeServiceManager) CheckBucketExistsCount() int {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	return manager.checkBucketExistsCount
 }
 
 func NewFakeServiceManager() ServiceManager {
@@ -59,6 +68,9 @@ func NewFakeServiceManager() ServiceManager {
 }
 
 func (service *fakeService) CreateBucket(_ context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
+	service.sm.mu.Lock()
+	defer service.sm.mu.Unlock()
+
 	sb := &ServiceBucket{
 		Project:   obj.Project,
 		Location:  obj.Location,
@@ -77,6 +89,9 @@ func (service *fakeService) DeleteBucket(_ context.Context, _ *ServiceBucket) er
 }
 
 func (service *fakeService) GetBucket(_ context.Context, obj *ServiceBucket) (*ServiceBucket, error) {
+	service.sm.mu.Lock()
+	defer service.sm.mu.Unlock()
+
 	if sb, ok := service.sm.createdBuckets[obj.Name]; ok {
 		return sb, nil
 	}
@@ -93,6 +108,10 @@ func (service *fakeService) RemoveIAMPolicy(_ context.Context, _ *ServiceBucket,
 }
 
 func (service *fakeService) CheckBucketExists(_ context.Context, obj *ServiceBucket) (bool, error) {
+	service.sm.mu.Lock()
+	defer service.sm.mu.Unlock()
+
+	service.sm.checkBucketExistsCount++
 	if _, ok := service.sm.createdBuckets[obj.Name]; ok {
 		return true, nil
 	}
