@@ -101,6 +101,8 @@ spec:
                   key: universe-domain
             - name: GOMAXPROCS
               value: "2"
+            - name: LIBMOUNT_FORCE_MOUNT2
+              value: "always"
           volumeMounts:
             - name: kubelet-pods-dir
               mountPath: /var/lib/kubelet/pods
