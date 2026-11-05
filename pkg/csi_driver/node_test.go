@@ -5480,6 +5480,30 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 			mountOptions: []string{"ro"},
 			want:         []string{"ro"},
 		},
+		{
+			name:         "explicit enable-grpc-by-default=false in mountOptions is preserved when driver would append true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro", "enable-grpc-by-default=false"},
+			want:         []string{"ro", "enable-grpc-by-default=false"},
+		},
+		{
+			name:         "explicit enable-grpc-by-default=true in mountOptions is preserved when driver would append false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			node:         newNode("ct6e-standard-4t", "v1.37.1-gke.1551999"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro", "enable-grpc-by-default=true"},
+			want:         []string{"ro", "enable-grpc-by-default=true"},
+		},
+		{
+			name:         "bare enable-grpc-by-default in mountOptions is preserved without appending duplicate flag",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"enable-grpc-by-default"},
+			want:         []string{"enable-grpc-by-default"},
+		},
 	}
 
 	for _, tc := range testCases {

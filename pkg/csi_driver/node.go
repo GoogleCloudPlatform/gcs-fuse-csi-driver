@@ -956,7 +956,8 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 }
 
 // appendGrpcByDefaultOptions evaluates and appends the enable-grpc-by-default
-// mount option when supported by the sidecar container image:
+// mount option when supported by the sidecar container image, unless already
+// specified in mountOptions:
 //   - If the node does not support gRPC by default (e.g., TPU v6e node running an
 //     unsupported GKE nodepool version, or missing machine-type label), it appends
 //     enable-grpc-by-default=false so GCSFuse uses HTTP/1.
@@ -968,6 +969,11 @@ func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage 
 	if s.driver.config.FeatureOptions == nil ||
 		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return mountOptions
+	}
+	for _, opt := range mountOptions {
+		if opt == util.EnableGrpcByDefaultConst || strings.HasPrefix(opt, util.EnableGrpcByDefaultConst+"=") {
+			return mountOptions
+		}
 	}
 	// Unsupported ct6e-* node (or missing machine-type label) on any cluster (new, existing, or OSS) -> pass enable-grpc-by-default=false
 	if !s.isNodeSupportedForGrpcByDefault(node) {
@@ -995,6 +1001,10 @@ func (s *nodeServer) isNodeSupportedForGrpcByDefault(node *corev1.Node) bool {
 		klog.Warningf("Disabling enable-grpc-by-default on node %q: missing %q label", node.Name, clientset.MachineTypeKey)
 		return false
 	}
+	// Non-TPU v6e machine types do not require a minimum GKE nodepool version check because
+	// the gRPC CPU performance regression is specific to TPU v6e's CPU architecture, and the
+	// HW-GRO mitigation (which requires COS >= cos-125-19216-395-138 to avoid a kernel bug)
+	// is only enabled on TPU v6e nodes.
 	if !strings.HasPrefix(machineType, tpuV6eMachineTypePrefix) {
 		return true
 	}
