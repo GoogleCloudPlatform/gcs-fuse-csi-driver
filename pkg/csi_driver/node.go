@@ -960,7 +960,7 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 //   - If the node does not support gRPC by default (e.g., TPU v6e node running an
 //     unsupported GKE nodepool version, or missing machine-type label), it appends
 //     enable-grpc-by-default=false so GCSFuse uses HTTP/1.
-//   - If EnableGrpcByDefault is true in driver options (new GKE cluster >= 1.38),
+//   - If EnableGrpcByDefault is true in driver options (e.g., new GKE clusters),
 //     it appends enable-grpc-by-default=true so GCSFuse uses gRPC across all VM types.
 //   - Otherwise (existing or OSS cluster with EnableGrpcByDefault=false on a supported node),
 //     it returns mount options unmodified so GCSFuse applies its machine-type optimization.
