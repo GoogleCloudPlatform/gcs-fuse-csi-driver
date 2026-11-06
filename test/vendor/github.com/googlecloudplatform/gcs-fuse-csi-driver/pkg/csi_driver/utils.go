@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -408,6 +410,96 @@ func overrideStorageEndpointInternal(opts []string, storageEndpoint string) []st
 
 	// Always append the correct/updated flag at the end.
 	return append(newMountOptions, replacement)
+}
+
+// sanitizeCustomEndpointMountOptions drops custom-endpoint mount options whose host is
+// not this cluster's universe storage endpoint.
+//
+// gcsfuse keeps attaching the Pod's credentials to its requests when custom-endpoint is
+// set and anonymous-access is left at its default of false, so the value of this mount
+// option decides where the Pod's OAuth access token is sent. Mount options reach the
+// driver from PersistentVolume.spec.mountOptions and StorageClass.mountOptions, objects
+// that a principal outside the workload's namespace can write, so the value does not
+// necessarily come from the owner of the identity that signs the requests. key-file,
+// token-url and reuse-token-from-url are already rejected for this reason; see
+// DisallowedFlags in pkg/sidecar_mounter/sidecar_mounter_config.go.
+//
+// The endpoint the driver derives from the universe domain stays allowed, so non-GDU
+// universes keep working with a custom-endpoint mount option, which is what it was added
+// for.
+func sanitizeCustomEndpointMountOptions(opts []string, storageEndpoint string) []string {
+	cliPrefix := util.CustomEndpointCLIFlag + "="
+	configFilePrefix := util.CustomEndpointConfigFileFlag + ":"
+
+	sanitized := make([]string, 0, len(opts))
+	for _, opt := range opts {
+		var value string
+		switch {
+		case strings.HasPrefix(opt, cliPrefix):
+			value = strings.TrimPrefix(opt, cliPrefix)
+		case strings.HasPrefix(opt, configFilePrefix):
+			value = strings.TrimPrefix(opt, configFilePrefix)
+		default:
+			sanitized = append(sanitized, opt)
+
+			continue
+		}
+
+		if customEndpointIsStorageEndpoint(value, storageEndpoint) {
+			sanitized = append(sanitized, opt)
+
+			continue
+		}
+
+		klog.Warningf("Dropped mount option %q: a custom-endpoint is only honored when it points at the storage endpoint of this cluster's universe, %q", opt, storageEndpoint)
+	}
+
+	return sanitized
+}
+
+// customEndpointIsStorageEndpoint reports whether a custom-endpoint value addresses the
+// same host as storageEndpoint, which the driver derives from the universe domain. A
+// cleartext scheme is rejected because the access token would then travel unencrypted.
+func customEndpointIsStorageEndpoint(value, storageEndpoint string) bool {
+	expectedHost, _ := hostAndSchemeFromEndpoint(storageEndpoint)
+	if expectedHost == "" {
+		return false
+	}
+
+	host, scheme := hostAndSchemeFromEndpoint(value)
+	if host == "" || (scheme != "" && scheme != "https") {
+		return false
+	}
+
+	return strings.EqualFold(host, expectedHost)
+}
+
+// hostAndSchemeFromEndpoint splits an endpoint into its host and its lowercased scheme.
+// Endpoints are written both as "storage.universe:443" and as a full URL, so a value
+// without a scheme is read as host[:port].
+func hostAndSchemeFromEndpoint(endpoint string) (string, string) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", ""
+	}
+
+	if strings.Contains(endpoint, "://") {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return "", ""
+		}
+
+		return u.Hostname(), strings.ToLower(u.Scheme)
+	}
+
+	if i := strings.IndexByte(endpoint, '/'); i >= 0 {
+		endpoint = endpoint[:i]
+	}
+	if host, _, err := net.SplitHostPort(endpoint); err == nil {
+		return host, ""
+	}
+
+	return endpoint, ""
 }
 
 func putExitFile(pod *corev1.Pod, targetPath string) error {
