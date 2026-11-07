@@ -231,6 +231,14 @@ type EventInfo struct {
 	message   string
 }
 
+// anywhereCacheConfigKey represents a requested Anywhere Cache configuration for a specific cache instance.
+type anywhereCacheConfigKey struct {
+	name            string
+	ttlSeconds      int64
+	ttlNanos        int32
+	admissionPolicy string
+}
+
 // Scanner is the main controller structure.
 type Scanner struct {
 	queue                workqueue.TypedRateLimitingInterface[string]
@@ -255,6 +263,15 @@ type Scanner struct {
 	// and removes the key from trackedPVs, potentially resulting in multiple
 	// scans not seeing the PV's annotationLastUpdatedTime.
 	trackedPVs map[string]syncInfo
+
+	// acMutex protects succeededACConfigs.
+	acMutex sync.RWMutex
+	// succeededACConfigs caches Anywhere Cache configurations that have already
+	// been successfully sent to the server via CreateAnywhereCache or UpdateAnywhereCache.
+	// If the server overrides a requested configuration (e.g. remapping a deprecated
+	// admission policy), subsequent syncs will see that this exact configuration was
+	// already applied and treat it as synced instead of looping on UpdateAnywhereCache.
+	succeededACConfigs map[anywhereCacheConfigKey]bool
 
 	// Identity of this controller, generated at creation time and not persisted
 	// across restarts. Useful only for debugging, for seeing the source of events.
@@ -368,15 +385,16 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	mux := http.NewServeMux()
 
 	scanner := &Scanner{
-		queue:          workqueue.NewTypedRateLimitingQueue(rateLimiter),
-		trackedPVs:     make(map[string]syncInfo),
-		eventRecorder:  eventRecorder,
-		datafluxConfig: config.DatafluxConfig,
-		scanBucketImpl: defaultScanBucket,
-		config:         config,
-		id:             id,
-		metricManager:  metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
-		mux:            mux,
+		queue:              workqueue.NewTypedRateLimitingQueue(rateLimiter),
+		trackedPVs:         make(map[string]syncInfo),
+		succeededACConfigs: make(map[anywhereCacheConfigKey]bool),
+		eventRecorder:      eventRecorder,
+		datafluxConfig:     config.DatafluxConfig,
+		scanBucketImpl:     defaultScanBucket,
+		config:             config,
+		id:                 id,
+		metricManager:      metrics.NewPrometheusMetricManager(config.HTTPEndpoint, mux),
+		mux:                mux,
 	}
 
 	return scanner, nil
@@ -1009,6 +1027,35 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 	return nil
 }
 
+// acConfigKey builds a lookup key for a desired Anywhere Cache configuration.
+func acConfigKey(ac *controlpb.AnywhereCache) anywhereCacheConfigKey {
+	return anywhereCacheConfigKey{
+		name:            ac.GetName(),
+		ttlSeconds:      ac.GetTtl().GetSeconds(),
+		ttlNanos:        ac.GetTtl().GetNanos(),
+		admissionPolicy: strings.ToLower(ac.GetAdmissionPolicy()),
+	}
+}
+
+// markACConfigSucceeded records that the desired Anywhere Cache configuration
+// has been successfully applied or accepted by the server.
+func (s *Scanner) markACConfigSucceeded(ac *controlpb.AnywhereCache) {
+	s.acMutex.Lock()
+	defer s.acMutex.Unlock()
+	if s.succeededACConfigs == nil {
+		s.succeededACConfigs = make(map[anywhereCacheConfigKey]bool)
+	}
+	s.succeededACConfigs[acConfigKey(ac)] = true
+}
+
+// hasACConfigSucceeded returns true if this exact Anywhere Cache configuration
+// has already been successfully applied or accepted by the server before.
+func (s *Scanner) hasACConfigSucceeded(ac *controlpb.AnywhereCache) bool {
+	s.acMutex.RLock()
+	defer s.acMutex.RUnlock()
+	return s.succeededACConfigs[acConfigKey(ac)]
+}
+
 // isCacheConfigSynced checks if the existing Anywhere Cache configuration (gotAC)
 // matches the desired configuration (wantAC). It compares the admission policy
 // and TTL (both seconds and nanoseconds).
@@ -1023,7 +1070,8 @@ func (s *Scanner) isCacheConfigSynced(gotAC, wantAC *controlpb.AnywhereCache) bo
 // syncAnywhereCacheForZone synchronizes the state of the Anywhere Cache for a single zone.
 // It retrieves the current cache state. If the cache does not exist, it creates it.
 // If it exists, it checks if the state is RUNNING and if the configuration matches the desired state.
-// If the configuration differs, it updates the cache.
+// If the configuration differs, it updates the cache unless this exact desired configuration
+// has already succeeded before (indicating the server overrode it).
 // Returns errRequeueNeeded if an asynchronous operation (create/update) was started.
 func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName string, wantAC *controlpb.AnywhereCache) *anywhereCacheSyncResult {
 	gotAC, err := s.storageControlClient.GetAnywhereCache(ctx, &controlpb.GetAnywhereCacheRequest{Name: wantAC.GetName()})
@@ -1034,6 +1082,7 @@ func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName strin
 					err: createErr,
 				}
 			}
+			s.markACConfigSucceeded(wantAC)
 			return &anywhereCacheSyncResult{
 				message: anywhereCacheAPICreating,
 			}
@@ -1058,6 +1107,16 @@ func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName strin
 		}
 
 		if s.isCacheConfigSynced(gotAC, wantAC) {
+			s.markACConfigSucceeded(wantAC)
+			return &anywhereCacheSyncResult{
+				message: anywhereCacheAPIRunning,
+				done:    true,
+			}
+		}
+
+		if s.hasACConfigSucceeded(wantAC) {
+			klog.Infof("Cache %s/%s configuration (ttl:%v, admission_policy:%q) has already succeeded before, but server returned (ttl:%v, admission_policy:%q); treating as synced.",
+				bucketName, wantAC.GetZone(), wantAC.GetTtl(), wantAC.GetAdmissionPolicy(), gotAC.GetTtl(), gotAC.GetAdmissionPolicy())
 			return &anywhereCacheSyncResult{
 				message: anywhereCacheAPIRunning,
 				done:    true,
@@ -1069,6 +1128,7 @@ func (s *Scanner) syncAnywhereCacheForZone(ctx context.Context, bucketName strin
 				err: updateErr,
 			}
 		}
+		s.markACConfigSucceeded(wantAC)
 		return &anywhereCacheSyncResult{
 			message: anywhereCacheAPIUpdating,
 		}
@@ -1129,10 +1189,7 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache ttl for PV %q: %v", pv.Name, err)
 	}
-	anywhereCacheAdmissionPolicy, err := anywhereCacheAdmissionPolicyVal(pv, sc)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to get anywhere cache admission policy for PV %q: %v", pv.Name, err)
-	}
+	anywhereCacheAdmissionPolicy := anywhereCacheAdmissionPolicyVal(pv, sc)
 
 	zones, err := utilGetZonesForClusterLocation(ctx, s.config.ProjectNumber, s.computeService, s.config.ClusterLocation)
 	if err != nil {
@@ -1215,14 +1272,9 @@ func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*
 }
 
 // anywhereCacheAdmissionPolicyVal returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
-func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (string, error) {
-	admissionPolicy := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
-	switch admissionPolicy {
-	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss:
-		return admissionPolicy, nil
-	default:
-		return "", fmt.Errorf("invalid anywhere cache admission policy provided provided: %s, valid values are %q or %q", admissionPolicy, anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss)
-	}
+// Validation is delegated to the GCS Anywhere Cache API, which returns codes.InvalidArgument if an unsupported admission policy is specified.
+func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) string {
+	return profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
 }
 
 func (s *Scanner) scanBucket(ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
