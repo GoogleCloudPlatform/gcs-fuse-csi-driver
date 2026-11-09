@@ -934,6 +934,25 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			assumeGoodSidecarVersion: true,
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:                     "feature flag enabled, sidecar version supported, user specifies enable-grpc-by-default=false, expect user override respected",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-grpc-by-default=false",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag disabled on unsupported ct6e-standard-4t, user specifies enable-grpc-by-default=true, expect user override respected",
+			enableGrpcByDefault:      false,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1551999",
+			userMountOptions:         "enable-grpc-by-default=true",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=false"},
 		},
 		{
 			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
@@ -3594,6 +3613,25 @@ func TestNodeStageVolumeEnableGrpcByDefault(t *testing.T) {
 			assumeGoodSidecarVersion: true,
 			userMountOptions:         "enable-grpc-by-default=true",
 			expectedOptions:          []string{"enable-grpc-by-default=true"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:                     "feature flag enabled, mounter pod image supported, user specifies enable-grpc-by-default=false, expect user override respected",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			userMountOptions:         "enable-grpc-by-default=false",
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag disabled on unsupported ct6e-standard-4t, user specifies enable-grpc-by-default=true, expect user override respected",
+			enableGrpcByDefault:      false,
+			assumeGoodSidecarVersion: true,
+			machineType:              "ct6e-standard-4t",
+			kubeletVersion:           "v1.37.1-gke.1551999",
+			userMountOptions:         "enable-grpc-by-default=true",
+			expectedOptions:          []string{"enable-grpc-by-default=true"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=false"},
 		},
 		{
 			name:                     "feature flag enabled on ct6e-standard-4t with supported GKE nodepool version, expect enable-grpc-by-default=true",
@@ -4588,6 +4626,7 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 		name                string
 		enableGrpcByDefault bool
 		enableHWgro         bool
+		disableHWGRO        string
 		machineType         string
 		kubeletVersion      string
 		enableHWgroErr      error
@@ -4603,6 +4642,44 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      1,
+		},
+		{
+			name:                "skips HWgro when disableHWGRO volume attribute is true",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "true",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on republish when disableHWGRO volume attribute is true",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "true",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			alreadyMounted:      true,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enables HWgro when disableHWGRO volume attribute is false",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "false",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "returns error when disableHWGRO volume attribute is invalid bool",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "invalid-bool",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantErr:             true,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "skips HWgro on TPU v6e node with older skewed GKE nodepool version",
@@ -4736,14 +4813,18 @@ func TestNodePublishVolumeEnableHWgro(t *testing.T) {
 			nwMgr := driver.config.NetworkManager.(*fakeNetworkManager)
 			nwMgr.enableHWgroFunc = func() error { return tc.enableHWgroErr }
 
+			volContext := map[string]string{
+				VolumeContextKeyPodName:      "test-pod",
+				VolumeContextKeyPodNamespace: "test-ns",
+			}
+			if tc.disableHWGRO != "" {
+				volContext[VolumeContextKeyDisableHWGRO] = tc.disableHWGRO
+			}
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:         testVolumeID,
 				TargetPath:       targetPath,
 				VolumeCapability: testVolumeCapability,
-				VolumeContext: map[string]string{
-					VolumeContextKeyPodName:      "test-pod",
-					VolumeContextKeyPodNamespace: "test-ns",
-				},
+				VolumeContext:    volContext,
 			}
 
 			_, err := ns.NodePublishVolume(t.Context(), req)
@@ -4772,6 +4853,7 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 		name                string
 		enableGrpcByDefault bool
 		enableHWgro         bool
+		disableHWGRO        string
 		machineType         string
 		kubeletVersion      string
 		enableHWgroErr      error
@@ -4787,6 +4869,44 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			machineType:         "ct6e-standard-4t",
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			wantHWgroCalls:      1,
+		},
+		{
+			name:                "skips HWgro when disableHWGRO volume attribute is true",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "true",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on restage when disableHWGRO volume attribute is true",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "true",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			alreadyMounted:      true,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enables HWgro when disableHWGRO volume attribute is false",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "false",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "returns error when disableHWGRO volume attribute is invalid bool",
+			enableGrpcByDefault: true,
+			enableHWgro:         true,
+			disableHWGRO:        "invalid-bool",
+			machineType:         "ct6e-standard-4t",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantErr:             true,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "skips HWgro on TPU v6e node with older skewed GKE nodepool version",
@@ -4905,7 +5025,13 @@ func TestNodeStageVolumeEnableHWgro(t *testing.T) {
 			ns.driver.config.FeatureOptions.SharedMountOptions = sharedMountOptions
 			testEnv.nwMgr.enableHWgroFunc = func() error { return tc.enableHWgroErr }
 
-			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, nil)
+			var extraVolContext map[string]string
+			if tc.disableHWGRO != "" {
+				extraVolContext = map[string]string{
+					VolumeContextKeyDisableHWGRO: tc.disableHWGRO,
+				}
+			}
+			stageReq := newTestNodeStageVolumeRequest(stagingPath, podName, podNamespace, extraVolContext)
 			_, err := ns.NodeStageVolume(t.Context(), stageReq)
 			ns.enableHWgroWg.Wait()
 
@@ -4931,8 +5057,12 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 	testCases := []struct {
 		name                string
 		enableGrpcByDefault bool
+		disableHWGRO        string
+		profilesEnabled     bool
+		scParameters        map[string]string
 		kubeletVersion      string
 		targetPathMounted   bool
+		wantErr             bool
 		wantHWgroCalls      int
 	}{
 		{
@@ -4941,6 +5071,48 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			targetPathMounted:   false,
 			wantHWgroCalls:      1,
+		},
+		{
+			name:                "skips HWgro on shared mount publish when disableHWGRO is true",
+			enableGrpcByDefault: true,
+			disableHWGRO:        "true",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on shared mount publish when profile StorageClass has disableHWGRO true",
+			enableGrpcByDefault: true,
+			profilesEnabled:     true,
+			scParameters:        map[string]string{"disableHWGRO": "true"},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on shared mount republish when disableHWGRO is true",
+			enableGrpcByDefault: true,
+			disableHWGRO:        "true",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   true,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enables HWgro on shared mount publish when disableHWGRO is false",
+			enableGrpcByDefault: true,
+			disableHWGRO:        "false",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "returns error on shared mount publish when disableHWGRO is invalid bool",
+			enableGrpcByDefault: true,
+			disableHWGRO:        "invalid-bool",
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantErr:             true,
+			wantHWgroCalls:      0,
 		},
 		{
 			name:                "enables HWgro on shared mount republish (targetPath already mounted) when not yet done",
@@ -4994,6 +5166,25 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 				PodStatus:    &corev1.PodStatus{Phase: corev1.PodRunning},
 				IsMounterPod: true,
 			})
+			if tc.profilesEnabled {
+				fc.CreatePV(clientset.FakePVConfig{
+					Name:         "node-publish",
+					VolumeHandle: volID,
+					SCName:       "test-sc",
+					Annotations: map[string]string{
+						"gke-gcsfuse/bucket-scan-num-objects":      "1000",
+						"gke-gcsfuse/bucket-scan-total-size-bytes": "1000000",
+						"gke-gcsfuse/bucket-scan-location-type":    "regional",
+					},
+				})
+				fc.CreateSC(clientset.FakeSCConfig{
+					Name: "test-sc",
+					Labels: map[string]string{
+						"gke-gcsfuse/profile": "true",
+					},
+					Parameters: tc.scParameters,
+				})
+			}
 
 			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
 			ns := testEnv.ns.(*nodeServer)
@@ -5003,6 +5194,7 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			}
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			ns.driver.config.FeatureOptions.EnableHWgro = true
+			ns.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = tc.profilesEnabled
 			ns.driver.config.AssumeGoodSidecarVersion = true
 
 			mountPoints := []mount.MountPoint{{Device: volID, Path: stagingPath, Type: FuseMountType}}
@@ -5011,24 +5203,30 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			}
 			testEnv.fm.MountPoints = mountPoints
 
+			volContext := map[string]string{
+				VolumeContextSharedNodeMount: "true",
+			}
+			if tc.disableHWGRO != "" {
+				volContext[VolumeContextKeyDisableHWGRO] = tc.disableHWGRO
+			}
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:          volID,
 				VolumeCapability:  testVolumeCapability,
 				TargetPath:        targetPath,
 				StagingTargetPath: stagingPath,
-				VolumeContext: map[string]string{
-					VolumeContextSharedNodeMount: "true",
-				},
+				VolumeContext:     volContext,
 				PublishContext: map[string]string{
 					PublishContextKeyMounterPodName:      podName,
 					PublishContextKeyMounterPodNamespace: podNamespace,
 				},
 			}
 
-			if _, err := ns.NodePublishVolume(t.Context(), req); err != nil {
-				t.Fatalf("NodePublishVolume failed: %v", err)
-			}
+			_, err := ns.NodePublishVolume(t.Context(), req)
 			ns.enableHWgroWg.Wait()
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NodePublishVolume error = %v, wantErr %v", err, tc.wantErr)
+			}
 
 			if got := testEnv.nwMgr.getEnableHWgroCalls(); got != tc.wantHWgroCalls {
 				t.Errorf("enableHWgroCalls = %d, want %d", got, tc.wantHWgroCalls)
@@ -5060,6 +5258,7 @@ func TestEnableHWgroIfApplicable(t *testing.T) {
 		features     *GCSDriverFeatureOptions
 		node         *corev1.Node
 		mounterImage string
+		disableHWGRO bool
 		nilNwMgr     bool
 		wantCalls    int
 	}{
@@ -5069,6 +5268,14 @@ func TestEnableHWgroIfApplicable(t *testing.T) {
 			node:         validNode,
 			mounterImage: supportedImage,
 			wantCalls:    1,
+		},
+		{
+			name:         "skips when disableHWGRO is true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true, EnableHWgro: true},
+			node:         validNode,
+			mounterImage: supportedImage,
+			disableHWGRO: true,
+			wantCalls:    0,
 		},
 		{
 			name:         "skips when EnableHWgro is false",
@@ -5150,7 +5357,7 @@ func TestEnableHWgroIfApplicable(t *testing.T) {
 				nwMgr:  mgr,
 			}
 
-			ns.enableHWgroIfApplicable(tc.node, tc.mounterImage)
+			ns.enableHWgroIfApplicable(tc.node, tc.mounterImage, tc.disableHWGRO)
 			ns.enableHWgroWg.Wait()
 
 			if got := nwMgr.getEnableHWgroCalls(); got != tc.wantCalls {
@@ -5197,9 +5404,9 @@ func TestEnableHWgroIfApplicableConcurrencyAndRetry(t *testing.T) {
 	}
 
 	// First attempt starts in background; concurrent call while in-flight is skipped.
-	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroIfApplicable(validNode, supportedImage, false)
 	<-started
-	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroIfApplicable(validNode, supportedImage, false)
 	close(release)
 	ns.enableHWgroWg.Wait()
 
@@ -5208,9 +5415,9 @@ func TestEnableHWgroIfApplicableConcurrencyAndRetry(t *testing.T) {
 	}
 
 	// Next call retries and succeeds; third call is a latched no-op.
-	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroIfApplicable(validNode, supportedImage, false)
 	ns.enableHWgroWg.Wait()
-	ns.enableHWgroIfApplicable(validNode, supportedImage)
+	ns.enableHWgroIfApplicable(validNode, supportedImage, false)
 	ns.enableHWgroWg.Wait()
 
 	if got := nwMgr.getEnableHWgroCalls(); got != 2 {

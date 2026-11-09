@@ -66,6 +66,7 @@ const (
 	VolumeContextKeyMultiNICIndex              = "multiNICIndex"
 	VolumeContextEnableCloudProfilerForSidecar = "enableCloudProfilerForSidecar"
 	VolumeContextSharedNodeMount               = "sharedMount"
+	VolumeContextKeyDisableHWGRO               = "disableHWGRO"
 	// Legacy key, kept for backward compatibility
 	//nolint:revive,stylecheck
 	VolumeContextKeyMetadataCacheTtlSeconds = "metadataCacheTtlSeconds"
@@ -118,6 +119,7 @@ type requestArgs struct {
 	disableMetricsCollection      bool
 	optInHostnetworkKSA           bool
 	enableCloudProfilerForSidecar bool
+	disableHWGRO                  bool
 	multiNICIndex                 int
 }
 
@@ -246,6 +248,7 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 	VolumeContextKeyIdentityProvider:           "",
 	VolumeContextKeyDisableMetrics:             util.DisableMetricsForGKE + ":",
 	VolumeContextEnableCloudProfilerForSidecar: "",
+	VolumeContextKeyDisableHWGRO:               "",
 }
 
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
@@ -284,7 +287,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 			mountOptionWithValue = mountOption + value
 
 		// parse bool volume attributes
-		case VolumeContextKeyFileCacheForRangeRead, VolumeContextKeySkipCSIBucketAccessCheck, VolumeContextKeyDisableMetrics, VolumeContextKeyHostNetworkPodKSA, VolumeContextEnableCloudProfilerForSidecar:
+		case VolumeContextKeyFileCacheForRangeRead, VolumeContextKeySkipCSIBucketAccessCheck, VolumeContextKeyDisableMetrics, VolumeContextKeyHostNetworkPodKSA, VolumeContextEnableCloudProfilerForSidecar, VolumeContextKeyDisableHWGRO:
 			if boolVal, err := strconv.ParseBool(value); err == nil {
 				if volumeAttribute == VolumeContextKeySkipCSIBucketAccessCheck {
 					args.skipCSIBucketAccessCheck = boolVal
@@ -300,6 +303,10 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 				}
 				if volumeAttribute == VolumeContextEnableCloudProfilerForSidecar {
 					args.enableCloudProfilerForSidecar = boolVal
+					continue
+				}
+				if volumeAttribute == VolumeContextKeyDisableHWGRO {
+					args.disableHWGRO = boolVal
 					continue
 				}
 				if volumeAttribute == VolumeContextKeyDisableMetrics {

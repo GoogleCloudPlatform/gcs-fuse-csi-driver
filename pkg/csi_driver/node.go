@@ -245,6 +245,31 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
 	}
 
+	if s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles != nil && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled {
+		pvName := vc[util.VolumeContextKeyPVName]
+		if pvName == "" {
+			pvName = volumeName
+		}
+		profile, err := profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
+			VolumeName:          pvName,
+			ContainerName:       util.MounterPodNamePrefix,
+			Clientset:           s.k8sClients,
+			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
+			NodeName:            s.driver.config.NodeID,
+			Pod:                 mounterPod,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build profile config: %w", err)
+		}
+		if profile != nil {
+			vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
+			args, err = parseRequestArguments(req.GetVolumeId(), req.GetReadonly(), req.GetVolumeCapability(), vc)
+			if err != nil {
+				return nil, status.Error(codes.InvalidArgument, err.Error())
+			}
+		}
+	}
+
 	// Verify staging path mounted.
 	mounted, err := s.isDirMounted(stagingPath)
 	if err != nil {
@@ -270,12 +295,12 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		})
 
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirPath, mounterPodUID, volumeName, mounterPodImage, args.bucketName, vs)
-		if !s.enableHWgroDone.Load() && s.driver.config.FeatureOptions != nil &&
+		if !s.enableHWgroDone.Load() && !args.disableHWGRO && s.driver.config.FeatureOptions != nil &&
 			s.driver.config.FeatureOptions.EnableHWgro {
 			if node, nodeErr := s.k8sClients.GetNode(s.driver.config.NodeID); nodeErr != nil {
 				klog.Warningf("Failed to get node %q for HW GRO/LRO enablement: %v", s.driver.config.NodeID, nodeErr)
 			} else {
-				s.enableHWgroIfApplicable(node, mounterPodImage)
+				s.enableHWgroIfApplicable(node, mounterPodImage, args.disableHWGRO)
 			}
 		}
 
@@ -551,7 +576,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
 			s.startGcsFuseKernelParamsMonitoring(targetPath, emptyDirBasePath, podUID, volumeName, gcsFuseSidecarImage, args.bucketName, vs)
 		}
-		s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
+		s.enableHWgroIfApplicable(node, gcsFuseSidecarImage, args.disableHWGRO)
 
 		klog.V(4).Infof("NodePublishVolume succeeded on volume %q to target path %q, mount already exists.", args.bucketName, targetPath)
 
@@ -607,7 +632,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful mount.
-	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage)
+	s.enableHWgroIfApplicable(node, gcsFuseSidecarImage, args.disableHWGRO)
 
 	// Start monitoring goroutine for new mounts.
 	if podUID != "" && volumeName != "" && emptyDirBasePath != "" {
@@ -1251,7 +1276,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	if mounted {
-		s.enableHWgroIfApplicable(node, podImage)
+		s.enableHWgroIfApplicable(node, podImage, args.disableHWGRO)
 		klog.Infof("NodeStageVolume succeeded on staging path %q for volume %q, mount already exists.", stagingPath, req.GetVolumeId())
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
@@ -1335,7 +1360,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 	}
 
 	// Enable default NIC GRO/LRO offloads on TPU v6e nodes after a successful shared mount.
-	s.enableHWgroIfApplicable(node, podImage)
+	s.enableHWgroIfApplicable(node, podImage, args.disableHWGRO)
 
 	util.ApplySysfsConfig(stagingPath, sysfsBDI, args.fuseMountOptions, logPrefix)
 
@@ -1506,12 +1531,12 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 }
 
 // enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)
-// on the node's COS default NIC (eth0) when --enable-hw-gro is enabled, the sidecar/mounter
-// image supports gRPC by default, and the node is a TPU v6e (ct6e-standard-*) machine running
-// a supported GKE nodepool version (regardless of whether --enable-grpc-by-default is true or
-// false, since GCSFuse 4.0+ uses gRPC on supported TPU v6e nodes even when the flag is unset).
-func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string) {
-	if s.enableHWgroDone.Load() || s.nwMgr == nil ||
+// on the node's COS default NIC (eth0) when --enable-hw-gro is enabled, disableHWGRO is false,
+// the sidecar/mounter image supports gRPC by default, and the node is a TPU v6e (ct6e-standard-*)
+// machine running a supported GKE nodepool version (regardless of whether --enable-grpc-by-default
+// is true or false, since GCSFuse 4.0+ uses gRPC on supported TPU v6e nodes even when the flag is unset).
+func (s *nodeServer) enableHWgroIfApplicable(node *corev1.Node, mounterImage string, disableHWGRO bool) {
+	if disableHWGRO || s.enableHWgroDone.Load() || s.nwMgr == nil ||
 		s.driver.config.FeatureOptions == nil ||
 		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) ||
 		!s.isNodeSupportedForGrpcByDefault(node) ||
