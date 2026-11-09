@@ -54,7 +54,12 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const metricEndpointFmt = "http://localhost:%v/metrics"
+const (
+	metricEndpointFmt    = "http://localhost:%v/metrics"
+	acceptHeader         = "Accept"
+	contentTypeHeader    = "Content-Type"
+	metricsScrapeTimeout = 5 * time.Second
+)
 
 var gracefulKillGracePeriod = 5 * time.Second
 
@@ -538,49 +543,93 @@ func collectMetrics(ctx context.Context, port, tempDir string) {
 		return
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		if err := scrapeMetrics(timeoutCtx, metricEndpoint, w); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
 	server := http.Server{
-		Handler:      mux,
+		Handler:      newMetricsProxyHandler(metricEndpoint, metricsHTTPClient),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+		// Scrapes in flight are canceled when the volume's context is done.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-	if err := server.Serve(socket); err != nil {
+	stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+	defer stop()
+	if err := server.Serve(socket); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		klog.Errorf("failed to start the metrics server for %q: %v", socketPath, err)
 	}
 }
 
-// scrapeMetrics connects to the metrics endpoint and scrapes latest metrics sample.
-// The response is written to a new http.ResponseWriter.
-func scrapeMetrics(ctx context.Context, metricEndpoint string, w http.ResponseWriter) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP request to %q: %w", metricEndpoint, err)
-	}
+// metricsHTTPClient scrapes the gcsfuse metrics endpoint over loopback.
+// Why: compression is disabled because the body is streamed through to the CSI driver unchanged,
+// so gzip-encoding and decoding every scrape over loopback would only cost CPU.
+var metricsHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DisableCompression: true,
+		MaxIdleConns:       16,
+		// Keyed by localhost:<port>, so each volume in a multi-volume pod retains its own idle connection.
+		MaxIdleConnsPerHost: 1,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make HTTP request to %q: %w", metricEndpoint, err)
-	}
-	defer resp.Body.Close()
+// newMetricsProxyHandler returns a handler that scrapes the latest metrics sample from the gcsfuse
+// metricEndpoint and streams it back.
+// Why: The CSI driver's Accept header is forwarded to gcsfuse, and the Content-Type of gcsfuse's
+// response is forwarded back, so that the driver can negotiate the exposition format with gcsfuse
+// (promhttp), e.g. the protobuf delimited format, which the driver decodes one metric family at a
+// time. Older drivers send no Accept header and keep receiving the text format.
+// Like httputil.ReverseProxy, errors before the response starts are reported as HTTP 500, whereas
+// an error while streaming the body aborts the connection, so that the driver sees a truncated
+// response instead of error text spliced into the metrics.
+func newMetricsProxyHandler(metricEndpoint string, client *http.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), metricsScrapeTimeout)
+		defer cancel()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected HTTP status: %v", resp.Status)
-	}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricEndpoint, nil)
+		if err != nil {
+			scrapeError(r.Context(), w, fmt.Sprintf("failed to scrape metrics from %q: %v", metricEndpoint, err))
+			return
+		}
+		if accept := r.Header.Get(acceptHeader); accept != "" {
+			req.Header.Set(acceptHeader, accept)
+		}
 
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return fmt.Errorf("failed to copy response: %w", err)
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			scrapeError(r.Context(), w, fmt.Sprintf("failed to scrape metrics from %q: %v", metricEndpoint, err))
+			return
+		}
+		defer resp.Body.Close()
 
-	return nil
+		if resp.StatusCode != http.StatusOK {
+			// Drain a bounded amount of the body, so that the connection can be reused.
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+			scrapeError(r.Context(), w, fmt.Sprintf("failed to scrape metrics from %q: unexpected HTTP status: %v", metricEndpoint, resp.Status))
+			return
+		}
+
+		if contentType := resp.Header.Get(contentTypeHeader); contentType != "" {
+			w.Header().Set(contentTypeHeader, contentType)
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			if r.Context().Err() != nil {
+				klog.V(4).Infof("failed to copy the metrics response from %q, aborting the response: %v", metricEndpoint, err)
+			} else {
+				klog.Errorf("failed to copy the metrics response from %q, aborting the response: %v", metricEndpoint, err)
+			}
+			panic(http.ErrAbortHandler)
+		}
+	}
+}
+
+// scrapeError logs msg and reports it to the CSI driver as HTTP 500.
+func scrapeError(ctx context.Context, w http.ResponseWriter, msg string) {
+	if ctx.Err() != nil {
+		klog.V(4).Info(msg)
+	} else {
+		klog.Error(msg)
+	}
+	http.Error(w, msg, http.StatusInternalServerError)
 }
 
 func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, identityProvider string) {
