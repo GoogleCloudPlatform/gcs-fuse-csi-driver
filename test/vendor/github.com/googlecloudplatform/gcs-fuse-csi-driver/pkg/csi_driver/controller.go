@@ -20,6 +20,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -378,6 +379,18 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	defer s.volumeLocks.Release(volumeID)
 
 	param := req.GetParameters()
+	var volumeContext map[string]string
+	for k, v := range param {
+		if strings.EqualFold(k, VolumeContextKeyDisableHWGRO) {
+			if _, err := strconv.ParseBool(v); err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "volume attribute %v only accepts a valid bool value, got %q", VolumeContextKeyDisableHWGRO, v)
+			}
+			volumeContext = map[string]string{
+				VolumeContextKeyDisableHWGRO: v,
+			}
+			break
+		}
+	}
 	newBucket := &storage.ServiceBucket{
 		Project:                        projectID,
 		Name:                           volumeID,
@@ -417,7 +430,9 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 			return nil, status.Error(codes.Internal, createErr.Error())
 		}
 	}
-	resp := &csi.CreateVolumeResponse{Volume: bucketToCSIVolume(bucket)}
+	csiVolume := bucketToCSIVolume(bucket)
+	csiVolume.VolumeContext = volumeContext
+	resp := &csi.CreateVolumeResponse{Volume: csiVolume}
 
 	return resp, nil
 }

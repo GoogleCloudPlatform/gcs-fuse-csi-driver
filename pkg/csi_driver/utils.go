@@ -251,6 +251,21 @@ var volumeAttributesToMountOptionsMapping = map[string]string{
 	VolumeContextKeyDisableHWGRO:               "",
 }
 
+// lookupVolumeAttribute looks up key in volumeContext, falling back to a case-insensitive
+// match for non-canonical keys (such as StorageClass parameters merged by profiles.BuildProfileConfig)
+// that do not match another exact key in volumeAttributesToMountOptionsMapping.
+func lookupVolumeAttribute(volumeContext map[string]string, key string) (string, bool) {
+	if val, ok := volumeContext[key]; ok {
+		return val, true
+	}
+	for k, v := range volumeContext {
+		if _, exactMappingExists := volumeAttributesToMountOptionsMapping[k]; !exactMappingExists && strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
 // parseVolumeAttributes parses volume attributes and convert them to gcsfuse mount options.
 func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]string) (requestArgs, error) {
 	if mountOptions, ok := volumeContext[VolumeContextKeyMountOptions]; ok {
@@ -258,7 +273,7 @@ func parseVolumeAttributes(fuseMountOptions []string, volumeContext map[string]s
 	}
 	var args requestArgs
 	for volumeAttribute, mountOption := range volumeAttributesToMountOptionsMapping {
-		value, ok := volumeContext[volumeAttribute]
+		value, ok := lookupVolumeAttribute(volumeContext, volumeAttribute)
 		if !ok {
 			continue
 		}

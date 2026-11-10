@@ -956,6 +956,12 @@ func TestParseVolumeAttributes(t *testing.T) {
 			expectedDisableHWGRO: true,
 		},
 		{
+			name:                 "case-insensitive key for VolumeContextKeyDisableHWGRO",
+			volumeContext:        map[string]string{"disableHwGro": util.TrueStr},
+			expectedMountOptions: []string{},
+			expectedDisableHWGRO: true,
+		},
+		{
 			name:                 "value set to false for VolumeContextKeyDisableHWGRO",
 			volumeContext:        map[string]string{VolumeContextKeyDisableHWGRO: util.FalseStr},
 			expectedMountOptions: []string{},

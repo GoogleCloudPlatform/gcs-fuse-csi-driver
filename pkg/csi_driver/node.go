@@ -245,31 +245,6 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 		return nil, status.Errorf(codes.Internal, "mounter pod %s/%s was found with an unexpected status: %+v", mounterPodNamespace, mounterPodName, mounterPod.Status)
 	}
 
-	if s.driver.config.FeatureOptions != nil && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles != nil && s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled {
-		pvName := vc[util.VolumeContextKeyPVName]
-		if pvName == "" {
-			pvName = volumeName
-		}
-		profile, err := profiles.BuildProfileConfig(&profiles.BuildProfileConfigParams{
-			VolumeName:          pvName,
-			ContainerName:       util.MounterPodNamePrefix,
-			Clientset:           s.k8sClients,
-			VolumeAttributeKeys: transformKeysToSet(volumeAttributesToMountOptionsMapping),
-			NodeName:            s.driver.config.NodeID,
-			Pod:                 mounterPod,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to build profile config: %w", err)
-		}
-		if profile != nil {
-			vc = profile.MergeVolumeAttributesOnRecommendedMissingKeys(vc)
-			args, err = parseRequestArguments(req.GetVolumeId(), req.GetReadonly(), req.GetVolumeCapability(), vc)
-			if err != nil {
-				return nil, status.Error(codes.InvalidArgument, err.Error())
-			}
-		}
-	}
-
 	// Verify staging path mounted.
 	mounted, err := s.isDirMounted(stagingPath)
 	if err != nil {
@@ -296,11 +271,11 @@ func (s *nodeServer) NodePublishVolumeForSharedMount(_ context.Context, req *csi
 
 		s.startGcsFuseKernelParamsMonitoring(stagingPath, emptyDirPath, mounterPodUID, volumeName, mounterPodImage, args.bucketName, vs)
 		if !s.enableHWgroDone.Load() && !args.disableHWGRO && s.driver.config.FeatureOptions != nil &&
-			s.driver.config.FeatureOptions.EnableHWgro {
+			s.driver.config.FeatureOptions.EnableHWgro && !s.isHWgroDisabledByStorageClass(vc, volumeName) {
 			if node, nodeErr := s.k8sClients.GetNode(s.driver.config.NodeID); nodeErr != nil {
 				klog.Warningf("Failed to get node %q for HW GRO/LRO enablement: %v", s.driver.config.NodeID, nodeErr)
 			} else {
-				s.enableHWgroIfApplicable(node, mounterPodImage, args.disableHWGRO)
+				s.enableHWgroIfApplicable(node, mounterPodImage, false)
 			}
 		}
 
@@ -1528,6 +1503,56 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 	}
 
 	return nil
+}
+
+// isHWgroDisabledByStorageClass checks whether disableHWGRO is set to true in the volume's
+// StorageClass parameters when GCSFuse Storage Profiles is enabled and disableHWGRO is not
+// already explicitly specified in the volume context. It looks up pv.Spec.StorageClassName ->
+// sc.Parameters directly without validating PV scanner annotations so shared-mount publishes
+// and periodic republishes cannot fail on profile scanner checks.
+func (s *nodeServer) isHWgroDisabledByStorageClass(vc map[string]string, defaultPVName string) bool {
+	if s.k8sClients == nil || s.driver.config.FeatureOptions == nil ||
+		s.driver.config.FeatureOptions.FeatureGCSFuseProfiles == nil ||
+		!s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled {
+		return false
+	}
+	for k := range vc {
+		if strings.EqualFold(k, VolumeContextKeyDisableHWGRO) {
+			return false
+		}
+	}
+	pvName := vc[util.VolumeContextKeyPVName]
+	if pvName == "" {
+		pvName = defaultPVName
+	}
+	if pvName == "" {
+		return false
+	}
+	pv, err := s.k8sClients.GetPV(pvName)
+	if err != nil || pv == nil || pv.Spec.StorageClassName == "" {
+		if err != nil && !apierrors.IsNotFound(err) {
+			klog.Warningf("Failed to get PV %q for HW GRO/LRO StorageClass check: %v", pvName, err)
+		}
+		return false
+	}
+	sc, err := s.k8sClients.GetSC(pv.Spec.StorageClassName)
+	if err != nil || sc == nil {
+		if err != nil && !apierrors.IsNotFound(err) {
+			klog.Warningf("Failed to get StorageClass %q for HW GRO/LRO check: %v", pv.Spec.StorageClassName, err)
+		}
+		return false
+	}
+	for k, v := range sc.Parameters {
+		if strings.EqualFold(k, VolumeContextKeyDisableHWGRO) {
+			disabled, parseErr := strconv.ParseBool(v)
+			if parseErr != nil {
+				klog.Warningf("Ignoring invalid %s value %q in StorageClass %q: %v", VolumeContextKeyDisableHWGRO, v, sc.Name, parseErr)
+				return false
+			}
+			return disabled
+		}
+	}
+	return false
 }
 
 // enableHWgroIfApplicable enables hardware GRO (rx-gro-hw) and Large Receive Offload (rx-lro)

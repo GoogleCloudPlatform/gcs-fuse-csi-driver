@@ -5059,6 +5059,7 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 		enableGrpcByDefault bool
 		disableHWGRO        string
 		profilesEnabled     bool
+		skipPVAnnotations   bool
 		scParameters        map[string]string
 		kubeletVersion      string
 		targetPathMounted   bool
@@ -5088,6 +5089,39 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			kubeletVersion:      "v1.37.1-gke.1552000",
 			targetPathMounted:   false,
 			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on shared mount publish when profile StorageClass has disableHWGRO true even if PV scanner annotations are missing",
+			enableGrpcByDefault: true,
+			profilesEnabled:     true,
+			skipPVAnnotations:   true,
+			scParameters:        map[string]string{"disableHWGRO": "true"},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantErr:             false,
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enables HWgro on shared mount publish when profile PV is missing scanner annotations and StorageClass does not disable HWgro",
+			enableGrpcByDefault: true,
+			profilesEnabled:     true,
+			skipPVAnnotations:   true,
+			scParameters:        map[string]string{},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantErr:             false,
+			wantHWgroCalls:      1,
+		},
+		{
+			name:                "enables HWgro on shared mount publish when volumeContext disableHWGRO false overrides StorageClass disableHWGRO true",
+			enableGrpcByDefault: true,
+			disableHWGRO:        "false",
+			profilesEnabled:     true,
+			scParameters:        map[string]string{"disableHWGRO": "true"},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			targetPathMounted:   false,
+			wantErr:             false,
+			wantHWgroCalls:      1,
 		},
 		{
 			name:                "skips HWgro on shared mount republish when disableHWGRO is true",
@@ -5167,15 +5201,19 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 				IsMounterPod: true,
 			})
 			if tc.profilesEnabled {
+				var pvAnnotations map[string]string
+				if !tc.skipPVAnnotations {
+					pvAnnotations = map[string]string{
+						"gke-gcsfuse/bucket-scan-num-objects":      "1000",
+						"gke-gcsfuse/bucket-scan-total-size-bytes": "1000000",
+						"gke-gcsfuse/bucket-scan-location-type":    "regional",
+					}
+				}
 				fc.CreatePV(clientset.FakePVConfig{
 					Name:         "node-publish",
 					VolumeHandle: volID,
 					SCName:       "test-sc",
-					Annotations: map[string]string{
-						"gke-gcsfuse/bucket-scan-num-objects":      "1000",
-						"gke-gcsfuse/bucket-scan-total-size-bytes": "1000000",
-						"gke-gcsfuse/bucket-scan-location-type":    "regional",
-					},
+					Annotations:  pvAnnotations,
 				})
 				fc.CreateSC(clientset.FakeSCConfig{
 					Name: "test-sc",
