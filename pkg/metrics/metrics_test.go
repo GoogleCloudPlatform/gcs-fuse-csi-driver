@@ -1716,13 +1716,15 @@ func registerRecordingMounts(t *testing.T, mm *manager, fakeClientset *clientset
 	}, mounts
 }
 
-// TestTruncatedMountScrape verifies that a mount whose response is cut off, by the sidecar aborting
-// the connection or by the per-mount scrape timeout, never exports the family that was cut off, on
+// TestTruncatedMountScrape verifies that a mount whose response is cut off (by the sidecar aborting
+// the connection or by the per-mount scrape timeout) or contains an oversized (> maxMetricFamilyBytes)
+// family never exports the cut-off/oversized family or any subsequent families from that mount, on
 // both the sequential and the prometheus.Registry path, while the other mounts are still exported.
 // Why: A text body and, without --stream-metrics-export, a protobuf body are parsed as a whole, so the
 // whole mount is dropped. With --stream-metrics-export, the complete protobuf families decoded before
-// the cut-off are exported. expfmt's text decoder, which the removed ProcessMetricsDataAsStream was
-// built on, yielded the cut-off family (e.g. a histogram with missing buckets) before the error.
+// the cut-off or oversized family are exported. expfmt's text decoder, which the removed
+// ProcessMetricsDataAsStream was built on, yielded the cut-off family (e.g. a histogram with missing
+// buckets) before the error.
 func TestTruncatedMountScrape(t *testing.T) {
 	t.Parallel()
 
@@ -1748,12 +1750,32 @@ truncated_ops_latencies_count{fs_op="Read"} 5
 	}
 	protoPartial := full[:len(first)+(len(full)-len(first))/2]
 
+	// The protobuf body has a valid counter family before an oversized (>2 MiB) histogram family,
+	// followed by valid trailing families from mountPayload(10).
+	var protoOversized bytes.Buffer
+	protoOversized.Write(first)
+	if _, err := protodelim.MarshalTo(&protoOversized, &dto.MetricFamily{
+		Name:   proto.String("truncated_ops_latencies"),
+		Help:   proto.String(strings.Repeat("a", maxMetricFamilyBytes+1024)),
+		Type:   dto.MetricType_HISTOGRAM.Enum(),
+		Metric: []*dto.Metric{{Histogram: &dto.Histogram{SampleCount: proto.Uint64(5), SampleSum: proto.Float64(10)}}},
+	}); err != nil {
+		t.Fatalf("MarshalTo failed: %v", err)
+	}
+	protoOversized.Write(encodeFamilies(t, mountPayload(10), protoFormat))
+	protoOversizedBytes := protoOversized.Bytes()
+
 	writePartial := func(w http.ResponseWriter, format expfmt.Format, body []byte) {
 		w.Header().Set(contentTypeHeader, string(format))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
+		}
+	}
+	serveBody := func(format expfmt.Format, body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			writePartial(w, format, body)
 		}
 	}
 	abortAfter := func(format expfmt.Format, body []byte) http.HandlerFunc {
@@ -1779,13 +1801,15 @@ truncated_ops_latencies_count{fs_op="Read"} 5
 		// sequentialOnly is set for cases that rely on the configurable per-mount scrape timeout of the
 		// sequential path; the registry path always waits for the fixed mountScrapeTimeout.
 		sequentialOnly bool
-		// wantCounter reports whether the complete counter family before the cut-off is exported.
+		// wantCounter reports whether the complete counter family before the cut-off or oversized family is exported.
 		wantCounter bool
 	}{
 		{name: "text aborted", handler: abortAfter(textFormat, textPartial), streamMetrics: true},
 		{name: "text per-mount timeout", handler: hangAfter(textFormat, textPartial), streamMetrics: true, sequentialOnly: true},
 		{name: "proto aborted without streaming", handler: abortAfter(protoFormat, protoPartial)},
 		{name: "proto aborted with streaming", handler: abortAfter(protoFormat, protoPartial), streamMetrics: true, wantCounter: true},
+		{name: "proto oversized without streaming", handler: serveBody(protoFormat, protoOversizedBytes)},
+		{name: "proto oversized with streaming", handler: serveBody(protoFormat, protoOversizedBytes), streamMetrics: true, wantCounter: true},
 	}
 	for _, tc := range testCases {
 		for _, sequential := range []bool{true, false} {
@@ -1839,7 +1863,7 @@ truncated_ops_latencies_count{fs_op="Read"} 5
 					t.Errorf("expected metrics of healthy mount vol-2 only, got volumes %v", got)
 				}
 				if _, ok := families["volume_truncated_ops_latencies"]; ok {
-					t.Errorf("expected the cut-off histogram family of mount vol-1 not to be exported, got %v", families["volume_truncated_ops_latencies"])
+					t.Errorf("expected the cut-off or oversized histogram family of mount vol-1 not to be exported, got %v", families["volume_truncated_ops_latencies"])
 				}
 				counter, ok := families["volume_truncated_ops_count"]
 				if tc.wantCounter {
@@ -1857,26 +1881,31 @@ truncated_ops_latencies_count{fs_op="Read"} 5
 func TestCollectMetricFamiliesSkipsConflictingType(t *testing.T) {
 	t.Parallel()
 
-	family := func(metricType dto.MetricType, value float64) *dto.MetricFamily {
+	family := func(metricType dto.MetricType, op string, value float64) *dto.MetricFamily {
 		return &dto.MetricFamily{
-			Name:   proto.String("ops"),
-			Type:   metricType.Enum(),
-			Metric: []*dto.Metric{{Counter: &dto.Counter{Value: proto.Float64(value)}, Gauge: &dto.Gauge{Value: proto.Float64(value)}}},
+			Name: proto.String("ops"),
+			Help: proto.String("Ops."),
+			Type: metricType.Enum(),
+			Metric: []*dto.Metric{{
+				Label:   []*dto.LabelPair{{Name: proto.String("op"), Value: proto.String(op)}},
+				Counter: &dto.Counter{Value: proto.Float64(value)},
+				Gauge:   &dto.Gauge{Value: proto.Float64(value)},
+			}},
 		}
 	}
-	families := func(yield func(*dto.MetricFamily, error) bool) {
-		for _, mf := range []*dto.MetricFamily{
-			family(dto.MetricType_COUNTER, 1),
-			family(dto.MetricType_GAUGE, 2),
-			family(dto.MetricType_COUNTER, 3),
-		} {
-			if !yield(mf, nil) {
-				return
-			}
+	var protoBuf bytes.Buffer
+	for _, mf := range []*dto.MetricFamily{
+		family(dto.MetricType_COUNTER, "a", 1),
+		family(dto.MetricType_GAUGE, "b", 2),
+		family(dto.MetricType_COUNTER, "c", 3),
+	} {
+		if _, err := protodelim.MarshalTo(&protoBuf, mf); err != nil {
+			t.Fatalf("MarshalTo failed: %v", err)
 		}
 	}
+	protoBody := protoBuf.Bytes()
 
-	collected, err := collectMetricFamilies(families)
+	collected, err := collectMetricFamilies(decodeMetricFamilies(bytes.NewReader(protoBody)))
 	if err != nil {
 		t.Fatalf("collectMetricFamilies failed: %v", err)
 	}
@@ -1886,6 +1915,43 @@ func TestCollectMetricFamiliesSkipsConflictingType(t *testing.T) {
 	}
 	if got := []float64{ops.GetMetric()[0].GetCounter().GetValue(), ops.GetMetric()[1].GetCounter().GetValue()}; !slices.Equal(got, []float64{1, 3}) {
 		t.Errorf("expected counter values [1 3], got %v", got)
+	}
+
+	protoFormat := string(protoDelimFormat())
+	handler := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(contentTypeHeader, protoFormat)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(protoBody)
+	}
+	for _, streamMetrics := range []bool{true, false} {
+		for _, sequential := range []bool{true, false} {
+			t.Run(fmt.Sprintf("streamMetrics=%v/sequential=%v", streamMetrics, sequential), func(t *testing.T) {
+				t.Parallel()
+
+				fakeClientset := clientset.NewFakeClientset()
+				mm := NewMetricsManager(":0", newSocketTempDir(t), 10, &lockedFakeClientset{FakeClientset: fakeClientset}, streamMetrics, sequential, true).(*manager)
+				registerFakeMounts(t, mm, fakeClientset, []fakeMount{
+					{podUID: "uid-1", podName: "pod-1", volumeName: "vol-1", handler: handler},
+				})
+
+				rec := httptest.NewRecorder()
+				mm.metricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, metricsPath, nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("unexpected status code %d, body:\n%s", rec.Code, rec.Body.String())
+				}
+				families, err := ProcessMetricsData(strings.NewReader(rec.Body.String()))
+				if err != nil {
+					t.Fatalf("failed to parse response: %v\nbody:\n%s", err, rec.Body.String())
+				}
+				gotOps := families["volume_ops"]
+				if gotOps.GetType() != dto.MetricType_COUNTER || len(gotOps.GetMetric()) != 2 {
+					t.Fatalf("expected 2 counter samples for volume_ops and the conflicting gauge skipped, got %v", gotOps)
+				}
+				if got := []float64{gotOps.GetMetric()[0].GetCounter().GetValue(), gotOps.GetMetric()[1].GetCounter().GetValue()}; !slices.Equal(got, []float64{1, 3}) {
+					t.Errorf("expected counter values [1 3], got %v", got)
+				}
+			})
+		}
 	}
 }
 
@@ -2498,7 +2564,7 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 	}{
 		// Without --sequential-metrics-export, prometheus.Registry.Gather() scrapes mounts concurrently,
 		// regardless of --stream-metrics-export.
-		{name: "default", wantMaxInFlight: 2},
+		{name: "neither flag", wantMaxInFlight: 2},
 		{name: "stream-metrics-export only", streamMetrics: true, wantMaxInFlight: 2},
 		// With --sequential-metrics-export, mounts are scraped one at a time, regardless of --stream-metrics-export.
 		{name: "sequential-metrics-export only", sequentialMetrics: true, wantMaxInFlight: 1},
@@ -2541,26 +2607,36 @@ func TestMetricsHandlerFlagSelection(t *testing.T) {
 func TestDecodeMetricFamiliesMaxSize(t *testing.T) {
 	t.Parallel()
 
-	largeHelp := strings.Repeat("a", maxMetricFamilyBytes+1024)
-	mf := &dto.MetricFamily{
-		Name: proto.String("fs_ops_count"),
-		Help: proto.String(largeHelp),
-		Type: dto.MetricType_COUNTER.Enum(),
-		Metric: []*dto.Metric{
-			{Counter: &dto.Counter{Value: proto.Float64(1)}},
-		},
+	family := func(name, help string, value float64) *dto.MetricFamily {
+		return &dto.MetricFamily{
+			Name:   proto.String(name),
+			Help:   proto.String(help),
+			Type:   dto.MetricType_COUNTER.Enum(),
+			Metric: []*dto.Metric{{Counter: &dto.Counter{Value: proto.Float64(value)}}},
+		}
 	}
 	var buf bytes.Buffer
-	if _, err := protodelim.MarshalTo(&buf, mf); err != nil {
-		t.Fatalf("MarshalTo failed: %v", err)
+	for _, mf := range []*dto.MetricFamily{
+		family("before_ops_count", "valid family before oversized frame", 1),
+		family("oversized_ops_count", strings.Repeat("a", maxMetricFamilyBytes+1024), 2),
+		family("after_ops_count", "valid family after oversized frame", 3),
+	} {
+		if _, err := protodelim.MarshalTo(&buf, mf); err != nil {
+			t.Fatalf("MarshalTo(%q) failed: %v", mf.GetName(), err)
+		}
 	}
 
+	var gotNames []string
 	var gotErr error
-	for _, err := range decodeMetricFamilies(&buf) {
+	for mf, err := range decodeMetricFamilies(&buf) {
 		if err != nil {
 			gotErr = err
 			break
 		}
+		gotNames = append(gotNames, mf.GetName())
+	}
+	if !slices.Equal(gotNames, []string{"before_ops_count"}) {
+		t.Errorf("decoded family names = %v, want [before_ops_count]", gotNames)
 	}
 	if gotErr == nil {
 		t.Fatal("expected oversized MetricFamily to fail decoding, got nil error")
