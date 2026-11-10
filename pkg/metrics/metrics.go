@@ -108,6 +108,12 @@ var gzipPool = sync.Pool{
 	},
 }
 
+var bufioReaderPool = sync.Pool{
+	New: func() any {
+		return bufio.NewReader(nil)
+	},
+}
+
 // metricsAcceptHeader is the Accept header sent to the sidecar when scraping a mount's metrics.
 // Why: The protobuf delimited format is preferred because it can be decoded one MetricFamily message
 // at a time (see decodeMetricFamilies), so a mount's metrics can be processed without an
@@ -300,7 +306,7 @@ func (mm *manager) encodeCollectorsSequentially(ctx, reqCtx context.Context, fe 
 		}
 		if ctx.Err() != nil {
 			// The budget ran out while (or right after) scraping this mount. If its scrape did not
-			// complete, its metrics were dropped, so report it as skipped as well.
+			// complete, its metrics were at least partially dropped, so report it as skipped as well.
 			skipped := n - i - 1
 			if !completed {
 				skipped++
@@ -719,8 +725,9 @@ func (c *metricsCollector) isPodRunning() bool {
 }
 
 // scrapeMetricFamilies scrapes the sidecar metrics endpoint, bounded by timeout and parentCtx, and calls
-// handleFamily for each parsed MetricFamily until it returns false. It returns true only if the response
-// was received and fully parsed, and every family was passed to handleFamily without early termination.
+// handleFamily for each parsed MetricFamily until it returns false (skipping any family whose type conflicts
+// with an earlier family of the same name). It returns true only if the response was received and fully
+// parsed, and handleFamily did not terminate early.
 //
 // The request asks for the protobuf delimited exposition format (see metricsAcceptHeader), which
 // decodeMetricFamilies reads one MetricFamily message at a time. With streamMetrics (--stream-metrics-export)
@@ -767,11 +774,18 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 	isProto := format.FormatType() == expfmt.TypeProtoDelim
 
 	if isProto && c.streamMetrics {
+		seenFamilies := map[string]dto.MetricType{}
 		for mf, err := range decodeMetricFamilies(resp.Body) {
 			if err != nil {
 				klog.Errorf("failed to decode metrics data, dropping the remaining metrics of pod %v/%v volume %q: %v", c.namespace, c.podName, c.volumeName, err)
 
 				return false
+			}
+			if prevType, ok := seenFamilies[mf.GetName()]; !ok {
+				seenFamilies[mf.GetName()] = mf.GetType()
+			} else if prevType != mf.GetType() {
+				klog.Errorf("metric family %q has conflicting type %v (already decoded as %v), skipping", mf.GetName(), mf.GetType(), prevType)
+				continue
 			}
 			if !handleFamily(mf) {
 				return false
@@ -815,7 +829,12 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 // protodelim.UnmarshalOptions{MaxSize: -1}, i.e. without any bound on the size of a single message.
 func decodeMetricFamilies(r io.Reader) iter.Seq2[*dto.MetricFamily, error] {
 	return func(yield func(*dto.MetricFamily, error) bool) {
-		br := bufio.NewReader(r)
+		br := bufioReaderPool.Get().(*bufio.Reader)
+		br.Reset(r)
+		defer func() {
+			br.Reset(nil)
+			bufioReaderPool.Put(br)
+		}()
 		unmarshalOpts := protodelim.UnmarshalOptions{MaxSize: maxMetricFamilyBytes}
 		for {
 			mf := &dto.MetricFamily{}
