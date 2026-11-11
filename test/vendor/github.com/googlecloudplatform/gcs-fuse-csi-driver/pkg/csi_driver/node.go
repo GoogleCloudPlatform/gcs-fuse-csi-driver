@@ -371,7 +371,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	klog.V(6).Infof("NodePublishVolume on volume %q has skipBucketAccessCheck %t", args.bucketName, args.skipCSIBucketAccessCheck)
 
 	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -397,6 +396,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	// volumeState is safe to access if its not nil for remaining of function since volumeLock prevents
 	// Node Publish/Unpublish Volume calls from running more than once at a time per volume.
 
+	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
+	klog.V(6).Infof("NodePublishVolume on volume %q has skipBucketAccessCheck %t", args.bucketName, args.skipCSIBucketAccessCheck)
+
 	// Check if the given Service Account has the access to the GCS bucket, and the bucket exists.
 	// skip check if it has ever succeeded
 	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
@@ -416,7 +418,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	s.populateTokenAndBucketAccessCheckOptions(pod, gcsFuseSidecarImage, vc, &args, vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName])
 	args.fuseMountOptions = s.appendCloudProfilerOptions(gcsFuseSidecarImage, args.enableCloudProfilerForSidecar, vc[VolumeContextKeyPodName], string(pod.UID), args.fuseMountOptions)
 	args.fuseMountOptions = s.appendAutoGoMemLimitOptions(gcsFuseSidecarImage, args.fuseMountOptions)
 	args.fuseMountOptions = s.appendGrpcByDefaultOptions(gcsFuseSidecarImage, args.fuseMountOptions)
@@ -829,7 +830,8 @@ func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, i
 	if userSpecifiedIDP == "" {
 		userSpecifiedIDP = vc[util.TokenServerIdentityProviderConst]
 	}
-	if s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, userSpecifiedIDP != "") {
+	shouldPopulateIDP := s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, userSpecifiedIDP != "")
+	if shouldPopulateIDP {
 		if userSpecifiedIDP != "" {
 			identityProvider = userSpecifiedIDP
 		} else {
@@ -843,6 +845,9 @@ func (s *nodeServer) populateTokenAndBucketAccessCheckOptions(pod *corev1.Pod, i
 	}
 
 	if enableBucketAccessCheckForVersion {
+		if !shouldPopulateIDP || userExplicitlyEnabled {
+			args.skipCSIBucketAccessCheck = true
+		}
 		if identityProvider == "" {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 			args.fuseMountOptions = joinMountOptions(args.fuseMountOptions, []string{util.TokenServerIdentityProviderConst + "=" + identityProvider})
