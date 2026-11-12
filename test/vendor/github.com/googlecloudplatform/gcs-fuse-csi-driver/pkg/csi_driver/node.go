@@ -386,11 +386,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return s.NodePublishVolumeForSharedMount(ctx, req)
 	}
 
-	// Rate limit NodePublishVolume calls to avoid kube API throttling for sidecar mode.
-	if err := s.limiter.Wait(ctx); err != nil {
-		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
-	}
-
 	// Get the Pod object.
 	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
@@ -459,6 +454,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
 	if vs != nil && !args.skipCSIBucketAccessCheck {
 		if !vs.BucketAccessCheckPassed {
+			// Rate limit the bucket access check. It calls remote APIs (the Kubernetes API, STS and GCS).
+			// The result is kept in memory per target path, so republish calls skip the check once it has passed and do not wait here.
+			if err := s.limiter.Wait(ctx); err != nil {
+				return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
+			}
 			storageService, err := s.prepareStorageService(ctx, vc, storageEndpoint)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
@@ -608,12 +608,19 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if args.bucketName != "_" && profile.NeedsBucketLocationType(args.fuseMountOptions) {
 			if vs != nil && vs.BucketLocationType != "" {
 				profile.SetBucketLocationType(vs.BucketLocationType)
-			} else if locationType, err := s.bucketLocationType(ctx, pod, vc, &args, profile.MergeSCMountOptionsOnMissingKeys(args.fuseMountOptions), storageEndpoint); err != nil {
-				klog.Warningf("Failed to get bucket location type for bucket %q and Pod %s/%s: %v", args.bucketName, pod.Namespace, pod.Name, err)
 			} else {
-				profile.SetBucketLocationType(locationType)
-				if vs != nil {
-					vs.BucketLocationType = locationType
+				// Rate limit the bucket location lookup. It calls remote APIs too, and it never runs on republish calls of a mounted volume.
+				// A failed wait aborts the call so that kubelet retries it. A mount without the lookup would not use the Local SSD file cache.
+				if err := s.limiter.Wait(ctx); err != nil {
+					return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
+				}
+				if locationType, err := s.bucketLocationType(ctx, pod, vc, &args, profile.MergeSCMountOptionsOnMissingKeys(args.fuseMountOptions), storageEndpoint); err != nil {
+					klog.Warningf("Failed to get bucket location type for bucket %q and Pod %s/%s: %v", args.bucketName, pod.Namespace, pod.Name, err)
+				} else {
+					profile.SetBucketLocationType(locationType)
+					if vs != nil {
+						vs.BucketLocationType = locationType
+					}
 				}
 			}
 		}

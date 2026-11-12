@@ -40,6 +40,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -136,6 +137,33 @@ func initTestNodeServerWithCustomClientset(t *testing.T, clientSet *clientset.Fa
 		fm:    mounter,
 		nwMgr: driver.config.NetworkManager.(*fakeNetworkManager),
 	}
+}
+
+// initTestNodeServerWithProfilesV2 returns a node server with gcsfuse profiles V2 enabled.
+// Its StorageClass skips the bucket access check, and its node makes the profile need the bucket location type.
+func initTestNodeServerWithProfilesV2(t *testing.T) *nodeServerTestEnv {
+	t.Helper()
+	fakeClient := clientset.NewFakeClientset()
+	fakeClient.CreateNode(clientset.FakeNodeConfig{
+		Annotations: map[string]string{clientset.GkeAppliedNodeLabelsAnnotationKey: "cloud.google.com/gke-ephemeral-storage-local-ssd=true"},
+		Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse("100Mi"), corev1.ResourceEphemeralStorage: resource.MustParse("100Mi"),
+			corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
+		}},
+	})
+	fakeClient.CreatePod(clientset.FakePodConfig{Name: "test-pod", Namespace: "test-ns"})
+	fakeClient.CreatePV(clientset.FakePVConfig{Name: "node-publish", SCName: "gcsfusecsi-training"})
+	fakeClient.CreateSC(clientset.FakeSCConfig{
+		Name: "gcsfusecsi-training", Labels: map[string]string{"gke-gcsfuse/profile": util.TrueStr},
+		Parameters: map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.TrueStr, "fuseFileCacheMediumPriority": "gpu:lssd"},
+	})
+
+	testEnv := initTestNodeServerWithCustomClientset(t, fakeClient, false)
+	featureOptions := testEnv.ns.(*nodeServer).driver.config.FeatureOptions.FeatureGCSFuseProfiles
+	featureOptions.Enabled = true
+	featureOptions.EnableProfilesV2 = true
+
+	return testEnv
 }
 
 type fakeForceUnmounter struct {
@@ -360,6 +388,171 @@ func TestNodePublishVolume(t *testing.T) {
 				t.Errorf("got error %q, expected error %q", err, test.expectErr)
 			}
 			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
+		})
+	}
+}
+
+func TestNodePublishVolumeRateLimiter(t *testing.T) {
+	testTargetPath, cleanup := setupTestTargetPath(t)
+	defer cleanup()
+
+	cases := []struct {
+		name string
+		// drainLimiter empties the limiter before the first publish. The limiter holds one token and refills once an hour.
+		drainLimiter bool
+		req          *csi.NodePublishVolumeRequest
+		publishes    int
+		// forgetVolumeState drops the in-memory volume state before the last publish, as a node driver restart does.
+		forgetVolumeState bool
+		// profilesV2 publishes a volume that skips the bucket access check and needs the bucket location type for gcsfuse profiles V2.
+		profilesV2 bool
+		// keptLocationType is stored in the volume state before the first publish, as an earlier publish on the target path does.
+		keptLocationType string
+		expectErr        codes.Code
+		expectMounts     int
+		// expectLocationLookup is true if a publish calls the storage service for the bucket location type.
+		expectLocationLookup bool
+	}{
+		{
+			name:         "first publish with bucket access check waits on the limiter",
+			drainLimiter: true,
+			req:          &csi.NodePublishVolumeRequest{VolumeId: testVolumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:    1,
+			expectErr:    codes.Aborted,
+			expectMounts: 0,
+		},
+		{
+			name:         "first publish with skipped bucket access check does not wait on the limiter",
+			drainLimiter: true,
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.TrueStr},
+			},
+			publishes:    1,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:         "dynamic mount does not wait on the limiter",
+			drainLimiter: true,
+			req:          &csi.NodePublishVolumeRequest{VolumeId: "_", TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:    1,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:         "first publish with a bucket location lookup waits on the limiter",
+			drainLimiter: true,
+			profilesV2:   true,
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{VolumeContextKeyPodName: "test-pod", VolumeContextKeyPodNamespace: "test-ns"},
+			},
+			publishes:    1,
+			expectErr:    codes.Aborted,
+			expectMounts: 0,
+		},
+		{
+			name:             "publish with a kept bucket location type does not wait on the limiter",
+			drainLimiter:     true,
+			profilesV2:       true,
+			keptLocationType: "region",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{VolumeContextKeyPodName: "test-pod", VolumeContextKeyPodNamespace: "test-ns"},
+			},
+			publishes:    1,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:         "republish after a passed bucket access check does not wait on the limiter",
+			req:          &csi.NodePublishVolumeRequest{VolumeId: testVolumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:    3,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:       "republish after a failed bucket location lookup does not wait on the limiter",
+			profilesV2: true,
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         "test-volume-id-without-bucket",
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{VolumeContextKeyPodName: "test-pod", VolumeContextKeyPodNamespace: "test-ns"},
+			},
+			publishes:            3,
+			expectErr:            codes.OK,
+			expectMounts:         1,
+			expectLocationLookup: true,
+		},
+		{
+			name:              "republish after the volume state is lost waits on the limiter again",
+			req:               &csi.NodePublishVolumeRequest{VolumeId: testVolumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:         2,
+			forgetVolumeState: true,
+			expectErr:         codes.Aborted,
+			expectMounts:      1,
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			var testEnv *nodeServerTestEnv
+			if test.profilesV2 {
+				testEnv = initTestNodeServerWithProfilesV2(t)
+			} else {
+				testEnv = initTestNodeServer(t)
+			}
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			storageServiceManager := &recordingStorageServiceManager{ServiceManager: ns.storageServiceManager}
+			ns.storageServiceManager = storageServiceManager
+			ns.limiter.SetLimit(rate.Every(time.Hour))
+			ns.limiter.SetBurst(1)
+			if test.drainLimiter && !ns.limiter.Allow() {
+				t.Fatal("failed to drain the limiter")
+			}
+			if test.keptLocationType != "" {
+				ns.volumeStateStore.Store(testTargetPath, &util.VolumeState{BucketAccessCheckPassed: true, BucketLocationType: test.keptLocationType})
+			}
+
+			var err error
+			for i := 0; i < test.publishes && err == nil; i++ {
+				if test.forgetVolumeState && i == test.publishes-1 {
+					ns.volumeStateStore = util.NewVolumeStateStore()
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				_, err = ns.NodePublishVolume(ctx, test.req)
+				cancel()
+			}
+			if status.Code(err) != test.expectErr {
+				t.Errorf("got error %v, expected code %v", err, test.expectErr)
+			}
+			if test.expectErr == codes.Aborted && err != nil && !strings.Contains(err.Error(), "rate limit") {
+				t.Errorf("got error %v, expected a rate limit error", err)
+			}
+
+			mounts := 0
+			for _, action := range testEnv.fm.GetLog() {
+				if action.Action == mount.FakeActionMount {
+					mounts++
+				}
+			}
+			if mounts != test.expectMounts {
+				t.Errorf("got %d mounts, expected %d", mounts, test.expectMounts)
+			}
+			if lookedUp := storageServiceManager.gotBucket != nil; lookedUp != test.expectLocationLookup {
+				t.Errorf("got bucket location lookup %t, expected %t", lookedUp, test.expectLocationLookup)
+			}
 		})
 	}
 }
