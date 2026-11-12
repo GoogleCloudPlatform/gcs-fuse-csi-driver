@@ -1338,6 +1338,120 @@ func TestOverrideStorageEndpointInternal(t *testing.T) {
 	}
 }
 
+func TestSanitizeCustomEndpointMountOptions(t *testing.T) {
+	t.Parallel()
+
+	storageEndpoint := storageEndpointFromUniverseDomain("googleapis.com")
+
+	testCases := []struct {
+		name            string
+		opts            []string
+		expectedOptions []string
+	}{
+		{
+			name: "should keep the universe storage endpoint",
+			opts: []string{
+				"implicit-dirs",
+				fmt.Sprintf("custom-endpoint=%s", storageEndpoint),
+			},
+			expectedOptions: []string{
+				"implicit-dirs",
+				fmt.Sprintf("custom-endpoint=%s", storageEndpoint),
+			},
+		},
+		{
+			name: "should keep the universe storage endpoint written as an https url with a path",
+			opts: []string{
+				"custom-endpoint=https://storage.googleapis.com/storage/v1",
+			},
+			expectedOptions: []string{
+				"custom-endpoint=https://storage.googleapis.com/storage/v1",
+			},
+		},
+		{
+			name: "should keep the universe storage endpoint in config file format",
+			opts: []string{
+				fmt.Sprintf("gcs-connection:custom-endpoint:%s", storageEndpoint),
+			},
+			expectedOptions: []string{
+				fmt.Sprintf("gcs-connection:custom-endpoint:%s", storageEndpoint),
+			},
+		},
+		{
+			name: "should drop a foreign endpoint and keep every other option",
+			opts: []string{
+				"implicit-dirs",
+				"custom-endpoint=https://endpoint.example.com/storage/v1",
+				"only-dir=dir1",
+			},
+			expectedOptions: []string{
+				"implicit-dirs",
+				"only-dir=dir1",
+			},
+		},
+		{
+			name: "should drop a foreign endpoint in config file format",
+			opts: []string{
+				"gcs-connection:custom-endpoint:http://endpoint.example.com:8099/storage/v1",
+			},
+			expectedOptions: []string{},
+		},
+		{
+			name: "should drop a cleartext endpoint even on the universe host",
+			opts: []string{
+				"custom-endpoint=http://storage.googleapis.com/storage/v1",
+			},
+			expectedOptions: []string{},
+		},
+		{
+			name: "should drop a host that only has the universe endpoint as a prefix",
+			opts: []string{
+				"custom-endpoint=https://storage.googleapis.com.example.com/storage/v1",
+			},
+			expectedOptions: []string{},
+		},
+		{
+			name: "should drop a host hidden behind userinfo",
+			opts: []string{
+				"custom-endpoint=https://storage.googleapis.com@endpoint.example.com/storage/v1",
+			},
+			expectedOptions: []string{},
+		},
+		{
+			name: "should drop an empty endpoint",
+			opts: []string{
+				"custom-endpoint=",
+			},
+			expectedOptions: []string{},
+		},
+		{
+			name: "should leave options untouched when no custom-endpoint is present",
+			opts: []string{
+				"o=noexec",
+				"rw",
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+			expectedOptions: []string{
+				"o=noexec",
+				"rw",
+				fmt.Sprintf("storage-endpoint-internal=%s", storageEndpoint),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			output := sanitizeCustomEndpointMountOptions(tc.opts, storageEndpoint)
+
+			if diff := cmp.Diff(output, tc.expectedOptions); diff != "" {
+				t.Errorf("unexpected options slice (-got, +want)\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGetInternalMountOptionValue(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
