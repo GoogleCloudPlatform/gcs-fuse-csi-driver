@@ -65,8 +65,14 @@ func (si *SidecarInjector) injectAsNativeSidecar(pod *corev1.Pod) (bool, error) 
 }
 
 func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
-	if si.ServerVersion != nil && !si.ServerVersion.AtLeast(minimumSupportedVersion) {
-		return false, nil
+	if si.ServerVersion != nil {
+		if !si.ServerVersion.AtLeast(minimumSupportedVersion) {
+			return false, nil
+		}
+		if si.ServerVersion.AtLeast(minimumVersionToSkipNativeSidecarCheck) {
+			// Skip the per-node check.
+			return true, nil
+		}
 	}
 
 	clusterNodes, err := si.NodeLister.List(labels.Everything())
@@ -77,9 +83,9 @@ func (si *SidecarInjector) supportsNativeSidecar() (bool, error) {
 	supportsNativeSidecar := true
 	for _, node := range clusterNodes {
 		nodeVersion, err := version.ParseGeneric(node.Status.NodeInfo.KubeletVersion)
-		if !nodeVersion.AtLeast(minimumSupportedVersion) || err != nil {
+		if err != nil || !nodeVersion.AtLeast(minimumSupportedVersion) {
 			if err != nil {
-				klog.Errorf(`invalid node gke version: could not get node "%s" k8s release from version "%s": "%v"`, node.Name, nodeVersion, err)
+				klog.Errorf(`invalid node gke version: could not get node "%s" k8s release from version "%s": "%v"`, node.Name, node.Status.NodeInfo.KubeletVersion, err)
 			}
 			supportsNativeSidecar = false
 
