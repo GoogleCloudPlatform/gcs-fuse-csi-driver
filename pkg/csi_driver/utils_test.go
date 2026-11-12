@@ -600,6 +600,7 @@ func TestParseVolumeAttributes(t *testing.T) {
 		expectedIdentityProvider              string
 		expectedErr                           bool
 		expectedEnableCloudProfilerForSidecar bool
+		expectedDisableHWGRO                  bool
 		expectMultiNICIndex                   bool
 		expectedMultiNICIndex                 int
 	}{
@@ -949,6 +950,29 @@ func TestParseVolumeAttributes(t *testing.T) {
 			expectedEnableCloudProfilerForSidecar: true,
 		},
 		{
+			name:                 "value set to true for VolumeContextKeyDisableHWGRO",
+			volumeContext:        map[string]string{VolumeContextKeyDisableHWGRO: util.TrueStr},
+			expectedMountOptions: []string{},
+			expectedDisableHWGRO: true,
+		},
+		{
+			name:                 "case-insensitive key for VolumeContextKeyDisableHWGRO",
+			volumeContext:        map[string]string{"disableHwGro": util.TrueStr},
+			expectedMountOptions: []string{},
+			expectedDisableHWGRO: true,
+		},
+		{
+			name:                 "value set to false for VolumeContextKeyDisableHWGRO",
+			volumeContext:        map[string]string{VolumeContextKeyDisableHWGRO: util.FalseStr},
+			expectedMountOptions: []string{},
+			expectedDisableHWGRO: false,
+		},
+		{
+			name:          "unexpected value for VolumeContextKeyDisableHWGRO",
+			volumeContext: map[string]string{VolumeContextKeyDisableHWGRO: "blah"},
+			expectedErr:   true,
+		},
+		{
 			name:                     "value set to true for VolumeContextKeyIdentityProvider",
 			volumeContext:            map[string]string{VolumeContextKeyIdentityProvider: "some-string"},
 			expectedErr:              false,
@@ -989,6 +1013,9 @@ func TestParseVolumeAttributes(t *testing.T) {
 			}
 			if tc.expectedEnableCloudProfilerForSidecar != args.enableCloudProfilerForSidecar {
 				t.Errorf("Got enableCloudProfilerForSidecar %v, but expected %v", args.enableCloudProfilerForSidecar, tc.expectedEnableCloudProfilerForSidecar)
+			}
+			if tc.expectedDisableHWGRO != args.disableHWGRO {
+				t.Errorf("Got disableHWGRO %v, but expected %v", args.disableHWGRO, tc.expectedDisableHWGRO)
 			}
 
 			less := func(a, b string) bool { return a > b }

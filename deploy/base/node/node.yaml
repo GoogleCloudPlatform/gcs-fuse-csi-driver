@@ -118,7 +118,6 @@ spec:
               mountPath: /etc/iproute2
             - name: host-proc-sys-fs
               mountPath: /host-proc-sys-fs
-
             - name: tmp
               mountPath: /tmp
         - name: csi-driver-registrar

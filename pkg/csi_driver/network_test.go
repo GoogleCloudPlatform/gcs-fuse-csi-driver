@@ -17,19 +17,26 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"sync"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 type fakeNetworkManager struct {
-	rtTables   string
-	devices    []LinkDevice
-	routes     []Route
-	rules      []Rule
-	poisonedIP string
-	mutex      sync.Mutex
+	rtTables         string
+	devices          []LinkDevice
+	routes           []Route
+	rules            []Rule
+	poisonedIP       string
+	enableHWgroFunc  func() error
+	enableHWgroCalls int
+	enableHWgroMu    sync.Mutex
+	mutex            sync.Mutex
 }
 
 var _ NetworkManager = &fakeNetworkManager{}
@@ -111,6 +118,24 @@ func (mgr *fakeNetworkManager) AddRoute(table int, gatewayIP, device string) err
 		Device:  device,
 	})
 	return nil
+}
+
+func (mgr *fakeNetworkManager) EnableHWgroOnDefaultNIC() error {
+	mgr.enableHWgroMu.Lock()
+	mgr.enableHWgroCalls++
+	fn := mgr.enableHWgroFunc
+	mgr.enableHWgroMu.Unlock()
+
+	if fn != nil {
+		return fn()
+	}
+	return nil
+}
+
+func (mgr *fakeNetworkManager) getEnableHWgroCalls() int {
+	mgr.enableHWgroMu.Lock()
+	defer mgr.enableHWgroMu.Unlock()
+	return mgr.enableHWgroCalls
 }
 
 func TestTableNames(t *testing.T) {
@@ -499,6 +524,115 @@ func TestSourceRouteForDevice(t *testing.T) {
 			}
 			if !reflect.DeepEqual(append([]Rule{}, mgr.rules...), expectedRules) {
 				t.Errorf("Bad rules, expected %+v, got %+v", expectedRules, mgr.rules)
+			}
+		})
+	}
+}
+
+type fakeEthtoolClient struct {
+	features      map[string]bool
+	featuresErr   error
+	changeErr     error
+	changeCalls   int
+	changeIntf    string
+	changedConfig map[string]bool
+}
+
+func (f *fakeEthtoolClient) Features(intf string) (map[string]bool, error) {
+	if f.featuresErr != nil {
+		return nil, f.featuresErr
+	}
+	return maps.Clone(f.features), nil
+}
+
+func (f *fakeEthtoolClient) Change(intf string, config map[string]bool) error {
+	f.changeCalls++
+	f.changeIntf = intf
+	f.changedConfig = maps.Clone(config)
+	return f.changeErr
+}
+
+func TestEnableHWgroOnNIC(t *testing.T) {
+	t.Parallel()
+
+	wantConfig := map[string]bool{rxGroHWFeature: true, rxLROFeature: true}
+	testCases := []struct {
+		name            string
+		features        map[string]bool
+		featuresErr     error
+		changeErr       error
+		wantChangeCalls int
+		expectError     bool
+	}{
+		{
+			name:            "enables rx-gro-hw and rx-lro when both are disabled",
+			features:        map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			wantChangeCalls: 1,
+			expectError:     false,
+		},
+		{
+			name:            "skips Change when rx-gro-hw is already enabled",
+			features:        map[string]bool{rxGroHWFeature: true, rxLROFeature: false},
+			wantChangeCalls: 0,
+			expectError:     false,
+		},
+		{
+			name:            "skips Change when rx-lro is already enabled",
+			features:        map[string]bool{rxGroHWFeature: false, rxLROFeature: true},
+			wantChangeCalls: 0,
+			expectError:     false,
+		},
+		{
+			name:            "skips Change when both rx-gro-hw and rx-lro are already enabled",
+			features:        map[string]bool{rxGroHWFeature: true, rxLROFeature: true},
+			wantChangeCalls: 0,
+			expectError:     false,
+		},
+		{
+			name:            "skips without error when eth0 is absent on non-COS host (ENODEV)",
+			featuresErr:     unix.ENODEV,
+			wantChangeCalls: 0,
+			expectError:     false,
+		},
+		{
+			name:            "returns error when Features fails with non-ENODEV error",
+			featuresErr:     errors.New("ioctl failed"),
+			wantChangeCalls: 0,
+			expectError:     true,
+		},
+		{
+			name:            "returns error when Change fails",
+			features:        map[string]bool{rxGroHWFeature: false, rxLROFeature: false},
+			changeErr:       errors.New("unsupported feature"),
+			wantChangeCalls: 1,
+			expectError:     true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeEth := &fakeEthtoolClient{
+				features:    tc.features,
+				featuresErr: tc.featuresErr,
+				changeErr:   tc.changeErr,
+			}
+			err := enableHWgroOnNIC(fakeEth, cosDefaultNIC)
+
+			if (err != nil) != tc.expectError {
+				t.Fatalf("enableHWgroOnNIC() error = %v, expectError %v", err, tc.expectError)
+			}
+			if fakeEth.changeCalls != tc.wantChangeCalls {
+				t.Fatalf("changeCalls = %d, want %d", fakeEth.changeCalls, tc.wantChangeCalls)
+			}
+			if tc.wantChangeCalls > 0 {
+				if fakeEth.changeIntf != cosDefaultNIC {
+					t.Errorf("changeIntf = %q, want %q", fakeEth.changeIntf, cosDefaultNIC)
+				}
+				if !maps.Equal(fakeEth.changedConfig, wantConfig) {
+					t.Errorf("changedConfig = %v, want %v", fakeEth.changedConfig, wantConfig)
+				}
 			}
 		})
 	}

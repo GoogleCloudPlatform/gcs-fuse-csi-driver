@@ -163,6 +163,64 @@ func TestCreateVolume(t *testing.T) {
 			},
 		},
 		{
+			name: "propagates disableHWGRO parameter to VolumeContext",
+			req: &csi.CreateVolumeRequest{
+				Name: testVolumeID,
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+					},
+				},
+				Parameters: map[string]string{
+					"disableHwGro": "true",
+				},
+				Secrets: map[string]string{
+					"projectID":               "test-project",
+					"serviceAccountName":      "test-sa-name",
+					"serviceAccountNamespace": "test-sa-namespace",
+				},
+			},
+			resp: &csi.CreateVolumeResponse{
+				Volume: &csi.Volume{
+					CapacityBytes: 1 * util.MiB,
+					VolumeId:      testVolumeID,
+					VolumeContext: map[string]string{
+						VolumeContextKeyDisableHWGRO: "true",
+					},
+				},
+			},
+		},
+		{
+			name: "invalid disableHWGRO parameter",
+			req: &csi.CreateVolumeRequest{
+				Name: testVolumeID,
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+					},
+				},
+				Parameters: map[string]string{
+					VolumeContextKeyDisableHWGRO: "invalid-bool",
+				},
+				Secrets: map[string]string{
+					"projectID":               "test-project",
+					"serviceAccountName":      "test-sa-name",
+					"serviceAccountNamespace": "test-sa-namespace",
+				},
+			},
+			expectErr: status.Errorf(codes.InvalidArgument, "volume attribute %v only accepts a valid bool value, got %q", VolumeContextKeyDisableHWGRO, "invalid-bool"),
+		},
+		{
 			name: "empty name",
 			req: &csi.CreateVolumeRequest{
 				VolumeCapabilities: []*csi.VolumeCapability{

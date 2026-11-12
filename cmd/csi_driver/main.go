@@ -75,7 +75,8 @@ var (
 	assumeGoodSidecarVersion       = flag.Bool("assume-good-sidecar-version", false, "Assume the sidecar version is compatible with all features in the running version of the driver.")
 	enableAutoGoMemLimit           = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio            = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
-	enableGrpcByDefault            = flag.Bool("enable-grpc-by-default", false, "Enable gRPC by default for new driver enablement.")
+	enableGrpcByDefault            = flag.Bool("enable-grpc-by-default", false, "Enable gRPC by default across all VM types for new clusters.")
+	enableHWgro                    = flag.Bool("enable-hw-gro", true, "Enable hardware GRO (rx-gro-hw) and LRO on the default NIC on supported TPU v6e nodes.")
 	universeDomain                 = flag.String("universe-domain", "googleapis.com", "The universe domain. The default value is googleapis.com.")
 
 	// GCSFuse kernel params feature.
@@ -265,6 +266,7 @@ func main() {
 			},
 		},
 		EnableGrpcByDefault:              *enableGrpcByDefault,
+		EnableHWgro:                      *enableHWgro,
 		EnableGcsFuseVolumeMetricsSchema: *enableGcsFuseVolumeMetricsSchema,
 	}
 

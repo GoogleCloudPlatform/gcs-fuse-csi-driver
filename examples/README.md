@@ -98,6 +98,10 @@ To use multiple NICs, the pod must run in host network. If the
 `gke-gcsfuse/enable-numa-pinning=true` annotation is used, then the gcs fuse
 daemon will be pinned to the corresponding NUMA node.
 
+Note that the `--enable-hw-gro` flag will not work for multi-NIC setups, as it
+only enables hardware GRO (`rx-gro-hw`) and LRO on the default NIC (`eth0`) on
+supported TPU v6e nodes.
+
 As an example, the following command on GKE creates an n2 instance with 2 NUMA
 nodes and two NICs. There is no actual NUMA alignment for the NICs, but this
 is an inexpensive way to test the behavior of machines like TPU v7x which do
