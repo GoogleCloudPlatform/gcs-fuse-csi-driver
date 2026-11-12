@@ -262,6 +262,36 @@ func TestSupportsNativeSidecar(t *testing.T) {
 			nodes:     []corev1.Node{},
 			expect:    true,
 		},
+		{
+			testName:  "test cp at skip version, node check skipped, uninitialized node",
+			cpVersion: minimumVersionToSkipNativeSidecarCheck,
+			nodes:     append(nativeSupportNodes(), uninitializedNode()),
+			expect:    true,
+		},
+		{
+			testName:  "test cp at skip version, node check skipped, skew nodes",
+			cpVersion: minimumVersionToSkipNativeSidecarCheck,
+			nodes:     skewVersionNodes(),
+			expect:    true,
+		},
+		{
+			testName:  "test cp below skip version, node check still applies, skew nodes",
+			cpVersion: version.MustParseGeneric("1.34.0"),
+			nodes:     skewVersionNodes(),
+			expect:    false,
+		},
+		{
+			testName:  "test cp below skip version, uninitialized node does not panic, falls back to regular sidecar",
+			cpVersion: version.MustParseGeneric("1.34.0"),
+			nodes:     append(nativeSupportNodes(), uninitializedNode()),
+			expect:    false,
+		},
+		{
+			testName:  "test nil cp version, uninitialized node does not panic, falls back to regular sidecar",
+			cpVersion: nil,
+			nodes:     append(nativeSupportNodes(), uninitializedNode()),
+			expect:    false,
+		},
 	}
 	for _, tc := range testCases {
 		fakeClient := fake.NewSimpleClientset()

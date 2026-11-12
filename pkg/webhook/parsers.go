@@ -27,6 +27,12 @@ import (
 
 var minimumSupportedVersion = version.MustParseGeneric("1.29.0")
 
+// minimumVersionToSkipNativeSidecarCheck is the server version from which the per-node kubelet
+// version check is skipped. Under the Kubernetes version skew policy, every node on a 1.35+
+// cluster is already >= 1.29, and nodes registered before kubelet reports status may have an
+// empty KubeletVersion.
+var minimumVersionToSkipNativeSidecarCheck = version.MustParseGeneric("1.35.0")
+
 func ParseBool(str string) (bool, error) {
 	switch str {
 	case "True", "true":

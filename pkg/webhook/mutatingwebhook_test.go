@@ -1254,6 +1254,16 @@ func regularSidecarSupportNodes() []corev1.Node {
 	}
 }
 
+// uninitializedNode returns a node registered before kubelet reported its first status,
+// so Status.NodeInfo is empty.
+func uninitializedNode() corev1.Node {
+	return corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node-uninitialized",
+		},
+	}
+}
+
 func skewVersionNodes() []corev1.Node {
 	return []corev1.Node{
 		{
