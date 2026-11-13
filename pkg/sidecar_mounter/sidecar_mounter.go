@@ -113,6 +113,7 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	if err := mc.ErrWriter.Clean(); err != nil {
 		klog.Warningf("failed to cleanup error file: %v", err)
 	}
+	removeExitDetailFile(mc)
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
 
@@ -322,7 +323,10 @@ func waitForGcsfuseExit(cmd *exec.Cmd, mc *MountConfig, outcomeDone <-chan struc
 		<-outcomeDone
 	}
 	removeReadyFile(mc)
+	exitDetail := ExtractExitDetail(err)
+	writeExitDetailFile(mc, exitDetail)
 	if err != nil {
+		klog.Infof("[%v] gcsfuse exited with code %d, reason %s (oom_kill_count=%d): %v", mc.VolumeName, exitDetail.ExitCode, exitDetail.ExitReason, exitDetail.OOMKillCount, err)
 		errMsg := fmt.Sprintf("gcsfuse exited with error: %v\n", err)
 		if strings.Contains(errMsg, "signal: terminated") {
 			klog.Infof("[%v] gcsfuse was terminated.", mc.VolumeName)
@@ -332,7 +336,7 @@ func waitForGcsfuseExit(cmd *exec.Cmd, mc *MountConfig, outcomeDone <-chan struc
 			mc.ErrWriter.WriteMsg(errMsg)
 		}
 	} else {
-		klog.Infof("[%v] gcsfuse exited normally.", mc.VolumeName)
+		klog.Infof("[%v] gcsfuse exited normally (code %d, reason %s).", mc.VolumeName, exitDetail.ExitCode, exitDetail.ExitReason)
 	}
 }
 

@@ -556,6 +556,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 		if mc.podUID == podUID && mc.volumeName == volumeName {
 			return
 		}
+		mc.stop()
 		mm.registry.Unregister(mc)
 		mm.collectors = slices.Delete(mm.collectors, i, i+1)
 		mm.volumeMountPathRegistered.Delete(mountPath)
@@ -570,6 +571,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 	constLabels := policy.BuildConstLabels(podName, podNamespace, volumeName, bucketName, k8sControllerType, k8sControllerName)
 	c := newMetricsCollector(socketBasePath, podNamespace, podName, podUID, volumeName, constLabels, mm.clientset, mm.streamMetrics, mm.enableGcsFuseVolumeMetricsSchema)
 	c.mountPath = mountPath
+	c.healthProber.SetMountPath(mountPath)
 
 	// Attempt to register new metrics collector and record success.
 	if err := mm.registry.Register(c); err != nil {
@@ -579,6 +581,7 @@ func (mm *manager) RegisterMetricsCollector(mountPath, podNamespace, podName, bu
 		}
 		return
 	}
+	c.startHealthProber()
 	mm.volumeMountPathRegistered.Insert(mountPath)
 	mm.collectors = append(mm.collectors, c)
 	klog.Infof("successfully registered a new metrics collector for mount path %q. There's %d collectors registered on node %q.", mountPath, mm.volumeMountPathRegistered.Len(), nodeName)
@@ -598,6 +601,7 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, _, _ string) 
 		return
 	}
 	mc := mm.collectors[i]
+	mc.stop()
 	mm.registry.Unregister(mc)
 	mm.collectors = slices.Delete(mm.collectors, i, i+1)
 	mm.volumeMountPathRegistered.Delete(mountPath)
@@ -605,8 +609,9 @@ func (mm *manager) UnregisterMetricsCollector(mountPath, nodeName, _, _ string) 
 }
 
 type metricsCollector struct {
-	mountPath   string
-	constLabels map[string]string
+	mountPath      string
+	socketBasePath string
+	constLabels    map[string]string
 	// constLabelPairs holds constLabels as label pairs sorted by name. grpcConstLabels and
 	// grpcConstLabelPairs hold the constant labels of gRPC metric families, which remain on the legacy
 	// k8s_pod schema when enableGcsFuseVolumeMetricsSchema is set. They are immutable and computed once
@@ -622,11 +627,18 @@ type metricsCollector struct {
 	clientset                        clientset.Interface
 	streamMetrics                    bool
 	enableGcsFuseVolumeMetricsSchema bool
+	healthProber                     *VolumeHealthProber
+	cancelProber                     context.CancelFunc
 }
 
 // newMetricsCollector returns a new Collector exposing metrics read from the give path.
 func newMetricsCollector(socketBasePath, namespace, podName, podUID, volumeName string, labels map[string]string, clientset clientset.Interface, streamMetrics bool, enableGcsFuseVolumeMetricsSchema bool) *metricsCollector {
+	var prober *VolumeHealthProber
+	if socketBasePath != "" {
+		prober = NewVolumeHealthProber("", filepath.Join(socketBasePath, util.ReadyFileName))
+	}
 	c := &metricsCollector{
+		socketBasePath:                   socketBasePath,
 		constLabels:                      labels,
 		constLabelPairs:                  sortedLabelPairs(labels),
 		namespace:                        namespace,
@@ -636,6 +648,7 @@ func newMetricsCollector(socketBasePath, namespace, podName, podUID, volumeName 
 		clientset:                        clientset,
 		streamMetrics:                    streamMetrics,
 		enableGcsFuseVolumeMetricsSchema: enableGcsFuseVolumeMetricsSchema,
+		healthProber:                     prober,
 	}
 	if enableGcsFuseVolumeMetricsSchema && labels != nil {
 		c.grpcConstLabels = grpcConstLabels(labels)
@@ -657,6 +670,41 @@ func newMetricsCollector(socketBasePath, namespace, podName, podUID, volumeName 
 	}
 
 	return c
+}
+
+func (c *metricsCollector) startHealthProber() {
+	if c.healthProber == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancelProber = cancel
+	c.healthProber.Start(ctx)
+}
+
+func (c *metricsCollector) stop() {
+	if c.cancelProber != nil {
+		c.cancelProber()
+	}
+}
+
+// emitDriverTelemetryFamilies emits CSI-driver-level mount health and crash exit telemetry families
+// for the volume, even when the sidecar Prometheus socket is unreachable after a GCSFuse crash or hang.
+func (c *metricsCollector) emitDriverTelemetryFamilies(handleFamily func(*dto.MetricFamily) bool) {
+	if c.healthProber != nil {
+		if c.mountPath != "" {
+			c.healthProber.SetMountPath(c.mountPath)
+		}
+		if res, ok := c.healthProber.Result(); ok {
+			if !handleFamily(newMountUnhealthyMetricFamily(res)) {
+				return
+			}
+		}
+	}
+	if detail, ok := readExitDetail(c.socketBasePath); ok {
+		if !handleFamily(newExitCodeMetricFamily(detail)) {
+			return
+		}
+	}
 }
 
 // grpcConstLabels returns the constant labels of gRPC metric families given the constant labels of the
@@ -743,6 +791,23 @@ func (c *metricsCollector) scrapeMetricFamilies(parentCtx context.Context, timeo
 		return false
 	}
 
+	handlerAborted := false
+	wrappedHandle := func(mf *dto.MetricFamily) bool {
+		if !handleFamily(mf) {
+			handlerAborted = true
+			return false
+		}
+		return true
+	}
+
+	sidecarOK := c.scrapeSidecarMetricFamilies(parentCtx, timeout, wrappedHandle)
+	if !handlerAborted && parentCtx.Err() == nil {
+		c.emitDriverTelemetryFamilies(wrappedHandle)
+	}
+	return sidecarOK && !handlerAborted
+}
+
+func (c *metricsCollector) scrapeSidecarMetricFamilies(parentCtx context.Context, timeout time.Duration, handleFamily func(*dto.MetricFamily) bool) bool {
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 

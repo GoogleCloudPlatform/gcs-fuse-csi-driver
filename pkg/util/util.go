@@ -64,6 +64,7 @@ const (
 	GCSFuseKernelParamsFileName         = "kernel-params.json"
 	ErrorFileName                       = "error"
 	ReadyFileName                       = "ready"
+	ExitDetailFileName                  = "exit_detail.json"
 	MediumRAM                           = "ram"
 	MediumLSSD                          = "lssd"
 	OptInHnw                            = "hnw-ksa"
