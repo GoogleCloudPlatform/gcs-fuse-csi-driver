@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+
+	"k8s.io/klog/v2"
 )
 
 func buildAndPushImage(pkgDir, registry string, buildGcsFuseFromSource, buildArm bool, gcsFusePRNumber string) error {
@@ -41,7 +43,12 @@ func buildAndPushImage(pkgDir, registry string, buildGcsFuseFromSource, buildArm
 	//nolint:gosec
 	cmd := exec.Command("make", args...)
 	if err := runCommand("Pushing image to REGISTRY "+registry, cmd); err != nil {
-		return fmt.Errorf("failed to run push image: %w", err)
+		klog.Warningf("Failed to push image to REGISTRY %s, retrying once: %v", registry, err)
+		//nolint:gosec
+		cmd = exec.Command("make", args...)
+		if err := runCommand("Retrying pushing image to REGISTRY "+registry, cmd); err != nil {
+			return fmt.Errorf("failed to run push image: %w", err)
+		}
 	}
 	return nil
 }
