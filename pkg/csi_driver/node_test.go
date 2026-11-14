@@ -38,6 +38,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -353,6 +354,109 @@ func TestNodePublishVolume(t *testing.T) {
 				t.Errorf("got error %q, expected error %q", err, test.expectErr)
 			}
 			validateMountPoint(t, testEnv.fm, test.expectedMount, nil)
+		})
+	}
+}
+
+func TestNodePublishVolumeRateLimiter(t *testing.T) {
+	testTargetPath, cleanup := setupTestTargetPath(t)
+	defer cleanup()
+
+	cases := []struct {
+		name string
+		// drainLimiter empties the limiter before the first publish. The limiter holds one token and refills once an hour.
+		drainLimiter bool
+		req          *csi.NodePublishVolumeRequest
+		publishes    int
+		// forgetVolumeState drops the in-memory volume state before the last publish, as a node driver restart does.
+		forgetVolumeState bool
+		expectErr         codes.Code
+		expectMounts      int
+	}{
+		{
+			name:         "first publish with bucket access check waits on the limiter",
+			drainLimiter: true,
+			req:          &csi.NodePublishVolumeRequest{VolumeId: testVolumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:    1,
+			expectErr:    codes.Aborted,
+			expectMounts: 0,
+		},
+		{
+			name:         "first publish with skipped bucket access check does not wait on the limiter",
+			drainLimiter: true,
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext:    map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.TrueStr},
+			},
+			publishes:    1,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:         "dynamic mount does not wait on the limiter",
+			drainLimiter: true,
+			req:          &csi.NodePublishVolumeRequest{VolumeId: "_", TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:    1,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:         "republish after a passed bucket access check does not wait on the limiter",
+			req:          &csi.NodePublishVolumeRequest{VolumeId: testVolumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:    3,
+			expectErr:    codes.OK,
+			expectMounts: 1,
+		},
+		{
+			name:              "republish after the volume state is lost waits on the limiter again",
+			req:               &csi.NodePublishVolumeRequest{VolumeId: testVolumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability},
+			publishes:         2,
+			forgetVolumeState: true,
+			expectErr:         codes.Aborted,
+			expectMounts:      1,
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			testEnv := initTestNodeServer(t)
+			ns, ok := testEnv.ns.(*nodeServer)
+			if !ok {
+				t.Fatalf("Failed to cast NodeServer to *nodeServer")
+			}
+			ns.limiter.SetLimit(rate.Every(time.Hour))
+			ns.limiter.SetBurst(1)
+			if test.drainLimiter && !ns.limiter.Allow() {
+				t.Fatal("failed to drain the limiter")
+			}
+
+			var err error
+			for i := 0; i < test.publishes && err == nil; i++ {
+				if test.forgetVolumeState && i == test.publishes-1 {
+					ns.volumeStateStore = util.NewVolumeStateStore()
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				_, err = ns.NodePublishVolume(ctx, test.req)
+				cancel()
+			}
+			if status.Code(err) != test.expectErr {
+				t.Errorf("got error %v, expected code %v", err, test.expectErr)
+			}
+			if test.expectErr == codes.Aborted && err != nil && !strings.Contains(err.Error(), "rate limit") {
+				t.Errorf("got error %v, expected a rate limit error", err)
+			}
+
+			mounts := 0
+			for _, action := range testEnv.fm.GetLog() {
+				if action.Action == mount.FakeActionMount {
+					mounts++
+				}
+			}
+			if mounts != test.expectMounts {
+				t.Errorf("got %d mounts, expected %d", mounts, test.expectMounts)
+			}
 		})
 	}
 }
