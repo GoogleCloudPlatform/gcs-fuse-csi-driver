@@ -1116,6 +1116,35 @@ func TestCheckForKernelReader(t *testing.T) {
 	}
 }
 
+func TestOnlyDirPrefix(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		opts []string
+		want string
+	}{
+		{name: "empty mount options - should return empty prefix", want: ""},
+		{name: "unrelated mount options - should return empty prefix", opts: []string{"implicit-dirs", "only-dir-suffix=other"}, want: ""},
+		{name: "equals syntax - should append trailing slash", opts: []string{"only-dir=team-a"}, want: "team-a/"},
+		{name: "colon syntax with slashes - should trim and append trailing slash", opts: []string{"only-dir:/team-a/sub/"}, want: "team-a/sub/"},
+		{name: "equals syntax with colon in value - should preserve colon", opts: []string{"only-dir=team:a/sub"}, want: "team:a/sub/"},
+		{name: "cli and config both set - should prefer cli flag", opts: []string{"only-dir=cli-dir", "only-dir:cfg-dir"}, want: "cli-dir/"},
+		{name: "repeated cli flag - should prefer last value", opts: []string{"only-dir=first", "only-dir=second"}, want: "second/"},
+		{name: "comma in directory name - should preserve comma", opts: []string{"only-dir=dataset,v2/train"}, want: "dataset,v2/train/"},
+		{name: "unclean relative path - should clean path", opts: []string{"only-dir=./a//b/../c"}, want: "a/c/"},
+		{name: "root slash only - should return empty prefix", opts: []string{"only-dir=/"}, want: ""},
+		{name: "empty value - should return empty prefix", opts: []string{"only-dir="}, want: ""},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := OnlyDirPrefix(tc.opts); got != tc.want {
+				t.Errorf("OnlyDirPrefix(%v) = %q, want %q", tc.opts, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 	t.Parallel()
 

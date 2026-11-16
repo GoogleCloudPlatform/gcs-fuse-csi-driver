@@ -467,7 +467,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			}
 			defer storageService.Close()
 
-			locationType, err := storageService.BucketLocationType(ctx, &storage.ServiceBucket{Name: args.bucketName})
+			mountOptions := profile.MergeSCMountOptionsOnMissingKeys(args.fuseMountOptions)
+			locationType, err := storageService.BucketLocationType(ctx, &storage.ServiceBucket{
+				Name:   args.bucketName,
+				Prefix: util.OnlyDirPrefix(mountOptions),
+			})
 			if err != nil {
 				return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", args.bucketName, err)
 			}
@@ -871,7 +875,7 @@ func (s *nodeServer) bucketLocationType(ctx context.Context, pod *corev1.Pod, vc
 	defer storageService.Close()
 	return storageService.BucketLocationType(ctx, &storage.ServiceBucket{
 		Name:   args.bucketName,
-		Prefix: onlyDirPrefix(mountOptions),
+		Prefix: util.OnlyDirPrefix(mountOptions),
 	})
 }
 

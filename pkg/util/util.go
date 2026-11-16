@@ -457,6 +457,29 @@ func CheckForKernelReader(options []string) bool {
 	return false
 }
 
+// OnlyDirPrefix returns the GetStorageLayout prefix GCSFuse uses for these mount options.
+func OnlyDirPrefix(mountOptions []string) string {
+	var cliSet bool
+	var cliDir, cfgDir string
+	for _, opt := range mountOptions {
+		item := strings.TrimSpace(opt)
+		if val, ok := strings.CutPrefix(item, "only-dir="); ok {
+			cliSet, cliDir = true, val
+		} else if val, ok := strings.CutPrefix(item, "only-dir:"); ok {
+			cfgDir = val
+		}
+	}
+	onlyDir := cfgDir
+	if cliSet {
+		onlyDir = cliDir
+	}
+	onlyDir = strings.TrimPrefix(path.Clean("/"+onlyDir), "/")
+	if onlyDir == "" {
+		return ""
+	}
+	return onlyDir + "/"
+}
+
 // PrepareSidecarMountOptions prepares mount options specifically for sidecar mounter.
 func PrepareSidecarMountOptions(options []string) ([]string, []string, map[string]int64, int64, error) {
 	defaultOptions := []string{
