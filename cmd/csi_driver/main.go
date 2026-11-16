@@ -88,6 +88,7 @@ var (
 
 	// GCSFuse profiles flags.
 	enableGCSFuseProfiles         = flag.Bool("enable-gcsfuse-profiles", false, "Enable the gcsfuse profiles feature.")
+	enableGCSFuseProfilesV2       = flag.Bool("enable-gcsfuse-profiles-v2", false, "Enable gcsfuse profiles V2, which sizes caches from node resources and does not scan buckets. Only takes effect when enable-gcsfuse-profiles is true.")
 	datafluxParallelism           = flag.Int("dataflux-parallelism", 0, "Number of go routines for Dataflux lister. Defaults to 0 (10X number of available vCPUs).")
 	datafluxBatchSize             = flag.Int("dataflux-batch-size", 25000, "Batch size for Dataflux lister. Defaults to 25000.")
 	datafluxSkipDirectoryObjects  = flag.Bool("dataflux-skip-directory-objects", false, "Set to true to skip Dataflux listing objects that include files with names ending in '/'.")
@@ -246,8 +247,9 @@ func main() {
 					BatchSize:            *datafluxBatchSize,
 					SkipDirectoryObjects: *datafluxSkipDirectoryObjects,
 				},
-				ClusterLocation: *clusterLocation,
-				ProjectNumber:   *projectNumber,
+				ClusterLocation:  *clusterLocation,
+				ProjectNumber:    *projectNumber,
+				EnableProfilesV2: *enableGCSFuseProfilesV2,
 			},
 			EnableGcsfuseProfilesInternal: *enableGcsfuseProfilesInternal,
 		},

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	control "cloud.google.com/go/storage/control/apiv2"
 	controlpb "cloud.google.com/go/storage/control/apiv2/controlpb"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googleapis/gax-go/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -659,6 +661,7 @@ func TestSyncPV(t *testing.T) {
 		expectedAnnots  map[string]string
 		expectResync    bool
 		controllerCrash bool
+		v2Flag          bool
 	}{
 		{
 			name:           "Successful Sync - Should patch PV annotations",
@@ -784,11 +787,29 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationHNSEnabled:   "true",
 			},
 		},
+		{
+			name:           "Profiles V2 flag on and PV sets useProfilesV2 to false - Should scan as V1",
+			key:            pvName,
+			initialObjects: []runtime.Object{createPV(pvName, scName, bucketName, csiDriverName, nil, nil, map[string]string{useProfilesV2Key: "false"}), relevantSC},
+			bucketI:        scanResult,
+			v2Flag:         true,
+			expectedAnnots: map[string]string{putil.AnnotationStatus: "completed"},
+			expectScanCall: true,
+		},
+		{
+			name:           "Profiles V2 flag off and PV sets useProfilesV2 to true - Should still scan as V1",
+			key:            pvName,
+			initialObjects: []runtime.Object{createPV(pvName, scName, bucketName, csiDriverName, nil, nil, map[string]string{useProfilesV2Key: "true"}), relevantSC},
+			bucketI:        scanResult,
+			expectedAnnots: map[string]string{putil.AnnotationStatus: "completed"},
+			expectScanCall: true,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTestFixture(t, tc.initialObjects...)
+			f.scanner.config.EnableProfilesV2 = tc.v2Flag
 
 			f.scanBucketFn.bucketI = tc.bucketI
 			f.scanBucketFn.err = tc.scanErr
@@ -877,6 +898,7 @@ func TestSyncPod(t *testing.T) {
 	volNotRelevant := v1.Volume{Name: "vol2", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-not-relevant"}}}
 	volUnbound := v1.Volume{Name: "vol3", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-unbound"}}}
 	volMissingPVC := v1.Volume{Name: "vol4", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-missing"}}}
+	volV2 := v1.Volume{Name: "vol5", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-v2"}}}
 
 	// Resources for Override test
 	pvOverrideAnnotations := map[string]string{
@@ -906,6 +928,7 @@ func TestSyncPod(t *testing.T) {
 		expectRequeueErr  bool
 		wantErr           bool
 		expectGateRemoved bool
+		v2Flag            bool
 	}{
 		{
 			name:              "Pod with no volumes, gate removed",
@@ -961,6 +984,13 @@ func TestSyncPod(t *testing.T) {
 			expectRequeueErr: true,
 		},
 		{
+			name:             "Profiles V2 flag on and Pod mixes V1 and V2 PVs, Pod requeued until the V1 PV is scanned",
+			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant, volV2}, podLabels, true),
+			initialObjects:   []runtime.Object{createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, map[string]string{useProfilesV2Key: "false"}), createPV("pv-v2", testSCName, testBucketName, csiDriverName, nil, nil, nil), scValid, pvcBoundRelevant, createPVC("pvc-v2", testNamespace, "pv-v2", testSCName)},
+			expectRequeueErr: true,
+			v2Flag:           true,
+		},
+		{
 			name:              "Pod with Override PV - Should remove gate",
 			pod:               createPod(testPodName, testNamespace, []v1.Volume{volOverride}, podLabels, true),
 			initialObjects:    []runtime.Object{pvOverride, scValid, pvcBoundOverride},
@@ -976,6 +1006,7 @@ func TestSyncPod(t *testing.T) {
 				allObjects = append(allObjects, tc.pod)
 			}
 			f := newTestFixture(t, allObjects...)
+			f.scanner.config.EnableProfilesV2 = tc.v2Flag
 
 			key, _ := cache.MetaNamespaceKeyFunc(tc.pod)
 			ctx := context.Background()
@@ -2577,6 +2608,341 @@ func TestCreateAnywhereCache(t *testing.T) {
 				}
 				if errors.Is(wantResult.err, errRequeueNeeded) != errors.Is(gotResult.err, errRequeueNeeded) {
 					t.Fatalf("zone %q want requeueNeeded: %t, got requeueNeeded: %t", zone, errors.Is(wantResult.err, errRequeueNeeded), errors.Is(gotResult.err, errRequeueNeeded))
+				}
+			}
+		})
+	}
+}
+
+func TestCheckPVRelevanceProfilesV2(t *testing.T) {
+	notCalled := fakebucketAttrsFunc{err: errors.New("bucketAttrs should not be called")}
+	bucketAttrs = notCalled.getBucketAttributes
+	t.Cleanup(func() { bucketAttrs = origbucketAttrs })
+
+	overrideAnnots := map[string]string{
+		putil.AnnotationStatus:     putil.ScanOverride,
+		putil.AnnotationNumObjects: "1000",
+		putil.AnnotationTotalSize:  "200000",
+	}
+	v1ScanAnnots := map[string]string{
+		putil.AnnotationStatus:          scanCompleted,
+		putil.AnnotationNumObjects:      "1234",
+		putil.AnnotationTotalSize:       "567890",
+		putil.AnnotationLastUpdatedTime: time.Date(2025, time.August, 27, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	}
+
+	testCases := []struct {
+		name         string
+		pv           *v1.PersistentVolume
+		sc           *storagev1.StorageClass
+		wantRelevant bool
+		wantDir      string
+	}{
+		{
+			name:         "Relevant PV - Should be relevant without a pending scan",
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:           validSC,
+			wantRelevant: true,
+		},
+		{
+			name:         "Relevant PV with only-dir - Should return the directory",
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, []string{onlyDirMountOptPrefix + ":" + testDirName}, nil, nil),
+			sc:           validSC,
+			wantRelevant: true,
+			wantDir:      testDirName,
+		},
+		{
+			name:         "Relevant PV with Anywhere Cache - Should not look up the bucket",
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:           createStorageClass(testSCName, map[string]string{anywhereCacheZonesKey: "*"}),
+			wantRelevant: true,
+		},
+		{
+			name:         "Relevant PV with override annotations - Should ignore override mode",
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, overrideAnnots, nil),
+			sc:           validSC,
+			wantRelevant: true,
+		},
+		{
+			name:         "Relevant PV with V1 scan annotations and invalid resync period - Should ignore them",
+			pv:           createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, v1ScanAnnots, nil),
+			sc:           createStorageClass(testSCName, map[string]string{scanResyncPeriodKey: "abc"}),
+			wantRelevant: true,
+		},
+		{
+			name: "Irrelevant PV with wrong driver - Should be irrelevant",
+			pv:   createPV(testPVName, testSCName, testBucketName, "other-driver", nil, nil, nil),
+			sc:   validSC,
+		},
+		{
+			name: "Irrelevant PV with SC missing profile label - Should be irrelevant",
+			pv:   createPV(testPVName, "no-label-sc", testBucketName, csiDriverName, nil, nil, nil),
+			sc:   &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "no-label-sc"}, Provisioner: csiDriverName, Parameters: map[string]string{}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(t, tc.pv.DeepCopy(), tc.sc)
+			f.scanner.config.EnableProfilesV2 = true
+
+			bucketI, isPendingScan, err := f.scanner.checkPVRelevance(context.Background(), tc.pv, tc.sc)
+			if err != nil {
+				t.Fatalf("checkPVRelevance() error = %v", err)
+			}
+			if (bucketI != nil) != tc.wantRelevant {
+				t.Fatalf("checkPVRelevance() relevant = %v, want %v", bucketI != nil, tc.wantRelevant)
+			}
+			if isPendingScan {
+				t.Errorf("checkPVRelevance() isPendingScan = true, want false")
+			}
+			if tc.wantRelevant {
+				if bucketI.name != testBucketName {
+					t.Errorf("bucketI.name = %q, want %q", bucketI.name, testBucketName)
+				}
+				if bucketI.dir != tc.wantDir {
+					t.Errorf("bucketI.dir = %q, want %q", bucketI.dir, tc.wantDir)
+				}
+				if bucketI.isOverride {
+					t.Errorf("bucketI.isOverride = true, want false")
+				}
+				updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), tc.pv.Name, metav1.GetOptions{})
+				if err != nil {
+					t.Fatalf("failed to get PV: %v", err)
+				}
+				if got := updatedPV.Labels[profileManagedLabelKey]; got != profileManagedLabelValue {
+					t.Errorf("PV label %q = %q, want %q", profileManagedLabelKey, got, profileManagedLabelValue)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncPVProfilesV2(t *testing.T) {
+	notCalled := fakebucketAttrsFunc{err: errors.New("bucketAttrs should not be called")}
+	acSC := createStorageClass(testSCName, map[string]string{anywhereCacheZonesKey: "*"})
+	overrideAnnots := map[string]string{
+		putil.AnnotationStatus:     putil.ScanOverride,
+		putil.AnnotationNumObjects: "111",
+		putil.AnnotationTotalSize:  "2222",
+	}
+
+	testCases := []struct {
+		name        string
+		pv          *v1.PersistentVolume
+		sc          *storagev1.StorageClass
+		attrs       fakebucketAttrsFunc
+		syncTwice   bool
+		wantErr     bool
+		wantRequeue bool
+		wantEvent   string
+	}{
+		{
+			name:  "No Anywhere Cache - Should not look up the bucket",
+			pv:    createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:    validSC,
+			attrs: notCalled,
+		},
+		{
+			name:  "Override annotations without Anywhere Cache - Should leave annotations unchanged",
+			pv:    createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, overrideAnnots, nil),
+			sc:    validSC,
+			attrs: notCalled,
+		},
+		{
+			name:  "Anywhere Cache with zonal bucket - Should skip Anywhere Cache sync",
+			pv:    createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:    acSC,
+			attrs: fakebucketAttrsFunc{attrs: &storage.BucketAttrs{LocationType: "zone"}},
+		},
+		{
+			name:      "Anywhere Cache with bucketAttrs error - Should emit one AnywhereCacheSyncError across two syncs",
+			pv:        createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:        acSC,
+			attrs:     fakebucketAttrsFunc{err: errors.New("bucket attrs failed")},
+			syncTwice: true,
+			wantErr:   true,
+			wantEvent: "Warning AnywhereCacheSyncError",
+		},
+		{
+			name:        "Anywhere Cache still creating - Should requeue and emit one event across two syncs",
+			pv:          createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:          acSC,
+			attrs:       fakebucketAttrsFunc{attrs: &storage.BucketAttrs{LocationType: "region"}},
+			syncTwice:   true,
+			wantRequeue: true,
+			wantEvent:   "Normal AnywhereCacheSyncInfo",
+		},
+		{
+			name:      "Deprecated scan parameter in StorageClass - Should emit one warning across two syncs",
+			pv:        createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil),
+			sc:        createStorageClass(testSCName, map[string]string{scanTimeoutKey: "5m"}),
+			attrs:     notCalled,
+			syncTwice: true,
+			wantEvent: "Warning ScanOperationWarning Parameters [bucketScanTimeout] are deprecated and will be ignored",
+		},
+		{
+			name:      "Deprecated scan parameters in PV volumeAttributes - Should emit warning",
+			pv:        createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, map[string]string{scanResyncPeriodKey: "24h", scanTimeoutKey: "5m"}),
+			sc:        validSC,
+			attrs:     notCalled,
+			wantEvent: "Warning ScanOperationWarning Parameters [bucketScanResyncPeriod, bucketScanTimeout] are deprecated and will be ignored",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(t, tc.pv.DeepCopy(), tc.sc)
+			f.scanner.config.EnableProfilesV2 = true
+			// Every cache reports "creating", so a sync that reaches the Anywhere Cache API asks for a requeue.
+			f.scanner.storageControlClient = &mockStorageControlClient{
+				GetAnywhereCacheFunc: func(context.Context, *controlpb.GetAnywhereCacheRequest, ...gax.CallOption) (*controlpb.AnywhereCache, error) {
+					return &controlpb.AnywhereCache{State: anywhereCacheAPICreating}, nil
+				},
+			}
+			bucketAttrs = tc.attrs.getBucketAttributes
+			t.Cleanup(func() { bucketAttrs = origbucketAttrs })
+			origGetZones := utilGetZonesForClusterLocation
+			utilGetZonesForClusterLocation = func(context.Context, string, *compute.Service, string) ([]string, error) {
+				return []string{"zone-a"}, nil
+			}
+			t.Cleanup(func() { utilGetZonesForClusterLocation = origGetZones })
+
+			calls := 1
+			if tc.syncTwice {
+				calls = 2
+			}
+			for i := 0; i < calls; i++ {
+				err := f.scanner.syncPV(context.Background(), tc.pv.Name)
+				if (err != nil) != (tc.wantErr || tc.wantRequeue) {
+					t.Fatalf("call %d: syncPV() error = %v, wantErr %v, wantRequeue %v", i+1, err, tc.wantErr, tc.wantRequeue)
+				}
+				if tc.wantRequeue && !errors.Is(err, errRequeueNeeded) {
+					t.Fatalf("call %d: syncPV() error = %v, want errRequeueNeeded", i+1, err)
+				}
+			}
+			if f.scanBucketFn.wasCalled {
+				t.Errorf("scanBucketFn.wasCalled = true, want false")
+			}
+			// A V2 PV has no scan to repeat, so the periodic enqueuer must leave it alone.
+			f.scanner.enqueueTrackedPVs()
+			if got := f.scanner.queue.Len(); got != 0 {
+				t.Errorf("enqueueTrackedPVs() queued %d PVs, want 0", got)
+			}
+
+			updatedPV, err := f.kubeClient.CoreV1().PersistentVolumes().Get(context.Background(), tc.pv.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("failed to get PV: %v", err)
+			}
+			if got := updatedPV.Labels[profileManagedLabelKey]; got != profileManagedLabelValue {
+				t.Errorf("PV label %q = %q, want %q", profileManagedLabelKey, got, profileManagedLabelValue)
+			}
+			if diff := cmp.Diff(tc.pv.Annotations, updatedPV.Annotations, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("PV annotations changed (-want +got):\n%s", diff)
+			}
+
+			var events []string
+			for len(f.recorder.Events) > 0 {
+				events = append(events, <-f.recorder.Events)
+			}
+			if tc.wantEvent == "" {
+				if len(events) != 0 {
+					t.Errorf("got events %v, want none", events)
+				}
+			} else if len(events) != 1 || !strings.HasPrefix(events[0], tc.wantEvent) {
+				t.Errorf("got events %v, want 1 event starting with %q", events, tc.wantEvent)
+			}
+		})
+	}
+}
+
+func TestSyncPodProfilesV2(t *testing.T) {
+	notCalled := fakebucketAttrsFunc{err: errors.New("bucketAttrs should not be called")}
+	bucketAttrs = notCalled.getBucketAttributes
+	t.Cleanup(func() { bucketAttrs = origbucketAttrs })
+
+	pvRelevant := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
+	pvcBound := createPVC(testPVCName, testNamespace, testPVName, testSCName)
+	pvcUnbound := createPVC("pvc-unbound", testNamespace, "", testSCName)
+	volBound := v1.Volume{Name: "vol1", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: testPVCName}}}
+	volUnbound := v1.Volume{Name: "vol2", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-unbound"}}}
+
+	podTwoGates := createPod(testPodName, testNamespace, nil, podLabels, true)
+	podTwoGates.Spec.SchedulingGates = append(podTwoGates.Spec.SchedulingGates, v1.PodSchedulingGate{Name: "example.com/other-gate"})
+
+	testCases := []struct {
+		name           string
+		pod            *v1.Pod
+		initialObjects []runtime.Object
+		patchErr       error
+		wantErr        bool
+		wantRequeue    bool
+		wantGates      []v1.PodSchedulingGate
+	}{
+		{
+			name:           "Gated Pod with unscanned PV removes gate",
+			pod:            createPod(testPodName, testNamespace, []v1.Volume{volBound}, podLabels, true),
+			initialObjects: []runtime.Object{pvRelevant, validSC, pvcBound},
+		},
+		{
+			name:           "Gated Pod with unbound PVC keeps gate",
+			pod:            createPod(testPodName, testNamespace, []v1.Volume{volUnbound}, podLabels, true),
+			initialObjects: []runtime.Object{pvcUnbound},
+			wantRequeue:    true,
+			wantGates:      []v1.PodSchedulingGate{{Name: schedulingGateName}},
+		},
+		{
+			name:      "Pod with two gates removes only profile gate",
+			pod:       podTwoGates,
+			wantGates: []v1.PodSchedulingGate{{Name: "example.com/other-gate"}},
+		},
+		{
+			name:     "Pod without gate is not patched",
+			pod:      createPod(testPodName, testNamespace, nil, podLabels, false),
+			patchErr: errors.New("Pod should not be patched"),
+		},
+		{
+			name: "Pod not found returns no error",
+			pod:  createPod("other-pod", testNamespace, nil, podLabels, false),
+		},
+		{
+			name:      "Pod patch fails returns Internal error",
+			pod:       createPod(testPodName, testNamespace, nil, podLabels, true),
+			patchErr:  errors.New("patch failed"),
+			wantErr:   true,
+			wantGates: []v1.PodSchedulingGate{{Name: schedulingGateName}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			allObjects := append([]runtime.Object{}, tc.initialObjects...)
+			if tc.pod.Name == testPodName {
+				allObjects = append(allObjects, tc.pod.DeepCopy())
+			}
+			f := newTestFixture(t, allObjects...)
+			f.scanner.config.EnableProfilesV2 = true
+			if tc.patchErr != nil {
+				f.kubeClient.PrependReactor("patch", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, tc.patchErr
+				})
+			}
+
+			key, _ := cache.MetaNamespaceKeyFunc(tc.pod)
+			err := f.scanner.syncPod(context.Background(), key)
+			if (err != nil) != (tc.wantErr || tc.wantRequeue) || errors.Is(err, errRequeueNeeded) != tc.wantRequeue {
+				t.Fatalf("syncPod(%q) error = %v, wantErr %v, wantRequeue %v", key, err, tc.wantErr, tc.wantRequeue)
+			}
+			if tc.wantErr && status.Code(err) != codes.Internal {
+				t.Errorf("syncPod(%q) code = %v, want %v", key, status.Code(err), codes.Internal)
+			}
+			if tc.pod.Name == testPodName {
+				updatedPod, err := f.kubeClient.CoreV1().Pods(testNamespace).Get(context.Background(), testPodName, metav1.GetOptions{})
+				if err != nil {
+					t.Fatalf("failed to get Pod: %v", err)
+				}
+				if diff := cmp.Diff(tc.wantGates, updatedPod.Spec.SchedulingGates, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("Pod schedulingGates (-want +got):\n%s", diff)
 				}
 			}
 		})

@@ -89,6 +89,7 @@ const (
 	anywhereCacheTTLKey             = "anywhereCacheTTL"
 	anywhereCacheZonesKey           = "anywhereCacheZones"
 	useBucketMetricsKey             = "useBucketMetrics"
+	useProfilesV2Key                = "useProfilesV2"
 
 	// Default values for PV / SC keys.
 	defaultScanTimeoutVal                  = "2m"
@@ -201,6 +202,7 @@ type ScannerConfig struct {
 	ClusterLocation                  string
 	ProjectNumber                    string
 	HTTPEndpoint                     string
+	EnableProfilesV2                 bool
 }
 
 // bucketInfo holds the results of a bucket scan.
@@ -218,9 +220,10 @@ type bucketInfo struct {
 
 // syncInfo holds information relevant to the PV resync.
 type syncInfo struct {
-	lastSuccessfulScan time.Time
-	nextScan           time.Time
-	lastEvent          *EventInfo
+	lastSuccessfulScan         time.Time
+	nextScan                   time.Time
+	lastEvent                  *EventInfo
+	deprecatedScanParamsWarned bool
 }
 
 // EventInfo holds information relevant to a PV event.
@@ -380,6 +383,12 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	}
 
 	return scanner, nil
+}
+
+// useProfilesV2 reports whether the PV is handled by profiles V2. V2 is never used when the driver flag is off,
+// and a PV can go back to V1 by setting the useProfilesV2 volume attribute to false.
+func (s *Scanner) useProfilesV2(pv *v1.PersistentVolume) bool {
+	return s.config.EnableProfilesV2 && (pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes[useProfilesV2Key] != util.FalseStr)
 }
 
 // run is the main function of the Scanner. It initializes necessary clients,
@@ -693,7 +702,8 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		if err != nil {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
-		if bucketI != nil {
+		// A V2 PV has no bucket scan to wait for.
+		if bucketI != nil && !s.useProfilesV2(pv) {
 			_, ok, err := s.calculateLastScanTime(pv, sc)
 			if err != nil {
 				return fmt.Errorf("failed to calculate last scan time for PV %q: %w", pvName, err)
@@ -790,6 +800,43 @@ func (s *Scanner) bypassScanForOverride(ctx context.Context, pv *v1.PersistentVo
 		return patchErr
 	}
 	return nil // Remove from queue since this is considered a complete and successful "scan" (bypass).
+}
+
+// warnDeprecatedScanParams emits a one-time Warning event on the PV when deprecated V1 scan parameters are set.
+func (s *Scanner) warnDeprecatedScanParams(pv *v1.PersistentVolume, sc *storagev1.StorageClass) {
+	if pv == nil {
+		return
+	}
+	var deprecated []string
+	for _, key := range []string{scanResyncPeriodKey, scanTimeoutKey} {
+		var inPV, inSC bool
+		if pv.Spec.CSI != nil {
+			_, inPV = pv.Spec.CSI.VolumeAttributes[key]
+		}
+		if sc != nil {
+			_, inSC = sc.Parameters[key]
+		}
+		if inPV || inSC {
+			deprecated = append(deprecated, key)
+		}
+	}
+	if len(deprecated) == 0 {
+		return
+	}
+
+	s.pvMutex.Lock()
+	info := s.trackedPVs[pv.Name]
+	alreadyWarned := info.deprecatedScanParamsWarned
+	info.deprecatedScanParamsWarned = true
+	s.trackedPVs[pv.Name] = info
+	s.pvMutex.Unlock()
+	if alreadyWarned {
+		return
+	}
+
+	params := strings.Join(deprecated, ", ")
+	klog.Warningf("PV %q: parameters [%s] are deprecated and will be ignored", pv.Name, params)
+	s.eventRecorder.Eventf(pv, v1.EventTypeWarning, reasonScanOperationWarning, "Parameters [%s] are deprecated and will be ignored", params)
 }
 
 // emitCachedEvent filters out duplicate events for the same PV to prevent
@@ -914,8 +961,39 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		}
 	}
 
+	if s.useProfilesV2(pv) {
+		s.warnDeprecatedScanParams(pv, sc)
+	}
+
 	// Check if the PV uses an Anywhere Cache enabled StorageClass.
 	anywhereCacheProvidedZones, shouldEnableAnywhereCache := anywhereCacheZonesVal(pv, sc)
+
+	if s.useProfilesV2(pv) && shouldEnableAnywhereCache {
+		// V2 never scans, so nothing else adds the PV to trackedPVs, and emitCachedEvent drops events for PVs that are not in it.
+		s.pvMutex.Lock()
+		if _, ok := s.trackedPVs[pv.Name]; !ok {
+			s.trackedPVs[pv.Name] = syncInfo{}
+		}
+		s.pvMutex.Unlock()
+
+		// V2 skips bucketAttrs in checkPVRelevance, so fetch LocationType here to check if the bucket is zonal.
+		attrs, err := bucketAttrs(ctx, s.gcsClient, bucketI.name)
+		if err != nil || attrs == nil {
+			if err == nil {
+				err = fmt.Errorf("bucket attributes are nil for %q", bucketI.name)
+			}
+			if emitErr := s.emitCachedEvent(&EventInfo{
+				pv:        pv,
+				eventType: v1.EventTypeWarning,
+				reason:    reasonAnywhereCacheSyncError,
+				message:   fmt.Sprintf("Anywhere Cache sync failed for PV %q: %v", pv.Name, err),
+			}); emitErr != nil {
+				klog.Errorf("failed to emit event: %v", emitErr)
+			}
+			return err
+		}
+		bucketI.locationType = attrs.LocationType
+	}
 
 	// Skip Anywhere Cache sync if it's disabled, or if the bucket is zonal, as it's not supported.
 	if !shouldEnableAnywhereCache || isZonalBucket(bucketI.locationType) {
@@ -1581,6 +1659,11 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 		}
 	}
 
+	if s.useProfilesV2(pv) {
+		// V2 does not scan buckets, so the PV needs no bucket metadata, override or rescan checks.
+		return &bucketInfo{name: bucketName, dir: dir}, false, nil
+	}
+
 	bucketAttrs, err := bucketAttrs(ctx, s.gcsClient, bucketName)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to get bucket attributes for %q: %w", bucketName, err)
@@ -1758,6 +1841,10 @@ func (s *Scanner) DeletePV(obj any) {
 func (s *Scanner) enqueueTrackedPVs() {
 	s.pvMutex.RLock()
 	for pvName, info := range s.trackedPVs {
+		// A V2 PV is tracked without a next scan time. Enqueuing it would re-sync it on every tick.
+		if info.nextScan.IsZero() {
+			continue
+		}
 		klog.V(6).Infof("Periodic scan: PV %q, next scan: %v, now: %v", pvName, info.nextScan, time.Now())
 		if !info.nextScan.After(time.Now()) {
 			klog.V(4).Infof("Periodic scan: Enqueuing tracked PV %q", pvName)
