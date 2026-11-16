@@ -439,7 +439,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			}
 			defer storageService.Close()
 
-			if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: args.bucketName}); !exist {
+			if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: args.bucketName, OnlyDir: util.OnlyDirFromMountOptions(args.fuseMountOptions)}); !exist {
 				return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", args.bucketName, err)
 			}
 

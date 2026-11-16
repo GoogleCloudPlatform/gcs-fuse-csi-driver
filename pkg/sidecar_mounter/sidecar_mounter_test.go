@@ -22,11 +22,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -436,6 +440,79 @@ func TestMountToNode(t *testing.T) {
 				if !matched {
 					t.Errorf("Got error code %v, expected one of %v", st.Code(), tc.acceptCodes)
 				}
+			}
+		})
+	}
+}
+
+type recordingStorageServiceManager struct {
+	storage.ServiceManager
+
+	mu             sync.Mutex
+	checkedBuckets []*storage.ServiceBucket
+}
+
+func (m *recordingStorageServiceManager) SetupStorageServiceForSidecar(_ context.Context, _ oauth2.TokenSource, _ string) (storage.Service, error) {
+	return &recordingStorageService{manager: m}, nil
+}
+
+type recordingStorageService struct {
+	storage.Service
+
+	manager *recordingStorageServiceManager
+}
+
+func (s *recordingStorageService) CheckBucketExists(_ context.Context, obj *storage.ServiceBucket) (bool, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	s.manager.checkedBuckets = append(s.manager.checkedBuckets, obj)
+
+	return true, nil
+}
+
+func TestCheckBucketAccessWithRetryChecksAccessOnOnlyDir(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name            string
+		options         []string
+		expectedOnlyDir string
+	}{
+		{
+			name:            "should check access to the whole bucket without only-dir",
+			options:         []string{"implicit-dirs"},
+			expectedOnlyDir: "",
+		},
+		{
+			name:            "should check access to the directory of the only-dir flag",
+			options:         []string{"implicit-dirs", "only-dir=data"},
+			expectedOnlyDir: "data",
+		},
+		{
+			name:            "should check access to the directory of the only-dir config file flag",
+			options:         []string{"implicit-dirs", "only-dir:data"},
+			expectedOnlyDir: "data",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			storageServiceManager := &recordingStorageServiceManager{}
+			m := &Mounter{StorageServiceManager: storageServiceManager}
+			mc := &MountConfig{
+				BucketName:         "test-bucket",
+				Options:            tc.options,
+				SidecarRetryConfig: sidecarRetryConfig{Duration: time.Millisecond, Factor: 1, Steps: 1},
+			}
+
+			if err := m.checkBucketAccessWithRetry(context.Background(), nil, mc.BucketName, "", mc); err != nil {
+				t.Fatalf("checkBucketAccessWithRetry() failed: %v", err)
+			}
+
+			expected := []*storage.ServiceBucket{{Name: "test-bucket", OnlyDir: tc.expectedOnlyDir}}
+			if diff := cmp.Diff(expected, storageServiceManager.checkedBuckets); diff != "" {
+				t.Errorf("unexpected bucket access checks (-expected +got):\n%s", diff)
 			}
 		})
 	}

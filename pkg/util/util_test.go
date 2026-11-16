@@ -1116,6 +1116,62 @@ func TestCheckForKernelReader(t *testing.T) {
 	}
 }
 
+func TestOnlyDirFromMountOptions(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		options  []string
+		expected string
+	}{
+		{
+			name:     "empty options",
+			options:  []string{},
+			expected: "",
+		},
+		{
+			name:     "unrelated options",
+			options:  []string{"ro", "implicit-dirs", "only-dir-suffix=other"},
+			expected: "",
+		},
+		{
+			name:     "flag form",
+			options:  []string{"implicit-dirs", "only-dir=data"},
+			expected: "data",
+		},
+		{
+			name:     "config file form",
+			options:  []string{"implicit-dirs", "only-dir:data"},
+			expected: "data",
+		},
+		{
+			name:     "nested directory is returned as given",
+			options:  []string{"only-dir=/data/models/"},
+			expected: "/data/models/",
+		},
+		{
+			name:     "flag form takes precedence over config file form",
+			options:  []string{"only-dir=from-flag", "only-dir:from-config-file"},
+			expected: "from-flag",
+		},
+		{
+			name:     "last flag wins",
+			options:  []string{"only-dir=first", "only-dir=second"},
+			expected: "second",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := OnlyDirFromMountOptions(tc.options)
+			if got != tc.expected {
+				t.Errorf("OnlyDirFromMountOptions() = %q, expected %q", got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestIsSidecarVersionSupportedForGivenFeature(t *testing.T) {
 	t.Parallel()
 

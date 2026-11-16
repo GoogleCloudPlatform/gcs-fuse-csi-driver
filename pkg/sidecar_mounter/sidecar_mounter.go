@@ -726,7 +726,7 @@ func (m *Mounter) checkBucketAccessWithRetry(ctx context.Context, tokenSource oa
 		}
 
 		if bucketName != "_" {
-			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
+			if exist, err := ss.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName, OnlyDir: util.OnlyDirFromMountOptions(mc.Options)}); !exist {
 				mc.ErrWriter.WriteMsg(retryableError(fmt.Sprintf("failed to get GCS bucket %q: %v %v", bucketName, storage.ParseErrCode(err), err)))
 				return false, nil
 			}
