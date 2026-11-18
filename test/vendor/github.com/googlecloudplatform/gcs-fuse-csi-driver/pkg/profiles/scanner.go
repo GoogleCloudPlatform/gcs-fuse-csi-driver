@@ -89,7 +89,6 @@ const (
 	anywhereCacheTTLKey             = "anywhereCacheTTL"
 	anywhereCacheZonesKey           = "anywhereCacheZones"
 	useBucketMetricsKey             = "useBucketMetrics"
-	useProfilesV2Key                = "useProfilesV2"
 
 	// Default values for PV / SC keys.
 	defaultScanTimeoutVal                  = "2m"
@@ -385,10 +384,9 @@ func NewScanner(config *ScannerConfig) (*Scanner, error) {
 	return scanner, nil
 }
 
-// useProfilesV2 reports whether the PV is handled by profiles V2. V2 is never used when the driver flag is off,
-// and a PV can go back to V1 by setting the useProfilesV2 volume attribute to false.
-func (s *Scanner) useProfilesV2(pv *v1.PersistentVolume) bool {
-	return s.config.EnableProfilesV2 && (pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes[useProfilesV2Key] != util.FalseStr)
+// useProfilesV2 reports whether the controller handles profiles with Profiles V2.
+func (s *Scanner) useProfilesV2() bool {
+	return s.config.EnableProfilesV2
 }
 
 // run is the main function of the Scanner. It initializes necessary clients,
@@ -703,7 +701,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
 		// A V2 PV has no bucket scan to wait for.
-		if bucketI != nil && !s.useProfilesV2(pv) {
+		if bucketI != nil && !s.useProfilesV2() {
 			_, ok, err := s.calculateLastScanTime(pv, sc)
 			if err != nil {
 				return fmt.Errorf("failed to calculate last scan time for PV %q: %w", pvName, err)
@@ -961,14 +959,14 @@ func (s *Scanner) syncPV(ctx context.Context, key string) error {
 		}
 	}
 
-	if s.useProfilesV2(pv) {
+	if s.useProfilesV2() {
 		s.warnDeprecatedScanParams(pv, sc)
 	}
 
 	// Check if the PV uses an Anywhere Cache enabled StorageClass.
 	anywhereCacheProvidedZones, shouldEnableAnywhereCache := anywhereCacheZonesVal(pv, sc)
 
-	if s.useProfilesV2(pv) && shouldEnableAnywhereCache {
+	if s.useProfilesV2() && shouldEnableAnywhereCache {
 		// V2 never scans, so nothing else adds the PV to trackedPVs, and emitCachedEvent drops events for PVs that are not in it.
 		s.pvMutex.Lock()
 		if _, ok := s.trackedPVs[pv.Name]; !ok {
@@ -1659,7 +1657,7 @@ func (s *Scanner) checkPVRelevance(ctx context.Context, pv *v1.PersistentVolume,
 		}
 	}
 
-	if s.useProfilesV2(pv) {
+	if s.useProfilesV2() {
 		// V2 does not scan buckets, so the PV needs no bucket metadata, override or rescan checks.
 		return &bucketInfo{name: bucketName, dir: dir}, false, nil
 	}

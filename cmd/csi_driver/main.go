@@ -230,7 +230,8 @@ func main() {
 
 	featureOptions := &driver.GCSDriverFeatureOptions{
 		FeatureGCSFuseProfiles: &driver.FeatureGCSFuseProfiles{
-			Enabled: *enableGCSFuseProfiles,
+			Enabled:          *enableGCSFuseProfiles,
+			EnableProfilesV2: *enableGCSFuseProfilesV2,
 			ScannerConfig: &profiles.ScannerConfig{
 				K8SClients:                       clientset,
 				CloudConfigPath:                  *cloudConfigFilePath,

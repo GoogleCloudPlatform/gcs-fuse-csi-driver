@@ -38,11 +38,13 @@ type FakeNodeConfig struct {
 	MachineType               string
 	KubeletVersion            string
 	Status                    corev1.NodeStatus
+	Annotations               map[string]string
 }
 
 type FakePodConfig struct {
 	Name               string
 	Namespace          string
+	Annotations        map[string]string
 	HostNetworkEnabled bool
 	SidecarLimits      corev1.ResourceList
 	DeletionTimestamp  *metav1.Time
@@ -154,9 +156,10 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 
 	c.fakePod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podConfig.Name,
-			Namespace: podConfig.Namespace,
-			UID:       podConfig.UID,
+			Name:        podConfig.Name,
+			Namespace:   podConfig.Namespace,
+			Annotations: podConfig.Annotations,
+			UID:         podConfig.UID,
 		},
 		Spec: corev1.PodSpec{
 			Containers: func() []corev1.Container {
@@ -228,8 +231,9 @@ func (c *FakeClientset) CreatePod(podConfig FakePodConfig) {
 func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 	c.fakeNode = &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "",
-			Labels: map[string]string{},
+			Name:        "",
+			Labels:      map[string]string{},
+			Annotations: nodeConfig.Annotations,
 		},
 	}
 
