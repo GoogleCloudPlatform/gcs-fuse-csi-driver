@@ -45,6 +45,7 @@ import (
 type ServiceBucket struct {
 	Project                        string
 	Name                           string
+	Prefix                         string
 	Location                       string
 	SizeBytes                      int64
 	Labels                         map[string]string
@@ -60,6 +61,7 @@ type Service interface {
 	SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	RemoveIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error
 	CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error)
+	BucketLocationType(ctx context.Context, obj *ServiceBucket) (string, error)
 	UploadGCSObject(ctx context.Context, localPath, bucketName, objectName string) error
 	DownloadGCSObject(ctx context.Context, bucketName, objectName, localPath string) error
 	Close()
@@ -69,6 +71,7 @@ type ServiceManager interface {
 	SetupService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (Service, error)
 	SetupServiceWithDefaultCredential(ctx context.Context, enableZB bool) (Service, error)
 	SetupStorageServiceForSidecar(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (Service, error)
+	SetupStorageControlService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string, withoutAuth bool) (Service, error)
 }
 
 type gcsService struct {
@@ -240,19 +243,26 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 // 403 error. A 404 error will be returned if the bucket doesn't exist, but
 // correct permissions are configured.
 func (service *gcsService) CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error) {
-	// This call matches the access check GCSFuse does:
-	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/919dbde3e074ff8f6a2cc7f7b612863542a1fb90/internal/storage/storage_handle.go#L319
+	if _, err := service.BucketLocationType(ctx, obj); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// BucketLocationType returns the bucket's location type by calling GetStorageLayout.
+func (service *gcsService) BucketLocationType(ctx context.Context, obj *ServiceBucket) (string, error) {
+	// This call matches the GetStorageLayout call GCSFuse makes.
 	req := &controlpb.GetStorageLayoutRequest{
 		Name:      fmt.Sprintf("projects/_/buckets/%s/storageLayout", obj.Name),
-		Prefix:    "",
+		Prefix:    obj.Prefix,
 		RequestId: "",
 	}
 
-	_, err := service.controlClient.GetStorageLayout(ctx, req)
-	if err == nil {
-		return true, nil
+	layout, err := service.controlClient.GetStorageLayout(ctx, req)
+	if err != nil {
+		return "", err
 	}
-	return false, err
+	return layout.GetLocationType(), nil
 }
 
 func (service *gcsService) SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error {
@@ -286,8 +296,12 @@ func (service *gcsService) RemoveIAMPolicy(ctx context.Context, obj *ServiceBuck
 }
 
 func (service *gcsService) Close() {
-	service.storageClient.Close()
-	service.controlClient.Close()
+	if service.storageClient != nil {
+		service.storageClient.Close()
+	}
+	if service.controlClient != nil {
+		service.controlClient.Close()
+	}
 }
 
 func cloudBucketToServiceBucket(attrs *storage.BucketAttrs) (*ServiceBucket, error) {
@@ -476,6 +490,27 @@ func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Cont
 	klog.Infof("Storage client and control client created successfully for sidecar.")
 	return &gcsService{
 		storageClient: storageClient,
+		controlClient: controlClient,
+	}, nil
+}
+
+// SetupStorageControlService creates a lightweight Service with only a StorageControlClient
+// and no initial token polling loop. When withoutAuth is true, authentication is disabled;
+// otherwise, default credentials are used when ts is nil.
+func (manager *gcsServiceManager) SetupStorageControlService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string, withoutAuth bool) (Service, error) {
+	var controlOpts []option.ClientOption
+	if withoutAuth {
+		controlOpts = append(controlOpts, option.WithoutAuthentication())
+	} else if ts != nil {
+		controlOpts = append(controlOpts, option.WithTokenSource(oauth2.ReuseTokenSource(nil, ts)))
+	}
+
+	controlClient, err := control.NewStorageControlClient(ctx, withCustomEndpoint(controlOpts, customEndpoint)...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create control client: %w", err)
+	}
+
+	return &gcsService{
 		controlClient: controlClient,
 	}, nil
 }

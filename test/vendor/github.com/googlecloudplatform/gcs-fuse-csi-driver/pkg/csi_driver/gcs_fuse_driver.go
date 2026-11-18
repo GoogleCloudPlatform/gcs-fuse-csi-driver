@@ -41,6 +41,7 @@ const DefaultName = "gcsfuse.csi.storage.gke.io"
 
 type FeatureGCSFuseProfiles struct {
 	Enabled                       bool
+	EnableProfilesV2              bool
 	ScannerConfig                 *profiles.ScannerConfig
 	EnableGcsfuseProfilesInternal bool
 	Scanner                       *profiles.Scanner

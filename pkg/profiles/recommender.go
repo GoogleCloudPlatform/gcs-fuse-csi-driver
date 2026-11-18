@@ -19,6 +19,7 @@ package profiles
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,7 @@ import (
 	v1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -85,10 +87,11 @@ const (
 // ProfileConfig holds the consolidated configuration for a volume profile,
 // derived from PersistentVolume annotations and StorageClass parameters.
 type ProfileConfig struct {
-	pvDetails   *pvDetails   // Details extracted from the PersistentVolume.
-	nodeDetails *nodeDetails // Details extracted from the Node.
-	scDetails   *scDetails   // Details extracted from the SC.
-	podDetails  *podDetails  // Details extracted from the Pod.
+	pvDetails     *pvDetails   // Details extracted from the PersistentVolume.
+	nodeDetails   *nodeDetails // Details extracted from the Node.
+	scDetails     *scDetails   // Details extracted from the SC.
+	podDetails    *podDetails  // Details extracted from the Pod.
+	useProfilesV2 bool         // Whether this PV uses the V2 recommendation path.
 }
 
 // pvDetails holds a parsed summary of information about a PersistentVolume that are relevant to the recommender.
@@ -110,11 +113,12 @@ type nodeDetails struct {
 
 // podDetails holds a parsed summary of information about a Pod that are relevant to the recommender.
 type podDetails struct {
-	containerLimits *parsedResourceList
-	namespace       string
-	name            string // The name of the Pod.
-	containerName   string // The name of the container (sidecar or mounter).
-	labels          map[string]string
+	containerLimits    *parsedResourceList
+	namespace          string
+	name               string // The name of the Pod.
+	containerName      string // The name of the container (sidecar or mounter).
+	labels             map[string]string
+	profileVolumeCount int // Number of profile volumes in the Pod from annotation, or 1 if unset or invalid.
 }
 
 // scDetails holds a parsed summary of information about a StorageClass that are relevant to the recommender.
@@ -168,6 +172,55 @@ type BuildProfileConfigParams struct {
 	NodeName            string
 	IsInitContainer     bool
 	Pod                 *corev1.Pod
+	EnableProfilesV2    bool
+}
+
+// NeedsBucketLocationType reports whether the bucket's location type is needed to skip
+// LSSD file cache on zonal buckets. Returns false when LSSD file cache won't be recommended
+// or the user already overrode the file cache.
+func (c *ProfileConfig) NeedsBucketLocationType(userMountOptions []string) bool {
+	if c == nil || !c.useProfilesV2 || c.nodeDetails == nil || c.scDetails == nil || c.customFileCacheEnabled() {
+		return false
+	}
+	if c.nodeDetails.nodeType == nodeTypeTPU || !c.nodeDetails.hasLocalSSDEphemeralStorageAnnotation {
+		return false
+	}
+	if !slices.Contains(c.scDetails.fileCacheMediumPriority[c.nodeDetails.nodeType], util.MediumLSSD) {
+		return false
+	}
+	var containerEphemeralLimit int64
+	if c.podDetails != nil && c.podDetails.containerLimits != nil {
+		containerEphemeralLimit = c.podDetails.containerLimits.ephemeralStorageBytes
+	}
+	if c.nodeDetails.nodeAllocatables == nil || calculateFuseResourceBudget(c.nodeDetails.nodeAllocatables.ephemeralStorageBytes, c.scDetails.fuseEphemeralStorageAllocatableFactor, containerEphemeralLimit) <= 0 {
+		return false
+	}
+	mergedMountOptions, err := mergeMountOptionsOnMissingKeys(userMountOptions, c.scDetails.mountOptions)
+	if err != nil {
+		return false
+	}
+	overrides, err := c.parseCacheOverrides(mergedMountOptions)
+	return err == nil && overrides.fileCacheBytes == nil
+}
+
+// SetBucketLocationType records the bucket's location type for cache recommendation and logging.
+func (c *ProfileConfig) SetBucketLocationType(locationType string) {
+	if c == nil || c.pvDetails == nil {
+		return
+	}
+	c.pvDetails.locationType = locationType
+}
+
+// MergeSCMountOptionsOnMissingKeys returns userMountOptions merged with the StorageClass mount options.
+func (c *ProfileConfig) MergeSCMountOptionsOnMissingKeys(userMountOptions []string) []string {
+	if c == nil || c.scDetails == nil {
+		return userMountOptions
+	}
+	merged, err := mergeMountOptionsOnMissingKeys(userMountOptions, c.scDetails.mountOptions)
+	if err != nil {
+		return userMountOptions
+	}
+	return merged
 }
 
 // MergeVolumeAttributesOnRecommendedMissingKeys returns the a copy of the input map, merged with the profile's.
@@ -236,16 +289,22 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	// At this point, we are sure that the user is attempting to use the volume with
 	// the profiles feature, so we start returning errors.
 
-	// Get the scDetails from the StorageClass object.
-	scDetails, err := buildSCDetails(pv, sc, params.VolumeAttributeKeys)
+	useV2 := params.EnableProfilesV2
+
+	scDetails, err := buildSCDetails(pv, sc, params.VolumeAttributeKeys, useV2)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
 	}
 
-	// Get the PV details from the PV object's annotations.
-	pvDetails, err := buildPVDetails(pv)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
+	var pvDetailsObj *pvDetails
+	if useV2 {
+		pvDetailsObj = &pvDetails{name: pv.Name}
+	} else {
+		// Get the PV details from the PV object's annotations.
+		pvDetailsObj, err = buildPVDetails(pv)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get PV details from annotations for %q: %v", pv.Name, err)
+		}
 	}
 
 	// Get the Node object using the Node name.
@@ -278,12 +337,16 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pod details: %v", err)
 	}
+	if useV2 {
+		podDetails.profileVolumeCount = parseProfileVolumeCount(pod)
+	}
 
 	return &ProfileConfig{
-		pvDetails:   pvDetails,
-		nodeDetails: nodeDetails,
-		scDetails:   scDetails,
-		podDetails:  podDetails,
+		pvDetails:     pvDetailsObj,
+		nodeDetails:   nodeDetails,
+		scDetails:     scDetails,
+		podDetails:    podDetails,
+		useProfilesV2: useV2,
 	}, nil
 }
 
@@ -310,18 +373,19 @@ type GCSFuseCSIRecommendationLog struct {
 		ContainerName string `json:"containerName,omitempty"`
 	} `json:"target"`
 	InputSignals struct {
-		BucketTotalObjects                   int64  `json:"bucketTotalObjects"`
-		BucketTotalDataSizeBytes             int64  `json:"bucketTotalDataSizeBytes"`
+		BucketTotalObjects                   *int64 `json:"bucketTotalObjects,omitempty"`
+		BucketTotalDataSizeBytes             *int64 `json:"bucketTotalDataSizeBytes,omitempty"`
 		BucketLocationType                   string `json:"bucketLocationType"`
-		BucketHNSEnabled                     bool   `json:"bucketHNSEnabled"`
-		RequiredFileCacheBytes               int64  `json:"requiredFileCacheBytes"`
-		RequiredMetadataStatCacheBytes       int64  `json:"requiredMetadataStatCacheBytes"`
+		BucketHNSEnabled                     *bool  `json:"bucketHNSEnabled,omitempty"`
+		RequiredFileCacheBytes               *int64 `json:"requiredFileCacheBytes,omitempty"`
+		RequiredMetadataStatCacheBytes       *int64 `json:"requiredMetadataStatCacheBytes,omitempty"`
 		NodeType                             string `json:"nodeType"`
 		NodeAllocatableMemoryBytes           int64  `json:"nodeAllocatableMemoryBytes"`
 		NodeAllocatableEphemeralStorageBytes int64  `json:"nodeAllocatableEphemeralStorageBytes"`
 		NodeHasEphemeralStorageLSSD          bool   `json:"nodeHasEphemeralStorageLSSD"`
 		ContainerLimitMemoryBytes            int64  `json:"containerLimitMemoryBytes"`
 		ContainerLimitEphemeralStorageBytes  int64  `json:"containerLimitEphemeralStorageBytes"`
+		ProfileVolumeCount                   *int   `json:"profileVolumeCount,omitempty"`
 		FuseBudgetMemoryBytes                int64  `json:"fuseBudgetMemoryBytes"`
 		FuseBudgetEphemeralStorageBytes      int64  `json:"fuseBudgetEphemeralStorageBytes"`
 	} `json:"inputSignals"`
@@ -336,6 +400,17 @@ type GCSFuseCSIRecommendationLog struct {
 // to expand a JSON log with input signals, target information, and decisions used for a complete understanding
 // of the recommendation.
 func logRecommendation(config *ProfileConfig, recommendation *recommendation, requirement *cacheRequirements, overrides *cacheOverrides, memoryBudget, ephemeralStorageBudget int64) error {
+	logJSON, err := marshalRecommendationLog(config, recommendation, requirement, overrides, memoryBudget, ephemeralStorageBudget)
+	if err != nil {
+		return err
+	}
+	// Print the JSON string directly to standard output so it doesn't look like an error.
+	// This bypasses klog's prefixing and one-line formatting.
+	fmt.Println(string(logJSON))
+	return nil
+}
+
+func marshalRecommendationLog(config *ProfileConfig, recommendation *recommendation, requirement *cacheRequirements, overrides *cacheOverrides, memoryBudget, ephemeralStorageBudget int64) ([]byte, error) {
 	summaryMessage := fmt.Sprintf("GCSFuseCSIRecommendation: Recommended cache configs for PV %s and Pod %s/%s:", config.pvDetails.name, config.podDetails.namespace, config.podDetails.name)
 
 	// File cache
@@ -368,15 +443,17 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	logEntry.Target.PodName = fmt.Sprintf("%s/%s", config.podDetails.namespace, config.podDetails.name)
 	logEntry.Target.ContainerName = config.podDetails.containerName
 
-	// Requirements
-	logEntry.InputSignals.RequiredFileCacheBytes = requirement.fileCacheBytes
-	logEntry.InputSignals.RequiredMetadataStatCacheBytes = requirement.metadataStatCacheBytes
-
-	// Bucket signals
-	logEntry.InputSignals.BucketTotalObjects = config.pvDetails.numObjects
-	logEntry.InputSignals.BucketTotalDataSizeBytes = config.pvDetails.totalSizeBytes
+	// Requirements and bucket scan signals only apply to V1.
+	if !config.useProfilesV2 {
+		logEntry.InputSignals.RequiredFileCacheBytes = ptr.To(requirement.fileCacheBytes)
+		logEntry.InputSignals.RequiredMetadataStatCacheBytes = ptr.To(requirement.metadataStatCacheBytes)
+		logEntry.InputSignals.BucketTotalObjects = ptr.To(config.pvDetails.numObjects)
+		logEntry.InputSignals.BucketTotalDataSizeBytes = ptr.To(config.pvDetails.totalSizeBytes)
+		logEntry.InputSignals.BucketHNSEnabled = ptr.To(config.pvDetails.hnsEnabled)
+	} else {
+		logEntry.InputSignals.ProfileVolumeCount = ptr.To(config.podDetails.profileVolumeCount)
+	}
 	logEntry.InputSignals.BucketLocationType = config.pvDetails.locationType
-	logEntry.InputSignals.BucketHNSEnabled = config.pvDetails.hnsEnabled
 
 	// Node signals
 	logEntry.InputSignals.NodeType = config.nodeDetails.nodeType
@@ -400,12 +477,9 @@ func logRecommendation(config *ProfileConfig, recommendation *recommendation, re
 	// Marshal the struct to JSON
 	logJSON, err := json.Marshal(logEntry)
 	if err != nil {
-		return fmt.Errorf("failed to marshal json: %v", err)
+		return nil, fmt.Errorf("failed to marshal json: %v", err)
 	}
-	// Print the JSON string directly to standard output so it doesn't look like an error.
-	// This bypasses klog's prefixing and one-line formatting.
-	fmt.Println(string(logJSON))
-	return nil
+	return logJSON, nil
 }
 
 // MergeRecommendedMountOptionsOnMissingKeys generates a slice of recommended mount options for GCS FUSE based on the provided ProfileConfig.
@@ -539,6 +613,10 @@ func recommendCacheConfigs(mountOptions []string, config *ProfileConfig) (*recom
 		return nil, status.Errorf(codes.Internal, "podDetails cannot be nil")
 	}
 
+	if config.useProfilesV2 {
+		return recommendCacheConfigsV2(mountOptions, config)
+	}
+
 	recommendation := &recommendation{}
 
 	// Calculate metadata and file cache requirements.
@@ -568,6 +646,44 @@ func recommendCacheConfigs(mountOptions []string, config *ProfileConfig) (*recom
 	return recommendation, nil
 }
 
+// recommendCacheConfigsV2 calculates recommended cache sizes and medium from node and container resources without bucket scan signals.
+func recommendCacheConfigsV2(mountOptions []string, config *ProfileConfig) (*recommendation, error) {
+	recommendation := &recommendation{}
+
+	// Calculate memory and ephemeral storage budgets.
+	memoryBudget, ephemeralStorageBudget := calculateResourceBudgets(config)
+	if config.podDetails.profileVolumeCount > 1 {
+		memoryBudget /= int64(config.podDetails.profileVolumeCount)
+	}
+
+	// Parse cache overrides found either in the customer's mount options or profile StorageClass.
+	cacheOverrides, err := config.parseCacheOverrides(mountOptions)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse cache overrides: %v", err)
+	}
+
+	// Size metadata stat cache to the divided memory budget unless overridden.
+	recommendation.metadataStatCacheBytes, _ = recommendMetadataStatCacheSize(config, memoryBudget, memoryBudget, cacheOverrides.metadataStatCacheBytes)
+
+	// Size file cache from the ephemeral storage budget only (memory budget is 0 so RAM is never selected).
+	recommendation.fileCacheBytes, recommendation.fileCacheMedium, err = recommendFileCacheSizeAndMedium(ephemeralStorageBudget, cacheOverrides.fileCacheBytes, config, 0, ephemeralStorageBudget)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to recommend file cache: %v", err)
+	}
+
+	// Disable local SSD file cache when the bucket location type is unknown or zonal.
+	if loc := config.pvDetails.locationType; recommendation.fileCacheMedium == util.MediumLSSD && (loc == "" || isZonalBucket(loc)) {
+		klog.Infof("Bucket location type is %q for PV %q and Pod %s/%s, disabling file cache.", loc, config.pvDetails.name, config.podDetails.namespace, config.podDetails.name)
+		recommendation.fileCacheBytes = 0
+		recommendation.fileCacheMedium = ""
+	}
+
+	if err := logRecommendation(config, recommendation, &cacheRequirements{}, cacheOverrides, memoryBudget, ephemeralStorageBudget); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to log recommendation: %v", err)
+	}
+	return recommendation, nil
+}
+
 // recommendFileCacheSizeAndMedium determines the optimal file cache size and medium.
 // It iterates through a prioritized list of storage mediums (e.g., RAM, LSSD) based on the `config.nodeDetails.nodeType`.
 // For each medium, it checks if the `cacheRequirements.fileCacheBytes` can be satisfied within the provided
@@ -592,6 +708,10 @@ func recommendFileCacheSizeAndMedium(required int64, override *int64, config *Pr
 	// Determine priority list & perform node type specific checks
 	priorityList, found := config.scDetails.fileCacheMediumPriority[config.nodeDetails.nodeType]
 	if !found {
+		if config.useProfilesV2 {
+			klog.V(6).Infof("No file cache medium priority list found for node type %q, disabling file cache.", config.nodeDetails.nodeType)
+			return 0, "", nil
+		}
 		return 0, "", fmt.Errorf("no file cache medium priority list found for node type %q", config.nodeDetails.nodeType)
 	}
 	klog.V(6).Infof("Using file cache medium priority list for node type %q: %v", config.nodeDetails.nodeType, priorityList)
@@ -612,6 +732,10 @@ func recommendFileCacheSizeAndMedium(required int64, override *int64, config *Pr
 			}
 		case util.MediumLSSD:
 			if config.nodeDetails.nodeType == nodeTypeTPU {
+				if config.useProfilesV2 {
+					klog.Warningf("Medium %q on node type %q is not supported, skipping medium.", medium, config.nodeDetails.nodeType)
+					break
+				}
 				// The customer may have accidentally put LSSD in the priority list for TPU. Fallback to RAM, since it's the only option.
 				klog.Warningf("Medium %q on node type %q is not supported, but was found in priority list %v. Falling back to RAM.", medium, config.nodeDetails.nodeType, priorityList)
 				if required <= memoryBudget {
@@ -843,6 +967,20 @@ func buildPodDetails(isInitContainer bool, containerName string, pod *corev1.Pod
 	}, nil
 }
 
+// parseProfileVolumeCount extracts the positive profile volume count from the Pod annotation, returning 1 if unset or invalid.
+func parseProfileVolumeCount(pod *corev1.Pod) int {
+	countStr, ok := pod.Annotations[webhook.GcsfuseProfileVolumeCountAnnotation]
+	if !ok {
+		return 1
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(countStr))
+	if err != nil || count <= 0 {
+		klog.Warningf("Ignoring invalid %q annotation value %q on pod %s/%s, defaulting profile volume count to 1", webhook.GcsfuseProfileVolumeCountAnnotation, countStr, pod.Namespace, pod.Name)
+		return 1
+	}
+	return count
+}
+
 // getContainerResourceRequirements finds the corev1.ResourceRequirements for the
 // specified container within a provided corev1.Pod.
 // The isInitContainer flag dictates whether the function searches in pod.Spec.InitContainers
@@ -868,19 +1006,22 @@ func getContainerResourceRequirements(isInitContainer bool, pod *corev1.Pod, con
 }
 
 // buildSCDetails extracts and validates parameters from a Kubernetes StorageClass
-// object to populate and return an scDetails struct. It checks for required
-// parameters like fuseFileCacheMediumPriority, parses
-// numeric factors, and selects volume attributes based on the provided
-// volumeAttributeKeys. An error is returned if any mandatory parameters are
-// missing or invalid.
-func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}) (*scDetails, error) {
+// object to populate and return an scDetails struct. It parses optional
+// parameters like fuseFileCacheMediumPriority and numeric factors, and selects
+// volume attributes based on the provided volumeAttributeKeys. An error is
+// returned if Parameters is nil or any parameter value is invalid.
+func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}, useV2 bool) (*scDetails, error) {
 	// Get the parameters from the StorageClass.
 	if sc.Parameters == nil {
 		return nil, fmt.Errorf("sc %q found but has nil Parameters map", sc.Name)
 	}
 
 	// Get the file cache medium priority from the StorageClass parameters (or PV override).
-	fileCacheMediumPriorityStr := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey, fuseFileCacheMediumPriorityDefaultVal)
+	defaultPriority := fuseFileCacheMediumPriorityDefaultVal
+	if useV2 {
+		defaultPriority = ""
+	}
+	fileCacheMediumPriorityStr := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey, defaultPriority)
 	fileCacheMediumPriority, err := parseFileCacheMediumPriority(fileCacheMediumPriorityStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuseFileCacheMediumPriority in StorageClass %q: %v", sc.Name, err)
