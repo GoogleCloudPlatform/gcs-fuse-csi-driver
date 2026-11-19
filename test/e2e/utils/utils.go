@@ -71,7 +71,7 @@ var (
 
 	// Use release branch for corresponding gcsfuse version. This ensures we
 	// can pick up test fixes without requiring a new gcsfuse release.
-	gcsfuseReleaseBranchFormat = "v%v.%v.%v_release"
+	gcsfuseReleaseBranchFormat = "v%v.%v_release"
 	configMapBackoff           = wait.Backoff{
 		Duration: 200 * time.Millisecond,
 		Factor:   2.0,
@@ -126,7 +126,7 @@ func GCSFuseBranch(gcsfuseVersionStr string) (*version.Version, string) {
 		return nil, MasterBranchName
 	}
 
-	return v, fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor(), v.Patch())
+	return v, fmt.Sprintf(gcsfuseReleaseBranchFormat, v.Major(), v.Minor())
 }
 
 type TestPackage struct {

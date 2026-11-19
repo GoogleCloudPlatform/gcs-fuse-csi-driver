@@ -123,7 +123,7 @@ make build-image-and-push-multi-arch \
 
 When `BUILD_GCSFUSE_FROM_SOURCE=true` is set along with `GCSFUSE_TAG` (e.g., `GCSFUSE_TAG=v3.7.0`), the testing framework performs two key actions:
 1. **Driver Image Build**: It builds the driver image using the GCSFuse binary from the specified tag.
-2. **E2E Test Execution**: During E2E testing, the framework dynamically fetches the `gcsfuse` version from the running pod and automatically checks out the corresponding release branch (e.g., `v3.7.0_release`) from the GCSFuse repository. This ensures that the integration tests executed exactly match the GCSFuse version running inside the driver.
+2. **E2E Test Execution**: During E2E testing, the framework dynamically fetches the `gcsfuse` version from the running pod and automatically checks out the corresponding release branch (e.g., `v3.7_release`) from the GCSFuse repository. This ensures that the integration tests executed exactly match the GCSFuse version running inside the driver.
 
 To run the E2E tests using a customized release branch, execute:
 

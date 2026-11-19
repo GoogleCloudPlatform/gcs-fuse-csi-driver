@@ -44,7 +44,7 @@ func TestGCSFuseBranch(t *testing.T) {
 			{
 				name:              "should return branch for not valid GCSFuse version v3.3.0-gke.1",
 				gcsfuseVersionStr: "3.3.0-gke.1",
-				expectedBranch:    "v3.3.0_release",
+				expectedBranch:    "v3.3_release",
 				expectedVersion:   version.MustParseSemantic("3.3.0-gke.1"),
 			},
 		}
