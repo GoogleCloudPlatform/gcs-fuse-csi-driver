@@ -361,11 +361,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return s.NodePublishVolumeForSharedMount(ctx, req)
 	}
 
-	// Rate limit NodePublishVolume calls to avoid kube API throttling for sidecar mode.
-	if err := s.limiter.Wait(ctx); err != nil {
-		return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
-	}
-
 	// Get the Pod object.
 	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
@@ -433,6 +428,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	storageEndpoint := storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain)
 	if vs != nil && !args.skipCSIBucketAccessCheck {
 		if !vs.BucketAccessCheckPassed {
+			// Rate limit the bucket access check. It is the only part of this path that calls remote APIs
+			// (the Kubernetes API for the ServiceAccount and its token, STS and GCS).
+			// The result is kept in memory per target path, so republish calls skip the check once it has passed and do not wait here.
+			if err := s.limiter.Wait(ctx); err != nil {
+				return nil, status.Errorf(codes.Aborted, "NodePublishVolume request is aborted due to rate limit: %v", err)
+			}
 			storageService, err := s.prepareStorageService(ctx, vc, storageEndpoint)
 			if err != nil {
 				return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
