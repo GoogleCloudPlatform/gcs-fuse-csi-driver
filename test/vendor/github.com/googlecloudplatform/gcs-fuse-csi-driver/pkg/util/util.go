@@ -75,6 +75,7 @@ const (
 	GCSFuseCsiDriverName                = "gcsfuse.csi.storage.gke.io"
 	GCSFuseNumaNodeArg                  = "gcs-fuse-numa-node"
 	GCSFuseAppNameArg                   = "app-name"
+	GCSFuseOnlyDirArg                   = "only-dir"
 	CustomEndpointConfigFileFlag        = "gcs-connection:custom-endpoint"
 	CustomEndpointCLIFlag               = "custom-endpoint"
 	EnableAutoGoMemLimitConst           = "enable-auto-gomemlimit"
@@ -455,6 +456,24 @@ func CheckForKernelReader(options []string) bool {
 		}
 	}
 	return false
+}
+
+// OnlyDirFromMountOptions returns the only-dir mount option, or "" when it is not set.
+// The flag form (only-dir=dir) overrides the config file form (only-dir:dir), as in gcsfuse.
+func OnlyDirFromMountOptions(options []string) string {
+	var flagValue, configFileValue string
+	flagSet := false
+	for _, o := range options {
+		if v, ok := strings.CutPrefix(o, GCSFuseOnlyDirArg+"="); ok {
+			flagValue, flagSet = v, true
+		} else if v, ok := strings.CutPrefix(o, GCSFuseOnlyDirArg+":"); ok {
+			configFileValue = v
+		}
+	}
+	if flagSet {
+		return flagValue
+	}
+	return configFileValue
 }
 
 // PrepareSidecarMountOptions prepares mount options specifically for sidecar mounter.

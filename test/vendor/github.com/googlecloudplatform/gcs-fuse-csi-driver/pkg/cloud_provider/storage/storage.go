@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -51,6 +52,8 @@ type ServiceBucket struct {
 	EnableUniformBucketLevelAccess bool
 	EnableHierarchicalNamespace    bool
 	EnableZB                       bool // Enable Zonal Buckets
+	// The only-dir mount option, for the GetStorageLayout bucket access check.
+	OnlyDir string
 }
 
 type Service interface {
@@ -238,13 +241,14 @@ func (service *gcsService) GetBucket(ctx context.Context, obj *ServiceBucket) (*
 // API's GetStorageLayout method which uses storage.objects.list permission.
 // If the customer hasn't set up permission to the bucket, this will return a
 // 403 error. A 404 error will be returned if the bucket doesn't exist, but
-// correct permissions are configured.
+// correct permissions are configured. With obj.OnlyDir set, the permission is
+// checked on that directory instead of the whole bucket.
 func (service *gcsService) CheckBucketExists(ctx context.Context, obj *ServiceBucket) (bool, error) {
 	// This call matches the access check GCSFuse does:
-	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/919dbde3e074ff8f6a2cc7f7b612863542a1fb90/internal/storage/storage_handle.go#L319
+	// https://github.com/GoogleCloudPlatform/gcsfuse/blob/309b01011fd8b224e128a26c714bb734cd172d72/internal/storage/storage_handle.go#L455-L465
 	req := &controlpb.GetStorageLayoutRequest{
 		Name:      fmt.Sprintf("projects/_/buckets/%s/storageLayout", obj.Name),
-		Prefix:    "",
+		Prefix:    onlyDirPrefix(obj.OnlyDir),
 		RequestId: "",
 	}
 
@@ -253,6 +257,17 @@ func (service *gcsService) CheckBucketExists(ctx context.Context, obj *ServiceBu
 		return true, nil
 	}
 	return false, err
+}
+
+// onlyDirPrefix formats only-dir the way GCSFuse does for the same call:
+// https://github.com/GoogleCloudPlatform/gcsfuse/blob/309b01011fd8b224e128a26c714bb734cd172d72/cfg/rationalize.go#L170-L177
+func onlyDirPrefix(onlyDir string) string {
+	clean := strings.TrimPrefix(path.Clean("/"+onlyDir), "/")
+	if clean == "" {
+		return ""
+	}
+
+	return clean + "/"
 }
 
 func (service *gcsService) SetIAMPolicy(ctx context.Context, obj *ServiceBucket, member, roleName string) error {

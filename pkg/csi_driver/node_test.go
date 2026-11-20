@@ -38,6 +38,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -2085,6 +2086,94 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 				Opts:   tc.expectedOptions,
 			},
 				tc.unexpectedOptions)
+		})
+	}
+}
+
+type recordingStorageServiceManager struct {
+	storage.ServiceManager
+
+	mu             sync.Mutex
+	checkedBuckets []*storage.ServiceBucket
+}
+
+func (m *recordingStorageServiceManager) SetupService(_ context.Context, _ oauth2.TokenSource, _ string) (storage.Service, error) {
+	return &recordingStorageService{manager: m}, nil
+}
+
+type recordingStorageService struct {
+	storage.Service
+
+	manager *recordingStorageServiceManager
+}
+
+func (s *recordingStorageService) CheckBucketExists(_ context.Context, obj *storage.ServiceBucket) (bool, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	s.manager.checkedBuckets = append(s.manager.checkedBuckets, obj)
+
+	return true, nil
+}
+
+func (s *recordingStorageService) Close() {}
+
+func TestNodePublishVolumeChecksBucketAccessOnOnlyDir(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name             string
+		userMountOptions string
+		expectedOnlyDir  string
+	}{
+		{
+			name:             "should check access to the whole bucket without only-dir",
+			userMountOptions: "implicit-dirs",
+			expectedOnlyDir:  "",
+		},
+		{
+			name:             "should check access to the directory of the only-dir flag",
+			userMountOptions: "implicit-dirs,only-dir=data",
+			expectedOnlyDir:  "data",
+		},
+		{
+			name:             "should check access to the directory of the only-dir config file flag",
+			userMountOptions: "implicit-dirs,only-dir:data",
+			expectedOnlyDir:  "data",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testTargetPath, cleanup := setupTestTargetPath(t)
+			defer cleanup()
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:            "test-pod",
+					VolumeContextKeyPodNamespace:       "test-ns",
+					VolumeContextKeyServiceAccountName: "test-sa",
+					VolumeContextKeyMountOptions:       tc.userMountOptions,
+				},
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
+			storageServiceManager := &recordingStorageServiceManager{}
+			driver.config.StorageServiceManager = storageServiceManager
+			ns := newNodeServer(driver, fakeMounter)
+
+			if _, err := ns.NodePublishVolume(context.TODO(), req); err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+
+			expected := []*storage.ServiceBucket{{Name: testVolumeID, OnlyDir: tc.expectedOnlyDir}}
+			if diff := cmp.Diff(expected, storageServiceManager.checkedBuckets); diff != "" {
+				t.Errorf("unexpected bucket access checks (-expected +got):\n%s", diff)
+			}
 		})
 	}
 }
