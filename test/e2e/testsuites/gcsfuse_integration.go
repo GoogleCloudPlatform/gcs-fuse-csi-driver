@@ -680,9 +680,13 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameEnableStreamingWrites:
 			finalTestCommand = baseTestCommandWithTestBucket
 		case testNameConcurrentOperations:
-			// Only run selected tests until gcsfuse team optimizes memory usage of their new sub-tests.
-			// https://github.com/GoogleCloudPlatform/gcsfuse/tree/master/tools/integration_tests/concurrent_operations
-			finalTestCommand = baseTestCommandWithTestBucket + " -run TestConcurrentListing/.*"
+			if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v3.6.0-gke.0")) {
+				finalTestCommand = baseTestCommandWithTestBucket
+			} else {
+				// Restrict concurrent_operations to TestConcurrentListing before v3.6.0 because
+				// TestConcurrentRead used 500 MiB files and OOM-killed the volume-tester container.
+				finalTestCommand = baseTestCommandWithTestBucket + " -run TestConcurrentListing/.*"
+			}
 		case testNameRenameDirLimit:
 			if gcsfuseTestBranch == utils.MasterBranchName || gcsfuseVersion.AtLeast(version.MustParseSemantic("v2.4.1-gke.0")) {
 				finalTestCommand = baseTestCommandWithTestBucket
