@@ -596,6 +596,10 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(gcsFuseSidecarImage)
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
 
+	// Drop a custom-endpoint that would send this Pod's access token somewhere other
+	// than the storage endpoint of its universe.
+	args.fuseMountOptions = sanitizeCustomEndpointMountOptions(args.fuseMountOptions, storageEndpoint)
+
 	// Pass the universe-aware storage endpoint if the sidecar version supports it.
 	if util.IsSidecarVersionSupportedForGivenFeature(gcsFuseSidecarImage, StorageEndpointInternalMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		args.fuseMountOptions = overrideStorageEndpointInternal(args.fuseMountOptions, storageEndpoint)
@@ -1271,6 +1275,10 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 
 	disallowedFlags := s.driver.generateDisallowedFlagsMap(podImage)
 	args.fuseMountOptions = removeDisallowedMountOptions(args.fuseMountOptions, disallowedFlags)
+
+	// Drop a custom-endpoint that would send this Pod's access token somewhere other
+	// than the storage endpoint of its universe.
+	args.fuseMountOptions = sanitizeCustomEndpointMountOptions(args.fuseMountOptions, storageEndpointFromUniverseDomain(s.driver.config.UniverseDomain))
 
 	// Make the staging path.
 	klog.Infof("NodeStageVolume attempting mkdir for staging path %q", stagingPath)
