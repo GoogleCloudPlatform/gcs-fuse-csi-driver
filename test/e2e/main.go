@@ -40,7 +40,7 @@ var (
 	useGKEAutopilot                = flag.Bool("use-gke-autopilot", false, "use GKE Autopilot cluster for the tests")
 	apiEndpointOverride            = flag.String("api-endpoint-override", "https://container.googleapis.com/", "CloudSDK API endpoint override to use for the cluster environment")
 	nodeImageType                  = flag.String("node-image-type", "cos_containerd", "image type to use for the cluster")
-	istioVersion                   = flag.String("istio-version", "1.23.0", "istio version to install on the cluster")
+	istioVersion                   = flag.String("istio-version", "1.31.4", "istio version to install on the cluster")
 	gcsfuseEnableZB                = flag.Bool("gcsfuse-enable-zb", false, "use GCS Zonal Buckets for the tests")
 	gkeGcloudCommand               = flag.String("gke-gcloud-command", "gcloud", "(gke only) gcloud command used to create a cluster. Modify if you need to pass custom gcloud to create cluster.")
 	gkeGcloudArgs                  = flag.String("gke-gcloud-args", "", "(gke only) Additional arguments to custom gcloud command.")
