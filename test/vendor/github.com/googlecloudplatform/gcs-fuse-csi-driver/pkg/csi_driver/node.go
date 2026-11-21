@@ -36,6 +36,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/mod/semver"
 	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -387,6 +388,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			NodeName:            s.driver.config.NodeID,
 			IsInitContainer:     isInitContainer,
 			Pod:                 pod,
+			EnableProfilesV2:    s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableProfilesV2,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build profile config: %w", err)
@@ -439,11 +441,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			}
 			defer storageService.Close()
 
-			if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: args.bucketName}); !exist {
+			locationType, err := storageService.BucketLocationType(ctx, &storage.ServiceBucket{Name: args.bucketName})
+			if err != nil {
 				return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", args.bucketName, err)
 			}
 
 			vs.BucketAccessCheckPassed = true
+			vs.BucketLocationType = locationType
 		}
 	}
 
@@ -577,6 +581,18 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	if profilesEnabled && profile != nil {
+		if args.bucketName != "_" && profile.NeedsBucketLocationType(args.fuseMountOptions) {
+			if vs != nil && vs.BucketLocationType != "" {
+				profile.SetBucketLocationType(vs.BucketLocationType)
+			} else if locationType, err := s.bucketLocationType(ctx, pod, vc, &args, profile.MergeSCMountOptionsOnMissingKeys(args.fuseMountOptions), storageEndpoint); err != nil {
+				klog.Warningf("Failed to get bucket location type for bucket %q and Pod %s/%s: %v", args.bucketName, pod.Namespace, pod.Name, err)
+			} else {
+				profile.SetBucketLocationType(locationType)
+				if vs != nil {
+					vs.BucketLocationType = locationType
+				}
+			}
+		}
 		// Merge the recommended mount options with user's mount options if the profiles feature
 		// is enabled. This operation respects the user's mount options if they are duplicated.
 		args.fuseMountOptions, err = profile.MergeRecommendedMountOptionsOnMissingKeys(args.fuseMountOptions)
@@ -811,6 +827,50 @@ func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]st
 	}
 
 	return storageService, nil
+}
+
+// bucketLocationType looks up the bucket's location type without initial token polling.
+func (s *nodeServer) bucketLocationType(ctx context.Context, pod *corev1.Pod, vc map[string]string, args *requestArgs, mountOptions []string, storageEndpoint string) (string, error) {
+	withoutAuth := isAnonymousAccess(mountOptions)
+	var ts oauth2.TokenSource
+	if !withoutAuth {
+		ts = s.bucketLocationTokenSource(pod, vc, args)
+	}
+	storageService, err := s.storageServiceManager.SetupStorageControlService(ctx, ts, storageEndpoint, withoutAuth)
+	if err != nil {
+		return "", err
+	}
+	defer storageService.Close()
+	return storageService.BucketLocationType(ctx, &storage.ServiceBucket{
+		Name:   args.bucketName,
+		Prefix: onlyDirPrefix(mountOptions),
+	})
+}
+
+// bucketLocationTokenSource returns the Pod KSA token source, or nil to use default credentials
+// when Workload Identity is not used for the Pod.
+func (s *nodeServer) bucketLocationTokenSource(pod *corev1.Pod, vc map[string]string, args *requestArgs) oauth2.TokenSource {
+	if s.driver.config.TokenManager == nil || s.driver.config.TokenManager.GetIdentityPool() == "" || s.driver.config.TokenManager.GetIdentityProvider() == "" {
+		return nil
+	}
+	userSpecifiedIDP := args.userSpecifiedIdentityProvider
+	if userSpecifiedIDP == "" {
+		userSpecifiedIDP = vc[util.TokenServerIdentityProviderConst]
+	}
+	audience := ""
+	if pod != nil && pod.Spec.HostNetwork {
+		if !s.shouldPopulateIdentityProvider(pod, args.optInHostnetworkKSA, userSpecifiedIDP != "") {
+			return nil
+		}
+		if userSpecifiedIDP != "" {
+			if util.IsGKEIdentityProvider(userSpecifiedIDP) {
+				audience = fmt.Sprintf("identitynamespace:%s:%s", s.driver.config.TokenManager.GetIdentityPool(), userSpecifiedIDP)
+			} else {
+				audience = userSpecifiedIDP
+			}
+		}
+	}
+	return s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken], audience, false)
 }
 
 func (s *nodeServer) shouldPopulateIdentityProvider(pod *corev1.Pod, optInHnwKSA bool, userInput bool) bool {

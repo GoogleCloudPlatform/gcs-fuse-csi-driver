@@ -31,6 +31,7 @@ type VolumeStateStore struct {
 
 type VolumeState struct {
 	BucketAccessCheckPassed   bool
+	BucketLocationType        string
 	GCSFuseKernelMonitorState GCSFuseKernelParamsMonitor
 	VolumeName                string
 	MounterPodUID             string

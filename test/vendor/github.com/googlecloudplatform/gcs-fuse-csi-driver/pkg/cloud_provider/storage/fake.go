@@ -54,6 +54,10 @@ func (manager *fakeServiceManager) SetupStorageServiceForSidecar(_ context.Conte
 	return &fakeService{sm: *manager}, nil
 }
 
+func (manager *fakeServiceManager) SetupStorageControlService(_ context.Context, _ oauth2.TokenSource, _ string, _ bool) (Service, error) {
+	return &fakeService{sm: *manager}, nil
+}
+
 func NewFakeServiceManager() ServiceManager {
 	return &fakeServiceManager{createdBuckets: map[string]*ServiceBucket{}}
 }
@@ -65,6 +69,7 @@ func (service *fakeService) CreateBucket(_ context.Context, obj *ServiceBucket) 
 		Name:      obj.Name,
 		SizeBytes: obj.SizeBytes,
 		Labels:    obj.Labels,
+		EnableZB:  obj.EnableZB,
 	}
 
 	service.sm.createdBuckets[obj.Name] = sb
@@ -98,6 +103,17 @@ func (service *fakeService) CheckBucketExists(_ context.Context, obj *ServiceBuc
 	}
 
 	return false, storage.ErrBucketNotExist
+}
+
+func (service *fakeService) BucketLocationType(_ context.Context, obj *ServiceBucket) (string, error) {
+	sb, ok := service.sm.createdBuckets[obj.Name]
+	if !ok {
+		return "", storage.ErrBucketNotExist
+	}
+	if sb.EnableZB {
+		return "zone", nil
+	}
+	return "region", nil
 }
 
 func (service *fakeService) Close() {
