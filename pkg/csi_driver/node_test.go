@@ -870,6 +870,19 @@ func TestNodePublishVolumeEnableAutoGoMemLimit(t *testing.T) {
 func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 	t.Parallel()
 
+	// nonNativeIstio rewrites the fake Pod, which runs gke-gcsfuse-sidecar as a regular container, so that
+	// gke-gcsfuse-sidecar is an init container and istio-init runs after it.
+	nonNativeIstio := func(annotations map[string]string) func(*corev1.Pod) {
+		return func(pod *corev1.Pod) {
+			pod.Spec.InitContainers = []corev1.Container{
+				webhook.GetSidecarContainerSpec(webhook.FakeConfig(), nil),
+				{Name: "istio-init"},
+			}
+			pod.Spec.Containers = []corev1.Container{{Name: "app"}}
+			pod.Annotations = annotations
+		}
+	}
+
 	testCases := []struct {
 		name                     string
 		enableGrpcByDefault      bool
@@ -877,6 +890,7 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 		machineType              string
 		kubeletVersion           string
 		userMountOptions         string
+		configurePod             func(*corev1.Pod)
 		expectedOptions          []string
 		unexpectedOptions        []string
 	}{
@@ -1016,6 +1030,25 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			kubeletVersion:           "v1.37.1-gke.1552000",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true", "enable-grpc-by-default=false"},
 		},
+		{
+			name:                     "feature flag disabled, istio-init after gke-gcsfuse-sidecar without DirectPath exclusions, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      false,
+			assumeGoodSidecarVersion: true,
+			configurePod:             nonNativeIstio(nil),
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, istio-init after gke-gcsfuse-sidecar with DirectPath exclusions, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			configurePod: nonNativeIstio(map[string]string{
+				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+				"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,34.126.0.0/18,2001:4860:8040::/42",
+			}),
+			expectedOptions:   []string{"enable-grpc-by-default=true"},
+			unexpectedOptions: []string{"enable-grpc-by-default=false"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1041,6 +1074,13 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
 			fc := clientset.NewFakeClientset()
+			if tc.configurePod != nil {
+				pod, err := fc.GetPod("test-ns", "test-pod")
+				if err != nil {
+					t.Fatalf("failed to get fake pod: %v", err)
+				}
+				tc.configurePod(pod)
+			}
 			if tc.machineType != "" || tc.kubeletVersion != "" {
 				fc.CreateNode(clientset.FakeNodeConfig{
 					IsWorkloadIdentityEnabled: true,
@@ -5554,6 +5594,132 @@ func TestIsNodeSupportedForGrpcByDefault(t *testing.T) {
 	}
 }
 
+func TestIsPodSupportedForGrpcByDefault(t *testing.T) {
+	t.Parallel()
+
+	// The annotation names and values are written out, as in a Pod manifest, so that the test also checks
+	// the names and values that the driver looks for.
+	const (
+		excludePorts    = "traffic.sidecar.istio.io/excludeOutboundPorts"
+		excludeIPRanges = "traffic.sidecar.istio.io/excludeOutboundIPRanges"
+		allIPRanges     = "169.254.169.254/32,34.126.0.0/18,2001:4860:8040::/42"
+	)
+	// newPod returns a Pod with the given annotations and with init containers of the given names, in order.
+	newPod := func(annotations map[string]string, initContainers ...string) *corev1.Pod {
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "test-ns", Annotations: annotations}}
+		for _, name := range initContainers {
+			pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{Name: name})
+		}
+		return pod
+	}
+	// istioAfterSidecar returns a Pod with the given annotations on which istio-init runs after gke-gcsfuse-sidecar.
+	istioAfterSidecar := func(annotations map[string]string) *corev1.Pod {
+		return newPod(annotations, webhook.GcsFuseSidecarName, "istio-init")
+	}
+
+	testCases := []struct {
+		name string
+		pod  *corev1.Pod
+		want bool
+	}{
+		{
+			name: "pod is nil returns false",
+			pod:  nil,
+			want: false,
+		},
+		{
+			name: "gke-gcsfuse-sidecar init container without Istio returns true",
+			pod:  newPod(nil, webhook.GcsFuseSidecarName),
+			want: true,
+		},
+		{
+			name: "istio-init without gke-gcsfuse-sidecar init container returns true",
+			pod:  newPod(nil, "istio-init"),
+			want: true,
+		},
+		{
+			name: "istio-init before gke-gcsfuse-sidecar without exclusions returns true",
+			pod:  newPod(nil, "istio-init", "istio-proxy", webhook.GcsFuseSidecarName),
+			want: true,
+		},
+		{
+			name: "istio-validation of Istio CNI after gke-gcsfuse-sidecar without exclusions returns true",
+			pod:  newPod(nil, webhook.GcsFuseSidecarName, "istio-validation"),
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without exclusions returns false",
+			pod:  istioAfterSidecar(nil),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with only port 443 excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443"}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with only the IP ranges excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludeIPRanges: allIPRanges}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without the metadata server range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "34.126.0.0/18,2001:4860:8040::/42"}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without the DirectPath IPv4 range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,2001:4860:8040::/42"}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without the DirectPath IPv6 range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.0.0/18"}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with a wider range instead of the DirectPath IPv4 range returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.0.0/16,2001:4860:8040::/42"}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with 134.126.0.0/18 instead of the DirectPath IPv4 range returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,134.126.0.0/18,2001:4860:8040::/42"}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with port 8443 instead of port 443 excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "8443", excludeIPRanges: allIPRanges}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with port 4430 instead of port 443 excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "4430", excludeIPRanges: allIPRanges}),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with port 443 and the IP ranges excluded returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: allIPRanges}),
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with other entries and spaces in the exclusions returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "8080, 443", excludeIPRanges: "10.0.0.0/8, 169.254.169.254/32, 34.126.0.0/18, 2001:4860:8040::/42"}),
+			want: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isPodSupportedForGrpcByDefault(tc.pod); got != tc.want {
+				t.Errorf("isPodSupportedForGrpcByDefault() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAppendGrpcByDefaultOptions(t *testing.T) {
 	t.Parallel()
 
@@ -5577,9 +5743,16 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 		}
 	}
 
+	// istioAfterSidecarPod runs istio-init after gke-gcsfuse-sidecar and does not exclude DirectPath traffic
+	// from Istio redirection, so isPodSupportedForGrpcByDefault returns false for it.
+	istioAfterSidecarPod := &corev1.Pod{
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: webhook.GcsFuseSidecarName}, {Name: "istio-init"}}},
+	}
+
 	testCases := []struct {
 		name         string
 		features     *GCSDriverFeatureOptions
+		pod          *corev1.Pod
 		node         *corev1.Node
 		mounterImage string
 		mountOptions []string
@@ -5749,6 +5922,33 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 			mountOptions: []string{"enable-grpc-by-default"},
 			want:         []string{"enable-grpc-by-default"},
 		},
+		{
+			name:         "istio-init after gke-gcsfuse-sidecar without Istio exclusions and EnableGrpcByDefault=true appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			pod:          istioAfterSidecarPod,
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"enable-grpc-by-default=false", "ro"},
+		},
+		{
+			name:         "istio-init after gke-gcsfuse-sidecar without Istio exclusions and EnableGrpcByDefault=false appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			pod:          istioAfterSidecarPod,
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"enable-grpc-by-default=false", "ro"},
+		},
+		{
+			name:         "explicit enable-grpc-by-default=true in mountOptions is preserved when istio-init runs after gke-gcsfuse-sidecar without Istio exclusions",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			pod:          istioAfterSidecarPod,
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro", "enable-grpc-by-default=true"},
+			want:         []string{"ro", "enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -5759,7 +5959,12 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 				driver: &GCSDriver{config: &GCSDriverConfig{FeatureOptions: tc.features}},
 			}
 
-			got := ns.appendGrpcByDefaultOptions(tc.node, tc.mounterImage, tc.mountOptions)
+			// Cases that do not set a Pod run with a Pod that has no init containers.
+			pod := tc.pod
+			if pod == nil {
+				pod = &corev1.Pod{}
+			}
+			got := ns.appendGrpcByDefaultOptions(pod, tc.node, tc.mounterImage, tc.mountOptions)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("appendGrpcByDefaultOptions() = %v, want %v", got, tc.want)
 			}

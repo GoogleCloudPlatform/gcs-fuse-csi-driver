@@ -21,13 +21,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 
 	"local/test/e2e/specs"
 	"local/test/e2e/utils"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"google.golang.org/grpc/codes"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -36,6 +40,10 @@ import (
 	storageframework "k8s.io/kubernetes/test/e2e/storage/framework"
 	admissionapi "k8s.io/pod-security-admission/api"
 )
+
+// Outbound IP ranges that a Pod excludes from Istio redirection so that DirectPath gRPC traffic bypasses the
+// Istio sidecar proxy: the GCE metadata server and the DirectPath IPv4 and IPv6 ranges.
+const directPathExcludeOutboundIPRanges = "169.254.169.254/32,34.126.0.0/18,2001:4860:8040::/42"
 
 type gcsFuseCSIIstioTestSuite struct {
 	tsInfo storageframework.TestSuiteInfo
@@ -94,7 +102,8 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		framework.ExpectNoError(err, "while cleaning up")
 	}
 
-	testGCSFuseWithIstio := func(configPrefix string, holdApplicationUntilProxyStarts, registryOnly bool) {
+	// extraChecks run on the pod after it has stored data.
+	testGCSFuseWithIstio := func(configPrefix string, holdApplicationUntilProxyStarts, registryOnly, nonNativeIstio bool, extraChecks ...func(tPod *specs.TestPod)) {
 		init(configPrefix)
 		defer cleanup()
 
@@ -102,6 +111,11 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		tPod := specs.NewTestPod(f.ClientSet, f.Namespace)
 		tPod.SetupVolume(l.volumeResource, volumeName, mountPath, false)
 		tPod.SetLabels(map[string]string{"sidecar.istio.io/inject": "true"})
+
+		if nonNativeIstio {
+			// Inject istio-proxy as a regular container, so that istio-init runs after gke-gcsfuse-sidecar.
+			tPod.SetAnnotations(map[string]string{"sidecar.istio.io/nativeSidecar": "false"})
+		}
 
 		if holdApplicationUntilProxyStarts {
 			tPod.SetAnnotations(map[string]string{"proxy.istio.io/config": "{ \"holdApplicationUntilProxyStarts\": true }"})
@@ -114,14 +128,33 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		}
 
 		// When using gRPC or Zonal Buckets, Istio blocks outbound connections to GCS and causes gcsfuse to hang on mount.
-		// Excluding port 443 lets gRPC traffic bypass the Istio sidecar proxy.
+		// Excluding port 443 and the metadata server and DirectPath IP ranges lets gRPC traffic bypass the Istio sidecar proxy.
+		// These IP ranges include the metadata server range that registryOnly sets above.
 		if zbEnabled(driver) || (getClientProtocol(driver) == "grpc" && configPrefix != specs.EnableGrpcByDefaultPrefix) {
-			tPod.SetAnnotations(map[string]string{"traffic.sidecar.istio.io/excludeOutboundPorts": "443"})
+			tPod.SetAnnotations(map[string]string{
+				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+				"traffic.sidecar.istio.io/excludeOutboundIPRanges": directPathExcludeOutboundIPRanges,
+			})
 		}
 
 		ginkgo.By("Deploying the pod")
 		tPod.Create(ctx)
 		defer tPod.Cleanup(ctx)
+
+		if nonNativeIstio {
+			// gke-gcsfuse-sidecar is either an init container that comes before istio-init, or a regular container.
+			ginkgo.By("Checking that istio-init runs after gke-gcsfuse-sidecar")
+			pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(ctx, tPod.GetPodName(), metav1.GetOptions{})
+			framework.ExpectNoError(err)
+			var initContainers []string
+			for _, c := range pod.Spec.InitContainers {
+				initContainers = append(initContainers, c.Name)
+			}
+			istioInitIdx := slices.Index(initContainers, "istio-init")
+			gomega.Expect(istioInitIdx).To(gomega.BeNumerically(">=", 0), "istio-init should be an init container, init containers are %v", initContainers)
+			gomega.Expect(istioInitIdx).To(gomega.BeNumerically(">", slices.Index(initContainers, webhook.GcsFuseSidecarName)),
+				"istio-init should come after %s, init containers are %v", webhook.GcsFuseSidecarName, initContainers)
+		}
 
 		if !holdApplicationUntilProxyStarts {
 			ginkgo.By("Checking that the pod has failed container error")
@@ -134,18 +167,22 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		ginkgo.By("Checking that the pod command exits with no error")
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("mount | grep %v | grep rw,", mountPath))
 		tPod.VerifyExecInPodSucceed(f, specs.TesterContainerName, fmt.Sprintf("echo 'hello world' > %v/data && grep 'hello world' %v/data", mountPath, mountPath))
+
+		for _, check := range extraChecks {
+			check(tPod)
+		}
 	}
 
-	// For gRPC, this test covers the case where the user explicitly sets client-protocol=grpc and
-	// traffic.sidecar.istio.io/excludeOutboundPorts: "443".
+	// For gRPC, this test covers the case where the user explicitly sets client-protocol=grpc and excludes
+	// port 443 and the metadata server and DirectPath IP ranges from Istio redirection.
 	ginkgo.It("should store data with istio injected at index 0", func() {
-		testGCSFuseWithIstio("", true, false)
+		testGCSFuseWithIstio("", true, false, false)
 	})
 	ginkgo.It("[metadata prefetch] should store data with istio injected at index 0", func() {
 		if !supportsNativeSidecar {
 			e2eskipper.Skipf("skip when native sidecar is not supported")
 		}
-		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, false)
+		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, false, false)
 	})
 
 	ginkgo.It("should store data with istio and fallback to http1 when grpc is enabled by default and excludeOutboundPorts is not set", func() {
@@ -153,21 +190,52 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 			e2eskipper.Skipf("skip when client-protocol is not grpc")
 		}
 		skipIfEnableGrpcByDefaultNotSupported()
-		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, false)
+		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, false, false)
 	})
 
 	ginkgo.It("[flaky] should store data with istio injected at the last index", func() {
-		testGCSFuseWithIstio("", false, false)
+		testGCSFuseWithIstio("", false, false, false)
 	})
 
 	ginkgo.It("should store data with istio registry only outbound traffic policy mode", func() {
-		testGCSFuseWithIstio("", true, true)
+		testGCSFuseWithIstio("", true, true, false)
 	})
 	ginkgo.It("[metadata prefetch] should store data with istio registry only outbound traffic policy mode", func() {
 		if !supportsNativeSidecar {
 			e2eskipper.Skipf("skip when native sidecar is not supported")
 		}
-		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, true)
+		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, true, false)
+	})
+
+	// These tests inject Istio without native sidecars, so that istio-init runs after gke-gcsfuse-sidecar.
+	ginkgo.It("should store data with non-native istio sidecar", func() {
+		testGCSFuseWithIstio("", true, false, true)
+	})
+	ginkgo.It("should store data with non-native istio sidecar in registry only outbound traffic policy mode", func() {
+		testGCSFuseWithIstio("", true, true, true)
+	})
+
+	// This test covers the case where gRPC is enabled by default, istio-init runs after gke-gcsfuse-sidecar, and the
+	// Pod does not exclude DirectPath traffic from Istio redirection. The driver then passes
+	// enable-grpc-by-default=false to gcsfuse.
+	ginkgo.It("should pass --enable-grpc-by-default=false from driver to gcsfuse and store data with non-native istio sidecar", func() {
+		if getClientProtocol(driver) != "grpc" {
+			e2eskipper.Skipf("skip when client-protocol is not grpc")
+		}
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip with Zonal Buckets, where the Pod excludes DirectPath traffic from Istio redirection")
+		}
+		if !supportsNativeSidecar {
+			e2eskipper.Skipf("skip when native sidecar is not supported")
+		}
+		skipIfEnableGrpcByDefaultNotSupported()
+		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, false, true, func(tPod *specs.TestPod) {
+			ginkgo.By("Checking that the driver passed --enable-grpc-by-default=false to gcsfuse")
+			stdout, err := tPod.GetSidecarLogs()
+			framework.ExpectNoError(err)
+			gomega.Expect(stdout).To(gomega.ContainSubstring("--enable-grpc-by-default=false"))
+			gomega.Expect(stdout).NotTo(gomega.ContainSubstring("--enable-grpc-by-default=true"))
+		})
 	})
 
 	ginkgo.It("[flaky] should fail with istio registry only outbound traffic policy mode missing Pod annotation", func() {
