@@ -146,7 +146,11 @@ func (c *Clientset) ConfigureNodeLister(ctx context.Context, nodeName string) {
 			newAnnotations[GkeAppliedNodeLabelsAnnotationKey] = appliedLabelsStr
 		}
 
-		nodeObj.Spec = corev1.NodeSpec{}
+		nodeObj.Spec = corev1.NodeSpec{
+			// Used to check whether pods on the node are IPv4-only when validating Istio DirectPath IP exclusions.
+			PodCIDR:  nodeObj.Spec.PodCIDR,
+			PodCIDRs: nodeObj.Spec.PodCIDRs,
+		}
 		nodeObj.Status = newStatus
 		nodeObj.ObjectMeta.Annotations = newAnnotations
 		nodeObj.ObjectMeta.Labels = newLabels

@@ -56,6 +56,11 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/proto/mounter"
 )
 
+const (
+	testIPv4PodCIDR = "10.88.0.0/24"
+	testIPv6PodCIDR = "fd20::/112"
+)
+
 var testVolumeCapability = &csi.VolumeCapability{
 	AccessType: &csi.VolumeCapability_Mount{
 		Mount: &csi.VolumeCapability_MountVolume{},
@@ -870,13 +875,28 @@ func TestNodePublishVolumeEnableAutoGoMemLimit(t *testing.T) {
 func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 	t.Parallel()
 
+	// nonNativeIstio rewrites the fake Pod, which runs gke-gcsfuse-sidecar as a regular container, so that
+	// gke-gcsfuse-sidecar is an init container and istio-init runs after it.
+	nonNativeIstio := func(annotations map[string]string) func(*corev1.Pod) {
+		return func(pod *corev1.Pod) {
+			pod.Spec.InitContainers = []corev1.Container{
+				webhook.GetSidecarContainerSpec(webhook.FakeConfig(), nil),
+				{Name: "istio-init"},
+			}
+			pod.Spec.Containers = []corev1.Container{{Name: "app"}}
+			pod.Annotations = annotations
+		}
+	}
+
 	testCases := []struct {
 		name                     string
 		enableGrpcByDefault      bool
 		assumeGoodSidecarVersion bool
 		machineType              string
 		kubeletVersion           string
+		podCIDRs                 []string
 		userMountOptions         string
+		configurePod             func(*corev1.Pod)
 		expectedOptions          []string
 		unexpectedOptions        []string
 	}{
@@ -1016,6 +1036,49 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			kubeletVersion:           "v1.37.1-gke.1552000",
 			unexpectedOptions:        []string{"enable-grpc-by-default=true", "enable-grpc-by-default=false"},
 		},
+		{
+			name:                     "feature flag disabled, istio-init after gke-gcsfuse-sidecar without DirectPath exclusions, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      false,
+			assumeGoodSidecarVersion: true,
+			configurePod:             nonNativeIstio(nil),
+			expectedOptions:          []string{"enable-grpc-by-default=false"},
+			unexpectedOptions:        []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:                     "feature flag enabled, istio-init after gke-gcsfuse-sidecar with DirectPath exclusions, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			configurePod: nonNativeIstio(map[string]string{
+				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+				"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,34.126.0.0/18,2001:4860:8040::/42",
+			}),
+			expectedOptions:   []string{"enable-grpc-by-default=true"},
+			unexpectedOptions: []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:                     "feature flag enabled, istio-init after gke-gcsfuse-sidecar on IPv4-only node with wider IPv4 exclusion and no IPv6 exclusion, expect enable-grpc-by-default=true",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			podCIDRs:                 []string{testIPv4PodCIDR},
+			configurePod: nonNativeIstio(map[string]string{
+				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+				"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,34.126.0.0/16",
+			}),
+			expectedOptions:   []string{"enable-grpc-by-default=true"},
+			unexpectedOptions: []string{"enable-grpc-by-default=false"},
+		},
+		{
+			name:                     "feature flag enabled, istio-init after gke-gcsfuse-sidecar on dual-stack node without IPv6 exclusion, expect enable-grpc-by-default=false",
+			enableGrpcByDefault:      true,
+			assumeGoodSidecarVersion: true,
+			podCIDRs:                 []string{testIPv4PodCIDR, testIPv6PodCIDR},
+			configurePod: nonNativeIstio(map[string]string{
+				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+				"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,34.126.0.0/18",
+			}),
+			expectedOptions:   []string{"enable-grpc-by-default=false"},
+			unexpectedOptions: []string{"enable-grpc-by-default=true"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1041,11 +1104,19 @@ func TestNodePublishVolumeEnableGrpcByDefault(t *testing.T) {
 			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
 
 			fc := clientset.NewFakeClientset()
-			if tc.machineType != "" || tc.kubeletVersion != "" {
+			if tc.configurePod != nil {
+				pod, err := fc.GetPod("test-ns", "test-pod")
+				if err != nil {
+					t.Fatalf("failed to get fake pod: %v", err)
+				}
+				tc.configurePod(pod)
+			}
+			if tc.machineType != "" || tc.kubeletVersion != "" || len(tc.podCIDRs) > 0 {
 				fc.CreateNode(clientset.FakeNodeConfig{
 					IsWorkloadIdentityEnabled: true,
 					MachineType:               tc.machineType,
 					KubeletVersion:            tc.kubeletVersion,
+					PodCIDRs:                  tc.podCIDRs,
 				})
 			}
 
@@ -5554,6 +5625,277 @@ func TestIsNodeSupportedForGrpcByDefault(t *testing.T) {
 	}
 }
 
+func TestIsPodSupportedForGrpcByDefault(t *testing.T) {
+	t.Parallel()
+
+	// The annotation names and values are written out, as in a Pod manifest, so that the test also checks
+	// the names and values that the driver looks for.
+	const (
+		excludePorts    = "traffic.sidecar.istio.io/excludeOutboundPorts"
+		excludeIPRanges = "traffic.sidecar.istio.io/excludeOutboundIPRanges"
+		ipv4Ranges      = "169.254.169.254/32,34.126.0.0/18"
+		allIPRanges     = "169.254.169.254/32,34.126.0.0/18,2001:4860:8040::/42"
+	)
+	// newPod returns a Pod with the given annotations and with init containers of the given names, in order.
+	newPod := func(annotations map[string]string, initContainers ...string) *corev1.Pod {
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "test-ns", Annotations: annotations}}
+		for _, name := range initContainers {
+			pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{Name: name})
+		}
+		return pod
+	}
+	// istioAfterSidecar returns a Pod with the given annotations on which istio-init runs after gke-gcsfuse-sidecar.
+	istioAfterSidecar := func(annotations map[string]string) *corev1.Pod {
+		return newPod(annotations, webhook.GcsFuseSidecarName, "istio-init")
+	}
+	hostNetworkIstioAfterSidecar := func(annotations map[string]string) *corev1.Pod {
+		pod := istioAfterSidecar(annotations)
+		pod.Spec.HostNetwork = true
+
+		return pod
+	}
+	newNodeWithCIDRs := func(podCIDRs ...string) *corev1.Node {
+		return &corev1.Node{Spec: corev1.NodeSpec{PodCIDRs: podCIDRs}}
+	}
+	ipv4Node := newNodeWithCIDRs(testIPv4PodCIDR)
+	dualStackNode := newNodeWithCIDRs(testIPv4PodCIDR, "2600:1900:4000:1::/112")
+	ipv6OnlyNode := newNodeWithCIDRs(testIPv6PodCIDR)
+
+	testCases := []struct {
+		name string
+		pod  *corev1.Pod
+		node *corev1.Node
+		want bool
+	}{
+		{
+			name: "pod is nil returns false",
+			pod:  nil,
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "gke-gcsfuse-sidecar init container without Istio returns true",
+			pod:  newPod(nil, webhook.GcsFuseSidecarName),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init without gke-gcsfuse-sidecar init container returns true",
+			pod:  newPod(nil, "istio-init"),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init before gke-gcsfuse-sidecar without exclusions returns true",
+			pod:  newPod(nil, "istio-init", "istio-proxy", webhook.GcsFuseSidecarName),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-validation of Istio CNI after gke-gcsfuse-sidecar without exclusions returns true",
+			pod:  newPod(nil, webhook.GcsFuseSidecarName, "istio-validation"),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without exclusions returns false",
+			pod:  istioAfterSidecar(nil),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with only port 443 excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443"}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with only the IP ranges excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludeIPRanges: allIPRanges}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without the metadata server range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "34.126.0.0/18,2001:4860:8040::/42"}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar without the DirectPath IPv4 range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,2001:4860:8040::/42"}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on dual-stack node without the DirectPath IPv6 range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: dualStackNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on IPv6-only node without the DirectPath IPv6 range excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: ipv6OnlyNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on nil node without the DirectPath IPv6 range excluded fails closed and returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: nil,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on node with empty PodCIDRs without the DirectPath IPv6 range excluded fails closed and returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: &corev1.Node{},
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on node with unparseable PodCIDR without the DirectPath IPv6 range excluded fails closed and returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: newNodeWithCIDRs(testIPv4PodCIDR, "not-a-cidr"),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on node with IPv4-mapped IPv6 PodCIDR without the DirectPath IPv6 range excluded fails closed and returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: newNodeWithCIDRs("::ffff:10.88.0.0/120"),
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on hostNetwork pod on IPv4 node without the DirectPath IPv6 range excluded fails closed and returns false",
+			pod:  hostNetworkIstioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on hostNetwork pod on IPv4 node with all DirectPath ranges excluded returns true",
+			pod:  hostNetworkIstioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: allIPRanges}),
+			node: ipv4Node,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on IPv4-only node without the DirectPath IPv6 range excluded returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: ipv4Node,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar on node with singular IPv4 PodCIDR without the DirectPath IPv6 range excluded returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: ipv4Ranges}),
+			node: &corev1.Node{Spec: corev1.NodeSpec{PodCIDR: testIPv4PodCIDR}},
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with a wider range covering the DirectPath IPv4 range returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.0.0/16,2001:4860:8040::/42"}),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with wider ranges covering all DirectPath IPv4 and IPv6 ranges returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.0.0/16,34.0.0.0/8,2001:4860::/32"}),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with catch-all 0.0.0.0/0 and ::/0 exclusions returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "0.0.0.0/0,::/0"}),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with non-canonical IPv6 spelling and non-zero host bits in wider CIDR returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.1.5/16,2001:4860:8040:0::/42"}),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with only 0.0.0.0/0 on dual-stack node returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "0.0.0.0/0"}),
+			node: dualStackNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with narrower /19 instead of the DirectPath IPv4 /18 range returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.0.0/19,2001:4860:8040::/42"}),
+			node: dualStackNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with narrower /43 instead of the DirectPath IPv6 /42 range returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.0.0/18,2001:4860:8040::/43"}),
+			node: dualStackNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with adjacent 34.126.64.0/18 instead of 34.126.0.0/18 returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,34.126.64.0/18,2001:4860:8040::/42"}),
+			node: dualStackNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with 134.126.0.0/18 instead of the DirectPath IPv4 range returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254/32,134.126.0.0/18,2001:4860:8040::/42"}),
+			node: dualStackNode,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with wildcard * in excludeOutboundIPRanges returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "*"}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with bare IP missing prefix length returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "169.254.169.254,34.126.0.0/18"}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with port 8443 instead of port 443 excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "8443", excludeIPRanges: allIPRanges}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with port 4430 instead of port 443 excluded returns false",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "4430", excludeIPRanges: allIPRanges}),
+			node: ipv4Node,
+			want: false,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with port 443 and the IP ranges excluded returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: allIPRanges}),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with other entries and spaces in the exclusions returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "8080, 443", excludeIPRanges: "10.0.0.0/8, 169.254.169.254/32, 34.126.0.0/18, 2001:4860:8040::/42"}),
+			node: dualStackNode,
+			want: true,
+		},
+		{
+			name: "istio-init after gke-gcsfuse-sidecar with unparseable entry alongside valid DirectPath exclusions returns true",
+			pod:  istioAfterSidecar(map[string]string{excludePorts: "443", excludeIPRanges: "invalid-cidr, 169.254.169.254/32, 34.126.0.0/18, 2001:4860:8040::/42"}),
+			node: dualStackNode,
+			want: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isPodSupportedForGrpcByDefault(tc.pod, tc.node); got != tc.want {
+				t.Errorf("isPodSupportedForGrpcByDefault() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAppendGrpcByDefaultOptions(t *testing.T) {
 	t.Parallel()
 
@@ -5577,9 +5919,29 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 		}
 	}
 
+	// istioAfterSidecarPod runs istio-init after gke-gcsfuse-sidecar and does not exclude DirectPath traffic
+	// from Istio redirection, so isPodSupportedForGrpcByDefault returns false for it.
+	istioAfterSidecarPod := &corev1.Pod{
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: webhook.GcsFuseSidecarName}, {Name: "istio-init"}}},
+	}
+	istioIPv4ExclusionsPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+				"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,34.126.0.0/18",
+			},
+		},
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: webhook.GcsFuseSidecarName}, {Name: "istio-init"}}},
+	}
+	ipv4OnlyNode := newNode("n2-standard-8", "v1.37.1-gke.1552000")
+	ipv4OnlyNode.Spec.PodCIDRs = []string{testIPv4PodCIDR}
+	dualStackNode := newNode("n2-standard-8", "v1.37.1-gke.1552000")
+	dualStackNode.Spec.PodCIDRs = []string{testIPv4PodCIDR, testIPv6PodCIDR}
+
 	testCases := []struct {
 		name         string
 		features     *GCSDriverFeatureOptions
+		pod          *corev1.Pod
 		node         *corev1.Node
 		mounterImage string
 		mountOptions []string
@@ -5749,6 +6111,50 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 			mountOptions: []string{"enable-grpc-by-default"},
 			want:         []string{"enable-grpc-by-default"},
 		},
+		{
+			name:         "istio-init after gke-gcsfuse-sidecar without Istio exclusions and EnableGrpcByDefault=true appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			pod:          istioAfterSidecarPod,
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"enable-grpc-by-default=false", "ro"},
+		},
+		{
+			name:         "istio-init after gke-gcsfuse-sidecar without Istio exclusions and EnableGrpcByDefault=false appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: false},
+			pod:          istioAfterSidecarPod,
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"enable-grpc-by-default=false", "ro"},
+		},
+		{
+			name:         "explicit enable-grpc-by-default=true in mountOptions is preserved when istio-init runs after gke-gcsfuse-sidecar without Istio exclusions",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			pod:          istioAfterSidecarPod,
+			node:         newNode("n2-standard-8", "v1.37.1-gke.1552000"),
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro", "enable-grpc-by-default=true"},
+			want:         []string{"ro", "enable-grpc-by-default=true"},
+		},
+		{
+			name:         "istio-init after gke-gcsfuse-sidecar with IPv4 DirectPath exclusions on IPv4-only node appends enable-grpc-by-default=true",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			pod:          istioIPv4ExclusionsPod,
+			node:         ipv4OnlyNode,
+			mounterImage: supportedImage,
+			want:         []string{"enable-grpc-by-default=true"},
+		},
+		{
+			name:         "istio-init after gke-gcsfuse-sidecar with only IPv4 DirectPath exclusions on dual-stack node appends enable-grpc-by-default=false",
+			features:     &GCSDriverFeatureOptions{EnableGrpcByDefault: true},
+			pod:          istioIPv4ExclusionsPod,
+			node:         dualStackNode,
+			mounterImage: supportedImage,
+			mountOptions: []string{"ro"},
+			want:         []string{"enable-grpc-by-default=false", "ro"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -5759,7 +6165,12 @@ func TestAppendGrpcByDefaultOptions(t *testing.T) {
 				driver: &GCSDriver{config: &GCSDriverConfig{FeatureOptions: tc.features}},
 			}
 
-			got := ns.appendGrpcByDefaultOptions(tc.node, tc.mounterImage, tc.mountOptions)
+			// Cases that do not set a Pod run with a Pod that has no init containers.
+			pod := tc.pod
+			if pod == nil {
+				pod = &corev1.Pod{}
+			}
+			got := ns.appendGrpcByDefaultOptions(pod, tc.node, tc.mounterImage, tc.mountOptions)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("appendGrpcByDefaultOptions() = %v, want %v", got, tc.want)
 			}

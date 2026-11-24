@@ -19,6 +19,7 @@ package driver
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,6 +74,12 @@ const (
 	// and hardware GRO/LRO offloads are enabled.
 	tpuV6eMachineTypePrefix = "ct6e-standard-"
 	gkePrereleasePrefix     = "-gke."
+	// Istio's init container that sets up iptables redirection (not injected with Istio CNI), the pod annotations
+	// that exclude outbound traffic from that redirection, and the port DirectPath gRPC needs excluded.
+	istioInitContainerName                 = "istio-init"
+	istioExcludeOutboundPortsAnnotation    = "traffic.sidecar.istio.io/excludeOutboundPorts"
+	istioExcludeOutboundIPRangesAnnotation = "traffic.sidecar.istio.io/excludeOutboundIPRanges"
+	directPathHTTPSPort                    = "443"
 )
 
 // Minimum GKE nodepool versions required to enable gRPC by default on TPU v6e nodes per minor release.
@@ -84,6 +91,22 @@ var minGKEVersionByMinorForTPUv6e = map[string]string{
 	"v1.36": "v1.36.0-gke.4681000",
 	"v1.37": "v1.37.1-gke.1552000",
 }
+
+// Outbound IP ranges that a pod must exclude from Istio redirection, in addition to port 443, to keep
+// DirectPath gRPC working when istio-init runs after gke-gcsfuse-sidecar: the GCE metadata server and
+// the DirectPath IPv4 and IPv6 ranges listed in https://cloud.google.com/storage/docs/direct-connectivity.
+// On IPv4-only pods, istio-init does not program ip6tables rules, so only the IPv4 ranges are required.
+var (
+	directPathIPv4ExcludeRanges = []netip.Prefix{
+		netip.MustParsePrefix("169.254.169.254/32"),
+		netip.MustParsePrefix("34.126.0.0/18"),
+	}
+	directPathDualStackExcludeRanges = []netip.Prefix{
+		netip.MustParsePrefix("169.254.169.254/32"),
+		netip.MustParsePrefix("34.126.0.0/18"),
+		netip.MustParsePrefix("2001:4860:8040::/42"),
+	}
+)
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
 type nodeServer struct {
@@ -585,7 +608,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 	}
 
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, gcsFuseSidecarImage, args.fuseMountOptions)
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(pod, node, gcsFuseSidecarImage, args.fuseMountOptions)
 
 	// Pass kernel params file flag to GCSFuse iff GCSFuse Kernel Params feature is supported.
 	if s.isGcsFuseKernelParamsFeatureSupported(gcsFuseSidecarImage, args.bucketName) {
@@ -959,13 +982,16 @@ func (s *nodeServer) appendAutoGoMemLimitOptions(mounterImage string, mountOptio
 // mount option when supported by the sidecar container image, unless already
 // specified in mountOptions:
 //   - If the node does not support gRPC by default (e.g., TPU v6e node running an
-//     unsupported GKE nodepool version, or missing machine-type label), it appends
-//     enable-grpc-by-default=false so GCSFuse uses HTTP/1.
+//     unsupported GKE nodepool version, or missing machine-type label), or if the pod
+//     runs non-native Istio (istio-init after gke-gcsfuse-sidecar) without the required
+//     DirectPath outbound exclusions, it appends enable-grpc-by-default=false so GCSFuse
+//     uses HTTP/1.
 //   - If EnableGrpcByDefault is true in driver options (e.g., new GKE clusters),
 //     it appends enable-grpc-by-default=true so GCSFuse uses gRPC across all VM types.
-//   - Otherwise (existing or OSS cluster with EnableGrpcByDefault=false on a supported node),
-//     it returns mount options unmodified so GCSFuse applies its machine-type optimization.
-func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage string, mountOptions []string) []string {
+//   - Otherwise (existing or OSS cluster with EnableGrpcByDefault=false on a supported node
+//     and pod), it returns mount options unmodified so GCSFuse applies its machine-type
+//     optimization.
+func (s *nodeServer) appendGrpcByDefaultOptions(pod *corev1.Pod, node *corev1.Node, mounterImage string, mountOptions []string) []string {
 	if s.driver.config.FeatureOptions == nil ||
 		!util.IsSidecarVersionSupportedForGivenFeature(mounterImage, SidecarGrpcByDefaultMinVersion, s.driver.config.AssumeGoodSidecarVersion) {
 		return mountOptions
@@ -975,16 +1001,136 @@ func (s *nodeServer) appendGrpcByDefaultOptions(node *corev1.Node, mounterImage 
 			return mountOptions
 		}
 	}
-	// Unsupported ct6e-* node (or missing machine-type label) on any cluster (new, existing, or OSS) -> pass enable-grpc-by-default=false
-	if !s.isNodeSupportedForGrpcByDefault(node) {
+	// Unsupported ct6e-* node (or missing machine-type label) or non-native Istio pod missing DirectPath exclusions
+	// on any cluster (new, existing, or OSS) -> pass enable-grpc-by-default=false
+	if !s.isNodeSupportedForGrpcByDefault(node) || !isPodSupportedForGrpcByDefault(pod, node) {
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
 	}
-	// Supported node on a new cluster (--enable-grpc-by-default=true) -> pass enable-grpc-by-default=true
+	// Supported node and pod on a new cluster (--enable-grpc-by-default=true) -> pass enable-grpc-by-default=true
 	if s.driver.config.FeatureOptions.EnableGrpcByDefault {
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=true"})
 	}
-	// Supported node on an existing or OSS cluster (--enable-grpc-by-default=false) -> leave unset so GCSFuse runs machine optimization
+	// Supported node and pod on an existing or OSS cluster (--enable-grpc-by-default=false) -> leave unset so GCSFuse runs machine optimization
 	return mountOptions
+}
+
+// isPodSupportedForGrpcByDefault returns false if istio-init runs after gke-gcsfuse-sidecar in the pod's
+// init containers (Istio with neither native sidecars nor Istio CNI) and the pod does not exclude port 443
+// and the applicable DirectPath IP ranges (exact or wider containing CIDRs) from Istio redirection. In that
+// order gcsfuse verifies DirectPath before istio-init installs its iptables rules, so DirectPath traffic is
+// only intercepted after the mount has succeeded. On IPv4-only pods, istio-init installs no ip6tables rules,
+// so only the IPv4 ranges are required; otherwise (dual-stack, IPv6, host-network, or unknown node CIDRs)
+// it fails closed and requires the IPv6 range as well. It also fails closed (returns false) if the pod is nil.
+func isPodSupportedForGrpcByDefault(pod *corev1.Pod, node *corev1.Node) bool {
+	if pod == nil {
+		return false
+	}
+	sidecarIdx := -1
+	istioInitIdx := -1
+	for i, c := range pod.Spec.InitContainers {
+		switch c.Name {
+		case webhook.GcsFuseSidecarName:
+			sidecarIdx = i
+		case istioInitContainerName:
+			istioInitIdx = i
+		}
+	}
+	// The exclusions only matter if both are init containers and istio-init runs after gke-gcsfuse-sidecar.
+	if sidecarIdx < 0 || istioInitIdx < sidecarIdx {
+		return true
+	}
+
+	requiredRanges := directPathDualStackExcludeRanges
+	if isIPv4OnlyPod(pod, node) {
+		requiredRanges = directPathIPv4ExcludeRanges
+	}
+
+	if excludesDirectPathHTTPSPort(pod.Annotations[istioExcludeOutboundPortsAnnotation]) &&
+		excludesAllCIDRs(pod.Annotations[istioExcludeOutboundIPRangesAnnotation], requiredRanges) {
+		return true
+	}
+
+	klog.Warningf("Disabling enable-grpc-by-default for pod %s/%s: %s runs after %s and the pod does not set %s containing %q and %s covering %v",
+		pod.Namespace, pod.Name, istioInitContainerName, webhook.GcsFuseSidecarName,
+		istioExcludeOutboundPortsAnnotation, directPathHTTPSPort,
+		istioExcludeOutboundIPRangesAnnotation, requiredRanges)
+	return false
+}
+
+// isIPv4OnlyPod reports whether pod can only receive IPv4 pod addresses, in which case istio-init leaves
+// ENABLE_INBOUND_IPV6=false and installs no ip6tables rules. It fails closed (returns false) for host-network
+// pods or when the node's pod CIDRs are unavailable or unparseable.
+//
+// The answer is inferred from the node's pod CIDRs, because the pod has no IP addresses yet when its volumes
+// are mounted. That matches GKE's default networking. A CNI with its own IPAM that hands out IPv6 pod addresses
+// while the node lists only IPv4 pod CIDRs is not detected, and the IPv6 range is then not required for the pod.
+func isIPv4OnlyPod(pod *corev1.Pod, node *corev1.Node) bool {
+	if pod == nil || pod.Spec.HostNetwork || node == nil {
+		return false
+	}
+	cidrs := node.Spec.PodCIDRs
+	if len(cidrs) == 0 && node.Spec.PodCIDR != "" {
+		cidrs = []string{node.Spec.PodCIDR}
+	}
+	if len(cidrs) == 0 {
+		return false
+	}
+	for _, cidr := range cidrs {
+		p, err := netip.ParsePrefix(cidr)
+		if err != nil || !p.Addr().Is4() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// excludesDirectPathHTTPSPort reports whether the comma-separated port list contains port 443.
+func excludesDirectPathHTTPSPort(ports string) bool {
+	if ports == "" {
+		return false
+	}
+	for _, entry := range strings.Split(ports, ",") {
+		if strings.TrimSpace(entry) == directPathHTTPSPort {
+			return true
+		}
+	}
+
+	return false
+}
+
+// excludesAllCIDRs reports whether every prefix in required is covered by at least one valid CIDR
+// in the comma-separated list (an exact match or a wider containing prefix).
+func excludesAllCIDRs(cidrList string, required []netip.Prefix) bool {
+	if cidrList == "" {
+		return len(required) == 0
+	}
+	parts := strings.Split(cidrList, ",")
+	excluded := make([]netip.Prefix, 0, len(parts))
+	for _, entry := range parts {
+		p, err := netip.ParsePrefix(strings.TrimSpace(entry))
+		if err != nil {
+			continue
+		}
+		excluded = append(excluded, p)
+	}
+	for _, want := range required {
+		if !cidrSliceCovers(excluded, want) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func cidrSliceCovers(excluded []netip.Prefix, want netip.Prefix) bool {
+	for _, p := range excluded {
+		if p.Bits() <= want.Bits() && p.Contains(want.Addr()) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isNodeSupportedForGrpcByDefault checks if the node's machine type and GKE nodepool version
@@ -1256,7 +1402,7 @@ func (s *nodeServer) executeNodeStageVolume(ctx context.Context, req *csi.NodeSt
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	args.fuseMountOptions = s.appendGrpcByDefaultOptions(node, podImage, args.fuseMountOptions)
+	args.fuseMountOptions = s.appendGrpcByDefaultOptions(pod, node, podImage, args.fuseMountOptions)
 
 	// Unlike other features, we'll assume multi NIC can be used unless we know for certain we have a version mismatch.
 	canUseMultiNIC := !util.IsManagedSidecarImage(podImage) || util.IsSidecarVersionSupportedForGivenFeature(podImage, MultiNICMinVersion, s.driver.config.AssumeGoodSidecarVersion)

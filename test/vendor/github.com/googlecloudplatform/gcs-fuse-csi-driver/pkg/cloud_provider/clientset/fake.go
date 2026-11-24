@@ -37,6 +37,7 @@ type FakeNodeConfig struct {
 	IsWorkloadIdentityEnabled bool
 	MachineType               string
 	KubeletVersion            string
+	PodCIDRs                  []string
 	Status                    corev1.NodeStatus
 }
 
@@ -238,6 +239,7 @@ func (c *FakeClientset) CreateNode(nodeConfig FakeNodeConfig) {
 	if c.fakeNode.Labels[MachineTypeKey] == "" {
 		c.fakeNode.Labels[MachineTypeKey] = "e2-medium"
 	}
+	c.fakeNode.Spec.PodCIDRs = nodeConfig.PodCIDRs
 	c.fakeNode.Status = nodeConfig.Status
 	if nodeConfig.KubeletVersion != "" {
 		c.fakeNode.Status.NodeInfo.KubeletVersion = nodeConfig.KubeletVersion

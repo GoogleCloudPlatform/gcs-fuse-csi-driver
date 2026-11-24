@@ -35,17 +35,28 @@ func TestConfigurePodLister(t *testing.T) {
 
 	var wantFSGroup int64 = 1000
 	wantSA := "custom-sa"
+	wantAnnotations := map[string]string{
+		"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
+		"traffic.sidecar.istio.io/excludeOutboundIPRanges": "169.254.169.254/32,34.126.0.0/18",
+	}
+	wantInitContainerNames := []string{webhook.GcsFuseSidecarName, "istio-init"}
 
 	testPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
-			Namespace: "test-ns",
+			Name:        "test-pod",
+			Namespace:   "test-ns",
+			Annotations: wantAnnotations,
 		},
 		Spec: corev1.PodSpec{
 			NodeName:           "test-node",
+			HostNetwork:        true,
 			ServiceAccountName: wantSA,
 			SecurityContext: &corev1.PodSecurityContext{
 				FSGroup: ptr.To(wantFSGroup),
+			},
+			InitContainers: []corev1.Container{
+				{Name: webhook.GcsFuseSidecarName, Image: "sidecar-image"},
+				{Name: "istio-init", Image: "istio-proxyv2-image"},
 			},
 		},
 	}
@@ -69,6 +80,22 @@ func TestConfigurePodLister(t *testing.T) {
 
 	if gotPod.Spec.SecurityContext == nil || gotPod.Spec.SecurityContext.FSGroup == nil || *gotPod.Spec.SecurityContext.FSGroup != wantFSGroup {
 		t.Errorf("got SecurityContext %+v, want FSGroup %d", gotPod.Spec.SecurityContext, wantFSGroup)
+	}
+
+	if diff := cmp.Diff(wantAnnotations, gotPod.Annotations); diff != "" {
+		t.Errorf("got Annotations mismatch (-want +got):\n%s", diff)
+	}
+
+	if !gotPod.Spec.HostNetwork {
+		t.Errorf("got HostNetwork %v, want true", gotPod.Spec.HostNetwork)
+	}
+
+	gotInitContainerNames := make([]string, 0, len(gotPod.Spec.InitContainers))
+	for _, cont := range gotPod.Spec.InitContainers {
+		gotInitContainerNames = append(gotInitContainerNames, cont.Name)
+	}
+	if diff := cmp.Diff(wantInitContainerNames, gotInitContainerNames); diff != "" {
+		t.Errorf("got InitContainers order/names mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -152,6 +179,8 @@ func TestConfigureNodeLister(t *testing.T) {
 
 	wantMachineType := "ct6e-standard-4t"
 	wantKubeletVersion := "v1.37.1-gke.1552000"
+	wantPodCIDR := "10.88.0.0/24"
+	wantPodCIDRs := []string{"10.88.0.0/24", "fd20::/112"}
 
 	testNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -161,6 +190,11 @@ func TestConfigureNodeLister(t *testing.T) {
 				MachineTypeKey:       wantMachineType,
 				"unneeded-label":     "should-be-trimmed",
 			},
+		},
+		Spec: corev1.NodeSpec{
+			PodCIDR:    wantPodCIDR,
+			PodCIDRs:   wantPodCIDRs,
+			ProviderID: "gce://test-project/us-central1-a/test-node",
 		},
 		Status: corev1.NodeStatus{
 			NodeInfo: corev1.NodeSystemInfo{
@@ -188,6 +222,15 @@ func TestConfigureNodeLister(t *testing.T) {
 	}
 	if _, exists := gotNode.Labels["unneeded-label"]; exists {
 		t.Errorf("expected unneeded-label to be trimmed from Node labels, got %v", gotNode.Labels)
+	}
+	if got := gotNode.Spec.PodCIDR; got != wantPodCIDR {
+		t.Errorf("got PodCIDR %q, want %q", got, wantPodCIDR)
+	}
+	if diff := cmp.Diff(wantPodCIDRs, gotNode.Spec.PodCIDRs); diff != "" {
+		t.Errorf("got PodCIDRs mismatch (-want +got):\n%s", diff)
+	}
+	if got := gotNode.Spec.ProviderID; got != "" {
+		t.Errorf("expected ProviderID to be trimmed from NodeSpec, got %q", got)
 	}
 	if got := gotNode.Status.NodeInfo.KubeletVersion; got != wantKubeletVersion {
 		t.Errorf("got KubeletVersion %q, want %q", got, wantKubeletVersion)
