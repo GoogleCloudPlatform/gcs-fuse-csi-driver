@@ -103,7 +103,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 	}
 
 	// extraChecks run on the pod after it has stored data.
-	testGCSFuseWithIstio := func(configPrefix string, holdApplicationUntilProxyStarts, registryOnly, nonNativeIstio bool, extraChecks ...func(tPod *specs.TestPod)) {
+	runIstioTest := func(configPrefix string, holdApplicationUntilProxyStarts, registryOnly, nonNativeIstio, forceDirectPathExclusions bool, extraChecks ...func(tPod *specs.TestPod)) {
 		init(configPrefix)
 		defer cleanup()
 
@@ -130,7 +130,7 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		// When using gRPC or Zonal Buckets, Istio blocks outbound connections to GCS and causes gcsfuse to hang on mount.
 		// Excluding port 443 and the metadata server and DirectPath IP ranges lets gRPC traffic bypass the Istio sidecar proxy.
 		// These IP ranges include the metadata server range that registryOnly sets above.
-		if zbEnabled(driver) || (getClientProtocol(driver) == "grpc" && configPrefix != specs.EnableGrpcByDefaultPrefix) {
+		if forceDirectPathExclusions || zbEnabled(driver) || (getClientProtocol(driver) == "grpc" && configPrefix != specs.EnableGrpcByDefaultPrefix) {
 			tPod.SetAnnotations(map[string]string{
 				"traffic.sidecar.istio.io/excludeOutboundPorts":    "443",
 				"traffic.sidecar.istio.io/excludeOutboundIPRanges": directPathExcludeOutboundIPRanges,
@@ -152,7 +152,11 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 			}
 			istioInitIdx := slices.Index(initContainers, "istio-init")
 			gomega.Expect(istioInitIdx).To(gomega.BeNumerically(">=", 0), "istio-init should be an init container, init containers are %v", initContainers)
-			gomega.Expect(istioInitIdx).To(gomega.BeNumerically(">", slices.Index(initContainers, webhook.GcsFuseSidecarName)),
+			sidecarIdx := slices.Index(initContainers, webhook.GcsFuseSidecarName)
+			if supportsNativeSidecar {
+				gomega.Expect(sidecarIdx).To(gomega.BeNumerically(">=", 0), "%s should be an init container, init containers are %v", webhook.GcsFuseSidecarName, initContainers)
+			}
+			gomega.Expect(istioInitIdx).To(gomega.BeNumerically(">", sidecarIdx),
 				"istio-init should come after %s, init containers are %v", webhook.GcsFuseSidecarName, initContainers)
 		}
 
@@ -172,6 +176,9 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 			check(tPod)
 		}
 	}
+	testGCSFuseWithIstio := func(configPrefix string, holdApplicationUntilProxyStarts, registryOnly, nonNativeIstio bool, extraChecks ...func(tPod *specs.TestPod)) {
+		runIstioTest(configPrefix, holdApplicationUntilProxyStarts, registryOnly, nonNativeIstio, false, extraChecks...)
+	}
 
 	// For gRPC, this test covers the case where the user explicitly sets client-protocol=grpc and excludes
 	// port 443 and the metadata server and DirectPath IP ranges from Istio redirection.
@@ -185,12 +192,38 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 		testGCSFuseWithIstio(specs.EnableMetadataPrefetchPrefix, true, false, false)
 	})
 
-	ginkgo.It("should store data with istio and fallback to http1 when grpc is enabled by default and excludeOutboundPorts is not set", func() {
+	ginkgo.It("should store data with istio when grpc is enabled by default and DirectPath exclusions are not set", func() {
 		if getClientProtocol(driver) != "grpc" {
 			e2eskipper.Skipf("skip when client-protocol is not grpc")
 		}
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip with Zonal Buckets, where the Pod excludes DirectPath traffic from Istio redirection")
+		}
 		skipIfEnableGrpcByDefaultNotSupported()
-		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, false, false)
+		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, false, false, func(tPod *specs.TestPod) {
+			ginkgo.By("Checking that the driver passed --enable-grpc-by-default=true to gcsfuse")
+			stdout, err := tPod.GetSidecarLogs()
+			framework.ExpectNoError(err)
+			gomega.Expect(stdout).To(gomega.ContainSubstring("--enable-grpc-by-default=true"))
+			gomega.Expect(stdout).NotTo(gomega.ContainSubstring("--enable-grpc-by-default=false"))
+		})
+	})
+
+	ginkgo.It("should store data with istio registry only outbound traffic policy mode and fallback to http1 when grpc is enabled by default and DirectPath exclusions are not set", func() {
+		if getClientProtocol(driver) != "grpc" {
+			e2eskipper.Skipf("skip when client-protocol is not grpc")
+		}
+		if zbEnabled(driver) {
+			e2eskipper.Skipf("skip with Zonal Buckets, where the Pod excludes DirectPath traffic from Istio redirection")
+		}
+		skipIfEnableGrpcByDefaultNotSupported()
+		testGCSFuseWithIstio(specs.EnableGrpcByDefaultPrefix, true, true, false, func(tPod *specs.TestPod) {
+			ginkgo.By("Checking that gcsfuse received --enable-grpc-by-default=true and fell back to HTTP/1")
+			stdout, err := tPod.GetSidecarLogs()
+			framework.ExpectNoError(err)
+			gomega.Expect(stdout).To(gomega.ContainSubstring("--enable-grpc-by-default=true"))
+			gomega.Expect(stdout).To(gomega.ContainSubstring("Grpc dp is not available and falling back to Http"))
+		})
 	})
 
 	ginkgo.It("[flaky] should store data with istio injected at the last index", func() {
@@ -235,6 +268,23 @@ func (t *gcsFuseCSIIstioTestSuite) DefineTests(driver storageframework.TestDrive
 			framework.ExpectNoError(err)
 			gomega.Expect(stdout).To(gomega.ContainSubstring("--enable-grpc-by-default=false"))
 			gomega.Expect(stdout).NotTo(gomega.ContainSubstring("--enable-grpc-by-default=true"))
+		})
+	})
+
+	ginkgo.It("should pass --enable-grpc-by-default=true from driver to gcsfuse and store data with non-native istio sidecar when DirectPath exclusions are set", func() {
+		if getClientProtocol(driver) != "grpc" {
+			e2eskipper.Skipf("skip when client-protocol is not grpc")
+		}
+		if !supportsNativeSidecar {
+			e2eskipper.Skipf("skip when native sidecar is not supported")
+		}
+		skipIfEnableGrpcByDefaultNotSupported()
+		runIstioTest(specs.EnableGrpcByDefaultPrefix, true, true, true, true, func(tPod *specs.TestPod) {
+			ginkgo.By("Checking that the driver passed --enable-grpc-by-default=true to gcsfuse")
+			stdout, err := tPod.GetSidecarLogs()
+			framework.ExpectNoError(err)
+			gomega.Expect(stdout).To(gomega.ContainSubstring("--enable-grpc-by-default=true"))
+			gomega.Expect(stdout).NotTo(gomega.ContainSubstring("--enable-grpc-by-default=false"))
 		})
 	})
 

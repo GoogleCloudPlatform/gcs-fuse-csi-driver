@@ -19,6 +19,7 @@ package driver
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -94,11 +95,18 @@ var minGKEVersionByMinorForTPUv6e = map[string]string{
 // Outbound IP ranges that a pod must exclude from Istio redirection, in addition to port 443, to keep
 // DirectPath gRPC working when istio-init runs after gke-gcsfuse-sidecar: the GCE metadata server and
 // the DirectPath IPv4 and IPv6 ranges listed in https://cloud.google.com/storage/docs/direct-connectivity.
-var directPathIstioExcludeOutboundIPRanges = []string{
-	"169.254.169.254/32",
-	"34.126.0.0/18",
-	"2001:4860:8040::/42",
-}
+// On IPv4-only pods, istio-init does not program ip6tables rules, so only the IPv4 ranges are required.
+var (
+	directPathIPv4ExcludeRanges = []netip.Prefix{
+		netip.MustParsePrefix("169.254.169.254/32"),
+		netip.MustParsePrefix("34.126.0.0/18"),
+	}
+	directPathDualStackExcludeRanges = []netip.Prefix{
+		netip.MustParsePrefix("169.254.169.254/32"),
+		netip.MustParsePrefix("34.126.0.0/18"),
+		netip.MustParsePrefix("2001:4860:8040::/42"),
+	}
+)
 
 // nodeServer handles mounting and unmounting of GCS FUSE volumes on a node.
 type nodeServer struct {
@@ -995,7 +1003,7 @@ func (s *nodeServer) appendGrpcByDefaultOptions(pod *corev1.Pod, node *corev1.No
 	}
 	// Unsupported ct6e-* node (or missing machine-type label) or non-native Istio pod missing DirectPath exclusions
 	// on any cluster (new, existing, or OSS) -> pass enable-grpc-by-default=false
-	if !s.isNodeSupportedForGrpcByDefault(node) || !isPodSupportedForGrpcByDefault(pod) {
+	if !s.isNodeSupportedForGrpcByDefault(node) || !isPodSupportedForGrpcByDefault(pod, node) {
 		return joinMountOptions(mountOptions, []string{util.EnableGrpcByDefaultConst + "=false"})
 	}
 	// Supported node and pod on a new cluster (--enable-grpc-by-default=true) -> pass enable-grpc-by-default=true
@@ -1008,11 +1016,12 @@ func (s *nodeServer) appendGrpcByDefaultOptions(pod *corev1.Pod, node *corev1.No
 
 // isPodSupportedForGrpcByDefault returns false if istio-init runs after gke-gcsfuse-sidecar in the pod's
 // init containers (Istio with neither native sidecars nor Istio CNI) and the pod does not exclude port 443
-// and the DirectPath IP ranges from Istio redirection. In that order gcsfuse verifies DirectPath before
-// istio-init installs its iptables rules, so DirectPath traffic is only intercepted after the mount has
-// succeeded. The exclusions are matched as written: a wider IP range that contains a required one does not
-// count. It fails closed (returns false) if the pod is nil.
-func isPodSupportedForGrpcByDefault(pod *corev1.Pod) bool {
+// and the applicable DirectPath IP ranges (exact or wider containing CIDRs) from Istio redirection. In that
+// order gcsfuse verifies DirectPath before istio-init installs its iptables rules, so DirectPath traffic is
+// only intercepted after the mount has succeeded. On IPv4-only pods, istio-init installs no ip6tables rules,
+// so only the IPv4 ranges are required; otherwise (dual-stack, IPv6, host-network, or unknown node CIDRs)
+// it fails closed and requires the IPv6 range as well. It also fails closed (returns false) if the pod is nil.
+func isPodSupportedForGrpcByDefault(pod *corev1.Pod, node *corev1.Node) bool {
 	if pod == nil {
 		return false
 	}
@@ -1031,30 +1040,97 @@ func isPodSupportedForGrpcByDefault(pod *corev1.Pod) bool {
 		return true
 	}
 
-	if commaSeparatedListContainsAll(pod.Annotations[istioExcludeOutboundPortsAnnotation], directPathHTTPSPort) &&
-		commaSeparatedListContainsAll(pod.Annotations[istioExcludeOutboundIPRangesAnnotation], directPathIstioExcludeOutboundIPRanges...) {
+	requiredRanges := directPathDualStackExcludeRanges
+	if isIPv4OnlyPod(pod, node) {
+		requiredRanges = directPathIPv4ExcludeRanges
+	}
+
+	if excludesDirectPathHTTPSPort(pod.Annotations[istioExcludeOutboundPortsAnnotation]) &&
+		excludesAllCIDRs(pod.Annotations[istioExcludeOutboundIPRangesAnnotation], requiredRanges) {
 		return true
 	}
 
-	klog.Infof("Disabling enable-grpc-by-default for pod %s/%s: %s runs after %s and the pod does not set %s containing %q and %s containing %v",
+	klog.Warningf("Disabling enable-grpc-by-default for pod %s/%s: %s runs after %s and the pod does not set %s containing %q and %s covering %v",
 		pod.Namespace, pod.Name, istioInitContainerName, webhook.GcsFuseSidecarName,
 		istioExcludeOutboundPortsAnnotation, directPathHTTPSPort,
-		istioExcludeOutboundIPRangesAnnotation, directPathIstioExcludeOutboundIPRanges)
+		istioExcludeOutboundIPRangesAnnotation, requiredRanges)
 	return false
 }
 
-// commaSeparatedListContainsAll reports whether the comma separated list contains every wanted entry.
-func commaSeparatedListContainsAll(list string, wanted ...string) bool {
-	entries := map[string]bool{}
-	for _, entry := range strings.Split(list, ",") {
-		entries[strings.TrimSpace(entry)] = true
+// isIPv4OnlyPod reports whether pod can only receive IPv4 pod addresses, in which case istio-init leaves
+// ENABLE_INBOUND_IPV6=false and installs no ip6tables rules. It fails closed (returns false) for host-network
+// pods or when the node's pod CIDRs are unavailable or unparseable.
+//
+// The answer is inferred from the node's pod CIDRs, because the pod has no IP addresses yet when its volumes
+// are mounted. That matches GKE's default networking. A CNI with its own IPAM that hands out IPv6 pod addresses
+// while the node lists only IPv4 pod CIDRs is not detected, and the IPv6 range is then not required for the pod.
+func isIPv4OnlyPod(pod *corev1.Pod, node *corev1.Node) bool {
+	if pod == nil || pod.Spec.HostNetwork || node == nil {
+		return false
 	}
-	for _, w := range wanted {
-		if !entries[w] {
+	cidrs := node.Spec.PodCIDRs
+	if len(cidrs) == 0 && node.Spec.PodCIDR != "" {
+		cidrs = []string{node.Spec.PodCIDR}
+	}
+	if len(cidrs) == 0 {
+		return false
+	}
+	for _, cidr := range cidrs {
+		p, err := netip.ParsePrefix(cidr)
+		if err != nil || !p.Addr().Is4() {
 			return false
 		}
 	}
+
 	return true
+}
+
+// excludesDirectPathHTTPSPort reports whether the comma-separated port list contains port 443.
+func excludesDirectPathHTTPSPort(ports string) bool {
+	if ports == "" {
+		return false
+	}
+	for _, entry := range strings.Split(ports, ",") {
+		if strings.TrimSpace(entry) == directPathHTTPSPort {
+			return true
+		}
+	}
+
+	return false
+}
+
+// excludesAllCIDRs reports whether every prefix in required is covered by at least one valid CIDR
+// in the comma-separated list (an exact match or a wider containing prefix).
+func excludesAllCIDRs(cidrList string, required []netip.Prefix) bool {
+	if cidrList == "" {
+		return len(required) == 0
+	}
+	parts := strings.Split(cidrList, ",")
+	excluded := make([]netip.Prefix, 0, len(parts))
+	for _, entry := range parts {
+		p, err := netip.ParsePrefix(strings.TrimSpace(entry))
+		if err != nil {
+			continue
+		}
+		excluded = append(excluded, p)
+	}
+	for _, want := range required {
+		if !cidrSliceCovers(excluded, want) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func cidrSliceCovers(excluded []netip.Prefix, want netip.Prefix) bool {
+	for _, p := range excluded {
+		if p.Bits() <= want.Bits() && p.Contains(want.Addr()) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isNodeSupportedForGrpcByDefault checks if the node's machine type and GKE nodepool version
