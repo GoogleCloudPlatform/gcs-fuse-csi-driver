@@ -173,6 +173,9 @@ type fakeK8sClients struct {
 }
 
 func (f *fakeK8sClients) GetPV(name string) (*v1.PersistentVolume, error) {
+	if f.pvLister == nil {
+		return nil, errors.New("pv informer is not ready")
+	}
 	return f.pvLister.Get(name)
 }
 
@@ -185,6 +188,9 @@ func (f *fakeK8sClients) GetSC(name string) (*storagev1.StorageClass, error) {
 }
 
 func (f *fakeK8sClients) GetPVC(namespace, name string) (*v1.PersistentVolumeClaim, error) {
+	if f.pvcLister == nil {
+		return nil, errors.New("pvc informer is not ready")
+	}
 	return f.pvcLister.PersistentVolumeClaims(namespace).Get(name)
 }
 func (f *fakeK8sClients) K8sClient() kubernetes.Interface {
@@ -2795,7 +2801,7 @@ func TestSyncPVProfilesV2(t *testing.T) {
 			if f.scanBucketFn.wasCalled {
 				t.Errorf("scanBucketFn.wasCalled = true, want false")
 			}
-			// A V2 PV has no scan to repeat, so the periodic enqueuer must leave it alone.
+			// Defense in depth: even if enqueueTrackedPVs is called, entries with a zero nextScan must not be re-enqueued.
 			f.scanner.enqueueTrackedPVs()
 			if got := f.scanner.queue.Len(); got != 0 {
 				t.Errorf("enqueueTrackedPVs() queued %d PVs, want 0", got)
@@ -2828,39 +2834,21 @@ func TestSyncPVProfilesV2(t *testing.T) {
 }
 
 func TestSyncPodProfilesV2(t *testing.T) {
-	notCalled := fakebucketAttrsFunc{err: errors.New("bucketAttrs should not be called")}
-	bucketAttrs = notCalled.getBucketAttributes
-	t.Cleanup(func() { bucketAttrs = origbucketAttrs })
-
-	pvRelevant := createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, nil)
-	pvcBound := createPVC(testPVCName, testNamespace, testPVName, testSCName)
-	pvcUnbound := createPVC("pvc-unbound", testNamespace, "", testSCName)
-	volBound := v1.Volume{Name: "vol1", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: testPVCName}}}
-	volUnbound := v1.Volume{Name: "vol2", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-unbound"}}}
+	volPVC := v1.Volume{Name: "vol1", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: testPVCName}}}
 
 	podTwoGates := createPod(testPodName, testNamespace, nil, podLabels, true)
 	podTwoGates.Spec.SchedulingGates = append(podTwoGates.Spec.SchedulingGates, v1.PodSchedulingGate{Name: "example.com/other-gate"})
 
 	testCases := []struct {
-		name           string
-		pod            *v1.Pod
-		initialObjects []runtime.Object
-		patchErr       error
-		wantErr        bool
-		wantRequeue    bool
-		wantGates      []v1.PodSchedulingGate
+		name      string
+		pod       *v1.Pod
+		patchErr  error
+		wantErr   bool
+		wantGates []v1.PodSchedulingGate
 	}{
 		{
-			name:           "Gated Pod with unscanned PV removes gate",
-			pod:            createPod(testPodName, testNamespace, []v1.Volume{volBound}, podLabels, true),
-			initialObjects: []runtime.Object{pvRelevant, validSC, pvcBound},
-		},
-		{
-			name:           "Gated Pod with unbound PVC keeps gate",
-			pod:            createPod(testPodName, testNamespace, []v1.Volume{volUnbound}, podLabels, true),
-			initialObjects: []runtime.Object{pvcUnbound},
-			wantRequeue:    true,
-			wantGates:      []v1.PodSchedulingGate{{Name: schedulingGateName}},
+			name: "Gated Pod with PVC volume removes gate without PVC or PV lookups",
+			pod:  createPod(testPodName, testNamespace, []v1.Volume{volPVC}, podLabels, true),
 		},
 		{
 			name:      "Pod with two gates removes only profile gate",
@@ -2887,12 +2875,16 @@ func TestSyncPodProfilesV2(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			allObjects := append([]runtime.Object{}, tc.initialObjects...)
+			var allObjects []runtime.Object
 			if tc.pod.Name == testPodName {
 				allObjects = append(allObjects, tc.pod.DeepCopy())
 			}
 			f := newTestFixture(t, allObjects...)
 			f.scanner.config.EnableProfilesV2 = true
+			// V2 skips PVC and PV lookups in syncPod, so removing both listers verifies it does not touch them.
+			k8sClients := f.scanner.config.K8SClients.(*fakeK8sClients)
+			k8sClients.pvcLister = nil
+			k8sClients.pvLister = nil
 			if tc.patchErr != nil {
 				f.kubeClient.PrependReactor("patch", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 					return true, nil, tc.patchErr
@@ -2901,8 +2893,8 @@ func TestSyncPodProfilesV2(t *testing.T) {
 
 			key, _ := cache.MetaNamespaceKeyFunc(tc.pod)
 			err := f.scanner.syncPod(context.Background(), key)
-			if (err != nil) != (tc.wantErr || tc.wantRequeue) || errors.Is(err, errRequeueNeeded) != tc.wantRequeue {
-				t.Fatalf("syncPod(%q) error = %v, wantErr %v, wantRequeue %v", key, err, tc.wantErr, tc.wantRequeue)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("syncPod(%q) error = %v, wantErr %v", key, err, tc.wantErr)
 			}
 			if tc.wantErr && status.Code(err) != codes.Internal {
 				t.Errorf("syncPod(%q) code = %v, want %v", key, status.Code(err), codes.Internal)
@@ -2915,6 +2907,29 @@ func TestSyncPodProfilesV2(t *testing.T) {
 				if diff := cmp.Diff(tc.wantGates, updatedPod.Spec.SchedulingGates, cmpopts.EquateEmpty()); diff != "" {
 					t.Errorf("Pod schedulingGates (-want +got):\n%s", diff)
 				}
+			}
+		})
+	}
+}
+
+func TestFetchMetricValue(t *testing.T) {
+	testCases := []struct {
+		name         string
+		metricClient *monitoring.MetricClient
+		wantCode     codes.Code
+	}{
+		{
+			name:         "Nil metric client returns Internal error",
+			metricClient: nil,
+			wantCode:     codes.Internal,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := fetchMetricValue(context.Background(), tc.metricClient, testProjectNumber, &bucketInfo{name: testBucketName}, objectCountMetric)
+			if status.Code(err) != tc.wantCode {
+				t.Errorf("fetchMetricValue() code = %v (err: %v), want %v", status.Code(err), err, tc.wantCode)
 			}
 		})
 	}
