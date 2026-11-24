@@ -63,7 +63,7 @@ spec:
             - --enable-cloud-profiler-for-driver=true
             - --enable-auto-gomemlimit=true
             - --auto-gomemlimit-ratio=0.95
-            - --enable-grpc-by-default=false
+            - --enable-grpc-by-default=true
             - --enable-gcsfuse-volume-metrics-schema=true
             - --universe-domain=$(UNIVERSE_DOMAIN)
           ports:
