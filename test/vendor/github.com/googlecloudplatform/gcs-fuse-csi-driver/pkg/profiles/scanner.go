@@ -415,17 +415,20 @@ func (s *Scanner) run(ctx context.Context) {
 		}
 	}()
 
-	metricClient, err := monitoring.NewMetricClient(ctx, option.WithTokenSource(tokenSource))
-	if err != nil {
-		klog.Errorf("Failed to create metric client: %v", err)
-		return
-	}
-	s.metricClient = metricClient
-	defer func() {
-		if err := metricClient.Close(); err != nil {
-			klog.Errorf("Failed to close metric client: %v", err)
+	// V2 does not scan buckets, so skip creating the metric client.
+	if !s.config.EnableProfilesV2 {
+		metricClient, err := monitoring.NewMetricClient(ctx, option.WithTokenSource(tokenSource))
+		if err != nil {
+			klog.Errorf("Failed to create metric client: %v", err)
+			return
 		}
-	}()
+		s.metricClient = metricClient
+		defer func() {
+			if err := metricClient.Close(); err != nil {
+				klog.Errorf("Failed to close metric client: %v", err)
+			}
+		}()
+	}
 
 	computeService, err := compute.NewService(ctx, option.WithScopes(compute.ComputeReadonlyScope), option.WithTokenSource(tokenSource))
 	if err != nil {
@@ -451,8 +454,11 @@ func (s *Scanner) run(ctx context.Context) {
 	klog.Info("Starting worker")
 	go wait.Until(func() { s.runWorker(ctx) }, time.Second, ctx.Done())
 
-	klog.Infof("Starting periodic enqueuer for tracked PVs with interval %s", trackedPVsPeriodicInterval)
-	go s.runPeriodicEnqueuer(ctx, trackedPVsPeriodicInterval)
+	// V2 never rescans PVs periodically.
+	if !s.config.EnableProfilesV2 {
+		klog.Infof("Starting periodic enqueuer for tracked PVs with interval %s", trackedPVsPeriodicInterval)
+		go s.runPeriodicEnqueuer(ctx, trackedPVsPeriodicInterval)
+	}
 
 	klog.Info("Scanner started")
 	<-stopCh
@@ -628,6 +634,8 @@ func (s *Scanner) processNextWorkItem(ctx context.Context) bool {
 // The function returns the error `errRequeueNeeded` if the Pod should be requeued
 // but the error doesn't need to be logged, for example: If the PVC is unbound
 // or the volumes are not scanned yet.
+// When EnableProfilesV2 is true, syncPod skips PVC/PV lookups and removes any
+// legacy scheduling gate immediately.
 func (s *Scanner) syncPod(ctx context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -646,6 +654,14 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 	}
 
 	klog.Infof("Syncing Pod: %q/%q", pod.Namespace, pod.Name)
+
+	// V2 does not wait for bucket scans, so remove any legacy scheduling gate right away without PVC/PV lookups.
+	if s.config.EnableProfilesV2 {
+		if err := s.removeSchedulingGate(ctx, pod); err != nil {
+			return status.Errorf(codes.Internal, "failed to remove scheduling gate from Pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+		return nil
+	}
 
 	unscannedPVs := []string{}
 	var needsRequeue bool
@@ -695,8 +711,7 @@ func (s *Scanner) syncPod(ctx context.Context, key string) error {
 		if err != nil {
 			return fmt.Errorf("error checking PV %q relevance for Pod %q: %w", pvName, key, err)
 		}
-		// A V2 PV has no bucket scan to wait for.
-		if bucketI != nil && !s.config.EnableProfilesV2 {
+		if bucketI != nil {
 			_, ok, err := s.calculateLastScanTime(pv, sc)
 			if err != nil {
 				return fmt.Errorf("failed to calculate last scan time for PV %q: %w", pvName, err)
@@ -1386,6 +1401,9 @@ func defaultScanBucketWithMetrics(ctx context.Context, metricClient *monitoring.
 
 // fetchMetricValue retrieves the latest value for a given metric type from Cloud Monitoring.
 func fetchMetricValue(ctx context.Context, metricClient *monitoring.MetricClient, projectNumber string, bucketI *bucketInfo, metricType string) (int64, error) {
+	if metricClient == nil {
+		return 0, status.Error(codes.Internal, "metric client is nil")
+	}
 	filter := fmt.Sprintf(`metric.type="%s" AND resource.type="gcs_bucket" AND resource.labels.bucket_name="%s"`, metricType, bucketI.name)
 
 	now := time.Now()
@@ -1834,7 +1852,7 @@ func (s *Scanner) DeletePV(obj any) {
 func (s *Scanner) enqueueTrackedPVs() {
 	s.pvMutex.RLock()
 	for pvName, info := range s.trackedPVs {
-		// A V2 PV is tracked without a next scan time. Enqueuing it would re-sync it on every tick.
+		// Skip entries without a scheduled next scan (a zero time would otherwise re-sync on every tick).
 		if info.nextScan.IsZero() {
 			continue
 		}

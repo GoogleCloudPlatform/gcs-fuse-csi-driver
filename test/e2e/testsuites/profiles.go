@@ -68,7 +68,6 @@ const (
 	anywhereCacheAdmissionPolicyKey = "anywhereCacheAdmissionPolicy"
 	anywhereCacheTTLKey             = "anywhereCacheTTL"
 	bucketScanResyncPeriodKey       = "bucketScanResyncPeriod"
-	useProfilesV2Key                = "useProfilesV2"
 	useBucketMetricsKey             = "useBucketMetrics"
 
 	anywhereCacheBackoffDuration = 22 * time.Second
@@ -563,8 +562,6 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 		}
 	case specs.ProfilesControllerCrashTestPrefix:
 		va[bucketScanResyncPeriodKey] = "5m"
-		// This spec tests the V1 rescan, so its PV stays on V1 when the driver runs profiles V2.
-		va[useProfilesV2Key] = "false"
 	default:
 		framework.Failf("Unknown test scenario: %s", testScenario)
 	}

@@ -322,7 +322,10 @@ func main() {
 		if *enableSharedMount || *enableGCSFuseProfiles {
 			clientset.ConfigurePVLister(ctx, pvEventHandlerFuncs)
 			clientset.ConfigurePodLister(ctx, "", podEventHandlerFuncs)
-			clientset.ConfigurePVCLister(ctx)
+			// Only shared mount and V1 syncPod look up PVCs on the controller.
+			if *enableSharedMount || !*enableGCSFuseProfilesV2 {
+				clientset.ConfigurePVCLister(ctx)
+			}
 		}
 		if *enableSharedMount {
 			clientset.ConfigurePodTemplateLister(ctx)
