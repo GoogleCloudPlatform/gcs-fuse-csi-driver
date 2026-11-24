@@ -305,8 +305,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 		mountOptions := "logging:severity:info"
 
-		if n.ClientProtocol == "grpc" && config.Prefix != EnableGrpcByDefaultPrefix {
-			mountOptions += ",client-protocol=grpc"
+		// EnableGrpcByDefaultPrefix tests explicitly test gRPC by default, so we don't pass the protocol.
+		if config.Prefix != EnableGrpcByDefaultPrefix {
+			mountOptions += ",client-protocol=" + n.gcsfuseClientProtocol()
 		}
 		if n.gcsfuseVersion == nil || n.gcsfuseBranch == "" {
 			n.gcsfuseVersion, n.gcsfuseBranch = GCSFuseVersionAndBranch()
@@ -515,6 +516,10 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
+	// EnableGrpcByDefaultPrefix tests explicitly test gRPC by default, so we don't pass the protocol.
+	if config.Prefix != EnableGrpcByDefaultPrefix {
+		mountOptions = append(mountOptions, "client-protocol="+n.gcsfuseClientProtocol())
+	}
 	switch config.Prefix {
 	case NonRootVolumePrefix:
 		mountOptions = append(mountOptions, "uid=1001")
@@ -531,6 +536,23 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 		Parameters:        parameters,
 		VolumeBindingMode: &defaultBindingMode,
 	}
+}
+
+// gcsfuseClientProtocol returns the client protocol to set explicitly on test volumes.
+//
+// The protocol is always set, even for HTTP/1.1, because once GCSFuse runs with
+// --enable-grpc-by-default it uses gRPC whenever --client-protocol is not set. Without an
+// explicit value, the HTTP/1.1 suites would silently run over gRPC and lose HTTP/1.1
+// coverage. Only the enable-grpc-by-default tests leave it unset to exercise the default.
+//
+// ClientProtocol cannot be passed through as is: CI sets it to "http" for the HTTP/1.1
+// suites, but GCSFuse only accepts http1, http2, grpc, or httpmtls.
+func (n *GCSFuseCSITestDriver) gcsfuseClientProtocol() string {
+	if n.ClientProtocol == "grpc" {
+		return "grpc"
+	}
+
+	return "http1"
 }
 
 // prepareStorageService prepares the GCS Storage Service using the default GCP credentials.
