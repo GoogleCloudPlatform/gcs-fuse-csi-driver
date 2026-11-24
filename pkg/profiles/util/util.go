@@ -130,14 +130,12 @@ func ParseOverrideStatus(pv *v1.PersistentVolume) (int64, int64, error) {
 	return numObjects, totalSizeBytes, nil
 }
 
-// AttributeWithSCFallback gets the value of a PV VolumeAttribute, if set.
+// AttributeWithSCFallback gets the value of key from volumeAttributes, if set.
 // Otherwise, it checks the StorageClass's Parameters field as fallback.
 // If the value is still not found, it uses defaultVal as the return value.
-func AttributeWithSCFallback(pv *v1.PersistentVolume, sc *storagev1.StorageClass, key, defaultVal string) string {
-	if pv != nil && pv.Spec.PersistentVolumeSource.CSI != nil && pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes != nil {
-		if val, ok := pv.Spec.PersistentVolumeSource.CSI.VolumeAttributes[key]; ok {
-			return val
-		}
+func AttributeWithSCFallback(volumeAttributes map[string]string, sc *storagev1.StorageClass, key, defaultVal string) string {
+	if val, ok := volumeAttributes[key]; ok {
+		return val
 	}
 	if sc != nil && sc.Parameters != nil {
 		if val, ok := sc.Parameters[key]; ok {

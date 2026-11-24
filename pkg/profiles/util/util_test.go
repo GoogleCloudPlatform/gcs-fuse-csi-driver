@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -227,6 +228,56 @@ func TestValidateStorageProfilesOverrideStatus(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatalf("Expected no error, but got: %v", err)
+			}
+		})
+	}
+}
+
+func TestAttributeWithSCFallback(t *testing.T) {
+	testCases := []struct {
+		name             string
+		volumeAttributes map[string]string
+		sc               *storagev1.StorageClass
+		key              string
+		defaultVal       string
+		want             string
+	}{
+		{
+			name:             "prefers volumeAttributes over StorageClass parameters",
+			volumeAttributes: map[string]string{"k": "from-va"},
+			sc:               &storagev1.StorageClass{Parameters: map[string]string{"k": "from-sc"}},
+			key:              "k",
+			defaultVal:       "default",
+			want:             "from-va",
+		},
+		{
+			name:             "falls back to StorageClass parameters when absent from volumeAttributes",
+			volumeAttributes: map[string]string{"other": "val"},
+			sc:               &storagev1.StorageClass{Parameters: map[string]string{"k": "from-sc"}},
+			key:              "k",
+			defaultVal:       "default",
+			want:             "from-sc",
+		},
+		{
+			name:             "falls back to defaultVal when absent from both",
+			volumeAttributes: nil,
+			sc:               &storagev1.StorageClass{Parameters: map[string]string{}},
+			key:              "k",
+			defaultVal:       "default",
+			want:             "default",
+		},
+		{
+			name:       "handles nil volumeAttributes and nil StorageClass",
+			key:        "k",
+			defaultVal: "default",
+			want:       "default",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AttributeWithSCFallback(tc.volumeAttributes, tc.sc, tc.key, tc.defaultVal); got != tc.want {
+				t.Errorf("AttributeWithSCFallback() = %q, want %q", got, tc.want)
 			}
 		})
 	}

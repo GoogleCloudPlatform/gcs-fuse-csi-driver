@@ -769,7 +769,7 @@ func (s *Scanner) removeSchedulingGate(ctx context.Context, pod *v1.Pod) error {
 }
 
 func (s *Scanner) getDurationAttribute(pv *v1.PersistentVolume, sc *storagev1.StorageClass, attributeKey, defaultVal string) (time.Duration, error) {
-	durationStr := profilesutil.AttributeWithSCFallback(pv, sc, attributeKey, defaultVal)
+	durationStr := profilesutil.AttributeWithSCFallback(pvVolumeAttributes(pv), sc, attributeKey, defaultVal)
 	parsedDuration, err := time.ParseDuration(durationStr)
 	if err != nil {
 		return time.Duration(0), fmt.Errorf("invalid duration format for %q: %q, error: %w", attributeKey, durationStr, err)
@@ -1259,7 +1259,7 @@ func (s *Scanner) syncAnywhereCache(ctx context.Context, pv *v1.PersistentVolume
 }
 
 func anywhereCacheZonesVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) ([]string, bool) {
-	zonesStr := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheZonesKey, defaultAnywhereCacheZonesVal)
+	zonesStr := profilesutil.AttributeWithSCFallback(pvVolumeAttributes(pv), sc, anywhereCacheZonesKey, defaultAnywhereCacheZonesVal)
 	zonesStr = strings.ReplaceAll(zonesStr, " ", "")
 	if strings.ToLower(zonesStr) == "none" {
 		// Disable Anywhere Cache if the key is not found or explicitly disabled.
@@ -1276,7 +1276,7 @@ func anywhereCacheZonesVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) 
 
 // anywhereCacheTTLVal returns the value of 'anywhereCacheTTL', defaults to 1h for no value or error if invalid value is present.
 func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*durationpb.Duration, error) {
-	ttl := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheTTLKey, defaultAnywhereCacheTTLVal)
+	ttl := profilesutil.AttributeWithSCFallback(pvVolumeAttributes(pv), sc, anywhereCacheTTLKey, defaultAnywhereCacheTTLVal)
 	ttlAsDuration, err := time.ParseDuration(ttl)
 	if err != nil {
 		return nil, err
@@ -1287,7 +1287,7 @@ func anywhereCacheTTLVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (*
 
 // anywhereCacheAdmissionPolicyVal returns the value of 'anywhereCacheAdmissionPolicy', defaulting to 'admit-on-first-miss' if no value is provided.
 func anywhereCacheAdmissionPolicyVal(pv *v1.PersistentVolume, sc *storagev1.StorageClass) (string, error) {
-	admissionPolicy := profilesutil.AttributeWithSCFallback(pv, sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
+	admissionPolicy := profilesutil.AttributeWithSCFallback(pvVolumeAttributes(pv), sc, anywhereCacheAdmissionPolicyKey, defaultAnywhereCacheAdmissionPolicyVal)
 	switch admissionPolicy {
 	case anywhereCacheAPIAdmitOnFirstMiss, anywhereCacheAPIAdmitOnSecondMiss:
 		return admissionPolicy, nil
@@ -1326,7 +1326,7 @@ func defaultBucketAttrs(ctx context.Context, gcsClient *storage.Client, bucketNa
 //   - If `useBucketMetrics` is false:
 //   - Scans the ENTIRE bucket using the GCS Dataflux client library.
 func defaultScanBucket(s *Scanner, ctx context.Context, bucketI *bucketInfo, scanTimeout time.Duration, pv *v1.PersistentVolume, sc *storagev1.StorageClass) error {
-	useBucketMetricsStr := profilesutil.AttributeWithSCFallback(pv, sc, useBucketMetricsKey, defaultUseBucketMetricsVal)
+	useBucketMetricsStr := profilesutil.AttributeWithSCFallback(pvVolumeAttributes(pv), sc, useBucketMetricsKey, defaultUseBucketMetricsVal)
 	useBucketMetrics := false
 	var err error
 	useBucketMetrics, err = util.ParseBool(useBucketMetricsStr)

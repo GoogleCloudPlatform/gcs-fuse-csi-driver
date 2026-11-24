@@ -173,6 +173,8 @@ type BuildProfileConfigParams struct {
 	IsInitContainer     bool
 	Pod                 *corev1.Pod
 	EnableProfilesV2    bool
+	VolumeContext       map[string]string
+	IsEphemeral         bool
 }
 
 // NeedsBucketLocationType reports whether the bucket's location type is needed to skip
@@ -237,6 +239,11 @@ func (c *ProfileConfig) MergeVolumeAttributesOnRecommendedMissingKeys(input map[
 // volumeAttributeKeys is used to filter parameters from the StorageClass that should be
 // treated as volume attributes.
 func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error) {
+	if params.IsEphemeral {
+		klog.V(6).Info("Volume is ephemeral, disabling profiles feature for this volume")
+		return nil, nil
+	}
+
 	var volumeName string
 	if params.TargetPath != "" {
 		// Get the PV name from target path.
@@ -253,22 +260,39 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 		return nil, status.Error(codes.Internal, "volume name cannot be empty")
 	}
 
-	// Get the PV object using the PV name.
-	pv, err := params.Clientset.GetPV(volumeName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Skip the profiles feature for ephemeral volumes.
-			klog.V(6).Infof("pv %q not found: %v, disabling profiles feature for this volume", volumeName, err)
+	useV2 := params.EnableProfilesV2
+
+	var (
+		pv     *corev1.PersistentVolume
+		scName string
+	)
+	if useV2 {
+		// New PVs get gke-gcsfuse/storage-class-name injected into VolumeAttributes by the webhook
+		// on creation, letting us skip GetPV. Pre-existing PVs lack it and fall back to GetPV below.
+		scName = strings.TrimSpace(params.VolumeContext[webhook.GcsfuseStorageClassNameVolumeAttribute])
+	}
+	if scName == "" {
+		// Get the PV object using the PV name.
+		var err error
+		pv, err = params.Clientset.GetPV(volumeName)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				// Skip the profiles feature for non-profile PVs (not in the label-filtered node cache).
+				klog.V(6).Infof("pv %q not found: %v, disabling profiles feature for this volume", volumeName, err)
+				return nil, nil
+			}
+			return nil, status.Errorf(codes.Internal, "failed to get pv %q: %v", volumeName, err)
+		}
+		if pv == nil {
+			return nil, status.Errorf(codes.Internal, "pv %q cannot be nil", volumeName)
+		}
+
+		// Get the StorageClassName from the PV object.
+		scName = pv.Spec.StorageClassName
+		if scName == "" {
+			klog.V(6).Infof("pv %q has empty StorageClassName, disabling profiles feature for this volume", pv.Name)
 			return nil, nil
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get pv %q: %v", volumeName, err)
-	}
-
-	// Get the StorageClassName from the PV object.
-	scName := pv.Spec.StorageClassName
-	if scName == "" {
-		klog.V(6).Infof("pv %q has empty StorageClassName, disabling profiles feature for this volume", pv.Name)
-		return nil, nil
 	}
 
 	// Get the StorageClass object from the StorageClassName.
@@ -289,16 +313,18 @@ func BuildProfileConfig(params *BuildProfileConfigParams) (*ProfileConfig, error
 	// At this point, we are sure that the user is attempting to use the volume with
 	// the profiles feature, so we start returning errors.
 
-	useV2 := params.EnableProfilesV2
-
-	scDetails, err := buildSCDetails(pv, sc, params.VolumeAttributeKeys, useV2)
+	volumeAttributes := pvVolumeAttributes(pv)
+	if pv == nil {
+		volumeAttributes = params.VolumeContext
+	}
+	scDetails, err := buildSCDetails(volumeAttributes, sc, params.VolumeAttributeKeys, useV2)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get StorageClass details: %v", err)
 	}
 
 	var pvDetailsObj *pvDetails
 	if useV2 {
-		pvDetailsObj = &pvDetails{name: pv.Name}
+		pvDetailsObj = &pvDetails{name: volumeName}
 	} else {
 		// Get the PV details from the PV object's annotations.
 		pvDetailsObj, err = buildPVDetails(pv)
@@ -800,12 +826,19 @@ func recommendMetadataStatCacheSize(config *ProfileConfig, required, memoryBudge
 	return recommended, memoryBudget
 }
 
+func pvVolumeAttributes(pv *corev1.PersistentVolume) map[string]string {
+	if pv != nil && pv.Spec.CSI != nil {
+		return pv.Spec.CSI.VolumeAttributes
+	}
+	return nil
+}
+
 // parseFloatParameterNonNegative extracts a parameter by key from the params map,
 // parses it as a float64, and returns an error if the value
 // is not a valid float, or the value is negative. If the value is not found, it defaults
 // to an internal value.
-func parseFloatParameterNonNegative(pv *corev1.PersistentVolume, sc *storagev1.StorageClass, key, defaultVal string) (float64, error) {
-	stringVal := profilesutil.AttributeWithSCFallback(pv, sc, key, defaultVal)
+func parseFloatParameterNonNegative(volumeAttributes map[string]string, sc *storagev1.StorageClass, key, defaultVal string) (float64, error) {
+	stringVal := profilesutil.AttributeWithSCFallback(volumeAttributes, sc, key, defaultVal)
 	floatVal, err := strconv.ParseFloat(stringVal, 64)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse %q: %w", key, err)
@@ -1010,7 +1043,7 @@ func getContainerResourceRequirements(isInitContainer bool, pod *corev1.Pod, con
 // parameters like fuseFileCacheMediumPriority and numeric factors, and selects
 // volume attributes based on the provided volumeAttributeKeys. An error is
 // returned if Parameters is nil or any parameter value is invalid.
-func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}, useV2 bool) (*scDetails, error) {
+func buildSCDetails(volumeAttributes map[string]string, sc *v1.StorageClass, volumeAttributeKeys map[string]struct{}, useV2 bool) (*scDetails, error) {
 	// Get the parameters from the StorageClass.
 	if sc.Parameters == nil {
 		return nil, fmt.Errorf("sc %q found but has nil Parameters map", sc.Name)
@@ -1021,32 +1054,32 @@ func buildSCDetails(pv *corev1.PersistentVolume, sc *v1.StorageClass, volumeAttr
 	if useV2 {
 		defaultPriority = ""
 	}
-	fileCacheMediumPriorityStr := profilesutil.AttributeWithSCFallback(pv, sc, fuseFileCacheMediumPriorityKey, defaultPriority)
+	fileCacheMediumPriorityStr := profilesutil.AttributeWithSCFallback(volumeAttributes, sc, fuseFileCacheMediumPriorityKey, defaultPriority)
 	fileCacheMediumPriority, err := parseFileCacheMediumPriority(fileCacheMediumPriorityStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuseFileCacheMediumPriority in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse memory allocatable factor from the StorageClass parameters (or PV override).
-	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseMemoryAllocatableFactorKey, fuseMemoryAllocatableFactorDefaultVal)
+	fuseMemoryAllocatableFactor, err := parseFloatParameterNonNegative(volumeAttributes, sc, fuseMemoryAllocatableFactorKey, fuseMemoryAllocatableFactorDefaultVal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse memory allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Get the fuse ephemeral storage allocatable factor from the StorageClass parameters.
-	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(pv, sc, fuseEphemeralStorageAllocatableFactorKey, fuseEphemeralStorageAllocatableFactorDefaultVal)
+	fuseEphemeralStorageAllocatableFactor, err := parseFloatParameterNonNegative(volumeAttributes, sc, fuseEphemeralStorageAllocatableFactorKey, fuseEphemeralStorageAllocatableFactorDefaultVal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse fuse ephemeral storage allocatable factor param in StorageClass %q: %v", sc.Name, err)
 	}
 
 	// Parse volume attributes from the StorageClass parameters. Only select from keys recognized by the CSI Driver as volume attributes.
-	volumeAttributes := selectFromMapIfKeysMatch(sc.Parameters, volumeAttributeKeys)
+	scVolumeAttributes := selectFromMapIfKeysMatch(sc.Parameters, volumeAttributeKeys)
 
 	return &scDetails{
 		fileCacheMediumPriority:               fileCacheMediumPriority,
 		fuseMemoryAllocatableFactor:           fuseMemoryAllocatableFactor,
 		fuseEphemeralStorageAllocatableFactor: fuseEphemeralStorageAllocatableFactor,
-		volumeAttributes:                      volumeAttributes,
+		volumeAttributes:                      scVolumeAttributes,
 		mountOptions:                          sc.MountOptions,
 	}, nil
 }
