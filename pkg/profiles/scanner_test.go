@@ -661,7 +661,6 @@ func TestSyncPV(t *testing.T) {
 		expectedAnnots  map[string]string
 		expectResync    bool
 		controllerCrash bool
-		v2Flag          bool
 	}{
 		{
 			name:           "Successful Sync - Should patch PV annotations",
@@ -787,29 +786,11 @@ func TestSyncPV(t *testing.T) {
 				putil.AnnotationHNSEnabled:   "true",
 			},
 		},
-		{
-			name:           "Profiles V2 flag on and PV sets useProfilesV2 to false - Should scan as V1",
-			key:            pvName,
-			initialObjects: []runtime.Object{createPV(pvName, scName, bucketName, csiDriverName, nil, nil, map[string]string{useProfilesV2Key: "false"}), relevantSC},
-			bucketI:        scanResult,
-			v2Flag:         true,
-			expectedAnnots: map[string]string{putil.AnnotationStatus: "completed"},
-			expectScanCall: true,
-		},
-		{
-			name:           "Profiles V2 flag off and PV sets useProfilesV2 to true - Should still scan as V1",
-			key:            pvName,
-			initialObjects: []runtime.Object{createPV(pvName, scName, bucketName, csiDriverName, nil, nil, map[string]string{useProfilesV2Key: "true"}), relevantSC},
-			bucketI:        scanResult,
-			expectedAnnots: map[string]string{putil.AnnotationStatus: "completed"},
-			expectScanCall: true,
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTestFixture(t, tc.initialObjects...)
-			f.scanner.config.EnableProfilesV2 = tc.v2Flag
 
 			f.scanBucketFn.bucketI = tc.bucketI
 			f.scanBucketFn.err = tc.scanErr
@@ -898,7 +879,6 @@ func TestSyncPod(t *testing.T) {
 	volNotRelevant := v1.Volume{Name: "vol2", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-not-relevant"}}}
 	volUnbound := v1.Volume{Name: "vol3", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-unbound"}}}
 	volMissingPVC := v1.Volume{Name: "vol4", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-missing"}}}
-	volV2 := v1.Volume{Name: "vol5", VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-v2"}}}
 
 	// Resources for Override test
 	pvOverrideAnnotations := map[string]string{
@@ -928,7 +908,6 @@ func TestSyncPod(t *testing.T) {
 		expectRequeueErr  bool
 		wantErr           bool
 		expectGateRemoved bool
-		v2Flag            bool
 	}{
 		{
 			name:              "Pod with no volumes, gate removed",
@@ -984,13 +963,6 @@ func TestSyncPod(t *testing.T) {
 			expectRequeueErr: true,
 		},
 		{
-			name:             "Profiles V2 flag on and Pod mixes V1 and V2 PVs, Pod requeued until the V1 PV is scanned",
-			pod:              createPod(testPodName, testNamespace, []v1.Volume{volRelevant, volV2}, podLabels, true),
-			initialObjects:   []runtime.Object{createPV(testPVName, testSCName, testBucketName, csiDriverName, nil, nil, map[string]string{useProfilesV2Key: "false"}), createPV("pv-v2", testSCName, testBucketName, csiDriverName, nil, nil, nil), scValid, pvcBoundRelevant, createPVC("pvc-v2", testNamespace, "pv-v2", testSCName)},
-			expectRequeueErr: true,
-			v2Flag:           true,
-		},
-		{
 			name:              "Pod with Override PV - Should remove gate",
 			pod:               createPod(testPodName, testNamespace, []v1.Volume{volOverride}, podLabels, true),
 			initialObjects:    []runtime.Object{pvOverride, scValid, pvcBoundOverride},
@@ -1006,7 +978,6 @@ func TestSyncPod(t *testing.T) {
 				allObjects = append(allObjects, tc.pod)
 			}
 			f := newTestFixture(t, allObjects...)
-			f.scanner.config.EnableProfilesV2 = tc.v2Flag
 
 			key, _ := cache.MetaNamespaceKeyFunc(tc.pod)
 			ctx := context.Background()

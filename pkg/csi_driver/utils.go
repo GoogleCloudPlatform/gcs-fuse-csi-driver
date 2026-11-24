@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -801,4 +802,49 @@ func getInternalMountOptionValue(options []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func onlyDirPrefix(mountOptions []string) string {
+	var cliSet bool
+	var cliDir, cfgDir string
+	for _, opt := range mountOptions {
+		item := strings.TrimSpace(opt)
+		if val, ok := strings.CutPrefix(item, "only-dir="); ok {
+			cliSet, cliDir = true, val
+		} else if val, ok := strings.CutPrefix(item, "only-dir:"); ok {
+			cfgDir = val
+		}
+	}
+	onlyDir := cfgDir
+	if cliSet {
+		onlyDir = cliDir
+	}
+	onlyDir = strings.TrimPrefix(path.Clean("/"+onlyDir), "/")
+	if onlyDir == "" {
+		return ""
+	}
+	return onlyDir + "/"
+}
+
+func isAnonymousAccess(mountOptions []string) bool {
+	var cliSet, cliVal bool
+	var cfgVal bool
+	for _, opt := range mountOptions {
+		item := strings.TrimSpace(opt)
+		if item == "anonymous-access" {
+			cliSet, cliVal = true, true
+		} else if val, ok := strings.CutPrefix(item, "anonymous-access="); ok {
+			if b, err := strconv.ParseBool(strings.TrimSpace(val)); err == nil {
+				cliSet, cliVal = true, b
+			}
+		} else if val, ok := strings.CutPrefix(item, "gcs-auth:anonymous-access:"); ok {
+			if b, err := strconv.ParseBool(strings.TrimSpace(val)); err == nil {
+				cfgVal = b
+			}
+		}
+	}
+	if cliSet {
+		return cliVal
+	}
+	return cfgVal
 }

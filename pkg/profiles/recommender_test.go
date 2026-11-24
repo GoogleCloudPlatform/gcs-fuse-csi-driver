@@ -17,6 +17,7 @@ limitations under the License.
 package profiles
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"testing"
@@ -229,6 +230,12 @@ func NewPodConfigBuilder() *PodConfigBuilder {
 	return &PodConfigBuilder{config: cfg}
 }
 
+// WithAnnotations sets the Annotations field.
+func (b *PodConfigBuilder) WithAnnotations(annotations map[string]string) *PodConfigBuilder {
+	b.config.Annotations = annotations
+	return b
+}
+
 // Build returns the final FakePodConfig.
 func (b *PodConfigBuilder) Build() clientset.FakePodConfig {
 	return b.config
@@ -237,6 +244,7 @@ func (b *PodConfigBuilder) Build() clientset.FakePodConfig {
 func TestBuildProfileConfig(t *testing.T) {
 	tests := []struct {
 		name       string
+		v2Flag     bool
 		targetPath string
 		pvConfig   clientset.FakePVConfig
 		scConfig   clientset.FakeSCConfig
@@ -360,6 +368,29 @@ func TestBuildProfileConfig(t *testing.T) {
 			wantConfig: nil,
 			wantErr:    false,
 		},
+		{
+			name:   "flag on, PV has no scan annotations, and Pod has profile volume count 2 - should build V2 config with count 2",
+			v2Flag: true, targetPath: testTargetPath, nodeName: "test-node",
+			pvConfig:   NewPVConfigBuilder().WithName("test-pv").WithAnnotations(nil).Build(),
+			scConfig:   NewSCConfigBuilder().WithParameters(map[string]string{}).Build(),
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().WithAnnotations(map[string]string{webhook.GcsfuseProfileVolumeCountAnnotation: "2"}).Build(),
+			wantConfig: &ProfileConfig{
+				useProfilesV2: true, pvDetails: &pvDetails{name: "test-pv"},
+				scDetails: &scDetails{
+					fileCacheMediumPriority: map[string][]string{}, fuseMemoryAllocatableFactor: 0.7, fuseEphemeralStorageAllocatableFactor: 0.85,
+					volumeAttributes: map[string]string{}, mountOptions: testSCConfig.MountOptions,
+				},
+				nodeDetails: &nodeDetails{
+					name: "test-node", nodeType: "general_purpose",
+					nodeAllocatables: &parsedResourceList{memoryBytes: 2 * 1024 * 1024 * 1024, ephemeralStorageBytes: 20 * 1024 * 1024 * 1024},
+				},
+				podDetails: &podDetails{
+					namespace: "default", name: "test-pod", containerName: webhook.GcsFuseSidecarName, profileVolumeCount: 2,
+					containerLimits: &parsedResourceList{memoryBytes: 1024 * 1024 * 1024, ephemeralStorageBytes: 10 * 1024 * 1024 * 1024},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -391,6 +422,7 @@ func TestBuildProfileConfig(t *testing.T) {
 				NodeName:            tt.nodeName,
 				ContainerName:       webhook.GcsFuseSidecarName,
 				Pod:                 pod,
+				EnableProfilesV2:    tt.v2Flag,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -629,6 +661,7 @@ func TestBuildSCDetails(t *testing.T) {
 		name    string
 		sc      *storagev1.StorageClass
 		pv      *corev1.PersistentVolume
+		useV2   bool
 		want    *scDetails
 		wantErr bool
 	}{
@@ -874,11 +907,27 @@ func TestBuildSCDetails(t *testing.T) {
 				mountOptions: defaultMountOptions,
 			},
 		},
+		{
+			name:  "TestBuildSCDetails - V2 missing fuseFileCacheMediumPriority - Should return empty priority map",
+			useV2: true,
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "v2-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
+				Parameters:   map[string]string{"skipCSIBucketAccessCheck": "true"},
+				MountOptions: defaultMountOptions,
+			},
+			want: &scDetails{
+				fileCacheMediumPriority:               map[string][]string{},
+				fuseMemoryAllocatableFactor:           0.7,
+				fuseEphemeralStorageAllocatableFactor: 0.85,
+				volumeAttributes:                      map[string]string{"skipCSIBucketAccessCheck": "true"},
+				mountOptions:                          defaultMountOptions,
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildSCDetails(tt.pv, tt.sc, csiDriverVolumeAttributeKeys)
+			got, err := buildSCDetails(tt.pv, tt.sc, csiDriverVolumeAttributeKeys, tt.useV2)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("buildSCDetails() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1797,6 +1846,17 @@ func TestRecommendFileCacheSizeAndMedium(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:              "Profiles V2 Unknown Node Type - Should disable file cache without error",
+			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
+			config: &ProfileConfig{
+				useProfilesV2: true,
+				nodeDetails:   &nodeDetails{nodeType: "unknown"},
+				scDetails:     &scDetails{fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumLSSD}}},
+			},
+			wantSize:   0,
+			wantMedium: "",
+		},
+		{
 			name:              "Unknown Medium in Priority - Should error",
 			cacheRequirements: &cacheRequirements{fileCacheBytes: fileCacheReq},
 			config: &ProfileConfig{
@@ -1836,12 +1896,29 @@ func TestRecommendCacheConfigs(t *testing.T) {
 	defaultSC := &scDetails{fuseMemoryAllocatableFactor: 1.0, fuseEphemeralStorageAllocatableFactor: 1.0}
 	defaultPod := &podDetails{containerLimits: &parsedResourceList{memoryBytes: 0, ephemeralStorageBytes: 0}, name: "test-pod"}
 	defaultNode := &nodeDetails{nodeType: "general_purpose", name: "test-node"}
+	newV2Config := func(locType string, edit func(*ProfileConfig)) *ProfileConfig {
+		c := &ProfileConfig{
+			useProfilesV2: true, pvDetails: &pvDetails{name: "test-pv", locationType: locType},
+			scDetails: &scDetails{fuseMemoryAllocatableFactor: 1.0, fuseEphemeralStorageAllocatableFactor: 1.0, fileCacheMediumPriority: map[string][]string{nodeTypeGPU: {util.MediumLSSD}}},
+			nodeDetails: &nodeDetails{
+				nodeType: nodeTypeGPU, nodeAllocatables: &parsedResourceList{memoryBytes: 100 * mib, ephemeralStorageBytes: 200 * mib},
+				hasLocalSSDEphemeralStorageAnnotation: true, name: "test-gpu-lssd-node",
+			},
+			podDetails: &podDetails{containerLimits: &parsedResourceList{}, name: "test-pod", profileVolumeCount: 1},
+		}
+		if edit != nil {
+			edit(c)
+		}
+		return c
+	}
 
 	tests := []struct {
-		name    string
-		config  *ProfileConfig
-		want    *recommendation
-		wantErr bool
+		name         string
+		config       *ProfileConfig
+		mountOptions []string
+		want         *recommendation
+		wantNeedsLoc bool
+		wantErr      bool
 	}{
 		{
 			name: "Sufficient budget for all caches (GPU, RAM) - Should recommend RAM",
@@ -2059,11 +2136,36 @@ func TestRecommendCacheConfigs(t *testing.T) {
 			config:  &ProfileConfig{pvDetails: defaultPV, scDetails: defaultSC, nodeDetails: defaultNode, podDetails: nil},
 			wantErr: true,
 		},
+		{name: "profiles V2 GPU with local SSD and regional bucket - should recommend lssd file cache", config: newV2Config("region", nil), wantNeedsLoc: true, want: &recommendation{metadataStatCacheBytes: 100 * mib, fileCacheBytes: 200 * mib, fileCacheMedium: util.MediumLSSD}},
+		{name: "profiles V2 with 2 profile volumes - should halve stat cache budget", config: newV2Config("region", func(c *ProfileConfig) { c.podDetails.profileVolumeCount = 2 }), wantNeedsLoc: true, want: &recommendation{metadataStatCacheBytes: 50 * mib, fileCacheBytes: 200 * mib, fileCacheMedium: util.MediumLSSD}},
+		{name: "profiles V2 CPU node - should disable file cache", config: newV2Config("", func(c *ProfileConfig) { c.nodeDetails.nodeType = nodeTypeGeneralPurpose }), want: &recommendation{metadataStatCacheBytes: 100 * mib}},
+		{name: "profiles V2 GPU without local SSD - should disable file cache", config: newV2Config("region", func(c *ProfileConfig) { c.nodeDetails.hasLocalSSDEphemeralStorageAnnotation = false }), want: &recommendation{metadataStatCacheBytes: 100 * mib}},
+		{name: "profiles V2 GPU with local SSD and zonal bucket - should disable file cache", config: newV2Config("zone", nil), wantNeedsLoc: true, want: &recommendation{metadataStatCacheBytes: 100 * mib}},
+		{name: "profiles V2 GPU with local SSD and unknown location type - should disable file cache", config: newV2Config("", nil), wantNeedsLoc: true, want: &recommendation{metadataStatCacheBytes: 100 * mib}},
+		{name: "profiles V2 priority with only ram - should disable file cache", config: newV2Config("", func(c *ProfileConfig) {
+			c.scDetails.fileCacheMediumPriority[nodeTypeGPU] = []string{util.MediumRAM}
+			c.nodeDetails.nodeAllocatables.memoryBytes = 200 * mib
+		}), want: &recommendation{metadataStatCacheBytes: 200 * mib}},
+		{name: "profiles V2 GPU with file cache size override - should skip location lookup and honor override", config: newV2Config("zone", nil), mountOptions: []string{"file-cache:max-size-mb:100"}, want: &recommendation{metadataStatCacheBytes: 100 * mib, fileCacheBytes: 100 * mib}},
+		{name: "profiles V2 GPU with custom cache volume - should skip location lookup and honor custom volume", config: newV2Config("zone", func(c *ProfileConfig) {
+			c.podDetails.labels = map[string]string{webhook.GcsfuseCacheCreatedByUserLabel: util.TrueStr}
+		}), want: &recommendation{metadataStatCacheBytes: 100 * mib, fileCacheBytes: -1}},
+		{name: "profiles V2 GPU with zero ephemeral storage factor and zero volume count - should skip location lookup and disable file cache", config: newV2Config("region", func(c *ProfileConfig) {
+			c.scDetails.fuseEphemeralStorageAllocatableFactor = 0
+			c.podDetails.profileVolumeCount = 0
+		}), want: &recommendation{metadataStatCacheBytes: 100 * mib}},
+		{name: "profiles V2 TPU with lssd priority - should skip location lookup and disable file cache", config: newV2Config("region", func(c *ProfileConfig) {
+			c.nodeDetails.nodeType = nodeTypeTPU
+			c.scDetails.fileCacheMediumPriority[nodeTypeTPU] = []string{util.MediumLSSD}
+		}), want: &recommendation{metadataStatCacheBytes: 100 * mib}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := recommendCacheConfigs([]string{}, tt.config)
+			if got := tt.config.NeedsBucketLocationType(tt.mountOptions); got != tt.wantNeedsLoc {
+				t.Errorf("NeedsBucketLocationType() = %v, want %v", got, tt.wantNeedsLoc)
+			}
+			got, err := recommendCacheConfigs(tt.mountOptions, tt.config)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("recommendCacheConfigs() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -2814,6 +2916,165 @@ func TestMergeMapsOnMissingKeys(t *testing.T) {
 			if tc.dst != nil {
 				if diff := cmp.Diff(dstOriginal, tc.dst); diff != "" {
 					t.Errorf("mergeMapsOnMissingKeys(%v, %v) unexpectedly modified dst in place:\n%s", tc.src, dstOriginal, diff)
+				}
+			}
+		})
+	}
+}
+
+func TestParseProfileVolumeCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        int
+	}{
+		{name: "unset annotation - should return 1", want: 1},
+		{name: "valid positive count - should return parsed count", annotations: map[string]string{webhook.GcsfuseProfileVolumeCountAnnotation: " 3 "}, want: 3},
+		{name: "zero count - should return 1", annotations: map[string]string{webhook.GcsfuseProfileVolumeCountAnnotation: "0"}, want: 1},
+		{name: "negative count - should return 1", annotations: map[string]string{webhook.GcsfuseProfileVolumeCountAnnotation: "-2"}, want: 1},
+		{name: "invalid non-numeric count - should return 1", annotations: map[string]string{webhook.GcsfuseProfileVolumeCountAnnotation: "abc"}, want: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "test-pod", Annotations: tc.annotations}}
+			if got := parseProfileVolumeCount(pod); got != tc.want {
+				t.Errorf("parseProfileVolumeCount() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetBucketLocationType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config *ProfileConfig
+		loc    string
+		want   string
+	}{
+		{name: "nil config - should be a no-op", loc: "region"},
+		{name: "nil pvDetails - should be a no-op", config: &ProfileConfig{}, loc: "region"},
+		{name: "valid config - should update locationType", config: &ProfileConfig{pvDetails: &pvDetails{}}, loc: "region", want: "region"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.config.SetBucketLocationType(tc.loc)
+			if tc.config != nil && tc.config.pvDetails != nil && tc.config.pvDetails.locationType != tc.want {
+				t.Errorf("locationType = %q, want %q", tc.config.pvDetails.locationType, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeSCMountOptionsOnMissingKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		config   *ProfileConfig
+		userOpts []string
+		want     []string
+	}{
+		{name: "nil config - should return user options", userOpts: []string{"only-dir=a"}, want: []string{"only-dir=a"}},
+		{name: "nil scDetails - should return user options", config: &ProfileConfig{}, userOpts: []string{"only-dir=a"}, want: []string{"only-dir=a"}},
+		{
+			name:     "valid SC options - should merge missing keys without overriding user options",
+			config:   &ProfileConfig{scDetails: &scDetails{mountOptions: []string{"only-dir=sc-dir", "anonymous-access"}}},
+			userOpts: []string{"only-dir=user-dir"},
+			want:     []string{"only-dir=user-dir", "anonymous-access"},
+		},
+		{
+			name:     "invalid user option - should fall back to user options",
+			config:   &ProfileConfig{scDetails: &scDetails{mountOptions: []string{"anonymous-access"}}},
+			userOpts: []string{"=invalid"},
+			want:     []string{"=invalid"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.config.MergeSCMountOptionsOnMissingKeys(tc.userOpts)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("MergeSCMountOptionsOnMissingKeys() diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestMarshalRecommendationLog(t *testing.T) {
+	t.Parallel()
+
+	v1ScanKeys := []string{
+		"bucketTotalObjects",
+		"bucketTotalDataSizeBytes",
+		"bucketHNSEnabled",
+		"requiredFileCacheBytes",
+		"requiredMetadataStatCacheBytes",
+	}
+
+	tests := []struct {
+		name        string
+		useV2       bool
+		wantPresent []string
+		wantAbsent  []string
+	}{
+		{
+			name:        "V1 keeps bucket scan fields and omits profileVolumeCount",
+			useV2:       false,
+			wantPresent: append([]string{"bucketLocationType"}, v1ScanKeys...),
+			wantAbsent:  []string{"profileVolumeCount"},
+		},
+		{
+			name:        "V2 omits bucket scan fields and includes profileVolumeCount",
+			useV2:       true,
+			wantPresent: []string{"bucketLocationType", "profileVolumeCount"},
+			wantAbsent:  v1ScanKeys,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &ProfileConfig{
+				useProfilesV2: tc.useV2,
+				pvDetails:     &pvDetails{name: "test-pv", locationType: "region"},
+				nodeDetails: &nodeDetails{
+					name:             "test-node",
+					nodeType:         nodeTypeGPU,
+					nodeAllocatables: &parsedResourceList{},
+				},
+				podDetails: &podDetails{
+					name:               "test-pod",
+					namespace:          "test-ns",
+					profileVolumeCount: 2,
+					containerLimits:    &parsedResourceList{},
+				},
+			}
+			raw, err := marshalRecommendationLog(cfg, &recommendation{}, &cacheRequirements{}, nil, 0, 0)
+			if err != nil {
+				t.Fatalf("marshalRecommendationLog() error = %v", err)
+			}
+
+			var parsed map[string]any
+			if err := json.Unmarshal(raw, &parsed); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			signals, ok := parsed["inputSignals"].(map[string]any)
+			if !ok {
+				t.Fatalf("inputSignals missing or not an object: %s", raw)
+			}
+			for _, key := range tc.wantPresent {
+				if _, exists := signals[key]; !exists {
+					t.Errorf("inputSignals missing key %q in %s", key, raw)
+				}
+			}
+			for _, key := range tc.wantAbsent {
+				if _, exists := signals[key]; exists {
+					t.Errorf("inputSignals unexpectedly contains key %q in %s", key, raw)
 				}
 			}
 		})

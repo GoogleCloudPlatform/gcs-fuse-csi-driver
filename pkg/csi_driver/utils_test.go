@@ -1794,3 +1794,56 @@ func TestGetSidecarContainerStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestOnlyDirPrefix(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		opts []string
+		want string
+	}{
+		{name: "empty mount options - should return empty prefix", want: ""},
+		{name: "equals syntax - should append trailing slash", opts: []string{"only-dir=team-a"}, want: "team-a/"},
+		{name: "colon syntax with slashes - should trim and append trailing slash", opts: []string{"only-dir:/team-a/sub/"}, want: "team-a/sub/"},
+		{name: "equals syntax with colon in value - should preserve colon", opts: []string{"only-dir=team:a/sub"}, want: "team:a/sub/"},
+		{name: "cli and config both set - should prefer cli flag", opts: []string{"only-dir=cli-dir", "only-dir:cfg-dir"}, want: "cli-dir/"},
+		{name: "comma in directory name - should preserve comma", opts: []string{"only-dir=dataset,v2/train"}, want: "dataset,v2/train/"},
+		{name: "unclean relative path - should clean path", opts: []string{"only-dir=./a//b/../c"}, want: "a/c/"},
+		{name: "root slash only - should return empty prefix", opts: []string{"only-dir=/"}, want: ""},
+		{name: "empty value - should return empty prefix", opts: []string{"only-dir="}, want: ""},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := onlyDirPrefix(tc.opts); got != tc.want {
+				t.Errorf("onlyDirPrefix(%v) = %q, want %q", tc.opts, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsAnonymousAccess(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name string
+		opts []string
+		want bool
+	}{
+		{name: "empty mount options - should return false", want: false},
+		{name: "bare flag - should return true", opts: []string{"anonymous-access"}, want: true},
+		{name: "flag true - should return true", opts: []string{"anonymous-access=true"}, want: true},
+		{name: "flag false - should return false", opts: []string{"anonymous-access=false"}, want: false},
+		{name: "config true - should return true", opts: []string{"gcs-auth:anonymous-access:true"}, want: true},
+		{name: "config false - should return false", opts: []string{"gcs-auth:anonymous-access:false"}, want: false},
+		{name: "cli and config both set - should prefer cli flag", opts: []string{"anonymous-access=false", "gcs-auth:anonymous-access:true"}, want: false},
+		{name: "comma inside only-dir value - should not treat as anonymous-access", opts: []string{"only-dir=dir,anonymous-access"}, want: false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isAnonymousAccess(tc.opts); got != tc.want {
+				t.Errorf("isAnonymousAccess(%v) = %v, want %v", tc.opts, got, tc.want)
+			}
+		})
+	}
+}

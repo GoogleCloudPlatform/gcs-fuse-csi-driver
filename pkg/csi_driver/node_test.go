@@ -32,12 +32,14 @@ import (
 	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -6250,6 +6252,270 @@ func TestIsGKENodePoolVersionSupportedForTPUv6e(t *testing.T) {
 
 			if got := isGKENodePoolVersionSupportedForTPUv6e(tc.kubeletVersion); got != tc.want {
 				t.Errorf("isGKENodePoolVersionSupportedForTPUv6e(%q) = %v, want %v", tc.kubeletVersion, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNodePublishVolumeProfilesV2(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name               string
+		volumeID           string
+		scMountOptions     []string
+		zonalBucket        bool
+		skipCreateBucket   bool
+		cachedLocationType string
+		wantLSSD           bool
+		wantPrefix         string
+		wantWithoutAuth    bool
+	}{
+		{name: "regional bucket on GPU node with local SSD - should mount with lssd file cache options", wantLSSD: true},
+		{name: "zonal bucket on GPU node with local SSD - should mount with file cache size 0", zonalBucket: true},
+		{name: "dynamic mount on GPU node with local SSD - should mount with file cache size 0", volumeID: "_"},
+		{name: "bucket location lookup fails - should mount with file cache size 0", skipCreateBucket: true},
+		{name: "cached regional location type in volume state - should reuse without bucket lookup", skipCreateBucket: true, cachedLocationType: "region", wantLSSD: true},
+		{
+			name:            "SC mountOptions with only-dir and anonymous-access - should pass prefix and disable auth",
+			scMountOptions:  []string{"only-dir=team-a/sub", "anonymous-access"},
+			wantLSSD:        true,
+			wantPrefix:      "team-a/sub/",
+			wantWithoutAuth: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testTargetPath, cleanup := setupTestTargetPath(t)
+			defer cleanup()
+
+			volumeID := tc.volumeID
+			if volumeID == "" {
+				volumeID = testVolumeID
+			}
+
+			fakeClient := clientset.NewFakeClientset()
+			fakeClient.CreateNode(clientset.FakeNodeConfig{
+				Annotations: map[string]string{clientset.GkeAppliedNodeLabelsAnnotationKey: "cloud.google.com/gke-ephemeral-storage-local-ssd=true"},
+				Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("100Mi"), corev1.ResourceEphemeralStorage: resource.MustParse("100Mi"),
+					corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
+				}},
+			})
+			fakeClient.CreatePod(clientset.FakePodConfig{Name: "test-pod", Namespace: "test-ns"})
+			fakeClient.CreatePV(clientset.FakePVConfig{Name: "node-publish", SCName: "gcsfusecsi-training"})
+			fakeClient.CreateSC(clientset.FakeSCConfig{
+				Name: "gcsfusecsi-training", Labels: map[string]string{"gke-gcsfuse/profile": util.TrueStr},
+				Parameters:   map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.TrueStr, "fuseFileCacheMediumPriority": "gpu:lssd"},
+				MountOptions: tc.scMountOptions,
+			})
+
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+			driver := initTestDriverWithCustomNodeServer(t, fakeMounter, fakeClient, false)
+			driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = true
+			driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableProfilesV2 = true
+
+			if !tc.skipCreateBucket {
+				s, _ := driver.config.StorageServiceManager.SetupService(context.TODO(), nil, "")
+				if _, err := s.CreateBucket(context.Background(), &storage.ServiceBucket{Name: volumeID, EnableZB: tc.zonalBucket}); err != nil {
+					t.Fatalf("failed to create the fake bucket: %v", err)
+				}
+			}
+
+			recMgr := &recordingStorageServiceManager{ServiceManager: driver.config.StorageServiceManager}
+			driver.config.StorageServiceManager = recMgr
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId: volumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{VolumeContextKeyPodName: "test-pod", VolumeContextKeyPodNamespace: "test-ns"},
+			}
+			ns := newNodeServer(driver, fakeMounter).(*nodeServer)
+			if tc.cachedLocationType != "" {
+				ns.volumeStateStore.Store(testTargetPath, &util.VolumeState{BucketAccessCheckPassed: true, BucketLocationType: tc.cachedLocationType})
+			}
+			if _, err := ns.NodePublishVolume(context.Background(), req); err != nil {
+				t.Fatalf("NodePublishVolume() error = %v", err)
+			}
+
+			if tc.wantPrefix != "" && (recMgr.gotBucket == nil || recMgr.gotBucket.Prefix != tc.wantPrefix) {
+				t.Errorf("bucket prefix = %+v, want %q", recMgr.gotBucket, tc.wantPrefix)
+			}
+			if recMgr.gotWithoutAuth != tc.wantWithoutAuth {
+				t.Errorf("withoutAuth = %v, want %v", recMgr.gotWithoutAuth, tc.wantWithoutAuth)
+			}
+			if tc.wantWithoutAuth && recMgr.gotTS != nil {
+				t.Errorf("tokenSource = %v, want nil for anonymous-access", recMgr.gotTS)
+			}
+
+			expectedOpts := []string{"metadata-cache:stat-cache-max-size-mb:70", "file-cache:max-size-mb:0"}
+			unexpectedOpts := []string{"file-cache-medium=" + util.MediumLSSD}
+			if tc.wantLSSD {
+				expectedOpts = []string{"metadata-cache:stat-cache-max-size-mb:70", "file-cache:max-size-mb:85", "file-cache-medium=" + util.MediumLSSD}
+				unexpectedOpts = nil
+			}
+			validateMountPoint(t, fakeMounter, &mount.MountPoint{Device: volumeID, Path: testTargetPath, Type: FuseMountType, Opts: expectedOpts}, unexpectedOpts)
+		})
+	}
+}
+
+type emptyIdentityPoolTokenManager struct {
+	auth.TokenManager
+}
+
+func (emptyIdentityPoolTokenManager) GetIdentityPool() string { return "" }
+
+type emptyIdentityProviderTokenManager struct {
+	auth.TokenManager
+}
+
+func (emptyIdentityProviderTokenManager) GetIdentityProvider() string { return "" }
+
+type recordingTokenManager struct {
+	auth.TokenManager
+	gotAudience string
+}
+
+func (tm *recordingTokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken, audience string, fetchFromFile bool) oauth2.TokenSource {
+	tm.gotAudience = audience
+	return tm.TokenManager.GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken, audience, fetchFromFile)
+}
+
+func TestBucketLocationTokenSource(t *testing.T) {
+	t.Parallel()
+
+	hnwKSAPod := &corev1.Pod{
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+			Volumes:     []corev1.Volume{{Name: webhook.SidecarContainerSATokenVolumeName}},
+			InitContainers: []corev1.Container{{
+				Name:  webhook.GcsFuseSidecarName,
+				Image: "gcr.io/gke-release/gcs-fuse-csi-driver-sidecar-mounter:v1.18.0-gke.0",
+			}},
+		},
+	}
+	customGKEIDP := "https://container.googleapis.com/v1/projects/my-proj/locations/us-central1/clusters/my-cluster"
+	cases := []struct {
+		name         string
+		tokenManager auth.TokenManager
+		pod          *corev1.Pod
+		args         *requestArgs
+		wantNil      bool
+		wantAudience string
+	}{
+		{name: "normal WI pod - should return KSA token source", tokenManager: auth.NewFakeTokenManager(), pod: &corev1.Pod{}, args: &requestArgs{}},
+		{name: "normal WI pod with custom identityProvider - should ignore custom identityProvider", tokenManager: auth.NewFakeTokenManager(), pod: &corev1.Pod{}, args: &requestArgs{userSpecifiedIdentityProvider: "custom-idp"}},
+		{name: "hostNetwork pod without KSA opt-in - should use default credentials", tokenManager: auth.NewFakeTokenManager(), pod: &corev1.Pod{Spec: corev1.PodSpec{HostNetwork: true}}, args: &requestArgs{}, wantNil: true},
+		{name: "hostNetwork pod with KSA opt-in and default identityProvider - should pass empty audience", tokenManager: auth.NewFakeTokenManager(), pod: hnwKSAPod, args: &requestArgs{optInHostnetworkKSA: true}},
+		{name: "hostNetwork pod with KSA opt-in and non-GKE identityProvider - should pass custom audience", tokenManager: auth.NewFakeTokenManager(), pod: hnwKSAPod, args: &requestArgs{optInHostnetworkKSA: true, userSpecifiedIdentityProvider: "custom-idp"}, wantAudience: "custom-idp"},
+		{name: "hostNetwork pod with KSA opt-in and GKE identityProvider - should pass identitynamespace audience", tokenManager: auth.NewFakeTokenManager(), pod: hnwKSAPod, args: &requestArgs{optInHostnetworkKSA: true, userSpecifiedIdentityProvider: customGKEIDP}, wantAudience: "identitynamespace:fake.identity.pool:" + customGKEIDP},
+		{name: "non-WI cluster with empty identity pool - should use default credentials", tokenManager: emptyIdentityPoolTokenManager{auth.NewFakeTokenManager()}, pod: &corev1.Pod{}, args: &requestArgs{}, wantNil: true},
+		{name: "non-WI cluster with empty identity provider - should use default credentials", tokenManager: emptyIdentityProviderTokenManager{auth.NewFakeTokenManager()}, pod: &corev1.Pod{}, args: &requestArgs{}, wantNil: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingTokenManager{TokenManager: tc.tokenManager}
+			ns := &nodeServer{driver: &GCSDriver{config: &GCSDriverConfig{TokenManager: rec}}}
+			got := ns.bucketLocationTokenSource(tc.pod, map[string]string{}, tc.args)
+			if (got == nil) != tc.wantNil {
+				t.Errorf("bucketLocationTokenSource() nil = %v, wantNil %v", got == nil, tc.wantNil)
+			}
+			if rec.gotAudience != tc.wantAudience {
+				t.Errorf("bucketLocationTokenSource() audience = %q, want %q", rec.gotAudience, tc.wantAudience)
+			}
+		})
+	}
+}
+
+type recordingStorageServiceManager struct {
+	storage.ServiceManager
+	gotTS          oauth2.TokenSource
+	gotWithoutAuth bool
+	gotBucket      *storage.ServiceBucket
+	gotDeadline    bool
+}
+
+func (m *recordingStorageServiceManager) SetupStorageControlService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string, withoutAuth bool) (storage.Service, error) {
+	m.gotTS = ts
+	m.gotWithoutAuth = withoutAuth
+	svc, err := m.ServiceManager.SetupStorageControlService(ctx, ts, customEndpoint, withoutAuth)
+	if err != nil {
+		return nil, err
+	}
+	return &recordingStorageService{Service: svc, mgr: m}, nil
+}
+
+type recordingStorageService struct {
+	storage.Service
+	mgr *recordingStorageServiceManager
+}
+
+func (s *recordingStorageService) BucketLocationType(ctx context.Context, obj *storage.ServiceBucket) (string, error) {
+	s.mgr.gotBucket = obj
+	_, s.mgr.gotDeadline = ctx.Deadline()
+	return s.Service.BucketLocationType(ctx, obj)
+}
+
+func TestBucketLocationType(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		mountOptions    []string
+		wantPrefix      string
+		wantWithoutAuth bool
+		wantNilTS       bool
+	}{
+		{
+			name:         "only-dir set - should pass prefix and use KSA token source",
+			mountOptions: []string{"only-dir=team-a"},
+			wantPrefix:   "team-a/",
+		},
+		{
+			name:            "anonymous-access and only-dir set - should disable auth and pass prefix",
+			mountOptions:    []string{"anonymous-access", "only-dir:/data/sub/"},
+			wantPrefix:      "data/sub/",
+			wantWithoutAuth: true,
+			wantNilTS:       true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			baseMgr := storage.NewFakeServiceManager()
+			svc, err := baseMgr.SetupService(context.Background(), nil, "")
+			if err != nil {
+				t.Fatalf("SetupService() error = %v", err)
+			}
+			if _, err := svc.CreateBucket(context.Background(), &storage.ServiceBucket{Name: "test-bucket"}); err != nil {
+				t.Fatalf("CreateBucket() error = %v", err)
+			}
+			recMgr := &recordingStorageServiceManager{ServiceManager: baseMgr}
+			ns := &nodeServer{
+				driver:                &GCSDriver{config: &GCSDriverConfig{TokenManager: auth.NewFakeTokenManager()}},
+				storageServiceManager: recMgr,
+			}
+			args := &requestArgs{bucketName: "test-bucket", fuseMountOptions: tc.mountOptions}
+			loc, err := ns.bucketLocationType(context.Background(), &corev1.Pod{}, map[string]string{}, args, tc.mountOptions, "")
+			if err != nil {
+				t.Fatalf("bucketLocationType() error = %v", err)
+			}
+			if loc != "region" {
+				t.Errorf("bucketLocationType() = %q, want %q", loc, "region")
+			}
+			if recMgr.gotWithoutAuth != tc.wantWithoutAuth {
+				t.Errorf("withoutAuth = %v, want %v", recMgr.gotWithoutAuth, tc.wantWithoutAuth)
+			}
+			if (recMgr.gotTS == nil) != tc.wantNilTS {
+				t.Errorf("tokenSource nil = %v, want %v", recMgr.gotTS == nil, tc.wantNilTS)
+			}
+			if recMgr.gotBucket == nil || recMgr.gotBucket.Prefix != tc.wantPrefix {
+				t.Errorf("bucket prefix = %+v, want %q", recMgr.gotBucket, tc.wantPrefix)
+			}
+			if !recMgr.gotDeadline {
+				t.Errorf("BucketLocationType() ctx missing deadline")
 			}
 		})
 	}
