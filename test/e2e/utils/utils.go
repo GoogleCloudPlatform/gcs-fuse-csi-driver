@@ -300,6 +300,18 @@ func IsFileCacheEnabled(flagStr string) bool {
 	return strings.Contains(flagStr, flagCacheDir)
 }
 
+// FlagsMatchClientProtocol reports whether a GCSFuse test config flag set should run for
+// clientProtocol. Flag sets with --client-protocol=grpc run only for grpc, and flag sets with any
+// other explicit protocol run only for non-grpc. Flag sets with no protocol, and all zonal bucket
+// runs, always run.
+func FlagsMatchClientProtocol(flagStr, clientProtocol string, enableZB bool) bool {
+	if enableZB || !strings.Contains(flagStr, "client-protocol=") {
+		return true
+	}
+
+	return strings.Contains(flagStr, "client-protocol=grpc") == (clientProtocol == "grpc")
+}
+
 func IsOnlyDirEnabled(testPackage TestPackage) bool {
 	return testPackage.OnlyDir != ""
 }

@@ -214,6 +214,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationFileCacheParallelDownloadsTestSuite) Define
 				}
 
 				for i, flagStr := range config.Flags {
+					if !utils.FlagsMatchClientProtocol(flagStr, getClientProtocol(driver), zbEnabled(driver)) {
+						continue
+					}
 					if !utils.IsFileCacheEnabled(flagStr) {
 						continue
 					}
