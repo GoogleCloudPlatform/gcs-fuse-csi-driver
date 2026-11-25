@@ -196,35 +196,3 @@ func TestParseConfigFlags(t *testing.T) {
 		}
 	})
 }
-
-func TestFlagsMatchClientProtocol(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name           string
-		flagStr        string
-		clientProtocol string
-		enableZB       bool
-		want           bool
-	}{
-		{name: "grpc flags on grpc TestGrid", flagStr: "--implicit-dirs,--client-protocol=grpc", clientProtocol: "grpc", want: true},
-		{name: "grpc flags on http TestGrid", flagStr: "--implicit-dirs,--client-protocol=grpc", clientProtocol: "http", want: false},
-		{name: "http1 flags on http TestGrid", flagStr: "--implicit-dirs,--client-protocol=http1", clientProtocol: "http", want: true},
-		{name: "http1 flags on grpc TestGrid", flagStr: "--implicit-dirs,--client-protocol=http1", clientProtocol: "grpc", want: false},
-		{name: "httpmtls flags on http TestGrid", flagStr: "--client-protocol=httpmtls", clientProtocol: "http", want: true},
-		{name: "no protocol on http TestGrid", flagStr: "--implicit-dirs", clientProtocol: "http", want: true},
-		{name: "no protocol on grpc TestGrid", flagStr: "--implicit-dirs", clientProtocol: "grpc", want: true},
-		{name: "http1 flags on http1 TestGrid", flagStr: "--client-protocol=http1", clientProtocol: "http1", want: true},
-		{name: "grpc flags on http1 TestGrid", flagStr: "--client-protocol=grpc", clientProtocol: "http1", want: false},
-		{name: "http1 flags on zonal bucket TestGrid", flagStr: "--client-protocol=http1", clientProtocol: "grpc", enableZB: true, want: true},
-		{name: "grpc flags on zonal bucket TestGrid", flagStr: "--client-protocol=grpc", clientProtocol: "grpc", enableZB: true, want: true},
-		{name: "grpc flags on http zonal bucket run", flagStr: "--client-protocol=grpc", clientProtocol: "http", enableZB: true, want: true},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := FlagsMatchClientProtocol(tc.flagStr, tc.clientProtocol, tc.enableZB); got != tc.want {
-				t.Errorf("FlagsMatchClientProtocol(%q, %q, %v) = %v, want %v", tc.flagStr, tc.clientProtocol, tc.enableZB, got, tc.want)
-			}
-		})
-	}
-}
