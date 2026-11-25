@@ -166,6 +166,14 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		// Saving testScenario because l.config.Prefix gets overriden when calling  storageframework.createVolumeResourceOverriden (configPrefix is used to pass bucket names from test drivers create volume to tests).
 		testScenario := l.config.Prefix
 
+		if testScenario == specs.ProfilesOverrideAllOverridablePrefix && shouldTestAnywhereCache() {
+			// Registered after PrepareTest so the caches are disabled before its
+			// cleanup deletes the buckets (DeferCleanup runs in LIFO order).
+			ginkgo.DeferCleanup(func() {
+				t.disableAC(l.volumeResourceList, ctx)
+			})
+		}
+
 		l.volumeResourceList = []*storageframework.VolumeResource{}
 
 		// e2e/storage/framework does not support annotation injection on persistent volumes.
@@ -284,8 +292,11 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 		if err != nil {
 			klog.Errorf("Failed while prepping anywherecache iam bindings for profiles tests: %v", err)
 		}
+		// Register cleanup before init so volumes created before a partial init
+		// failure are still cleaned up. The closure reads l.volumeResourceList when
+		// it runs, so it sees the volumes created by init.
+		ginkgo.DeferCleanup(cleanup)
 		init(specs.ProfilesOverrideAllOverridablePrefix)
-		defer cleanup()
 
 		for _, vr := range l.volumeResourceList {
 			validatePVAnnotationsAndReturnScan(gomega.Default, vr.Pv.Name, map[string]string{
@@ -352,17 +363,20 @@ func (t *gcsFuseCSIProfilesTestSuite) DefineTests(driver storageframework.TestDr
 					"Should find %q in recommendation log stdout with overrides", substr)
 			}
 		}
-		isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
-		if isZBEnabled == "true" {
-			// AC is not supported for zb, so we only validate AC for non zb tests.
+		if !shouldTestAnywhereCache() {
 			return
 		}
 
 		t.validateAC(l.volumeResourceList, ctx)
 		klog.Infof("Successfully validated AnywhereCache creation for all profiles test")
-
-		t.disableAC(l.volumeResourceList, ctx)
 	})
+}
+
+// shouldTestAnywhereCache reports whether the profiles tests should create and
+// validate a real AnywhereCache. The test handler decides this, see
+// TestWithAnywhereCacheEnvVar.
+func shouldTestAnywhereCache() bool {
+	return os.Getenv(utils.TestWithAnywhereCacheEnvVar) == "true"
 }
 
 func killController(ctx context.Context, config *storageframework.PerTestConfig) {
@@ -544,9 +558,10 @@ func modifyPVForProfiles(testScenario string, pv *v1.PersistentVolume, sc string
 			// zones which have limited quota, we should not make caches in those zones.
 			va[anywhereCacheTTLKey] = "2h"
 			va[anywhereCacheAdmissionPolicyKey] = "admit-on-second-miss"
-			isZBEnabled := os.Getenv(utils.IsZBEnabledEnvVar)
-			if isZBEnabled == "false" {
-				// AC is not supported for zb, so we only use AC for non zb tests.
+			// The serving StorageClass enables AC in all zones by default, so explicitly
+			// opt out when this run should not create a cache.
+			va[anywhereCacheZonesKey] = "none"
+			if shouldTestAnywhereCache() {
 				clusterLocation := os.Getenv(utils.ClusterLocationEnvVar)
 				if clusterLocation == "" {
 					clusterLocation = "us-central1"
@@ -681,9 +696,13 @@ func (t *gcsFuseCSIProfilesTestSuite) disableAC(vrList []*storageframework.Volum
 	}
 	gomega.Expect(disableErrors).To(gomega.BeEmpty(), "error(s) encountered while disabling AnywhereCaches: %v", disableErrors)
 	framework.Logf("Disabled AnywhereCaches now waiting for caches to be deleted")
+	var deletionErrors []error
 	for _, bucket := range bucketsNeedingACDeletion {
-		t.waitForAnywhereCacheDeletion(bucket, ctx)
+		if err := t.waitForAnywhereCacheDeletion(bucket, ctx); err != nil {
+			deletionErrors = append(deletionErrors, fmt.Errorf("AnywhereCache for bucket %q was not deleted: %w", bucket, err))
+		}
 	}
+	gomega.Expect(utilerrors.NewAggregate(deletionErrors)).To(gomega.Succeed(), "error(s) encountered while waiting for AnywhereCache deletion")
 }
 
 func (t *gcsFuseCSIProfilesTestSuite) waitForAnywhereCacheDeletion(bucket string, ctx context.Context) error {
