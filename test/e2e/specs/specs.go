@@ -23,7 +23,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1063,6 +1065,21 @@ func (t *TestPod) ensureMounterPodTemplateAnnotation(volumeResource *storagefram
 	framework.ExpectNoError(err, "failed to update PVC with mounter pod template annotation")
 }
 
+// appendMountOptions appends test-specific mount options to a CSI volume. CreateVolume sets a
+// default client-protocol, so if the test passes its own, the default is dropped and the
+// test's protocol is used.
+func appendMountOptions(csi *corev1.CSIVolumeSource, mountOptions []string) {
+	testMountOptions := strings.Join(mountOptions, ",")
+	if strings.Contains(testMountOptions, "client-protocol") {
+		attributes := maps.Clone(csi.VolumeAttributes)
+		options := strings.Split(attributes["mountOptions"], ",")
+		options = slices.DeleteFunc(options, func(o string) bool { return strings.HasPrefix(o, "client-protocol=") })
+		attributes["mountOptions"] = strings.Join(options, ",")
+		csi.VolumeAttributes = attributes
+	}
+	csi.VolumeAttributes["mountOptions"] += "," + testMountOptions
+}
+
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
 	volume := corev1.Volume{
 		Name: name,
@@ -1080,7 +1097,7 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 		if volumeResource.VolSource.CSI != nil {
 			volume.VolumeSource.CSI.ReadOnly = &readOnly
 			if len(mountOptions) > 0 {
-				volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
+				appendMountOptions(volume.VolumeSource.CSI, mountOptions)
 			}
 		}
 	}
@@ -1105,7 +1122,7 @@ func (t *TestPod) SetupVolumeWithHostNetworkKSAOptIn(volumeResource *storagefram
 			volume.VolumeSource.CSI.VolumeAttributes["hostNetworkPodKSA"] = "true"
 			volume.VolumeSource.CSI.ReadOnly = &readOnly
 			if len(mountOptions) > 0 {
-				volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
+				appendMountOptions(volume.VolumeSource.CSI, mountOptions)
 			}
 		}
 	}
