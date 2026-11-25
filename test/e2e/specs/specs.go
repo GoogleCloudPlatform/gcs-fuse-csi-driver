@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -1065,17 +1064,16 @@ func (t *TestPod) ensureMounterPodTemplateAnnotation(volumeResource *storagefram
 	framework.ExpectNoError(err, "failed to update PVC with mounter pod template annotation")
 }
 
-// appendMountOptions appends test-specific mount options to a CSI volume. CreateVolume sets a
-// default client-protocol, so if the test passes its own, the default is dropped and the
-// test's protocol is used.
+// appendMountOptions appends mountOptions to the CSI volume's mountOptions attribute. If
+// mountOptions set a client protocol (as client-protocol=<value> or
+// gcs-connection:client-protocol:<value>), the default client-protocol=<value> set by
+// CreateVolume is removed first so the test's protocol is used.
 func appendMountOptions(csi *corev1.CSIVolumeSource, mountOptions []string) {
 	testMountOptions := strings.Join(mountOptions, ",")
 	if strings.Contains(testMountOptions, "client-protocol") {
-		attributes := maps.Clone(csi.VolumeAttributes)
-		options := strings.Split(attributes["mountOptions"], ",")
+		options := strings.Split(csi.VolumeAttributes["mountOptions"], ",")
 		options = slices.DeleteFunc(options, func(o string) bool { return strings.HasPrefix(o, "client-protocol=") })
-		attributes["mountOptions"] = strings.Join(options, ",")
-		csi.VolumeAttributes = attributes
+		csi.VolumeAttributes["mountOptions"] = strings.Join(options, ",")
 	}
 	csi.VolumeAttributes["mountOptions"] += "," + testMountOptions
 }

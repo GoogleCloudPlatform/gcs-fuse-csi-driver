@@ -469,6 +469,11 @@ func generateTestSkip(testParams *TestParameters) string {
 
 		skipTests = append(skipTests, "oidc") // OIDC authentication requires non-managed driver features
 
+		// gRPC by default is not enabled on managed clusters yet, so the driver passes
+		// --enable-grpc-by-default=false even when the sidecar supports it.
+		// TODO: Remove once gRPC by default is enabled for managed clusters.
+		skipTests = append(skipTests, "enable-grpc-by-default", "enabled.by.default")
+
 		supportsKernelReadAhead, _ := ClusterAtLeastMinVersion(testParams.GkeClusterVersion, testParams.GkeNodeVersion, kernelReadAheadMinimumVersion)
 		if !supportsKernelReadAhead {
 			skipTests = append(skipTests, "read.ahead")

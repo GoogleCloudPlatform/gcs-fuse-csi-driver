@@ -305,7 +305,7 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 		mountOptions := "logging:severity:info"
 
-		// EnableGrpcByDefaultPrefix tests explicitly test gRPC by default, so we don't pass the protocol.
+		// EnableGrpcByDefaultPrefix tests rely on the default protocol, so don't set one.
 		if config.Prefix != EnableGrpcByDefaultPrefix {
 			mountOptions += ",client-protocol=" + n.gcsfuseClientProtocol()
 		}
@@ -516,7 +516,7 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
-	// EnableGrpcByDefaultPrefix tests explicitly test gRPC by default, so we don't pass the protocol.
+	// EnableGrpcByDefaultPrefix tests rely on the default protocol, so don't set one.
 	if config.Prefix != EnableGrpcByDefaultPrefix {
 		mountOptions = append(mountOptions, "client-protocol="+n.gcsfuseClientProtocol())
 	}
@@ -539,15 +539,9 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 }
 
 // gcsfuseClientProtocol returns the client protocol to set explicitly on test volumes.
-//
-// The protocol is always set, even for HTTP/1.1, because once GCSFuse runs with
-// --enable-grpc-by-default it uses gRPC whenever --client-protocol is not set. Without an
-// explicit value, the HTTP/1.1 suites would silently run over gRPC and lose HTTP/1.1
-// coverage. Only the enable-grpc-by-default tests leave it unset to exercise the default.
-//
-// CI sets ClientProtocol to "http" for the HTTP/1.1 suites (and the flag defaults to "http"),
-// but GCSFuse only accepts http1, http2, grpc, or httpmtls, so "" and "http" map to "http1".
-// Any other value is passed through as is.
+// HTTP/1.1 is set explicitly too, because GCSFuse defaults to gRPC with
+// --enable-grpc-by-default. CI passes "http", which GCSFuse doesn't accept, so "" and
+// "http" map to "http1".
 func (n *GCSFuseCSITestDriver) gcsfuseClientProtocol() string {
 	if n.ClientProtocol == "" || n.ClientProtocol == "http" {
 		return "http1"
