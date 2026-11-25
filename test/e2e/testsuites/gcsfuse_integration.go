@@ -734,7 +734,9 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 				}
 
 				for i, flagStr := range config.Flags {
-
+					if !utils.FlagsMatchClientProtocol(flagStr, getClientProtocol(driver), zbEnabled(driver)) {
+						continue
+					}
 					// Filter out file cache and parallel download testcases
 					// Since they will be picked up by other testsuites
 					if utils.IsFileCacheEnabled(flagStr) || utils.IsParallelDownloadsEnabled(flagStr) {
