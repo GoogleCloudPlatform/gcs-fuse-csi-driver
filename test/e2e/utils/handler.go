@@ -113,6 +113,7 @@ const (
 	IsZBEnabledEnvVar                      = "IS_ZB_ENABLED"
 	GCSFusePRNumberEnvVar                  = "GCSFUSE_PR_NUMBER"
 	NodeServiceAccountEnvVar               = "NODE_SERVICE_ACCOUNT"
+	TestWithAnywhereCacheEnvVar            = "TEST_WITH_ANYWHERE_CACHE"
 )
 
 var skipDynamicPVTests = []string{"stable", "sidecar_bucket_access_check", "profiles", "shared-mount"}
@@ -361,6 +362,16 @@ func Handle(testParams *TestParameters) error {
 				return fmt.Errorf("failed to set %s env var: %w", GkeClusterVersionVarName, err)
 			}
 		}
+	}
+
+	// Creating a real AnywhereCache is slow and expensive, so we only test it on
+	// standard clusters without node version skew that use the HTTP client
+	// protocol. This keeps it to one run per GKE minor version instead of one
+	// per grid configuration. AC is not supported for ZB. This runs after
+	// GkeClusterVersion is resolved so the skew check compares real versions.
+	testWithAnywhereCache := !testParams.EnableZB && !testParams.UseGKEAutopilot && !hasNodeVersionSkew(testParams.GkeClusterVersion, testParams.GkeNodeVersion) && testParams.GcsfuseClientProtocol != "grpc"
+	if err := os.Setenv(TestWithAnywhereCacheEnvVar, strconv.FormatBool(testWithAnywhereCache)); err != nil {
+		return fmt.Errorf("failed to set %s env var: %w", TestWithAnywhereCacheEnvVar, err)
 	}
 
 	testBucketLocation := testParams.GkeClusterRegion

@@ -196,3 +196,28 @@ func TestParseConfigFlags(t *testing.T) {
 		}
 	})
 }
+
+func TestHasNodeVersionSkew(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name           string
+		clusterVersion string
+		nodeVersion    string
+		want           bool
+	}{
+		{name: "node version not set", clusterVersion: "1.35.1-gke.100", nodeVersion: "", want: false},
+		{name: "same full version", clusterVersion: "1.35.1-gke.100", nodeVersion: "1.35.1-gke.100", want: false},
+		{name: "same minor, different patch", clusterVersion: "1.35", nodeVersion: "1.35.1-gke.100", want: false},
+		{name: "different minor", clusterVersion: "1.35.1-gke.100", nodeVersion: "1.34.2-gke.200", want: true},
+		{name: "unparsable cluster version", clusterVersion: "latest", nodeVersion: "1.34", want: true},
+		{name: "empty cluster version", clusterVersion: "", nodeVersion: "1.34", want: true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hasNodeVersionSkew(tc.clusterVersion, tc.nodeVersion); got != tc.want {
+				t.Errorf("hasNodeVersionSkew(%q, %q) = %v, want %v", tc.clusterVersion, tc.nodeVersion, got, tc.want)
+			}
+		})
+	}
+}

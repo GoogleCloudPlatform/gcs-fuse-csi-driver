@@ -488,6 +488,24 @@ func clusterUpGKE(testParams *TestParameters) error {
 	return nil
 }
 
+// hasNodeVersionSkew reports whether the node version is set and has a
+// different major.minor version than the cluster. If either version can't be
+// parsed, it returns true.
+func hasNodeVersionSkew(clusterVersion, nodeVersion string) bool {
+	if !isVariableSet(nodeVersion) {
+		return false
+	}
+	cv, err := version.ParseGeneric(clusterVersion)
+	if err != nil {
+		return true
+	}
+	nv, err := version.ParseGeneric(nodeVersion)
+	if err != nil {
+		return true
+	}
+	return cv.Major() != nv.Major() || cv.Minor() != nv.Minor()
+}
+
 func ClusterAtLeastMinVersion(clusterVersion, nodeVersion string, minVersion *version.Version) (bool, error) {
 	supportsFeature := false
 	if clusterVersion != "" {
